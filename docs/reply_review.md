@@ -1,0 +1,693 @@
+# Reply.md（v0.2 / v0.3）审查报告
+
+> 审查日期：2026-09-25
+> 审查对象：`D:\库\Desktop\Reply.md`（3181 行，含 v0.2 数据模型答复 + v0.3 同步规范 + Dart 骨架）
+> 审查方式：逐条对照规范文本与参考代码，并对可判定项做了静态推演（未运行，本机 Dart VM 创建子进程受限）
+> 结论：**规范方向正确、信息密度高，采纳。但参考代码不能直接运行，且存在 9 项必须在实施前裁定的阻断问题。**
+
+## 0. 结论速览
+
+| 分级 | 数量 | 含义 |
+|---|---|---|
+| **P0 阻断** | 9 | 不裁定就动手，写出来的代码必然返工或直接报错 |
+| **P1 高** | 10 | 影响正确性 / 会计精度 / 安全，建议实施前定 |
+| **P2 次要** | 7 | 可在实施中补，但需在文档写明 |
+
+另外有一项**文档治理问题**：v0.2/v0.3 目前只存在于仓库外的桌面文件，仓库内的 `Agents.md` 仍是 v0.1，
+项目"单一来源"约定已被破坏（见第四节）。
+
+---
+
+## 1. 阻断问题（P0）—— 实施前必须裁定
+
+### P0-1 `Db.transaction` 不可重入，`purchaseInbound` 与 `stocktake` 必然抛错
+
+**位置**：`lib/src/db/database.dart` 的 `Db.transaction`；`lib/src/rules/rule_engine.dart` 的 `purchaseInbound` / `stocktake`；
+`lib/src/dao/document_dao.dart` 的 `insertIfAbsent`。
+
+**现象**：`purchaseInbound` 外层调用 `db.transaction(...)`（`BEGIN IMMEDIATE`），内部又调用
+`docs.insertIfAbsent(...)`，而后者**自己也调用 `db.transaction(...)`** → 嵌套 `BEGIN IMMEDIATE`。
+SQLite 不支持嵌套事务，会抛 `SqliteException: cannot start a transaction within a transaction`。
+
+**为什么是问题**：这不是边界情况，是**主路径 100% 触发**。文档给出的两个示例测试（`invariants_test.dart` 的两个用例）
+都会在这一步失败，因此"参考代码可跑"这一前提不成立。
+
+**推荐处置**：`Db.transaction` 改为**可重入**——用深度计数器（depth == 0 时才 `BEGIN`/`COMMIT`/`ROLLBACK`），
+或改用 `SAVEPOINT`。同时明确"DAO 不自己开事务，由 RuleEngine 统一开"的边界，二者选一，不要两套并存。
+
+---
+
+### P0-2 `SyncServer._applyCreate` 只做裸 INSERT，不走 RuleEngine —— 客户端推上来的单据不产生任何流水
+
+**位置**：`lib/src/sync/server.dart` 的 `_applyCreate`。
+
+**现象**：实现是通用表插入：
+
+```dart
+final cols = op.payload.keys.join(', ');
+db.raw.execute('INSERT INTO $table ($cols) VALUES ($ph)', op.payload.values.toList());
+```
+
+若客户端推送 `entity = 'documents'`，则**只有 `documents` 一行落库**，`document_lines`、`stock_ledger`、
+`money_ledger`、`party_ledger` **全部不产生**。库存、资金、往来三本账在同步路径上整体丢失。
+
+**更深一层**：v0.3 §6 规定"`seq_no` 由主机分配"，而 `seq_no` 只在**主机事务内**能分配。
+通用插入无法分配 `seq_no`，因此"客户端推全部流水行"这条退路**与 §6 直接冲突**。
+`settlements` 同理——它由 Android 端 create 并 push，但主机侧的通用插入**不会**刷新
+`documents.paid_amount` 这个缓存字段。
+
+**这是文档与参考代码之间最严重的一处断裂，必须二选一：**
+
+| 方案 | 内容 | 代价 |
+|---|---|---|
+| **A（推荐）** | 客户端只推 **`Document` + lines**；主机侧 `SyncServer` 收到后**调用 `RuleEngine` 的对应规则**落地，`seq_no` 与流水由主机生成 | 需主机侧按 `doc_type` 分派规则；客户端离线期间无权威流水 |
+| B | 客户端把 4 张流水表的行一并推上来 | 与 §6"seq_no 由主机分配"冲突，需改为客户端分配（则失去全局单调性） |
+
+---
+
+### P0-3 参考测试无法编译（两处确定性编译错误）
+
+**位置**：`test/invariants_test.dart`。
+
+1. `_memDb()` 中 `return Db._(db);` —— `Db._` 是**库级私有**构造，测试在另一个库，
+   **不可访问** → `The constructor 'Db._' isn't defined`。
+2. 测试只 `import 'package:shensuanzi_core/src/db/database.dart'`，却使用 `Schema.createTables`；
+   Dart 的 `import` **不传递导出**（`database.dart` 里的 `import 'schema.dart'` 不会对外暴露 `Schema`）
+   → `Undefined name 'Schema'`。
+
+**推荐处置**：给 `Db` 增加公开工厂 `Db.openInMemory()` 与 `Db.forTesting(Database raw)`；
+在 `lib/shensuanzi_core.dart` 统一 `export` 需要对外可见的符号，测试改为 import 包入口。
+
+---
+
+### P0-4 同步队列的"四类写入"与"只推 create"自相矛盾；离线动作（司机签收）没有队列类型
+
+**位置**：v0.3 §3「状态变更的动作化」。
+
+**现象 A（自相矛盾）**：同一节先写「`sync_queue` 只推 `create`，不推 `update documents.status`」，
+紧接着又写「Android 端的 sync_queue 只需要处理三类写入：1. create Document 2. **update 主数据** 3. create Settlement」。
+第 2 类就是 update。`sync_queue.operation` 的枚举也含 `update`/`delete`。
+应改为：「业务数据（Document + 4 张 Ledger）只推 create；主数据可推 update/delete」。
+
+**现象 B（实质缺口）**：§3 规定客户端改状态必须走 `POST /api/documents/:id/actions`。
+但**"司机已签收"恰好是离线场景的核心动作**（送货途中无网是常态）。而三类写入里**没有 action**，
+`sync_queue.operation` 枚举里也没有 → **离线状态下无法签收**。
+
+**推荐处置**：`sync_queue.operation` 增加第 4 类 `action`；`payload` 存
+`{ "document_id": ..., "action": "mark_delivered", ... }`；主机收到后在其事务内执行动作并更新 `status`。
+
+---
+
+### P0-5 `doc_no` 的生成主体未定义，且 `documents.doc_no` 是 `UNIQUE` → 离线多端必然撞号
+
+**位置**：`schema.dart` 的 `doc_no TEXT NOT NULL UNIQUE`；骨架里的 `rules/doc_no_generator.dart`（**无实现**）。
+
+**现象**：v0.3 让 Android 端**离线**开单并本地生成 `document.id`（UUIDv7），但**没有规定 `doc_no` 由谁生成**。
+若客户端也按 `XS20260925-001` 规则本地生成，两台设备同日离线开单**必然撞号**，推送时
+`UNIQUE` 冲突 → 插入失败，且 `_applyCreate` 会把它抛成异常（见 P1-3）。
+
+**推荐处置（三选一）**：
+
+| 方案 | 内容 |
+|---|---|
+| **A（推荐）** | `doc_no` **由主机在事务内生成**；客户端离线期间用 UUIDv7 前 8 位做**临时展示号**，同步后由主机回填正式号 |
+| B | 客户端生成，规则改为 `前缀-YYYYMMDD-设备短码-序号`，用 `device_id` 保证不撞号 |
+| C | 放弃人可读单号，直接用 UUID（违背原始需求，不建议） |
+
+---
+
+### P0-6 `seq_no` 是"全局单调"还是"每表独立"—— 规范与实现不符，且同步游标不可用
+
+**位置**：v0.2 §8 写「由**主机**在写入时分配，**全局单调递增**」；
+实现上 `SeqCounter` 是**每张表独立** `MAX(seq_no)+1`；`schema.dart` 为三张流水表各建了一个
+**表内 UNIQUE** 索引（`idx_stock_seq` / `idx_money_seq` / `idx_party_ledger_seq`）。
+
+**后果**：`seq_no` **不是全局唯一键**。而 v0.2 §7 的接口
+`GET /api/sync/pull?since_seq=` 是**单个游标**——它无法跨 `stock_ledger` / `money_ledger` /
+`party_ledger` 三张表分页（三张表的 `seq_no` 各自从 1 开始，语义不同）。
+
+**推荐处置**：明确"**每表独立单调**"是最终语义（成本计算在表内自洽，够用）；
+把 §8 的"全局单调递增"改为"每张流水表内单调递增"；
+`/api/sync/pull` 改为**按实体分别传游标**（如 `?stock_since=&money_since=&party_since=&doc_since=`）。
+
+---
+
+### P0-7 `documents.sync_version` 是否存在 —— 文档三处自相矛盾
+
+| 出处 | 说法 |
+|---|---|
+| v0.2 §0 白名单表 | `documents` 允许 UPDATE `status`, `paid_amount`, `updated_at`, **`sync_version`**（4 个） |
+| v0.2 结尾「一句话规格」 | 「`documents` 表只允许更新 `status`、`paid_amount`、`updated_at`、`sync_version` 四个字段」 |
+| v0.3 §4 | 「**`sync_version` 只对主数据有意义**（Product / Party / Account）。业务数据不需要 `sync_version`」 |
+| 参考代码 `schema.dart` | `documents` 表**没有 `sync_version` 列** |
+| 参考代码 `updateStatusAndPaid` 注释 | 「只允许 `status` / `paid_amount` / `updated_at`」（**3 个**） |
+
+**结论**：v0.3 §4 与参考代码是正确的（3 个字段，无 `sync_version`）。
+**需修正**：v0.2 §0 白名单表与"一句话规格"两处必须删掉 `sync_version`，否则实施者会照着加列。
+
+---
+
+### P0-8 `sync_queue.idempotency_key` —— 同一份文档内前后矛盾
+
+- v0.2「总纲」表：`sync_queue` **增加 `idempotency_key`** → 解决问题 6
+- v0.3 §1：**「不设 `sync_queue.idempotency_key`。幂等键就是实体自身的 UUIDv7 主键」**
+
+v0.3 是显式冻结的结论，应以此为准（且理由充分：避免幂等键与主键不同步）。
+**需修正**：删除 v0.2 总纲表该行，或标注"已被 v0.3 取代"。
+
+---
+
+### P0-9 缺少 `sqlite3_flutter_libs` —— 桌面能跑、Android 直接崩
+
+**位置**：v0.3 的 `shensuanzi_core/pubspec.yaml` 依赖清单。
+
+`package:sqlite3` 只是 **Dart 绑定**，不含原生库。Android 上必须搭配 `sqlite3_flutter_libs`
+（由它提供 `libsqlite3.so`），Windows 上也需要它把 `sqlite3.dll` 带进产物。
+参考 pubspec 只有 `sqlite3` / `uuid` / `path` / `collection` → **Android 端首次运行即报
+`Failed to load dynamic library`**。
+
+**推荐处置**：`shensuanzi_core` 增加 `sqlite3_flutter_libs`。注意这是 federated 插件，
+按项目既定纪律，**引入前先跑 `dart pub add --dry-run` 量出连带包范围**再确认。
+
+---
+
+## 2. 高优先问题（P1）—— 影响正确性 / 会计精度 / 安全
+
+### P1-1 `_weightedCost` 缺 `seq_no <= ?` 上界，不是"时点成本"
+
+**位置**：`rule_engine.dart` 的 `_weightedCost`。
+
+v0.2 §5 给的公式是**时点加权**（含 `AND seq_no <= ?`），实现里**该条件被漏掉**：
+
+```dart
+'... FROM stock_ledger WHERE product_id = ? AND quantity > 0'   // 缺 seq_no <= ?
+```
+
+后果：算的是"截至**当前**（含之后所有入库）的加权平均"，而**不是出库那个时点**的加权平均。
+与 v0.2 §5「出库时点加权平均成本（Point-in-Time）」的定名不符。
+**处置**：补上上界（传入当前待分配的 `seq_no`），或明确把口径改名为"当前加权平均"并更新 §5。
+
+### P1-2 加权成本用整数截断，且盘盈会回写成本形成自反馈
+
+1. `return total ~/ qty;` —— **整数除法截断**。例：入库 3 件，成本分别 100/101/101 分
+   → `302 ~/ 3 = 100` 分，每件凭空少 0.67 分。因为出库 `unit_cost` **写入即冻结**，
+   误差**永久固化**，且方向单一（系统性低估成本 → **毛利虚高**）。
+   **必须定义舍入策略**（建议 round-half-up，并在规范里写明"成本总额 ≠ 出库数量 × 出库均价"）。
+2. RULE-009 盘点盘盈时写入 `unit_cost = _weightedCost(...)`，而该值正是历史入库的加权平均
+   → 在**精确算术下不改变均值**、在**截断算术下逐步下移**均值。两者叠加会放大 P1-2.1 的漂移。
+   **处置**：盘盈的 `unit_cost` 取值口径需显式规定（用当前加权、还是用最近一次入库价）。
+
+### P1-3 同步服务端拼 SQL，且 `_applyDelete` 对无 `is_active` 列的表会直接报错
+
+**位置**：`server.dart` 的 `_applyCreate` / `_applyUpdate` / `_applyDelete`。
+
+1. **注入面**：`op.entity`（表名）与 `op.payload.keys`（列名）**直接字符串拼接进 SQL**。
+   token 是唯一的门（明文进二维码、v1 无 TLS，见 v0.2 §10）——一旦泄露即可任意拼表名/列名。
+   **处置**：服务端维护**表名白名单 + 列名白名单**，拒绝一切不在白名单内的输入。
+2. **必然报错**：`_applyDelete` 执行 `UPDATE $table SET is_active = 0 ...`，
+   而 `documents` 表**没有 `is_active` 列** → `no such column: is_active`。
+   §3 说队列不处理 documents 的 delete，但实现是**通用**的，没有拦截。
+   **处置**：delete 仅允许主数据（Product/Party/Account），其余一律 `rejected`。
+
+### P1-4 `settlements` 无 `seq_no`；`documents.paid_amount` 缓存刷新路径缺失
+
+- `settlements` 是三张流水之外的**第四张真相表**（v0.2 §2 明确"真相永远是 `SUM(settlements.amount)`"），
+  但**没有 `seq_no`**，只能靠 `created_at` 排序。建议补 `seq_no`，或明确"`paid_amount` 允许与真相短暂不一致，UI 必须容忍"。
+- 缓存刷新路径在两处都不存在：`SyncServer._applyCreate` 不会刷新（P0-2），
+  `RuleEngine` 示例里也没有核销规则 → `paid_amount` 会**永久停留在 0**。
+  **处置**：核销写 `settlements` 后，**在同一事务内**按
+  `SUM(settlements.amount WHERE target_doc_id = X)` 回写 `X.paid_amount`。
+
+### P1-5 Android 离线端的本地库存视图与 `seq_no` 二义性未解决
+
+v0.3 让 Android 离线开单并本地生成 `document.id`，但**没有规定客户端是否维护本地库存视图**。
+若维护（离线优先的应有之义），则客户端必须自己排序流水，而 `seq_no` **只有主机能分配** →
+同步完成后本地 `seq_no` 与主机不同 → **任何引用 `seq_no` 的本地缓存（加权成本）失效**。
+**处置**：明确"客户端用 `(created_at, id)` 本地排序、`seq_no` 仅主机内部使用"，
+并明确客户端库存视图是**估算值**（服务端权威）。
+
+### P1-6 负库存（超卖）策略未定义
+
+测试清单把"负库存"列为边界用例，但**没有任何规则规定销售时库存不足是否拒绝**。
+离线优先下**必然**出现本地超卖（两台设备各自离线卖同一件货），事后无法拒绝。
+**必须回答**：允许记负账（记账口径，推荐）还是拒绝出库并告警？
+
+### P1-7 盘点单的语义缺口，与"不变量"冲突
+
+1. `stocktake` 的 `document_lines.quantity` 记的是**盘点后的实际数量**，而标准单据记的是**交易数量**。
+   **同一字段两种语义**，消费端（明细页、报表）必须按 `doc_type` 分支，否则误算。
+   规范里**没有写明这一点**。
+2. RULE-009 代码写入 `unitPrice: 0, amount: 0`，而测试清单 B 有独立不变量
+   「`SUM(document_lines.amount)` = `document.total_amount`」→ 盘点单上该不变量成立的条件是
+   `total_amount` 恒为 0，但规范**没有定义盘点单的 `total_amount` 语义**。
+   **处置**：显式规定"盘点单 `total_amount = 0`，其金额信息只体现在 `stock_ledger`"。
+
+### P1-8 核销约束缺失；RULE-004 的判定口径未随 `settlements` 更新
+
+- v0.2 §2 给了四条核心公式，但**没有任何约束校验**：核销额不得超过收款单未核销额、
+  不得超过目标单未收金额、不得为负/零。
+- 原 RULE-004 的"`paid_amount >= total_amount` → `status = settled`"在引入多对多核销后，
+  应改为基于 `SUM(settlements.amount WHERE target_doc_id = X)` 判断。**需在规范中改写**。
+
+### P1-9 `time_estimated=true` 标记没有对应列
+
+v0.2 §8 规定 Android 端估算时间要"打上 `time_estimated=true` 标记"，
+但 `documents` / `stock_ledger` / `money_ledger` / `party_ledger` 的 schema 里**都没有该列**。
+**处置**：补列（`INTEGER NOT NULL DEFAULT 0`），或删除该设计。
+
+### P1-10 mDNS 依赖未决策，且是双端 + 防火墙问题
+
+v0.2 §10 把 mDNS 列为**主方案**（`_shensuanzi._tcp.local`），但参考 pubspec 里**没有任何 mDNS 包**
+（`sqlite3` / `uuid` / `path` / `collection`）。Windows 与 Android 各需实现，
+Windows 还需处理**防火墙入站规则**（否则发现成功但连不上）。
+按项目纪律，引入前需先量连带范围。
+
+---
+
+## 3. 次要问题（P2）
+
+| # | 问题 | 处置建议 |
+|---|---|---|
+| P2-1 | `DocType.transfer` 在枚举里且 `docTypeFromDb` 可解析，但**无任何规则** | v1 在创建入口**显式拒绝** `transfer`，避免产生无法处理的单据 |
+| P2-2 | `Document` **未实现** `base.dart` 的 `ImmutableEntity` / `MutableEntity` 抽象 | 因此"不暴露 update、编译期堵死"的承诺**未兑现**。要么让 `Document` 实现 `MutableEntity`，要么明确该承诺属后续 |
+| P2-3 | `clock_offset`（客户端概念）与业务表共用同一份 `Schema.createTables` | 注明"仅客户端使用"，或拆成 `clientTables` / `serverTables` |
+| P2-4 | `_applyResults` 用**下标** `resp.results[i]` 与 `pending[i]` 配对 | 应改为按 `entityId` 匹配，否则服务端顺序一变就错配 |
+| P2-5 | 盘点不生成 Party/Money 流水 → **盘亏在资金与往来报表中不可见** | 需在规范写明"盘亏只通过成本进入毛利，不产生资金流出" |
+| P2-6 | `accounts.initial_balance` 属可更新主数据 → 修改后**历史余额报表整体失真** | 注明"更改期初余额会重算全部历史余额"，或限制只允许在无流水时修改 |
+| P2-7 | `stock_ledger.unit_cost` 取 `line.unit_price`，**不含运费/折扣** | 在规范中明示成本口径边界 |
+
+---
+
+## 4. 文档治理问题（需单独处理）
+
+当前权威规范被**拆成两处**，且**仓库内外分离**：
+
+| 位置 | 内容 | 状态 |
+|---|---|---|
+| `Agents.md`（仓库内，294 行） | v0.1 模型：8 张表、RULE-001~006 | 已是**过期版本**（无 `party_ledger` / `settlements` / `seq_no` / 幂等规范） |
+| `D:\库\Desktop\Reply.md`（**仓库外**） | v0.2 + v0.3：11 张表、RULE-007~009、同步冻结规范 | 未入库、无版本控制 |
+
+**风险**：`Agents.md` 仍写着"任何业务动作只能通过创建单据实现"，而 v0.2 §1 的新增记账规则
+（如"采购入库生成 `party_ledger`"）**不在其中**。后续任何只看 `Agents.md` 的实施者都会做出错误实现。
+
+**建议**：把 v0.2/v0.3 并入仓库 —— `Agents.md` 保留规则与纪律 + 摘要，实体与规则细节拆到
+`docs/data_model.md` / `docs/sync_protocol.md`，并在 `README.md` 建立文档分工表（沿用 Nova 项目的做法）。
+
+---
+
+## 5. 工期与实施顺序评估
+
+v0.3 修订后的 12 天计划，方向正确（同步协议先行），但**偏紧**。未计入工期的项：
+
+1. 上述 9 项 P0 的裁定与修正（预计 0.5~1 天，且是纯返工成本）
+2. `sqlite3_flutter_libs` / mDNS 的依赖实测与接入
+3. Windows 防火墙入站规则、端口探测（17890→17900）
+4. 二维码生成库接入（`qr_flutter`）
+5. MSIX / APK 的**签名**流程（MSIX 需证书）
+6. Windows UI 4 天要覆盖 3 张主数据 CRUD + 3 个开单页 + 核销页 + 库存页 —— 偏紧
+7. Android 2 天要覆盖配对 + mDNS + 扫码 + 查询 + 开单 + 离线队列 + 同步 —— **明显偏紧**
+
+**建议**：把 12 天视为"最小可运行版本"的目标，并**在第 1 天只做一件事**——
+让 P0 全部落地（规范修正 + 骨架可 `dart test` 通过），再进入 schema。
+
+---
+
+## 6. 建议的 Day 1 范围（待确认）
+
+1. 修正 P0-1（事务可重入）、P0-3（测试可编译）、P0-9（补齐依赖）
+2. 按 P0-2 选定的方案，重写 `SyncServer` 的 create 路径
+3. 完成 `schema.dart` 的最终版（含 P1-9 的 `time_estimated`、P1-4 的 `settlements.seq_no` 决策）
+4. 只交付 **RULE-001 + RULE-009** 两条规则 + 不变量单测，跑通 `dart test`
+5. 不碰 UI、不碰 HTTP、不碰 Android
+
+---
+
+## 7. 待裁定清单
+
+| 编号 | 问题 | 推荐 |
+|---|---|---|
+| P0-2 | 同步落库路径 | 客户端只推 Document，主机用 RuleEngine 落地 |
+| P0-4 | 离线动作（签收）同步 | `sync_queue.operation` 增加 `action` 类型 |
+| P0-5 | `doc_no` 生成主体 | 主机生成 + 客户端临时展示号 |
+| P0-6 | `seq_no` 语义 | 每表独立单调 + 同步游标按实体分开 |
+| P0-7 | `documents.sync_version` | **确认删除**（3 字段白名单） |
+| P0-8 | `sync_queue.idempotency_key` | **确认不设**（幂等键 = 实体 id） |
+| P1-2 | 成本舍入 | round-half-up，并写明口径 |
+| P1-6 | 负库存 | 允许记负账（待用户确认业务语义） |
+| 治理 | 规范入库 | v0.2/v0.3 并入 `Agents.md` + `docs/` |
+
+---
+
+# 附录：v0.4 复审（2026-09-25）
+
+v0.4 冻结版已落地于仓库内（`README.md` / `Agents.md` / `docs/{data_model,sync_protocol,rules,threat_model}.md`）。
+原始答复文档（`D:\库\Desktop\Reply.md`）已迁移完毕并将删除，**本报告后续不再引用它**。
+
+## A. 关闭确认
+
+第一节提出的问题在 v0.4 中的处置：
+
+| 原编号 | v0.4 处置 | 状态 |
+|---|---|---|
+| P0-1 事务嵌套 | `Agents.md` 纪律 1：DAO 不开事务，`Db.transaction` 必须可重入 | ✅ |
+| P0-2 同步落库 | `Agents.md` 纪律 9 + `sync_protocol.md` §五：客户端只推 Document，主机走 RuleEngine | ✅ |
+| P0-3 测试不可编译 | 未在文档层面提及，属实现细节（实施时用公开工厂 + 包入口 export） | ⏳ 实现侧处理 |
+| P0-4 离线动作 | `sync_queue.operation` 五类含 `documentAction` | ✅ |
+| P0-5 `doc_no` | 主机生成，客户端用 `待同步-XXXXXX` | ✅（但见 R-5） |
+| P0-6 `seq_no` 语义 | 每表独立单调 + 游标按实体分开 | ✅ |
+| P0-7 `documents.sync_version` | 删除，白名单收紧为 3 字段 | ✅ |
+| P0-8 `idempotency_key` | 明确不设，幂等键 = 实体 `id` | ✅ |
+| P0-9 `sqlite3_flutter_libs` | 明确必须包含 | ✅ |
+| P1-1 时点成本 | `WHERE seq_no < 出库 seq_no AND quantity > 0` | ✅ |
+| P1-2 成本精度 | 引入 `total_cost` 精确追踪，`unit_cost` 降为派生字段 | ✅ 优于原建议 |
+| P1-3 SQL 白名单 | `Agents.md` 纪律 10 + `sync_protocol.md` §8.4 | ✅ |
+| P1-4 `settlements.seq_no` + 缓存刷新 | 已加 `seq_no`；§五 明确刷新 `paid_amount` | ✅（但见 R-6） |
+| P1-5 客户端排序 | 用 `(created_at, id)`，`seq_no` 不持久化 | ✅ |
+| P1-6 负库存 | 允许，UI 告警，成本取最近入库价 | ✅ |
+| P1-7 盘点语义 | `total_amount = 0`，`quantity` 语义分支 | ✅（但见 R-2） |
+| P1-8 核销约束 | `rules.md` RULE-004 五条约束 | ✅ |
+| P1-9 `time_estimated` | 补列（4 张流水 + documents + settlements） | ✅ |
+| P1-10 mDNS | v1 只做二维码，mDNS 延后 v1.5 | ✅ |
+| P2-1~P2-7 | 均已处置（transfer 拒绝、初始余额提示、按 `entityId` 匹配、盘亏口径、成本边界等） | ✅ |
+| 治理 | v0.4 全部入库，单一来源恢复 | ✅ |
+
+**结论：第一节的 26 项全部关闭或转入实现侧。**
+
+## B. 残留问题（v0.4 文档内部一致性复审新发现）
+
+### R-1 收款/付款单的 `allocations` 无承载结构 —— **阻断 RULE-004 / RULE-005 实现**
+
+- `rules.md` RULE-004 输入 = `Document(doc_type=receipt)` + `allocations`，其中 `allocations = [{ target_doc_id, amount }]`
+- `data_model.md` §3.2 `document_lines` 字段为 (`product_id`, `quantity`, `unit_price`, `amount`) ——
+  **没有 `target_doc_id` 的位置**
+- `sync_protocol.md` §8.1 `createDocument` 的 payload 只定义 `{ "document": {...}, "lines": [...] }`，
+  `lines` 即 `document_lines` 行
+
+⇒ **收/付款单无法表达核销分配**，因此"司机回店收款"这一核心离线场景无法从 Android 端发起。
+
+**需裁定（三选一）**：
+
+| 方案 | 内容 | 代价 |
+|---|---|---|
+| **A（推荐）** | `createDocument` 的 payload 增加可选 `allocations` 字段，主机 `RuleEngine` 在 RULE-004 内消费 | 不动表结构，仅扩 payload 契约 |
+| B | `sync_queue.operation` 增加第 6 类 `createSettlement` | 需要 `settlements` 的 `seq_no` 由主机分配，且客户端要理解核销语义 |
+| C | 收/付款单只允许在 Windows 主机创建 | 放弃离线收款，与"离线可用"的产品立场冲突 |
+
+### R-2 不变量 B5 对 `receipt` / `payment` 不成立
+
+`data_model.md` §五 不变量 5「`SUM(document_lines.amount) = document.total_amount`」只排除了 `stocktake`。
+但收/付款单没有商品明细（`SUM(lines.amount) = 0`）而 `total_amount > 0` ⇒ 断言必然失败。
+**处置**：把不变量改为「`stocktake` / `receipt` / `payment` 除外」，并明确这三类的 `total_amount` 语义。
+
+### R-3 `documentAction` 的幂等判定缺乏存储依据
+
+> ✅ **已裁定（2026-09-25）：推迟到同步层**（裁定书 `docs/reply.md`）。
+> 理由：「动作」这一抽象尚未定型，它会影响 `sync_queue` 的操作枚举、
+> `SyncServer` 的处理路径、甚至是否需要动作表；现在猜等于把 `sync_queue`
+> 的字段设计押在未验证的假设上。**该问题不反向决定 schema 骨架**，
+> 因此按「冻结的标准」留到实现层裁定。
+>
+> **落地方式**：`documentAction` 枚举保留但 v1 一律 `rejected` +
+> `action_not_implemented`；签收走主机本地 `RuleEngine.markDelivered`
+> （幂等判定**基于状态**，是 R-3.1 的候选答案）。
+>
+> 进入同步层时需回答 R-3.1 ~ R-3.5，清单见 `docs/reply.md`。
+
+`sync_protocol.md` §三 用 `(document_id, action, occurred_at)` 判定"已处理"，
+但主机**没有任何表记录已执行的动作**（`data_model.md` 无 `document_actions` 之类）。
+**处置**：若 v1 的动作全部可归约为 `status` 判定（如 `mark_delivered` 时若已是 `delivered` 即幂等），
+需**在规范中显式写明这一归约**；否则需补一张动作表。
+
+### R-4 `documents` 的 pull 游标字段未定义
+
+> ✅ **已处置（2026-09-25，同步层落地时）**。`sync_protocol.md` §8.2 用
+> `doc_since=1700000000000`（毫秒），但 §七 说「排序一律用 `seq_no`」，
+> 而 `documents` **没有 `seq_no` 列**。
+>
+> **处置（不动表结构，只加一个索引）**：`documents` 用 **`(created_at, id)` 复合游标**
+> （形如 `"1700000000000|0192…"`）。理由：`created_at` **不唯一** ——
+> 用 `>` 会丢同一毫秒的其它行，用 `>=` 又会在「同一毫秒行数 > `limit`」时死循环；
+> 复合游标是唯一既**不丢行**又能**保证推进**的方案，且与 §七「客户端按 `(created_at, id)`
+> 排序」一致。为此新增索引 `idx_documents_created`（纯增量，无迁移）。
+>
+> **顺带发现并一并处置**：`document_lines` **根本没有时间列**，
+> 所以它**不需要独立游标** —— 明细与主单在同一事务里写入、永不单独存在，
+> 按「本页 `documents`」取即可。这也解释了 §8.2 为什么只给了 `doc_since`。
+>
+> 四张流水表的游标仍是开区间的 `seq_no > ?`（`seq_no` 唯一）。
+> 两种游标语义不同，不可互换 —— 已写进 §8.2。
+
+### R-5 正式单号回填与"业务数据不可变"的边界未写明
+
+`Agents.md` 裁定「`doc_no` 主机生成，客户端离线用 `待同步-XXXXXX` 临时展示号」。
+客户端需通过 `/api/sync/pull` 拿到正式号并**覆盖本地**的 `doc_no` ——
+但客户端本地 `documents` 归入"业务数据只插入不更新"。
+**处置**：明确「"业务数据不可变"是**主机侧**约束；客户端本地是估算镜像，允许被主机状态覆盖」。
+
+### R-6 立即收款 / 立即退款不生成 `settlement`，与"已收额"口径冲突
+
+- `rules.md` RULE-002 立即收款时只写 `MoneyLedger`、`status = settled`，**不写 `settlements`**；
+  RULE-007 / RULE-008 的立即退款同理
+- 但不变量 B4 定义「单据已收额 = `SUM(settlements.amount WHERE target_doc_id = X)`」
+  ⇒ 立即收款的销售单"已收额"算出来是 **0**，而实际已全额收款；`documents.paid_amount` 缓存同样为 0
+
+**处置（二选一）**：
+
+| 方案 | 内容 |
+|---|---|
+| A | 立即收款时**同时**创建一条 `settlement`（指向该 sale 单）。注意此时 `receipt_doc_id` 无独立收/付款单，需放宽 `receipt.doc_type ∈ {receipt, payment}` 的约束 |
+| **B（推荐）** | 明确 `paid_amount` 语义为"**经收/付款单核销**的金额"；立即收款单据靠 `status = settled` 单独表达。不变量 B4 相应限定为「存在收/付款单的场景」，UI 按 `doc_type` + `status` 分支 |
+
+### R-7 `stock_ledger.unit_cost` 的负数舍入方向未定义
+
+`data_model.md` §3.3 定义 `unit_cost = round_half_up(total_cost / quantity)`。
+出库时 `quantity < 0` 且 `total_cost < 0`，**负数的 half-up 方向**（向零 / 远离零）未定义。
+**处置**：补一句规定，或直接规定"`unit_cost` 仅在 UI 使用，按 `abs` 舍入后补符号"。
+
+## C. 实施前置
+
+| 项 | 状态 |
+|---|---|
+| 规范单一来源 | ✅ 已恢复（4 + 1 份 `docs/`） |
+| **R-1** | ✅ **已裁定（2026-09-25）：方案 A** —— `allocations` 随 `createDocument` payload 传入，不动表结构。已写入 `sync_protocol.md` §8.1、`rules.md` RULE-004、`Agents.md` 裁定表 |
+| **R-2** | ✅ **已随 R-1 连带处置** —— R-1 选 A 后收/付款单确实无商品明细，不变量 5 已排除 `receipt` / `payment`（`data_model.md` §五） |
+| R-3 ~ R-5、R-7 | 待实现时处理，不阻断 `schema` |
+| **R-6** | ⏳ **待裁定** —— 立即收款/退款的"已收额"口径（方案 A：补一条 settlement / 方案 B：`paid_amount` 仅指经收付款单核销额）。**不阻断 `schema`**，但阻断 RULE-002 / RULE-007 / RULE-008 实现 |
+
+## D. 实现期新增待裁定项（2026-09-25，RULE-001 / RULE-009 落地时）
+
+以下两项是**规范未覆盖、我在实现中自行选定处置**的边界。已按最保守方式实现，但**需要你确认**。
+
+### R-8 盘盈时若无任何入库历史，「当前加权均价」无定义
+
+`docs/data_model.md` §3.3 规定盘盈的 `total_cost` 用**当前加权均价**。
+但账面数量 ≤ 0 且**从未入库过**时，加权均价是 `0/0` —— 规范没有定义。
+
+**我的处置**：`total_cost = 0`（`cost_policy.dart` 的 `surplusCost`，无历史时走
+`lastInboundUnitCost ?? 0`）。
+
+**影响**：盘盈成本记 0 会**低估成本 → 毛利虚高**。
+**可选替代**：回退到 `products.cost_price`（参考进价）作为估值。
+
+### R-9 出库数量超过账面数量时，比率公式会把库存总成本推成负数
+
+`CostPolicy.outboundCost` 在账面数量 > 0 时用
+`round_half_up(库存总成本 × 出库数量 / 库存数量)`。
+当出库量 > 账面量（超卖，`docs/threat_model.md` §3.4 明确**允许负库存**）时，
+该公式会算出「超过现有成本」的金额，使 `SUM(total_cost)` 转为负值。
+
+**实际效果是自洽的**：例 300 分 / 3 件，出库 5 件 → 出库成本 -500，
+余值 -200、余量 -2，均价仍为 100。
+**但需确认**：这是否是期望行为，还是应该只按账面量计成本、超出部分另按最近入库价？
+
+### R-10（方案 C 引入）`delivery.status` 与通用 `status` 判定规则冲突
+
+`docs/data_model.md` §3.1 的通用规则写的是
+`status = paid_amount >= total_amount ? settled : confirmed`，
+并声称适用于 `{purchase, sale, delivery, sale_return, purchase_return}`。
+但送货的 `status` 由状态机驱动（`in_transit → delivered → settled`，见 `rules.md` RULE-003），
+创建时必须是 `in_transit` —— **通用公式会把它立刻改成 `confirmed`**。
+
+**当前处置（已实现）**：`data_model.md` §3.1 与 `rules.md` RULE-003 已标注 `delivery`
+**不适用**该公式，实现上：
+
+- 创建时主机**强制** `status = in_transit`
+- `paid_amount` 照常按 `SUM(settlements.amount)` 刷新（不变量 B4 无例外），但**不驱动** `status`
+- `in_transit → delivered` 需要 `documentAction: mark_delivered`，属 R-3（幂等判定），随 `SyncServer` 落地
+
+**待你确认**：上述三条是否即期望语义。若认为「送货单收满款即算 `settled`」，需改规则。
+
+### R-11（方案 C 引入）退货成本「用原单成本比例分摊」缺少可执行的定位手段
+
+> ✅ **已裁定（2026-09-25）：方案 A —— 原单比例精确回退**。裁定书见 `docs/reply.md`。
+> 已落地到 `data_model.md` §3.3「退货的成本分摊」、`rules.md` RULE-007 / RULE-008 与
+> 独立小节「退货成本分摊」、`testing.md` §F。
+
+`docs/rules.md` RULE-007 / RULE-008 规定退货的 `stock_ledger.total_cost`
+「用**原销售单的出库成本**（按数量比例分摊）」，但：
+
+- `stock_ledger` 只有 `product_id` + `document_id`，**没有 `document_line_id`**
+- 因此无法把「某条出库流水」对应回「原单的哪条明细」
+
+**裁定采用的算法**：按 `(document_id, product_id)` 聚合原单的流水，得到该商品的数量与
+总成本，再用「**累计退货量**」比例分摊，并以「累计分摊 − 已分摊」消除多次退货的舍入余数。
+**不加 `document_line_id`**（不动结构）。
+
+**已知代价**：原单同一商品有多条明细时**合并为一次分摊**，明细粒度丢失。
+成本总额仍精确（可重放），只是「退的是哪一条明细」不可考。
+
+### R-12（方案 C 引入）「有欠款就必须有 `party_id`」是方案 C 的隐含硬约束
+
+方案 C 下主单要写 `PartyLedger = ±total_amount`；若 `party_id` 为空该条目被跳过，
+**欠款会凭空消失**。因此实现中加了硬校验：
+
+> `SUM(immediate_payments) < total_amount`（即存在未结清金额）时，**必须**有 `party_id`；
+> 否则 `rejected`。
+
+**推论**：**零售散客（无往来方）只能"全额立即收款"**。若确实需要给散客记赊账，
+必须先建一个"散客"伪往来方。
+
+**已实现并自检覆盖**（`tool/selfcheck_payments.dart`）。若你希望放宽（例如散客赊账走别的科目），
+需要修改规则。
+
+## E. 实施前置状态（更新）
+
+| 项 | 状态 |
+|---|---|
+| R-1 | ✅ 已裁定（方案 A）并落地 |
+| R-2 | ✅ 随 R-1 连带处置 |
+| R-6 | ✅ **已裁定（方案 C）并落地** —— `immediate_payments` + 自动生成收付款单机制已实现 |
+| **R-11** | ✅ **已裁定（方案 A）并落地** —— 退货成本按原单比例**精确回退**（`data_model.md` §3.3 + `rules.md` 共用小节） |
+| R-8 / R-9 | ⏳ 待确认；**不阻断**（当前处置可用） |
+| **R-10** | ⏳ 待确认；已按「状态机驱动、`paid_amount` 不驱动 `status`」实现，**不阻断** |
+| **R-12** | ⏳ 待确认；已按「有欠款必须有 `party_id`」实现，**不阻断** |
+| **R-3** | ✅ **已裁定（2026-09-25）：推迟到同步层** —— 「动作」抽象未定型，动作部分暂缓；v1 用主机本地 `RuleEngine.markDelivered` 替代（裁定书 `docs/reply.md`） |
+| **R-4** | ✅ **已处置（2026-09-25，同步层落地时）** —— `documents` 用 `(created_at, id)` 复合游标；明细无独立游标，随主单同页 |
+| R-5 | 待实现时处理（客户端本地镜像的可覆盖性，不反向决定主机表结构） |
+| R-7 | ✅ 已随实现确定：负数舍入**半数远离零**（`Money.divideRoundHalfUp`） |
+
+## F. 方案 C 落地记录（2026-09-25）
+
+已实现并通过自检（`tool/selfcheck_payments.dart`，67 项）：
+
+- **统一资金流**：`RuleEngine` 的 `dispatch` 新增 `immediatePayments` 与 `allocations`
+  两个互斥入参；前者触发**主机自动生成** `receipt` / `payment` 单
+- **自动收付款单**：一张主单可生成多张（混合支付）；每张写 `MoneyLedger` + `PartyLedger` + `Settlement`，
+  并继承主单的 `occurredAt` / `timeEstimated`；`ref_doc_id` 指向来源主单
+- **`status` 派生**：`_refreshPaidAmount` 按 `SUM(settlements.amount WHERE target_doc_id)` 刷新
+  `paid_amount` 与 `status`；主单**不再**直接写 `money_ledger`、**不再**直接设 `settled`
+- **RULE-004 / 005**：手动核销走 `allocations`，含五条核销约束校验
+- **新增防御性校验**：`document_lines.document_id` 必须等于单据 `id`；
+  收付款单必须有 `party_id` + `account_id`；立即收付款总额 ≤ 单据总额
+- **仍未实现**：RULE-003 送货、RULE-007 / RULE-008 退货（当前 `rejected`）
+
+## G. R-11 落地记录（2026-09-25）
+
+**裁定**：方案 A —— 原单比例精确回退（裁定书 `docs/reply.md`）。
+
+**文档**：
+
+- `data_model.md` §3.3：新增「退货的成本分摊」小节 + `total_cost` 取值规则补两行 + 新增「符号约定」表
+- `rules.md`：RULE-007 / RULE-008 的输出精确化；新增共用小节「退货成本分摊」
+- `rules.md` RULE-003：补 v1 首版对 R-10 的保守处置（创建即 `in_transit`）
+- `testing.md`：§E 补充拒绝场景，§F 扩为「盘点与退货成本」
+
+**代码**：
+
+- `StockLedgerDao.documentProductFlow` / `StockLedgerDao.returnedFlow`：两组聚合查询（带符号原始值）
+- `CostPolicy.returnCost`：累计分摊 − 已分摊，含 `return_exceeds_original` 校验
+- `RuleEngine._return`：RULE-007 / RULE-008 共用实现（原单类型校验、符号、往来方向、自动退款/收退款）
+- `RuleEngine._delivery`：RULE-003 创建路径（强制 `in_transit`）
+- `RuleEngine._refreshPaidAmount`：新增 `delivery` 分支（只刷 `paid_amount`，不推 `status`）
+
+**一处对裁定书公式的符号修正**（需你过目）：
+
+裁定书 §3.1 写的是 `已退数量 = SUM(-sl.quantity)`，且未区分原单类型。
+但 `quantity` 的符号随**被退的原单类型**而变：原单是 `sale` 时其出库流水 `quantity` 为**负**、
+`total_cost` 也为负；原单是 `purchase` 时两者均为正。
+若按字面实现，`sale_return` 会得到**负的**「已退数量」，`purchase_return` 会得到**正的** `total_cost`（应为负）。
+
+实现按**裁定书 §3.4 的符号表**（那是自洽的）落地：分子分母一律取绝对值，
+最后由退货类型决定符号。**语义与 §3.2 的余数归属示例完全一致**（该示例已验算通过）。
+`data_model.md` §3.3 的公式已按此写清。
+
+## H. R-3 裁定落地记录（2026-09-25）
+
+**裁定**：「动作」抽象未定型 → **推迟到同步层**，v1 用主机本地改状态替代（裁定书 `docs/reply.md`）。
+
+**文档**：
+
+- `Agents.md` §五 重写：新增**「冻结的标准」**（是否反向决定表结构/字段）+ R-3 条目；
+  §四 裁定表补「退货成本」「送货签收」「拒收」三行
+- `rules.md` RULE-003：状态流转改为代码块 + v1 实现表 + `markDelivered` 幂等口径；
+  RULE-007 前置放宽为 `sale` **或 `delivery`**；共用小节补第 8 条测试要点
+- `data_model.md` §3.1 `delivery` 例外写具体；§3.3 补「原单类型」约束；§4.1 补 v1 不落地声明
+- `sync_protocol.md` §三 + §十一：`documentAction` → `rejected` + `action_not_implemented`，幂等测试暂缓
+- `testing.md` §C 补签收断言、§G 标注暂缓
+
+**代码**：
+
+- `RuleEngine.markDelivered`：**主机本地**签收入口，幂等**基于状态**
+  （`in_transit` → `delivered`；已收满款 → 同事务内到 `settled`；重复 → `alreadyExists`；
+  `cancelled` / 非 `delivery` / 不存在 → `rejected`）
+- `_refreshPaidAmount` 的 `delivery` 分支改为**完整状态机**：
+  `in_transit` 不动 → `delivered` 由 `paid_amount` 决定 `delivered`/`settled` →
+  `settled`/`cancelled` 不回退
+- `RuleEngine.returnOriginalTypes` 由 `Map<DocType, DocType>` 改为 `Map<DocType, Set<DocType>>`
+
+**一处我主动修的规范内部不一致**（需你过目）：
+
+`rules.md` RULE-003 写着「客户拒收 → 走 RULE-007 销售退货」，
+但 RULE-007 的前置写的是「`ref_doc_id` 必须指向**原销售单**」——
+两条合起来看，拒收**无路可走**（原单是 `delivery`，不是 `sale`）。
+
+已把 `sale_return` 的合法原单放宽为 **`sale` 或 `delivery`**。
+依据：两者在成本口径上同构 —— `stock_ledger` 都是「货已离店」的负数流水
+（`quantity < 0`、`total_cost < 0`），所以 §3.3 的比例回退公式**无需分支**即可对两者成立。
+已实测：送货 10 件（出库成本 1000）→ 拒收 4 件 → 回退 `1000 × 4 / 10 = 400`。
+
+**门禁**：`selfcheck_delivery` 30 → **70** 项、`selfcheck_returns` 80 → **89** 项。
+
+**同时修掉的守卫缺陷**：`tool/typecheck.dart` 此前**只 import `test/`，不 import `tool/`**，
+因此自检脚本自身的编译错误（本轮真实发生一次：`createParty(name:)` 参数不存在）
+**不会被任何门禁发现**（`dart test` 也只跑 `test/`）。已把 5 个自检脚本全部纳入
+`typecheck.dart`，入口数 7 → 12。
+
+## I. RULE-006 + SyncServer 落地记录（2026-09-25）
+
+规则集到此齐了（RULE-001 ~ RULE-009 全部落地），并补上主机侧同步领域层。
+
+**新增代码**：
+
+- `dao/query_dao.dart` —— **RULE-006**：`stockByProduct` / `accountBalances` /
+  `partyBalances` / `inTransitByProduct` / `availableInStore`（全是批量映射，
+  避免列表页 N+1）
+- `sync/sync_operation.dart` —— `SyncOperation` / `SyncOpType` / `SyncResponse` / `SyncStatus`
+- `sync/whitelist.dart` —— `SyncWhitelist`（表 / 列 / 主机专属列）+ `SyncValueCheck`（值类型规整）
+- `sync/sync_server.dart` —— `SyncServer`（五类操作 + `pull` + `SyncCursor` + `SyncPullResult`）
+
+**架构决定（需你过目）**：
+
+1. **`SyncServer` 不含 HTTP**。它接 `SyncOperation`、返 `SyncResponse`；
+   HTTP 适配层（shelf）留给 Windows 应用侧，只做 JSON ↔ 对象搬运。
+   这样同步逻辑是**纯 Dart**，在无网络、无 Flutter 的环境可测，
+   而且 `shensuanzi_core` **不引入任何新依赖**。
+2. **wire 值的形态 = `toRow()` 的形态**（列名 snake_case、布尔 `1/0`、时间毫秒、
+   金额整数分）。于是模型已有的 `toRow()` / `fromRow()` **直接就是编解码器**，
+   没有转换层也就没有转换漂移。
+3. **`RowReader` 的报错改为带列名**（`base.dart`）。原来缺列只抛
+   `Null check operator used on a null value`、类型不符只抛 `TypeError`，
+   **都不说是哪一列** —— 而 `fromRow` 唯一的远程调用方就是 `SyncServer`，
+   没有列名等于没有可诊断信息。
+
+**R-4 处置**（见上文）：`documents` 用 `(created_at, id)` 复合游标；
+`document_lines` 因**没有时间列**而**不需要独立游标**，随主单同页返回。
+新增索引 `idx_documents_created`（22 → 23 个索引，纯增量、无需迁移）。
+
+**`documentAction`**：v1 一律 `rejected` + `action_not_implemented`（R-3 未裁定）。
+
+**门禁**：新增 `test/{query,sync_server}_test.dart` 与镜像的
+`tool/selfcheck_{query,sync}.dart`；`typecheck.dart` 入口 12 → **16**
+（9 个测试文件 + 7 个自检脚本）。
+
+

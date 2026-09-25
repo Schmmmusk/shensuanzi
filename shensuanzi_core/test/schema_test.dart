@@ -47,6 +47,7 @@ void main() {
       'idx_documents_party',
       'idx_documents_occurred',
       'idx_documents_ref',
+      'idx_documents_created',
       'idx_lines_document',
       'idx_lines_product',
       'idx_stock_product_seq',

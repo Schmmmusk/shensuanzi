@@ -145,6 +145,9 @@ class Schema {
     'CREATE INDEX idx_documents_party       ON $documents(party_id)',
     'CREATE INDEX idx_documents_occurred    ON $documents(occurred_at)',
     'CREATE INDEX idx_documents_ref         ON $documents(ref_doc_id)',
+    // 同步拉取游标：`documents` 没有 seq_no，用 (created_at, id) 复合游标
+    // （见 docs/sync_protocol.md §8.2 / R-4 处置）
+    'CREATE INDEX idx_documents_created     ON $documents(created_at, id)',
 
     '''
     CREATE TABLE $documentLines (

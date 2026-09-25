@@ -39,14 +39,61 @@ int boolToInt(bool value) => value ? 1 : 0;
 ///
 /// 方法名刻意区分 `required*` 与 `optional*` —— 对应 `docs/data_model.md` 里
 /// 列是否可空，读错会在运行期立刻炸而不是静默变成 `null`。
+///
+/// ⚠️ **报错必须带列名**。`this[column]! as int` 在缺列时只会抛
+/// `Null check operator used on a null value`，类型不符时只抛 `TypeError` ——
+/// 两者都**不说是哪一列**，而 `fromRow` 唯一的远程调用方是 `SyncServer`
+/// （客户端推上来的 JSON），没有列名就等于没有可诊断信息。
 extension RowReader on Map<String, Object?> {
-  String requiredString(String column) => this[column]! as String;
+  String requiredString(String column) {
+    final Object? value = _require(column);
+    if (value is String) return value;
+    throw _typeError(column, 'String', value);
+  }
 
-  String? optionalString(String column) => this[column] as String?;
+  String? optionalString(String column) {
+    final Object? value = this[column];
+    if (value == null || value is String) return value as String?;
+    throw _typeError(column, 'String?', value);
+  }
 
-  int requiredInt(String column) => this[column]! as int;
+  int requiredInt(String column) {
+    final Object? value = _require(column);
+    if (value is int) return value;
+    throw _typeError(column, 'int', value);
+  }
 
-  int? optionalInt(String column) => this[column] as int?;
+  int? optionalInt(String column) {
+    final Object? value = this[column];
+    if (value == null || value is int) return value as int?;
+    throw _typeError(column, 'int?', value);
+  }
 
-  bool requiredBool(String column) => (this[column]! as int) != 0;
+  /// SQLite 的 `INTEGER` 0/1 → `bool`
+  bool requiredBool(String column) {
+    final Object? value = _require(column);
+    if (value is int) return value != 0;
+    throw _typeError(column, 'int（0/1）', value);
+  }
+
+  Object _require(String column) {
+    if (!containsKey(column)) {
+      throw ArgumentError(
+        '缺少必填列 `$column`。已有列：${keys.join(', ')}',
+        column,
+      );
+    }
+    final Object? value = this[column];
+    if (value == null) {
+      throw ArgumentError('必填列 `$column` 是 NULL', column);
+    }
+    return value;
+  }
+
+  ArgumentError _typeError(String column, String expected, Object? actual) =>
+      ArgumentError.value(
+        actual,
+        column,
+        '列 `$column` 应为 $expected，实际 ${actual.runtimeType}',
+      );
 }

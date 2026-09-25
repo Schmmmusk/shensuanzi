@@ -36,6 +36,7 @@ export 'src/dao/ledger_dao.dart'
     show MoneyLedgerDao, PartyLedgerDao, StockCostSnapshot, StockLedgerDao;
 export 'src/dao/party_dao.dart' show PartyDao;
 export 'src/dao/product_dao.dart' show ProductDao;
+export 'src/dao/query_dao.dart' show QueryDao;
 export 'src/dao/settlement_dao.dart' show SettlementDao;
 
 // 规则
@@ -44,3 +45,10 @@ export 'src/rules/doc_no_generator.dart' show DocNoGenerator;
 export 'src/rules/payment_entry.dart' show Allocation, PaymentEntry;
 export 'src/rules/rule_engine.dart' show RuleEngine, RuleOutcome, RuleStatus;
 export 'src/rules/seq_counter.dart' show SeqCounter;
+
+// 同步（主机侧，纯 Dart、不含 HTTP）
+export 'src/sync/sync_operation.dart'
+    show SyncOperation, SyncOpType, SyncResponse, SyncStatus;
+export 'src/sync/sync_server.dart'
+    show SyncCursor, SyncPullResult, SyncServer;
+export 'src/sync/whitelist.dart' show SyncValueCheck, SyncWhitelist;
