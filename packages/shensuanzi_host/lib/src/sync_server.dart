@@ -153,7 +153,9 @@ class SyncServer {
     } catch (error) {
       return SyncResponse.rejected(
         op.entityId,
-        '单据字段缺失或类型不符（必填：id / doc_type / status / occurred_at）：$error',
+        'document / lines 字段缺失或类型不符：$error'
+        '（document 必填 id / doc_type / status / occurred_at；'
+        'lines 的元素是完整 wire 行，含客户端生成的 id —— sync_protocol.md §8.1）',
       );
     }
 

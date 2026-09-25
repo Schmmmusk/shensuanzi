@@ -91,6 +91,9 @@ class Schema {
     )
     ''',
     'CREATE INDEX idx_products_barcode ON $products(barcode)',
+    // 同步拉取游标：主数据用 (updated_at, id) 复合（R-13 方案 A）。
+    // 与 documents 的 (created_at, id) 同构 —— 时间戳不唯一，必须带 id 兜底。
+    'CREATE INDEX idx_products_updated ON $products(updated_at, id)',
 
     '''
     CREATE TABLE $parties (
@@ -108,6 +111,7 @@ class Schema {
     )
     ''',
     'CREATE INDEX idx_parties_phone ON $parties(phone)',
+    'CREATE INDEX idx_parties_updated ON $parties(updated_at, id)',
 
     '''
     CREATE TABLE $accounts (
@@ -121,6 +125,7 @@ class Schema {
       sync_version    INTEGER NOT NULL DEFAULT 0
     )
     ''',
+    'CREATE INDEX idx_accounts_updated ON $accounts(updated_at, id)',
 
     // ============================ 单据 ============================
     '''

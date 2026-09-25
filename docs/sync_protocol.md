@@ -201,6 +201,15 @@ Response: {
 - `allocations` 中 `target_doc_id = null` 表示预收/预付
 - 两者都**不是** `document_lines` 的行，只在 payload 中存在（`rules.md` §零）
 
+**`document` 与 `lines` 的元素都是完整的 wire 行**（列名与值同 `toRow()`，见 §8.2 前）。
+其中 **`document_lines.id` 由客户端生成，主机原样落库、不重新生成**：
+
+- 客户端本地镜像已经用这个 `id` 建了明细行；主机若换一个 id，
+  `pull` 回来的明细与本地**对不上**（同一明细两份）
+- 因此明细的 `id` 是**必填**。漏了会被判 `rejected`（`document_lines` 的可写列见 §8.4）
+- 与 `document.id` 的区别：后者是**幂等键**（§二），必须是客户端生成且稳定的；
+  前者只是本地主键，无幂等语义 —— 重推同一张单时，`already_exists` 在 `document.id` 上就短路了
+
 **互斥规则（硬性）**：`immediate_payments` 与 `allocations` **不能同时非空**。
 
 | 哪个非空 | 说明该 op 是 |

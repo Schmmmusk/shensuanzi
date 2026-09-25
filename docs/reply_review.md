@@ -751,3 +751,40 @@ v0.4 冻结版已落地于仓库内（`README.md` / `Agents.md` / `docs/{data_mo
 
 
 
+
+## K. host 传输层首轮测试失败修复 + 规范收紧（2026-09-25）
+
+**现象**：`packages/shensuanzi_host` 首轮 `dart test` = `+77 -1`。
+唯一失败是 `http_server_test.dart` 的「推送后能拉到业务实体与游标」——
+期望两条回执 `applied`，实际第二条 `rejected`。
+
+**根因**：**夹具手写 wire JSON，漏了明细的 `id`**。
+
+`document_lines.id` 由**客户端**生成、主机**原样落库不重建**
+（`DocumentDao.insertLine` 直接用 `line.toRow()`），
+所以 `DocumentLine.fromRow` 把它当必填 —— 漏了就在解析阶段抛错，
+被 `_createDocument` 的 catch 兜成一个笼统的 `rejected`。
+
+**这不是实现 bug，是测试夹具违反 wire 约定**（「值 = `toRow()` 的形态」，`sync_protocol.md` §8.2 前）。
+
+**修了什么**：
+
+1. **夹具改为由模型生成**：主单 `Document.toRow()` 再经 `SyncWhitelist.isAllowedColumn`
+   过滤主机专属列，明细 `DocumentLine.toRow()`。夹具从此**不可能**写出非法列 / 漏列。
+2. **断言 `status` 时把 `reason` 带进 `reason:`** —— 这次失败的输出里只有
+   `'applied'` vs `'rejected'`，没有原因，等于白跑一轮。
+3. **补回归守卫**：新增用例「明细漏 id → `rejected` 且原因点到列名」，
+   并在 `selfcheck_host.dart` 里镜像同一条（断言错误信息含 `缺少必填列 \`id\``，
+   以及被拒单据不落库）。
+4. **收紧规范**：`sync_protocol.md` §8.1 补明
+   「`document` 与 `lines` 的元素都是完整 wire 行；`document_lines.id` 由客户端生成、
+   主机原样落库」，并说明为什么**不能**由主机重新生成
+   （本地镜像已用该 id 建行，重生成会让 `pull` 回来的明细与本地对不上）。
+5. **改诊断信息**：`_createDocument` 的 catch 文案原为
+   「单据字段缺失或类型不符（必填：id / doc_type / status / occurred_at）」——
+   它只提主单字段，明细出错时会误导。改为同时点名 `lines` 并指向 §8.1。
+
+**这是第三次同源漂移**（前两次：只改一边的镜像断言、只搬断言没搬 setup）。
+已把「夹具别手写 wire JSON」「断言 status 要带 reason」两条写进 `docs/testing.md` 的镜像纪律块。
+
+**门禁**：core 8 测试 + 6 自检（371 项）；host 4 测试 + 2 自检（**209** 项，自检 189 → 209）。

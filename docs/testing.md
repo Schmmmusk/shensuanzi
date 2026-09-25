@@ -91,6 +91,16 @@ dart run tool/typecheck.dart
 > 却断言 `contains(p)` —— 而 `selfcheck_query.dart` 里同一场景**先 seed 了库存**，所以那边是绿的。
 > **搬一个场景时，把它的夹具调用（seed / 建单 / 定价）一起搬过去**，
 > 不要凭「上一个用例的上下文」补脑子里的前置条件。
+>
+> ⚠️ **夹具里的 wire 行不要手写 JSON —— 用模型的 `toRow()` 生成。**
+> wire 约定是「值 = `toRow()` 的形态」（`sync_protocol.md` §8.2 前），手写必然漏字段。
+> 第三次踩到（2026-09-25）：`http_server_test` 手写的明细漏了 `id`
+> （`document_lines.id` 由**客户端**生成、主机原样落库），整条 `createDocument` 被判 `rejected`。
+> 现在主单用 `Document.toRow()` 经 `SyncWhitelist` 过滤主机专属列，明细用 `DocumentLine.toRow()`。
+>
+> ⚠️ **断言 `status` 时必须把 `reason` 带进 `reason:`**。
+> 「`rejected`」本身不告诉你为什么，得回头加打印再跑一遍才算定位 ——
+> 上面那次失败的输出里只有 `'applied'` vs `'rejected'`，白跑了一轮。
 
 ## A. DAO 层
 
@@ -238,6 +248,11 @@ dart run tool/typecheck.dart
 - pull 返回**恰好 6 个业务实体 + `next_cursors`**，
   **不含主数据**（主数据走 §8.3，见下）
 - 游标非法 → 400
+- **`createDocument` 全链路**（HTTP → `SyncServer` → `RuleEngine` → 四张流水 → 再 pull 回来）：
+  推送采购单 → 两条回执 `applied`；单据落库且**主机分配正式单号**（不再是 `pendingDocNoPrefix`）；
+  `document_lines` / `stock_ledger` / `party_ledger` 各 1 行；
+  `next_cursors` 的 `stock_since` 推进到 `1`、`doc_since` 不再等于 `'0|'`；
+  **带这两个游标再拉一次 → `documents` 与 `stock_ledger` 都为空**（增量语义）
 
 > ⚠️ **`/api/sync/pull` 不返回主数据**。主数据的增量同步目前**没有游标**
 > （§8.3 的 REST 接口只有 `?q=&active=`），这是一个已知缺口，待裁定。

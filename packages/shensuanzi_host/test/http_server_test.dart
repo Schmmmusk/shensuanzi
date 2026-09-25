@@ -88,6 +88,68 @@ void main() {
         'payload': <String, Object?>{'id': id, ...payload},
       };
 
+  /// `documents` 的 wire 行：只保留白名单列。
+  ///
+  /// 用 [SyncWhitelist]（**与主机侧同一份白名单**）剔除主机专属列
+  /// （`created_at` / `updated_at` / `paid_amount`），
+  /// 于是夹具**不可能**写出会被主机判 `rejected` 的列。
+  Map<String, Object?> documentWire(Document doc) => <String, Object?>{
+    for (final MapEntry<String, Object?> entry in doc.toRow().entries)
+      if (SyncWhitelist.isAllowedColumn(Schema.documents, entry.key))
+        entry.key: entry.value,
+  };
+
+  /// `createDocument` 的 payload（采购入库）。
+  ///
+  /// ⚠️ 主单与明细都用**模型的 `toRow()`** 生成，**不手写 JSON**：
+  /// wire 约定是「值 = `toRow()` 的形态」（`sync_protocol.md` §8.2 前）。
+  /// 手写会漏字段 —— 2026-09-25 真实漏过明细的 `id`，整条 op 被判 `rejected`，
+  /// 而断言只比 `status`，失败信息里看不到原因。
+  Map<String, Object?> purchaseOp({
+    required String docId,
+    required String productId,
+    required String partyId,
+    int quantity = 10,
+    int unitPrice = 100,
+  }) => <String, Object?>{
+    'entity': 'documents',
+    'entity_id': docId,
+    'operation': 'createDocument',
+    'payload': <String, Object?>{
+      'document': documentWire(
+        Document(
+          id: docId,
+          docNo: '', // 空 = 临时展示号，主机分配正式单号
+          docType: DocType.purchase,
+          status: DocStatus.confirmed,
+          partyId: partyId,
+          totalAmount: quantity * unitPrice,
+          occurredAt: fixedNow,
+          createdAt: fixedNow,
+          updatedAt: fixedNow,
+        ),
+      ),
+      'lines': <Object?>[
+        DocumentLine.create(
+          documentId: docId,
+          productId: productId,
+          quantity: quantity,
+          unitPrice: unitPrice,
+        ).toRow(),
+      ],
+    },
+  };
+
+  /// 逐条回执的 `reason`，供 [expect] 的 `reason:` 使用。
+  ///
+  /// 只比 `status` 时，`rejected` 本身不告诉你为什么 —— 得回头加打印再跑一遍。
+  String reasonsOf(Map<String, Object?> pushJson) => <String>[
+    for (final Object? item in pushJson['results']! as List)
+      '${(item! as Map)['entity_id']}: '
+          '${(item as Map)['status']}'
+          '${(item as Map)['reason'] == null ? '' : ' (${(item as Map)['reason']})'}',
+  ].join(' | ');
+
   /// 经 HTTP 建一个商品，返回 id
   Future<String> createProduct(String code) async {
     final String id = newId();
@@ -303,37 +365,19 @@ void main() {
         body: <String, Object?>{
           'operations': <Object?>[
             masterOp('parties', partyId, <String, Object?>{'name': '往来方'}),
-            <String, Object?>{
-              'entity': 'documents',
-              'entity_id': docId,
-              'operation': 'createDocument',
-              'payload': <String, Object?>{
-                'document': <String, Object?>{
-                  'id': docId,
-                  'doc_type': 'purchase',
-                  'status': 'confirmed',
-                  'party_id': partyId,
-                  'total_amount': 1000,
-                  'occurred_at': fixedNow,
-                  'time_estimated': 0,
-                },
-                'lines': <Object?>[
-                  <String, Object?>{
-                    'product_id': productId,
-                    'quantity': 10,
-                    'unit_price': 100,
-                    'amount': 1000,
-                  },
-                ],
-              },
-            },
+            purchaseOp(docId: docId, productId: productId, partyId: partyId),
           ],
         },
       );
       expect(pushStatus, 200);
       expect(
-        (pushJson['results']! as List).map((Object? r) => (r! as Map)['status']),
+        <Object?>[
+          for (final Object? r in pushJson['results']! as List)
+            (r! as Map)['status'],
+        ],
         <Object?>['applied', 'applied'],
+        // 带上逐条 reason：否则失败信息里只有「rejected」，没有原因
+        reason: reasonsOf(pushJson),
       );
 
       final (int status, Map<String, Object?> json) = await call(
@@ -357,6 +401,44 @@ void main() {
         '1',
         reason: '游标推进到已拉取的最大 seq_no',
       );
+    });
+
+    test('明细漏 id → rejected，且原因点出列名（HTTP 全链路）', () async {
+      final String productId = await createProduct('H005');
+      final String partyId = newId();
+      final String docId = newId();
+
+      final Map<String, Object?> op = purchaseOp(
+        docId: docId,
+        productId: productId,
+        partyId: partyId,
+      );
+      // 故意去掉明细的 id —— 这是 2026-09-25 真实踩过的坑：
+      // `document_lines.id` 由客户端生成、主机原样落库（sync_protocol.md §8.1）
+      final Map<String, Object?> line =
+          ((op['payload']! as Map)['lines']! as List).first as Map<String, Object?>;
+      line.remove('id');
+
+      final (int status, Map<String, Object?> json) = await call(
+        'POST',
+        '/api/sync/push',
+        bearer: token(),
+        body: <String, Object?>{
+          'operations': <Object?>[op],
+        },
+      );
+
+      expect(status, 200);
+      final Map<String, Object?> receipt = Map<String, Object?>.from(
+        (json['results']! as List).first as Map,
+      );
+      expect(receipt['status'], 'rejected');
+      expect(
+        '${receipt['reason']}',
+        contains('缺少必填列 `id`'),
+        reason: '失败原因必须点到具体列名，否则只能靠复跑定位',
+      );
+      expect(DocumentDao(db).findById(docId), isNull, reason: '被拒的单据不落库');
     });
 
     test('游标非法 → 400', () async {

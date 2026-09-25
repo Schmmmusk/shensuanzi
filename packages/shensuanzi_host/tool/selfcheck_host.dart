@@ -322,6 +322,151 @@ Future<void> main() async {
     check('limit=0 → 200 且空页',
         zeroLimit == 200 && (zeroLimitJson['documents']! as List).isEmpty);
 
+    // ---------------------------------------------- createDocument 全链路
+    // ⚠️ 主单与明细**都用模型的 toRow()** 生成，不手写 JSON：
+    // wire 约定是「值 = toRow() 的形态」（§8.2 前）。
+    // 手写会漏字段 —— 2026-09-25 真实漏过明细的 `id`，
+    // 整条 op 被判 rejected，而断言只比 status，看不到原因。
+    final String partyId = newId();
+    final String docId = newId();
+    final Document draft = Document(
+      id: docId,
+      docNo: '', // 空 = 临时展示号，主机分配正式单号
+      docType: DocType.purchase,
+      status: DocStatus.confirmed,
+      partyId: partyId,
+      totalAmount: 1000,
+      occurredAt: _fixedNow,
+      createdAt: _fixedNow,
+      updatedAt: _fixedNow,
+    );
+    final Map<String, Object?> docWire = <String, Object?>{
+      for (final MapEntry<String, Object?> e in draft.toRow().entries)
+        if (SyncWhitelist.isAllowedColumn(Schema.documents, e.key))
+          e.key: e.value,
+    };
+
+    final (int docPush, Map<String, Object?> docPushJson) = await call(
+      'POST',
+      '/api/sync/push',
+      bearer: token,
+      body: <String, Object?>{
+        'operations': <Object?>[
+          <String, Object?>{
+            'entity': 'parties',
+            'entity_id': partyId,
+            'operation': 'createMasterData',
+            'payload': <String, Object?>{'id': partyId, 'name': '往来方'},
+          },
+          <String, Object?>{
+            'entity': 'documents',
+            'entity_id': docId,
+            'operation': 'createDocument',
+            'payload': <String, Object?>{
+              'document': docWire,
+              'lines': <Object?>[
+                DocumentLine.create(
+                  documentId: docId,
+                  productId: productId,
+                  quantity: 10,
+                  unitPrice: 100,
+                ).toRow(),
+              ],
+            },
+          },
+        ],
+      },
+    );
+    final List<Object?> docResults = docPushJson['results']! as List<Object?>;
+    String receipts() => <String>[
+      for (final Object? r in docResults)
+        '${(r! as Map)['status']}'
+            '${(r as Map)['reason'] == null ? '' : ' (${(r as Map)['reason']})'}',
+    ].join(' | ');
+
+    check('createDocument 推送 → 200', docPush == 200, '$docPush');
+    check('两条都 applied', docResults.every((Object? r) => (r! as Map)['status'] == 'applied'),
+        receipts());
+    final Document? saved = DocumentDao(db).findById(docId);
+    check('单据已落库', saved != null);
+    check('明细 1 行',
+        db.raw.select('SELECT 1 FROM document_lines WHERE document_id = ?',
+            <Object?>[docId]).length == 1);
+    check('主机分配了正式单号（不再是临时展示号）',
+        saved != null && !saved.docNo.startsWith(Document.pendingDocNoPrefix),
+        '${saved?.docNo}');
+    check('主机写入 paid_amount = 0（派生缓存）', saved?.paidAmount == 0);
+
+    final (int pull2Status, Map<String, Object?> pull2) =
+        await call('GET', '/api/sync/pull', bearer: token);
+    check('拉取 → 200', pull2Status == 200, '$pull2Status');
+    check('documents 1 行', (pull2['documents']! as List).length == 1);
+    check('document_lines 1 行', (pull2['document_lines']! as List).length == 1);
+    check('stock_ledger 1 行', (pull2['stock_ledger']! as List).length == 1);
+    check('party_ledger 1 行', (pull2['party_ledger']! as List).length == 1);
+    final Map<String, Object?> cursors2 =
+        Map<String, Object?>.from(pull2['next_cursors']! as Map);
+    check('stock_since 推进到 1', cursors2[SyncCursorKeys.stock] == '1',
+        '${cursors2[SyncCursorKeys.stock]}');
+    check('doc_since 推进（不再是起始值）',
+        cursors2[SyncCursorKeys.doc] != '0|', '${cursors2[SyncCursorKeys.doc]}');
+
+    final (int pull3Status, Map<String, Object?> pull3) = await call(
+      'GET',
+      '/api/sync/pull'
+          '?stock_since=${cursors2[SyncCursorKeys.stock]}'
+          '&doc_since=${Uri.encodeQueryComponent('${cursors2[SyncCursorKeys.doc]}')}',
+      bearer: token,
+    );
+    check('按游标再拉增量 → 空', pull3Status == 200, '$pull3Status');
+    check('增量不再返回 documents', (pull3['documents']! as List).isEmpty);
+    check('增量不再返回 stock_ledger', (pull3['stock_ledger']! as List).isEmpty);
+
+    // 明细漏 id → rejected，且原因点到列名。
+    // 这是 2026-09-25 真实踩过的坑（夹具手写 JSON 漏字段），钉住它，
+    // 免得下次又靠「跑一遍看输出」定位。
+    final String badDoc = newId();
+    final Map<String, Object?> badOp = <String, Object?>{
+      'entity': 'documents',
+      'entity_id': badDoc,
+      'operation': 'createDocument',
+      'payload': <String, Object?>{
+        'document': <String, Object?>{
+          for (final MapEntry<String, Object?> e in draft.toRow().entries)
+            if (SyncWhitelist.isAllowedColumn(Schema.documents, e.key))
+              e.key: e.value,
+          'id': badDoc,
+        },
+        'lines': <Object?>[
+          DocumentLine.create(
+            documentId: badDoc,
+            productId: productId,
+            quantity: 1,
+            unitPrice: 100,
+          ).toRow()
+            ..remove('id'),
+        ],
+      },
+    };
+    final (int badStatus, Map<String, Object?> badJson) = await call(
+      'POST',
+      '/api/sync/push',
+      bearer: token,
+      body: <String, Object?>{
+        'operations': <Object?>[badOp],
+      },
+    );
+    final Map<String, Object?> badReceipt = Map<String, Object?>.from(
+      (badJson['results']! as List).first! as Map,
+    );
+    check('明细漏 id → 200 + rejected', badStatus == 200, '$badStatus');
+    check('漏 id 的明细 → rejected', badReceipt['status'] == 'rejected',
+        '${badReceipt['reason']}');
+    check('原因点到列名 `id`',
+        '${badReceipt['reason']}'.contains('缺少必填列 `id`'),
+        '${badReceipt['reason']}');
+    check('被拒的单据不落库', DocumentDao(db).findById(badDoc) == null);
+
     await server.close(force: true);
     db.close();
   }
