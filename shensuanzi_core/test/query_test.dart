@@ -131,13 +131,21 @@ void main() {
       expect(query.stockByProduct()[p], 7);
     });
 
-    test('从没进过货的商品不出现在结果里（消费端用 ?? 0）', () {
+    test('只包含有流水的商品：进过货的在，没进过货的不在', () {
       final String p = createProduct();
       final String untouched = createProduct(code: 'P002');
+      final String party = createParty();
+      seedPurchase(p, party, 10, 100);
 
-      expect(query.stockByProduct(), isNot(contains(untouched)));
-      expect(query.stockByProduct()[untouched] ?? 0, 0);
-      expect(query.stockByProduct(), contains(p));
+      final Map<String, int> stock = query.stockByProduct();
+      expect(stock, contains(p));
+      expect(stock[p], 10);
+      expect(
+        stock,
+        isNot(contains(untouched)),
+        reason: '从没进过货的商品不出现（GROUP BY 只覆盖有流水的行）',
+      );
+      expect(stock[untouched] ?? 0, 0, reason: '消费端用 ?? 0 兜底');
     });
 
     test('负库存如实反映（超卖允许）', () {
