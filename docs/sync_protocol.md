@@ -106,11 +106,13 @@ RuleEngine 落地                 调 API 提交动作
 - 所有操作在**同一个主机事务内**完成
 - 事务失败 → 整单回滚 → 返回 `rejected`
 
-**`SyncServer` 的边界**（实现见 `shensuanzi_core/lib/src/sync/`）：
+**`SyncServer` 的边界**（实现见 `packages/shensuanzi_host/lib/src/sync_server.dart`）：
 
-- **不含 HTTP**。它接收 `SyncOperation`、返回 `SyncResponse`；HTTP 适配层（shelf）
-  属于 Windows 应用侧，只做 JSON ↔ 对象的搬运。这样同步逻辑是**纯 Dart**，
-  可在没有网络、没有 Flutter 的环境里测试
+- **协议 DTO 在 core**（`shensuanzi_core` 的 `lib/src/sync/`），
+  **服务端实现在 host**（`shensuanzi_host`）—— 见 `README.md` 的包边界图
+- **本类不含 HTTP**：它接收 `SyncOperation`、返回 `SyncResponse`；
+  HTTP 适配层（shelf）在 host 的 `http_server.dart`，只做 JSON ↔ 对象的搬运。
+  这样同步逻辑是**纯 Dart**，可在没有网络、没有 Flutter 的环境里测试
 - **同步层自己不写任何流水** —— `createDocument` 全部委托给 `RuleEngine`
 - **一条 op 一个事务**：一条失败只影响该条，**不回滚同一批里的其它条目**
   （它们是各自独立的队列条目）
@@ -149,6 +151,16 @@ RuleEngine 落地                 调 API 提交动作
 - 同步游标按实体分开传
 
 ## 八、同步接口
+
+### 8.0 鉴权范围
+
+| 端点 | 鉴权 | 为什么 |
+|---|---|---|
+| `GET /api/health` | **否** | 客户端在**扫码之前**就要能判断「这个 IP:端口是不是主机」。它只返回 `ok` / `api_version` / `server_time` / `schema_version`，**不含任何业务数据** |
+| 其余全部 | **是**（`Authorization: Bearer <token>`） | 令牌来自二维码（§9.1），只经带外通道（人眼 → 摄像头）传播 |
+
+令牌错误或缺失一律 `401` + `{"error": "..."}`；
+请求体不是合法 JSON 或缺字段一律 `400`；未捕获异常一律 `500`（**不外泄 stack trace**）。
 
 ### 8.1 推送
 
@@ -288,6 +300,28 @@ GET    /api/party_ledger?party_id=&since=
 所有 POST 接受 **upsert 语义**（body 带 `id` 即更新，无 `id` 即创建）。
 所有写接口要求 `Authorization: Bearer <token>`。
 
+> ⚠️ **v1 未实现**。本节是**便利接口**：同步本身不依赖它 ——
+> 主数据的增删改都走 §8.1 的 `createMasterData` / `updateMasterData` /
+> `deleteMasterData`。本节留给 Windows UI 与手工调用，实现优先级低于
+> 「主数据增量同步」这条缺口（见下）。
+>
+> ⚠️ **已知缺口：主数据的增量同步没有游标。**
+>
+> §8.2 的 `pull` **只返回 6 个业务实体**（`documents` / `document_lines` /
+> 四张流水），**不含主数据**；而本节这些 GET 接口只有 `?q=&active=`，
+> 没有 `since`。两端合起来的结果是：
+>
+> **一台客户端改了商品价格，另一台客户端无法通过 `pull` 得知。**
+>
+> 修法有两种，各有代价：
+>
+> | 方案 | 代价 |
+> |---|---|
+> | A. 把主数据并入 `pull`（`products_since` / `parties_since` / `accounts_since`） | 要决定主数据的游标列（`updated_at`？`sync_version`？软删怎么表达？） |
+> | B. 给本节接口加 `?since=` | 拉取要分两个端点，客户端逻辑分叉 |
+>
+> **待裁定**（列在 `docs/reply_review.md` 附录 J）。
+
 ### 8.4 表名 / 列名白名单
 
 **唯一实现**：`shensuanzi_core/lib/src/sync/whitelist.dart` 的 `SyncWhitelist`。
@@ -385,6 +419,10 @@ documentAction → rejected + action_not_implemented（v1 不落地）
 批量 push 里一条失败不影响其它条目
 同一 created_at 的多张单：分页不丢行、不重复、游标必推进
 明细随主单同页返回，且不按 limit 截断
+health 不需要鉴权，且不泄露业务数据
+push / pull 缺令牌或错令牌 → 401
+请求体不是 JSON / 缺 operations → 400
+`pull` 恰好返回 6 个业务实体 + next_cursors（**不含主数据**）
 ```
 
 > ⏸ **暂缓**：原「`documentAction` 幂等」一项**推迟到 R-3 裁定后**（见 `docs/reply.md`）。

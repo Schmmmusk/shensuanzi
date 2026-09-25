@@ -5,63 +5,78 @@
 
 ## 零、本地运行前提
 
-> ⚠️ **测试在 `shensuanzi_core/` 下运行，不是仓库根。** 两者用的是**不同的运行器**：
+> ⚠️ **`dart test` 在两个纯 Dart 包里跑，不在仓库根。** 三种位置用**不同的运行器**：
 >
 > | 位置 | 命令 | 原因 |
 > |---|---|---|
-> | `shensuanzi_core/` | `dart test` | 纯 Dart 包，无 Flutter 依赖 |
+> | `packages/shensuanzi_core/` | `dart test` | 纯 Dart 包，无 Flutter 依赖 |
+> | `packages/shensuanzi_host/` | `dart test` | 纯 Dart 包（shelf 也是纯 Dart），无 Flutter 依赖 |
 > | 仓库根 | `flutter test` | Flutter 应用；`dart test` 编译不了 `package:flutter`（会报大量 `package:flutter/src/...` 的 switch 穷尽性错误） |
 >
 > 在根目录跑 `dart test` 还会去编译 Flutter 模板测试 `test/widget_test.dart`，产生成片的 Flutter 报错 ——
 > **那不是数据层的失败**。
 
+**最短正确路径**（两条命令都不能省，**注意 `cd` 目标**）：
+
+```bash
+# 数据层
+cd packages/shensuanzi_core
+dart pub get      # ← 别漏：test 是 dev_dependency，不装就报 "Could not find package test"
+dart test
+
+# 主机端
+cd packages/shensuanzi_host
+dart pub get
+dart test
+```
+
 `dart test` 需要能创建子进程的环境（测试跑在独立 isolate 里）。此外：
 
 | 项 | 说明 |
 |---|---|
-| **依赖安装（最易漏）** | `test` 是 **dev_dependency**，只写在 `shensuanzi_core/pubspec.yaml` 里**不会自动生效** —— 必须先 `dart pub get`；漏了会报 `Could not find package test or file test:test` |
-| SQLite 原生库 | 纯 Dart 环境**不含**原生库。非 Windows 通常能自动找到系统 sqlite3；**Windows 需自行提供 `sqlite3.dll`**，或设环境变量 `SQLITE3_DLL` 指向它。`tool/sqlite_local.dart` 负责查找（含 `System32\winsqlite3.dll` 兜底） |
-| `sqlite3_flutter_libs` 的位置 | **加在根 Flutter 应用**（`pubspec.yaml`），**不加在 `shensuanzi_core`** —— 它是 Flutter 插件，加进纯 Dart 包会让 `dart test` 失效 |
+| **依赖安装（最易漏）** | `test` 是 **dev_dependency**，只写在 `pubspec.yaml` 里**不会自动生效** —— 必须先 `dart pub get`；漏了会报 `Could not find package test or file test:test` |
+| SQLite 原生库 | 纯 Dart 环境**不含**原生库。非 Windows 通常能自动找到系统 sqlite3；**Windows 需自行提供 `sqlite3.dll`**，或设环境变量 `SQLITE3_DLL` 指向它。`shensuanzi_core/lib/sqlite_local.dart` 负责查找（含 `System32\winsqlite3.dll` 兜底） |
+| `sqlite3_flutter_libs` 的位置 | **加在根 Flutter 应用**（`pubspec.yaml`），**不加在任何纯 Dart 包** —— 它是 Flutter 插件，加进纯 Dart 包会让 `dart test` 失效 |
 | 根目录不要加 `package:test` | 根应用用 `flutter_test`；给根加 `test` 只会让 `dart test` 误编译 Flutter 源码 |
-
-**最短正确路径**（两条命令都不能省）：
-
-```bash
-cd shensuanzi_core
-dart pub get      # ← 别漏：test 是 dev_dependency，不装就报 "Could not find package test"
-dart test
-```
+| 跨包共享测试辅助 | `test/` 不属于包的公开面，**无法跨包导入**。`sqlite_local.dart` 因此放在 `shensuanzi_core/lib/`（公开 API，但不 re-export）；`test/support/fixtures.dart` 在两个包里**各有一份精简镜像**，改夹具语义时要两边看 |
 
 **降级门禁**（当分析器 / 测试运行器不可用时）：
 
 ```bash
-cd shensuanzi_core
+# 数据层
+cd packages/shensuanzi_core
 dart run tool/selfcheck.dart           # 基础设施：schema / 事务 / 约束 / 金额 / ID
 dart run tool/selfcheck_rules.dart     # RULE-001 / RULE-009
 dart run tool/selfcheck_payments.dart  # 方案 C：立即收付款自动生成收付款单
 dart run tool/selfcheck_delivery.dart  # RULE-003 送货（含 R-10 的 status 例外、签收、在途视图）
 dart run tool/selfcheck_returns.dart   # RULE-007 / RULE-008（含 R-11 成本分摊、拒收）
 dart run tool/selfcheck_query.dart     # RULE-006 查询（库存 / 余额 / 在途 / 在店可售）
-dart run tool/selfcheck_sync.dart      # SyncServer（五类操作 + 白名单 + 拉取游标）
 dart run tool/typecheck.dart           # 编译校验：import 全部入口但不执行
+
+# 主机端
+cd packages/shensuanzi_host
+dart run tool/selfcheck_sync.dart      # SyncServer（五类操作 + 白名单 + 拉取游标）
+dart run tool/selfcheck_host.dart      # 令牌 / 主机身份 / 配对载荷 / 二维码数据 / shelf HTTP
+dart run tool/typecheck.dart
 ```
 
 镜像关系（**改一边必须改另一边**）：
 
-| `tool/` | `test/` |
-|---|---|
-| `selfcheck.dart` | `schema_test` + `database_test` + `util_test` |
-| `selfcheck_rules.dart` | `rule_engine_test.dart` |
-| `selfcheck_payments.dart` | `immediate_payment_test.dart` |
-| `selfcheck_delivery.dart` | `delivery_test.dart` |
-| `selfcheck_returns.dart` | `return_test.dart` |
-| `selfcheck_query.dart` | `query_test.dart` |
-| `selfcheck_sync.dart` | `sync_server_test.dart` |
+| 包 | `tool/` | `test/` |
+|---|---|---|
+| core | `selfcheck.dart` | `schema_test` + `database_test` + `util_test` |
+| core | `selfcheck_rules.dart` | `rule_engine_test.dart` |
+| core | `selfcheck_payments.dart` | `immediate_payment_test.dart` |
+| core | `selfcheck_delivery.dart` | `delivery_test.dart` |
+| core | `selfcheck_returns.dart` | `return_test.dart` |
+| core | `selfcheck_query.dart` | `query_test.dart` |
+| **host** | `selfcheck_sync.dart` | `sync_server_test.dart` |
+| **host** | `selfcheck_host.dart` | `auth_test` + `pairing_test` + `http_server_test` |
 
 > ⚠️ **`typecheck.dart` 必须 import 全部入口，包括 `tool/` 下每个自检脚本本身。**
 > `dart test` 只跑 `test/`，脚本自身的编译错误不会被任何门禁发现 ——
 > 2026-09-25 真实漏过一次（`selfcheck_returns.dart` 调了不存在的 `createParty(name:)`）。
-> 加入口时**同时改 `typecheck.dart` 的 import 与 `entries` 列表**。
+> 加入口时**同时改 `typecheck.dart` 的 import 与 `entries` 列表**。**每个包各有一份 `typecheck.dart`。**
 
 > ⚠️ **改规则语义时必须同时改两处**：`test/**` 与 `tool/selfcheck*.dart` 是**两套并行的镜像断言**
 > （前者是正式门禁，后者是无法运行 `dart test` 时的降级门禁）。
@@ -193,6 +208,39 @@ dart run tool/typecheck.dart           # 编译校验：import 全部入口但�
 > ⏸ **暂缓**：原「`documentAction` 幂等」一项推迟到 **R-3** 裁定后
 > （见 `docs/reply.md`）。v1 只需要断言 `documentAction` → `rejected` +
 > `action_not_implemented`。
+
+## G2. 主机端传输层（`packages/shensuanzi_host/`）
+
+**令牌与主机身份**（`auth_test.dart`）：
+
+- `generate` 注入种子可复现、不注入时两次不同；明文是 32 字节 Base64
+- `matches` 正确 / 错误 / 空串 / `null`；`constantTimeEquals` 等长与不等长
+- **首启生成时带明文**；**重启后只读回哈希、没有明文**（哈希不可逆），
+  但**照样能校验旧令牌** —— 校验只需要哈希
+- `reset` 换 `host_id` + 新令牌 → **旧令牌立刻失效**（一键重置 = 所有设备重配）
+- **持久化的 JSON 不含明文令牌**（含哈希），这条必须被断言，不能只写在注释里
+
+**配对载荷**（`pairing_test.dart`）：
+
+- `uri` 形态与 §9.1 一致；生成 → 解析**往返一致**
+- 含 URL 不安全字符的令牌（Base64Url 的 `-` `_`）也能往返
+- 非配对码 / 缺字段 / `port` 非法 → `FormatException`
+- `PairingQr`：`moduleCount ≥ 21`、矩阵是方阵、有深色模块、
+  **三个定位角（左上 / 右上 / 左下）是深色**、不同内容矩阵不同
+
+**HTTP 层**（`http_server_test.dart`）：
+
+- 端口落在给定范围；同范围第二次启动落到下一个端口
+- `/api/health` **不需要鉴权**（扫码前就要能探到），且**不泄露业务数据**（只有 4 个键）
+- `/api/sync/push` 与 `/api/sync/pull` **缺令牌 / 错令牌 → 401**
+- 合法 push → 200 + `results`；**一条被拒不拖累同批其它条目**
+- 请求体不是 JSON / 缺 `operations` → 400
+- pull 返回**恰好 6 个业务实体 + `next_cursors`**，
+  **不含主数据**（主数据走 §8.3，见下）
+- 游标非法 → 400
+
+> ⚠️ **`/api/sync/pull` 不返回主数据**。主数据的增量同步目前**没有游标**
+> （§8.3 的 REST 接口只有 `?q=&active=`），这是一个已知缺口，待裁定。
 
 ## H. 时钟
 

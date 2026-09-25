@@ -1,71 +1,111 @@
-# 同意推迟：R-3 与 RULE-003 的动作部分一起定
+# 推荐 A
 
-你的判断是对的。R-3 表面上是"幂等判定缺存储依据"，实质是**"动作"这个抽象还没定型**——它会影响 `sync_queue` 的操作枚举、SyncServer 的处理路径、可能的动作表结构。现在猜，等于把 `sync_queue` 的字段设计押在一个未验证的假设上。
+## 三点理由
 
-## 边界划分
+1. **core 的语义边界**：一旦塞进 shelf，core 就不再是"数据层"——未来 mDNS、证书管理、文件监听都会往里挤。包名和职责对不上，是最难改的债。
+2. **你的测试约束**：`flutter test` 跑不了。凡是核心逻辑，必须落在纯 Dart 包里。A 让 host 100% `dart test` 可测。
+3. **传输层可替换**：v2 可能换 WebSocket、或加本地 socket 加速。core 不依赖 shelf，就不用动。
 
-**RULE-003 拆成两部分**：
+## host 的边界：只放"传输层 + 主机专属设施"
 
-### 现在可以定（不依赖 R-3）
+**应包含**：
 
-- 创建送货单：`StockLedger(quantity = -qty)`、`PartyLedger(+total)`、`status = in_transit`
-- 在途视图 SQL
-- "在店可售 = 账面库存 - 在途数量"
-- 拒收 → 走 RULE-007 销售退货
+- `shelf` HTTP 服务绑定
+- `SyncServer`（协议处理 + RuleEngine 分派）
+- Token 生成 / 校验 / 重置
+- 端口探测（17890→17900）
+- 二维码**数据**生成（用 `qr` 包，纯 Dart）
+- Windows 防火墙引导（若实现）
 
-这部分**与普通单据创建完全同构**，没有任何特殊之处。可以按 R-6 方案 C 的模板直接写死。
+**不应包含**：
 
-### 等同步层一起定（依赖 R-3）
+- DTO（`SyncPushRequest` / `SyncOp` / `SyncOpResult`）→ **core**
+- `SyncClient` 的队列逻辑 → **core**
+- 二维码**渲染** widget → 根 Flutter 应用
 
-- `mark_delivered` 动作的幂等判定
-- 动作的 payload 契约
-- 是否需要独立的动作表
-- 动作失败的回滚语义
+## 依赖图
 
-## 进入同步层时需要回答的问题
-
-不用现在答，列个清单，写进 `Agents.md` 的待裁定表：
-
-| # | 问题 | 影响面 |
-|---|---|---|
-| R-3.1 | 动作能否全部归约为 `status` 判定？ | 若可以，不建表；若不可以，需 `document_actions` 表 |
-| R-3.2 | 同一 `document_id` 上的多个动作是否有序？ | 决定是否需要 `action_seq` |
-| R-3.3 | 动作的 `occurred_at` 由客户端提供，冲突时按哪个时间判？ | 与 §七 的 `seq_no` 排序一致性 |
-| R-3.4 | 动作失败（如已 `cancelled` 的单据收到 `mark_delivered`）如何返回？ | `rejected` 还是 `conflict`？语义不同 |
-| R-3.5 | 一台 Android 离线签收，另一台同时取消该单，谁赢？ | "主机赢"在动作层面如何具体化 |
-
-这些问题在实际写 `SyncServer._applyAction` 时**必然会撞上**，届时答案会比现在清晰得多。
-
-## 对实施的影响
-
-- **RULE-003 可以先行实现**（不含动作部分）
-- **`documentAction` 的枚举值保留**，但 `SyncServer` 里先 `rejected`，错误码 `action_not_implemented`
-- **Android 端的"签收"按钮暂时禁用**，标注"v1.1 开放"
-- **测试清单 G 里"`documentAction` 幂等"一项暂缓**，其他同步测试不受影响
-
-这样 v1 的送货场景是：**司机在店里出发前创建送货单 → 客户签收后回店手动改状态**（走主机本地的白名单 UPDATE）。虽然不如"司机途中签收"顺滑，但闭环完整、实现清晰。等 R-3 定了，再补上离线签收。
-
-## `Agents.md` 待裁定表新增条目
-
-```markdown
-| R-3 | `documentAction` 的幂等判定与存储 | 待同步层实现时裁定。目前 RULE-003 的动作部分暂缓，v1 用主机本地改状态替代 |
 ```
+shensuanzi_core        纯 Dart   models / dao / rules / sync DTO / sync client
+      ↑
+shensuanzi_host        纯 Dart   shelf / SyncServer / token / 端口 / qr 数据
+      ↑
+根 Flutter 应用(Windows)  Flutter  UI + 二维码渲染 + 调用 host
+      ↑
+根 Flutter 应用(Android)  Flutter  UI + 调用 core.client
+```
+
+Android 端**不依赖 host**。它只用 core 里的 DTO 和 SyncClient。
+
+## 二维码的拆分是关键
+
+这是 A 能不能成立的技术要点：
+
+| 部分 | 包 | 依赖 | 可测性 |
+|---|---|---|---|
+| 生成二维码字符串 | `shensuanzi_host` | `qr`（纯 Dart） | ✅ `dart test` |
+| 生成二维码图片数据 | `shensuanzi_host` | `image`（纯 Dart） | ✅ `dart test` |
+| 渲染到 Widget | 根应用 | `qr_flutter`（Flutter） | ❌ `flutter test` |
+
+**把"生成"和"渲染"分开**，host 里所有逻辑都可测，只有最后的 `QrImageView(data: host.qrData)` 一行在 Flutter 层。这一行无需测试。
+
+## host 的最小 pubspec
+
+```yaml
+name: shensuanzi_host
+description: 神算子主机端——shelf 服务、配对、令牌
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  shensuanzi_core:
+    path: ../shensuanzi_core
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
+  qr: ^3.0.2
+  crypto: ^3.0.6        # token 哈希
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^5.0.0
+```
+
+**无 Flutter 依赖**。`dart test` 可直接跑。
+
+## 对根应用的影响
+
+根应用的 `pubspec.yaml`：
+
+```yaml
+dependencies:
+  shensuanzi_core:
+    path: packages/shensuanzi_core
+  shensuanzi_host:
+    path: packages/shensuanzi_host    # 仅 Windows 目标需要
+  qr_flutter: ^4.1.0
+```
+
+Android 目标可以条件性不引入 `shensuanzi_host`（Flutter 目前不支持按平台区分依赖，但可以通过不在代码里 import 来避免打进 APK——tree shaking 会处理）。
+
+## 目录结构
+
+```
+repo/
+├── packages/
+│   ├── shensuanzi_core/       # 纯 Dart
+│   └── shensuanzi_host/       # 纯 Dart
+├── windows_app/               # Flutter Windows
+├── android_app/               # Flutter Android
+└── docs/
+```
+
+**注意**：如果 Windows 和 Android 共享大量 UI 代码，也可以只做一个 Flutter 应用，用 `Platform.isWindows` 分支。但**包结构不变**——core 和 host 仍是独立包。
 
 ---
 
-## 顺带一个观察
+## 一句话
 
-审查报告里 R-3 ~ R-5、R-7 四项都是同一类问题：**规范写到了"接口层"，但没写到"存储层"**。
-
-- R-3：动作的幂等存储
-- R-4：`documents` 的 pull 游标字段
-- R-5：客户端本地镜像的可覆盖性
-- R-7：负数舍入方向
-
-它们的共同特点是**不影响 schema 的骨架，但会在实现时逼出具体选择**。你的处理方式——"不猜，等实际写那一层时定"——对这类问题是对的。真正需要在动工前冻结的是 **R-1（已裁）** 和 **R-6（已裁）** 这种**会反向决定表结构**的问题。
-
-把这个原则写进 `Agents.md` 会很有用：
-
-> **冻结的标准**：是否反向决定表结构或字段。若是，动工前必须裁定；若否，留到对应实现层裁定。
-
-这条原则能防止未来再出现"为了完备而提前猜"的倾向，也能在审查时快速区分"必须现在答"和"可以以后答"。
+**A。** host 只放传输与主机设施，DTO 与客户端逻辑留在 core，二维码生成与渲染拆开——这样 host 是纯 Dart 的，`dart test` 全程可跑，core 的语义边界也守住了。

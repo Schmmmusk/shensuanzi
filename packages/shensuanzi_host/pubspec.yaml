@@ -1,0 +1,26 @@
+name: shensuanzi_host
+description: 神算子主机端：shelf HTTP 服务、同步协议实现、配对与令牌
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  # 数据层 + 同步协议（DTO / 白名单 / 游标）
+  shensuanzi_core:
+    path: ../shensuanzi_core
+
+  # HTTP 服务。**纯 Dart，无 Flutter 依赖** —— 因此本包 dart test 可直接跑。
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
+
+  # 二维码**数据**生成（渲染由根 Flutter 应用的 qr_flutter 负责）
+  qr: ^3.0.2
+
+  # token 哈希（主机只存 sha256，不存明文）
+  crypto: ^3.0.6
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^6.0.0

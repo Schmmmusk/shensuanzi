@@ -37,11 +37,26 @@ repo/
 │   ├── rules.md
 │   ├── threat_model.md
 │   └── testing.md
-├── lib/ test/ windows/ android/    # Flutter 壳（Windows 主机 + Android 客户端）
-└── shensuanzi_core/                # Dart 数据层包
-    ├── lib/
-    └── test/
+├── packages/
+│   ├── shensuanzi_core/     # 纯 Dart：模型 / DAO / 规则 / 同步协议（DTO + 白名单）
+│   └── shensuanzi_host/     # 纯 Dart：shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据
+└── lib/ test/ windows/ android/    # Flutter 壳（Windows 主机 + Android 客户端）
 ```
+
+**包边界**（2026-09-25 裁定）：
+
+```text
+shensuanzi_core        纯 Dart   模型 / DAO / 规则引擎 / 同步协议（DTO / 白名单 / 游标）
+      ↑
+shensuanzi_host        纯 Dart   shelf / SyncServer / 令牌 / 端口探测 / 二维码数据
+      ↑
+Flutter 应用(Windows)  Flutter   UI + 二维码渲染 + 调用 host
+Flutter 应用(Android)  Flutter   UI + 调用 core.client（**不依赖 host**）
+```
+
+两个包**都无 Flutter 依赖**，所以 `dart test` 全程可跑。
+二维码**生成**在 host（`qr`，纯 Dart），**渲染**在 Flutter 层（`qr_flutter`）——
+把「生成」与「渲染」拆开，是为了让逻辑都能被测试。
 
 ## 威胁模型
 
@@ -57,20 +72,23 @@ repo/
 
 v0.4 — 规范冻结，进入实施。
 
-**实施进度**（数据层 `shensuanzi_core/`，纯 Dart 包）：
+**实施进度**：
 
-| 项 | 状态 |
-|---|---|
-| `schema`（11 表 + 23 索引）、可重入事务、迁移 | ✅ |
-| 模型 + DAO（主数据 / 单据 / 四张流水 / 查询） | ✅ |
-| RULE-001 采购入库 · RULE-002 店内销售 | ✅ |
-| RULE-003 送货 | ✅ 创建 + **主机本地签收**（`markDelivered`）；离线签收待 `documentAction`（R-3） |
-| RULE-004 收款核销 · RULE-005 付款核销 | ✅ |
-| RULE-006 库存 / 余额查询 | ✅ `QueryDao`（含在途与「在店可售」） |
-| RULE-007 销售退货 · RULE-008 采购退货 | ✅ 含 R-11 成本分摊、拒收 |
-| RULE-009 盘点 | ✅ |
-| **`SyncServer` 领域层**（推送 / 拉取 / 白名单 / 乐观锁） | ✅ 纯 Dart，**不含 HTTP** |
-| HTTP 适配层（shelf）+ 配对 + Windows UI | 未开始 |
-| Android 客户端 + SyncClient | 未开始 |
+| 项 | 包 | 状态 |
+|---|---|---|
+| `schema`（11 表 + 23 索引）、可重入事务、迁移 | core | ✅ |
+| 模型 + DAO（主数据 / 单据 / 四张流水 / 查询） | core | ✅ |
+| RULE-001 采购入库 · RULE-002 店内销售 | core | ✅ |
+| RULE-003 送货 | core | ✅ 创建 + **主机本地签收**（`markDelivered`）；离线签收待 `documentAction`（R-3） |
+| RULE-004 收款核销 · RULE-005 付款核销 | core | ✅ |
+| RULE-006 库存 / 余额查询 | core | ✅ `QueryDao`（含在途与「在店可售」） |
+| RULE-007 销售退货 · RULE-008 采购退货 | core | ✅ 含 R-11 成本分摊、拒收 |
+| RULE-009 盘点 | core | ✅ |
+| 同步协议（DTO / 白名单 / 游标编解码） | core | ✅ |
+| `SyncServer`（五类操作 + 拉取 + 乐观锁） | host | ✅ |
+| shelf HTTP 服务 · Bearer 鉴权 · 端口探测 · 二维码数据 | host | ✅ |
+| 主数据 REST 接口（§8.3）+ 其增量同步 | host | 未开始（**缺口：主数据拉取还没有游标**） |
+| `SyncClient`（Android 离线队列） | core | 未开始 |
+| Windows UI · Android UI · 备份打包 | Flutter | 未开始 |
 
 运行与验证方式（含本机限制）见 [`docs/testing.md` §零](docs/testing.md)。

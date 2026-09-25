@@ -65,6 +65,7 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | 同步游标 | 四张流水用 `seq_no`（开区间）；`documents` 用 **`(created_at, id)` 复合**；`document_lines` **无独立游标**（随主单同页）。见 §8.2（R-4 / 2026-09-25） |
 | wire 形态 | **列名 = 数据库列名（snake_case），值 = `toRow()` 的形态** —— 布尔 `1/0`、时间毫秒、金额整数分。模型自带编解码器，无转换层 |
 | SyncServer 边界 | **不含 HTTP**。接 `SyncOperation`、返 `SyncResponse`；shelf 适配层属 Windows 应用侧。保持纯 Dart、零新依赖 |
+| **包边界** | `shensuanzi_core` = 模型 / DAO / 规则 / **同步协议（DTO + 白名单 + 游标）**；`shensuanzi_host` = **shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据**；二维码**渲染**留 Flutter 层。两包都无 Flutter 依赖 ⇒ `dart test` 全程可跑（2026-09-25） |
 
 ## 五、待裁定清单
 
@@ -78,6 +79,7 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | 编号 | 内容 | 处理 |
 |---|---|---|
 | R-3 | `documentAction` 的幂等判定与存储 | 待同步层实现时裁定。目前 RULE-003 的动作部分暂缓，v1 用主机本地改状态替代 |
+| **R-13** | **主数据的增量同步没有游标** —— `pull` 只返 6 个业务实体，§8.3 的 GET 也没有 `since` ⇒ 一台客户端改了商品价格，另一台无法感知 | **待裁定**：A. 并入 `pull`（需决定游标列与软删表达）/ B. 给 §8.3 加 `?since=`。见 `sync_protocol.md` §8.3 |
 | R-8 / R-9 / R-10 / R-12 | 实现期边界（盘盈无成本、超卖符号、`delivery` 状态机、散客赊账） | 已按当前处置实现、**不阻断**；详见 `docs/reply_review.md` 附录 D |
 
 **已裁定并落地**：R-1（`allocations` 随 payload）、R-2（B5 排除收付款单）、

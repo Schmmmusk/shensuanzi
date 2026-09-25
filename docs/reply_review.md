@@ -690,4 +690,64 @@ v0.4 冻结版已落地于仓库内（`README.md` / `Agents.md` / `docs/{data_mo
 `tool/selfcheck_{query,sync}.dart`；`typecheck.dart` 入口 12 → **16**
 （9 个测试文件 + 7 个自检脚本）。
 
+## J. 包拆分 + host 传输层落地记录（2026-09-25）
+
+**裁定**：方案 A —— 新建纯 Dart 包 `shensuanzi_host`（裁定书 `docs/reply.md`）。
+
+**目录重构**：`shensuanzi_core/` → `packages/shensuanzi_core/`；
+新建 `packages/shensuanzi_host/`。根 Flutter 应用留在仓库根（`reply.md` 的
+「注意」允许一个应用 + `Platform.isWindows` 分支）。
+
+**按裁定书移动的文件**：
+
+| 文件 | 从 | 到 | 依据 |
+|---|---|---|---|
+| `sync_server.dart`（`SyncServer`） | core | **host** | 「host 应包含 `SyncServer`」 |
+| `sync_server_test.dart` / `selfcheck_sync.dart` | core | **host** | 跟随被测对象 |
+| `SyncCursor` / `SyncPullResult` | core 的 `sync_server.dart` | core 的 **`sync_pull.dart`** | 它们是**游标 DTO**，客户端也要解析 ⇒ 留 core |
+| `sqlite_local.dart` | core 的 `tool/` | core 的 **`lib/`** | host 的测试也要用它，而**跨包只能 `package:` 导入** |
+
+**新增（core）**：`lib/src/sync/sync_pull.dart`（`SyncCursor` / `SyncCursorKeys` /
+`SyncPullResult`）；`SyncPushRequest` / `SyncPushResponse` 两个信封 DTO
+（`sync_operation.dart`）。
+**新增（host）**：`auth.dart`（`HostToken` / `HostIdentity` / `HostIdentityStore`）、
+`pairing.dart`（`PairingPayload` / `PairingQr`）、`http_server.dart`
+（`HostHttpServer` / `PortRange`）、`lib/shensuanzi_host.dart`。
+
+**几处实现决定**：
+
+1. **令牌只持久化 `sha256`**。校验只需哈希 ⇒ **重启后照样能校验**，
+   但**画不出二维码**（哈希不可逆），必须 `reset`。`HostIdentity.plaintextToken`
+   为 `null` 就是「重启后」的状态，`canShowQr` 据此判断。
+   —— 我最初写成了「重启后编一个假明文」，那是错的，已改。
+2. **校验用常量时间比较**（异或累积）。逐字节提前返回可用响应时间**逐字节猜出**令牌。
+3. **令牌存文件（`<数据目录>/host.json`）而不是建表** ——
+   `data_model.md` 里没有配对应的表，令牌是**主机设施**不是业务数据。**不动 schema。**
+4. **不做「先探测端口再绑定」**：那有竞态。逐个真正 `serve`，失败就试下一个。
+5. **`/api/health` 不鉴权**：客户端**扫码之前**就要能判断「这个 IP:端口是不是主机」。
+   只返回 4 个键，不含业务数据 —— 并用断言钉住「不泄露」。
+6. **持久化 JSON 里不含明文令牌** —— 这条被断言，不只是注释里的一句话。
+
+**新发现一个缺口（R-13）**：
+
+`/api/sync/pull` **只返回 6 个业务实体，不含主数据**（这是 §8.2 的原文），
+而 §8.3 的 GET 接口只有 `?q=&active=`、**没有 `since`**。两端合起来：
+
+> **一台客户端改了商品价格，另一台客户端无法通过 `pull` 得知。**
+
+这不是实现 bug，是**规范的缺口**。修法两选（并入 `pull` / 给 §8.3 加 `?since=`），
+代价已写进 `sync_protocol.md` §8.3。**待裁定。**
+
+**我踩到的两个自己的错**（都由自检抓到，不是靠人眼）：
+
+1. `HostIdentityStore.inMemory()` 的内存槽初值写成了**空 map**而非 `null`，
+   于是 `load()` 把「还没存过」误判成「已存过一条记录」→ 空指针。
+   已改，并在注释里写清「初值必须是 `null`」。
+2. 我在测试与自检里都断言了 `pull` 返回 `products` —— **错的**（§8.2 不含主数据）。
+   两处一起改；顺带把「pull 不含主数据」变成**正向断言**钉住这个契约。
+
+**门禁**：core 8 测试 + 6 自检（371 项）；host 4 测试 + 2 自检（189 项）。
+两包各有独立 `typecheck.dart`（14 + 6 个入口）。
+
+
 
