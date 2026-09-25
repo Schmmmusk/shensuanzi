@@ -165,6 +165,9 @@ class _HostRoutes {
               partySince: q[SyncCursorKeys.party] ?? '0',
               settleSince: q[SyncCursorKeys.settle] ?? '0',
               docSince: q[SyncCursorKeys.doc] ?? '',
+              productsSince: q[SyncCursorKeys.products] ?? '',
+              partiesSince: q[SyncCursorKeys.parties] ?? '',
+              accountsSince: q[SyncCursorKeys.accounts] ?? '',
               limit:
                   int.tryParse(q['limit'] ?? '') ?? SyncServer.defaultPullLimit,
             )

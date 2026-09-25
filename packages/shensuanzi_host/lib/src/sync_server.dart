@@ -326,6 +326,7 @@ class SyncServer {
   /// | 四张流水 | `seq_no`（整数字符串） | `seq_no` 唯一且单调，`>` 即安全 |
   /// | `documents` | `"<created_at>\|<id>"` | `created_at` **不唯一**，见 [SyncCursor] |
   /// | `document_lines` | **无独立游标** | 明细随主单走，理由见下 |
+  /// | 主数据（products / parties / accounts） | `"<updated_at>\|<id>"` | 主数据**会被改**，`created_at` 感知不到（R-13 方案 A） |
   ///
   /// **`document_lines` 没有独立游标是刻意的**：它**没有时间列**（`data_model.md`
   /// §3.2），而且明细与主单**在同一个事务里写入**，永远不会单独存在。
@@ -335,12 +336,17 @@ class SyncServer {
   /// 因此 [limit] 限制的是**主单条数**；明细条数由「本页主单的明细总数」决定，
   /// **不额外截断** —— 截断会造出「有主单但明细不全」的镜像，
   /// 而那恰恰是「明细随主单走」要避免的状态。
+  ///
+  /// [limit] 对**每个分页实体独立生效**，各自推进：某一个先拉完不影响其它。
   SyncPullResult pull({
     String stockSince = '0',
     String moneySince = '0',
     String partySince = '0',
     String settleSince = '0',
     String docSince = '',
+    String productsSince = '',
+    String partiesSince = '',
+    String accountsSince = '',
     int limit = defaultPullLimit,
   }) {
     final Map<String, List<Map<String, Object?>>> entities =
@@ -357,39 +363,76 @@ class SyncServer {
       next[key] = rows.isEmpty ? '$from' : '${rows.last['seq_no']! as int}';
     }
 
+    /// `(column, id)` 复合游标分页。
+    ///
+    /// ⚠️ [column] **只接受本文件里的字面量**（`created_at` / `updated_at`），
+    /// 绝不来自客户端 —— 它会被拼进 SQL。列名白名单（`SyncWhitelist`）
+    /// 约束的是**客户端可写**的列，不覆盖这里的查询列，所以这层把关靠约定 + 这段注释。
+    void byStampCursor(String table, String column, String key, String since) {
+      final SyncCursor from = SyncCursor.parse(since);
+      final List<Map<String, Object?>> rows = _select(
+        'SELECT * FROM $table '
+        'WHERE $column > ? OR ($column = ? AND id > ?) '
+        'ORDER BY $column, id LIMIT ?',
+        <Object?>[from.stamp, from.stamp, from.id, limit],
+      );
+      entities[table] = rows;
+      next[key] = rows.isEmpty
+          ? from.wire
+          : SyncCursor(
+              rows.last[column]! as int,
+              rows.last['id']! as String,
+            ).wire;
+    }
+
     bySeqNo(Schema.stockLedger, SyncCursorKeys.stock, stockSince);
     bySeqNo(Schema.moneyLedger, SyncCursorKeys.money, moneySince);
     bySeqNo(Schema.partyLedger, SyncCursorKeys.party, partySince);
     bySeqNo(Schema.settlements, SyncCursorKeys.settle, settleSince);
 
     // documents 与「它这一页的明细」用**同一个页边界**，保证不漏不串。
-    final SyncCursor from = SyncCursor.parse(docSince);
-    final List<Map<String, Object?>> documents = _select(
-      'SELECT * FROM ${Schema.documents} '
-      'WHERE created_at > ? OR (created_at = ? AND id > ?) '
-      'ORDER BY created_at, id LIMIT ?',
-      <Object?>[from.createdAt, from.createdAt, from.id, limit],
+    byStampCursor(
+      Schema.documents,
+      'created_at',
+      SyncCursorKeys.doc,
+      docSince,
     );
-    entities[Schema.documents] = documents;
-    entities[Schema.documentLines] = _linesOfPage(from, limit);
-    next[SyncCursorKeys.doc] = documents.isEmpty
-        ? from.wire
-        : SyncCursor(
-            documents.last['created_at']! as int,
-            documents.last['id']! as String,
-          ).wire;
+    entities[Schema.documentLines] = _linesOfPage(SyncCursor.parse(docSince));
+
+    // 主数据（R-13 方案 A）：软删行**照常返回**（客户端据此在本地标记删除），
+    // 列**全给** —— 客户端要 `sync_version` 做下次更新的 `base_version`、
+    // 要 `updated_at` 做游标。这里不筛选 `is_active`，是刻意的。
+    byStampCursor(
+      Schema.products,
+      'updated_at',
+      SyncCursorKeys.products,
+      productsSince,
+    );
+    byStampCursor(
+      Schema.parties,
+      'updated_at',
+      SyncCursorKeys.parties,
+      partiesSince,
+    );
+    byStampCursor(
+      Schema.accounts,
+      'updated_at',
+      SyncCursorKeys.accounts,
+      accountsSince,
+    );
 
     return SyncPullResult(entities: entities, nextCursors: next);
   }
 
   /// 取「本页 `documents` 的全部明细」。谓词与主单页边界**完全一致**。
-  List<Map<String, Object?>> _linesOfPage(SyncCursor from, int limit) => _select(
+  List<Map<String, Object?>> _linesOfPage(SyncCursor from) => _select(
     'SELECT dl.* FROM ${Schema.documentLines} dl '
     'JOIN ${Schema.documents} d ON d.id = dl.document_id '
     'WHERE d.created_at > ? OR (d.created_at = ? AND d.id > ?) '
     'ORDER BY d.created_at, d.id, dl.id',
-    <Object?>[from.createdAt, from.createdAt, from.id],
+    <Object?>[from.stamp, from.stamp, from.id],
   );
+
 
   // ------------------------------------------------------------ 内部
 

@@ -41,6 +41,16 @@ bool throws(void Function() body) {
 const int _fixedNow = 1700000000000;
 const PortRange _testPorts = PortRange(start: 17985, end: 17999);
 
+/// 注入给主机的时钟。**可变** —— 需要「时间前进」的用例自己调 [tick]。
+///
+/// 为什么不能一直是常量：主数据的拉取游标是 `(updated_at, id)`，
+/// 而 `updated_at` 取自主机时钟。时钟不动 ⇒ 两次改动落在同一毫秒 ⇒
+/// `(stamp, id) >` 的谓词认不出后一次改动（见 R-14）。
+int _clock = _fixedNow;
+
+/// 让主机时钟前进 1ms（模拟「稍后」发生的一次写）
+int tick() => ++_clock;
+
 Future<void> main() async {
   useLocalSqlite();
 
@@ -196,7 +206,7 @@ Future<void> main() async {
       identity: identity,
       ports: _testPorts,
       address: InternetAddress.loopbackIPv4,
-      clock: () => _fixedNow,
+      clock: () => _clock,
     );
     final String base = 'http://127.0.0.1:${server.port}';
 
@@ -305,12 +315,21 @@ Future<void> main() async {
         Map<String, Object?>.from(pullJson['next_cursors']! as Map);
     check('stock_since 初始为 0', cursors[SyncCursorKeys.stock] == '0');
     check('doc_since 初始为 0|', cursors[SyncCursorKeys.doc] == '0|');
+    check('products_since 是复合游标',
+        cursors[SyncCursorKeys.products]!.toString().contains('|'),
+        '${cursors[SyncCursorKeys.products]}');
     check('空库 stock_ledger 为空', (pullJson['stock_ledger']! as List).isEmpty);
-    // ⚠️ pull **不含主数据** —— §8.2 只列 6 个业务实体。
-    // 主数据的增量同步是另一件事（§8.3 的 REST 接口没有游标）。
-    check('pull 不含主数据', !pullJson.containsKey('products'));
-    check('pull 恰好 6 个实体 + next_cursors',
-        pullJson.keys.length == 7, '${pullJson.keys.toList()}');
+    // R-13 方案 A：pull **含主数据**（不再是「只返 6 个业务实体」）。
+    // 9 个实体 + next_cursors = 10 个键。
+    check('pull 含主数据（products 在响应里）', pullJson.containsKey('products'));
+    check('pull 恰好 9 个实体 + next_cursors', pullJson.keys.length == 10,
+        '${pullJson.keys.toList()}');
+    check('实体名与 SyncPullResult.entityNames 一致',
+        pullJson.keys
+            .toSet()
+            .difference(<String>{...SyncPullResult.entityNames, 'next_cursors'})
+            .isEmpty);
+    check('恰好 8 个游标', cursors.length == 8, '${cursors.length}');
 
     final (int badCursor, Map<String, Object?> badCursorJson) =
         await call('GET', '/api/sync/pull?doc_since=oops', bearer: token);
@@ -466,6 +485,107 @@ Future<void> main() async {
         '${badReceipt['reason']}'.contains('缺少必填列 `id`'),
         '${badReceipt['reason']}');
     check('被拒的单据不落库', DocumentDao(db).findById(badDoc) == null);
+
+    // ---------------------------------------------- 主数据增量（R-13 方案 A）
+    final String productsCursor =
+        cursors2[SyncCursorKeys.products]! as String;
+    tick(); // 真实世界里「改价」不会与「创建」挤在同一毫秒
+    final (int updStatus, Map<String, Object?> updJson) = await call(
+      'POST',
+      '/api/sync/push',
+      bearer: token,
+      body: <String, Object?>{
+        'operations': <Object?>[
+          <String, Object?>{
+            'entity': 'products',
+            'entity_id': productId,
+            'operation': 'updateMasterData',
+            'base_version': 0,
+            'payload': <String, Object?>{'cost_price': 120},
+          },
+        ],
+      },
+    );
+    check('改价 → 200', updStatus == 200, '$updStatus');
+    check('改价 applied',
+        ((updJson['results']! as List).single! as Map)['status'] == 'applied',
+        '$updJson');
+
+    final (int deltaStatus, Map<String, Object?> delta) = await call(
+      'GET',
+      '/api/sync/pull'
+          '?products_since=${Uri.encodeQueryComponent(productsCursor)}',
+      bearer: token,
+    );
+    check('带 products_since 增量拉取 → 200', deltaStatus == 200, '$deltaStatus');
+    check('增量拉到改动的那一行', (delta['products']! as List).length == 1,
+        '${delta['products']}');
+    check('拉到的是新价 120',
+        ((delta['products']! as List).single! as Map)['cost_price'] == 120);
+    // 每个实体的游标**独立**：只给 products_since，其它实体就按「从头拉」返回。
+    // （别指望「给一个游标 ⇒ 整页都是增量的」。）
+    check('各游标独立：只给 products_since 时 documents 从头拉回来',
+        (delta['documents']! as List).isNotEmpty,
+        '${(delta['documents']! as List).length}');
+
+    // ⚠️ 已知边界（R-14）：同一毫秒内的二次改动，带游标拉不到。
+    // 这条**断言当前行为**，作用是把这个边界摆在门禁里 ——
+    // 一旦按 R-14 修复（主机分配单调 `updated_at`，或主数据加 `sync_seq`），
+    // 它会立刻失败，逼着把它翻过来，而不是让边界悄悄留在代码里。
+    final String boundaryId = newId();
+    await call(
+      'POST',
+      '/api/sync/push',
+      bearer: token,
+      body: <String, Object?>{
+        'operations': <Object?>[
+          <String, Object?>{
+            'entity': 'products',
+            'entity_id': boundaryId,
+            'operation': 'createMasterData',
+            'payload': <String, Object?>{'code': 'HZ1', 'name': '边界商品'},
+          },
+        ],
+      },
+    );
+    final (_, Map<String, Object?> boundaryFirst) =
+        await call('GET', '/api/sync/pull', bearer: token);
+    final String boundaryCursor =
+        (boundaryFirst['next_cursors']! as Map)[SyncCursorKeys.products]! as String;
+
+    // 不 tick：与上一次写落在同一毫秒
+    await call(
+      'POST',
+      '/api/sync/push',
+      bearer: token,
+      body: <String, Object?>{
+        'operations': <Object?>[
+          <String, Object?>{
+            'entity': 'products',
+            'entity_id': boundaryId,
+            'operation': 'updateMasterData',
+            'base_version': 0,
+            'payload': <String, Object?>{'cost_price': 130},
+          },
+        ],
+      },
+    );
+    final (_, Map<String, Object?> boundaryDelta) = await call(
+      'GET',
+      '/api/sync/pull'
+          '?products_since=${Uri.encodeQueryComponent(boundaryCursor)}',
+      bearer: token,
+    );
+    check('R-14 边界：同一毫秒的同 id 改动被增量漏掉',
+        (boundaryDelta['products']! as List).isEmpty,
+        '${boundaryDelta['products']}');
+    final (_, Map<String, Object?> boundaryFull) =
+        await call('GET', '/api/sync/pull', bearer: token);
+    check('R-14 边界：但全量重拉看得到（数据没丢）',
+        ((boundaryFull['products']! as List)
+                .cast<Map<String, Object?>>()
+                .firstWhere((Map<String, Object?> r) => r['id'] == boundaryId))['cost_price'] ==
+            130);
 
     await server.close(force: true);
     db.close();

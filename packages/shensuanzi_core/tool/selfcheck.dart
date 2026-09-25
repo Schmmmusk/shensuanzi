@@ -112,7 +112,10 @@ void main() {
   section('B. 索引');
   const List<String> expectedIndexes = <String>[
     'idx_products_barcode',
+    'idx_products_updated',
     'idx_parties_phone',
+    'idx_parties_updated',
+    'idx_accounts_updated',
     'idx_documents_type_status',
     'idx_documents_party',
     'idx_documents_occurred',

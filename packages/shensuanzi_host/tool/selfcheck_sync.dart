@@ -606,12 +606,30 @@ void main() {
     freshDb();
     final SyncPullResult empty = server.pull();
     check('空库 stock_ledger 为空', empty.entities['stock_ledger']!.isEmpty);
+    // 实体清单只从 SyncPullResult.entityNames 取（单一定义，加实体时一处改）
+    check('恰好 9 个实体', empty.entities.keys.length == 9,
+        '${empty.entities.keys.toList()}');
+    check('实体名与 entityNames 一致',
+        empty.entities.keys.toSet().difference(SyncPullResult.entityNames.toSet()).isEmpty &&
+            SyncPullResult.entityNames.toSet().difference(empty.entities.keys.toSet()).isEmpty,
+        '${empty.entities.keys.toList()}');
+    for (final String entity in SyncPullResult.entityNames) {
+      check('空库 $entity 为空', empty.entities[entity]!.isEmpty);
+    }
+    check('恰好 8 个游标', empty.nextCursors.length == 8,
+        '${empty.nextCursors.length}');
+    check('游标键与 SyncCursorKeys.all 一致',
+        empty.nextCursors.keys.toSet().difference(SyncCursorKeys.all.toSet()).isEmpty &&
+            SyncCursorKeys.all.toSet().difference(empty.nextCursors.keys.toSet()).isEmpty);
     check('空库 next_cursors.stock_since = 0',
         empty.nextCursors[SyncCursorKeys.stock] == '0',
         '${empty.nextCursors[SyncCursorKeys.stock]}');
     check('空库 next_cursors.doc_since = "0|"',
         empty.nextCursors[SyncCursorKeys.doc] == '0|',
         '${empty.nextCursors[SyncCursorKeys.doc]}');
+    check('空库 next_cursors.products_since = "0|"',
+        empty.nextCursors[SyncCursorKeys.products] == '0|',
+        '${empty.nextCursors[SyncCursorKeys.products]}');
 
     final String p = syncProduct(code: 'PR1');
     final String party = syncParty();
@@ -636,7 +654,7 @@ void main() {
     check('documents 游标是复合形式（含 |）', docCursor.contains('|'), docCursor);
     final SyncCursor parsed = SyncCursor.parse(docCursor);
     final Map<String, Object?> lastDoc = first.entities['documents']!.last;
-    check('复合游标的 created_at 与末行一致', parsed.createdAt == lastDoc['created_at']);
+    check('复合游标的时间戳与末行 created_at 一致', parsed.stamp == lastDoc['created_at']);
     check('复合游标的 id 与末行一致', parsed.id == lastDoc['id']);
 
     final SyncPullResult docIncrement = server.pull(docSince: docCursor);
@@ -712,7 +730,7 @@ void main() {
     check('next_cursors 里没有 line_since',
         !result.nextCursors.containsKey('line_since'),
         '${result.nextCursors.keys.toList()}');
-    check('next_cursors 有 5 个键', result.nextCursors.length == 5,
+    check('next_cursors 有 8 个键', result.nextCursors.length == 8,
         '${result.nextCursors.length}');
 
     final SyncPullResult next = server.pull(
@@ -762,6 +780,116 @@ void main() {
     check('limit=1 只取 1 张主单', result.countOf('documents') == 1);
     check('但该主单的 3 条明细都在', result.countOf('document_lines') == 3,
         '${result.countOf('document_lines')}');
+    db.close();
+  }
+
+  // ============================================================ 主数据（R-13 方案 A）
+  section('pull · 主数据');
+  {
+    freshDb();
+    final String p = syncProduct(code: 'PM1', costPrice: 100);
+
+    final SyncPullResult firstB = server.pull();
+    final Map<String, Object?> row = firstB.entities['products']!.single;
+    check('主数据随 pull 返回', firstB.countOf('products') == 1);
+    check('返回全部列（含 sync_version）', row['sync_version'] == 0,
+        '${row['sync_version']}');
+    check('返回全部列（含 updated_at）', row.containsKey('updated_at'));
+
+    final String productsCursor = firstB.nextCursors[SyncCursorKeys.products]!;
+    check('主数据游标是复合形式（含 |）', productsCursor.contains('|'), productsCursor);
+    final SyncCursor parsed = SyncCursor.parse(productsCursor);
+    check('复合游标的时间戳 = 末行 updated_at', parsed.stamp == row['updated_at'],
+        '${parsed.stamp} vs ${row['updated_at']}');
+    check('复合游标的 id = 末行 id', parsed.id == row['id']);
+    check('主数据游标的时间戳列是 updated_at（不是 created_at）',
+        row['updated_at'] != null && parsed.stamp == row['updated_at']);
+
+    // ---- A 改价 → B 带游标拉
+    final SyncResponse update = server.handle(
+      opMaster('products', p, SyncOpType.updateMasterData, baseVersion: 0,
+          payload: <String, Object?>{'cost_price': 120}),
+      now: now(),
+    );
+    check('A 改价 applied', update.status == SyncStatus.applied, '${update.reason}');
+
+    final SyncPullResult secondB = server.pull(productsSince: productsCursor);
+    check('B 增量拉到 1 行', secondB.countOf('products') == 1,
+        '${secondB.countOf('products')}');
+    check('B 拿到新价 120',
+        secondB.entities['products']!.single['cost_price'] == 120,
+        '${secondB.entities['products']!.single['cost_price']}');
+    check('sync_version +1',
+        secondB.entities['products']!.single['sync_version'] == 1);
+
+    // ---- 无改动 → 增量页为空
+    final SyncPullResult third = server.pull(
+      productsSince: secondB.nextCursors[SyncCursorKeys.products]!,
+    );
+    check('未改动 → 增量页为空', third.countOf('products') == 0);
+    check('未改动 → 游标保持',
+        third.nextCursors[SyncCursorKeys.products] ==
+            secondB.nextCursors[SyncCursorKeys.products]);
+
+    // ---- 软删可见
+    final SyncResponse deleted = server.handle(
+      opMaster('products', p, SyncOpType.deleteMasterData),
+      now: now(),
+    );
+    check('软删 applied', deleted.status == SyncStatus.applied, '${deleted.reason}');
+    final SyncPullResult afterDelete = server.pull(
+      productsSince: third.nextCursors[SyncCursorKeys.products]!,
+    );
+    check('软删行照常返回（否则客户端永远不知道）',
+        afterDelete.countOf('products') == 1);
+    check('is_active = 0',
+        afterDelete.entities['products']!.single['is_active'] == 0);
+
+    // ---- 新客户端全量首拉也能看到软删行
+    final SyncPullResult freshClient = server.pull();
+    check('全量首拉可见软删行', freshClient.countOf('products') == 1);
+    check('全量首拉的 is_active = 0',
+        freshClient.entities['products']!.single['is_active'] == 0);
+    db.close();
+  }
+
+  section('pull · 主数据 limit 与游标推进');
+  {
+    freshDb();
+    // 同一毫秒建 3 个商品 —— 制造「同一 updated_at 多行」
+    final int stamp = now();
+    for (int i = 0; i < 3; i++) {
+      final SyncResponse r = server.handle(
+        opMaster('products', newId(), SyncOpType.createMasterData,
+            payload: <String, Object?>{'code': 'PM9$i', 'name': '商品$i'}),
+        now: stamp,
+      );
+      if (r.status != SyncStatus.applied) {
+        stderr.writeln('夹具失败：第 $i 个商品 → ${r.reason}');
+        exit(2);
+      }
+    }
+
+    final Set<String> seen = <String>{};
+    String cursor = '';
+    bool advanced = true;
+    for (int page = 0; page < 10; page++) {
+      final SyncPullResult result = server.pull(
+        productsSince: cursor,
+        limit: 1,
+      );
+      final List<Map<String, Object?>> rows = result.entities['products']!;
+      if (rows.isEmpty) break;
+      seen.add(rows.single['id']! as String);
+      final String next = result.nextCursors[SyncCursorKeys.products]!;
+      if (next == cursor) advanced = false;
+      cursor = next;
+    }
+    check('limit=1 时主数据游标也推进', advanced);
+    check('同一 updated_at 的 3 行全部取到且不重复', seen.length == 3, '${seen.length}');
+
+    check('products_since 非法 → 抛 FormatException',
+        throws(() => server.pull(productsSince: 'oops')));
     db.close();
   }
 

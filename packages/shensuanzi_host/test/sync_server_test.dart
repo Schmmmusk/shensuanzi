@@ -682,22 +682,36 @@ void main() {
   // ============================================================ 拉取
 
   group('pull', () {
-    test('空库 → 六个实体都空，游标原样返回', () {
+    test('空库 → 9 个实体都空，8 个游标原样返回', () {
       final SyncPullResult result = server.pull();
 
-      const List<String> pullable = <String>[
-        Schema.documents,
-        Schema.documentLines,
-        Schema.stockLedger,
-        Schema.moneyLedger,
-        Schema.partyLedger,
-        Schema.settlements,
-      ];
-      for (final String entity in pullable) {
+      // 实体清单只从 SyncPullResult.entityNames 取 —— 加实体时改那儿一处，
+      // 「拉了几个」与「拉的是哪几个」不会各说各话
+      expect(result.entities.keys.toSet(), SyncPullResult.entityNames.toSet());
+      expect(SyncPullResult.entityNames, hasLength(9));
+      for (final String entity in SyncPullResult.entityNames) {
         expect(result.entities[entity], isEmpty, reason: entity);
       }
-      expect(result.nextCursors[SyncCursorKeys.stock], '0');
-      expect(result.nextCursors[SyncCursorKeys.doc], '0|');
+
+      expect(result.nextCursors.keys.toSet(), SyncCursorKeys.all.toSet());
+      // 流水表：整数字符串游标
+      for (final String key in <String>[
+        SyncCursorKeys.stock,
+        SyncCursorKeys.money,
+        SyncCursorKeys.party,
+        SyncCursorKeys.settle,
+      ]) {
+        expect(result.nextCursors[key], '0', reason: key);
+      }
+      // documents 与主数据：复合游标
+      for (final String key in <String>[
+        SyncCursorKeys.doc,
+        SyncCursorKeys.products,
+        SyncCursorKeys.parties,
+        SyncCursorKeys.accounts,
+      ]) {
+        expect(result.nextCursors[key], '0|', reason: key);
+      }
     });
 
     test('拉到的行就是 wire 形态（列名 = 数据库列名）', () {
@@ -742,7 +756,7 @@ void main() {
       expect(cursor, contains('|'));
       final SyncCursor parsed = SyncCursor.parse(cursor);
       final Map<String, Object?> last = result.entities['documents']!.last;
-      expect(parsed.createdAt, last['created_at']);
+      expect(parsed.stamp, last['created_at']);
       expect(parsed.id, last['id']);
     });
 
@@ -820,6 +834,9 @@ void main() {
           SyncCursorKeys.party,
           SyncCursorKeys.settle,
           SyncCursorKeys.doc,
+          SyncCursorKeys.products,
+          SyncCursorKeys.parties,
+          SyncCursorKeys.accounts,
         },
         reason: '明细没有独立游标 —— §8.2 的 doc_since 已经覆盖它',
       );
@@ -870,6 +887,140 @@ void main() {
         result.countOf('document_lines'),
         3,
         reason: '截断明细会造出「有主单但明细不全」的镜像',
+      );
+    });
+
+    // ---------------------------------------------- 主数据（R-13 方案 A）
+
+    test('主数据随 pull 返回，游标是 "<updated_at>|<id>"，且返回全部列', () {
+      final String p = syncProduct(code: 'P950', costPrice: 100);
+
+      final SyncPullResult result = server.pull();
+      final Map<String, Object?> row = result.entities['products']!.single;
+
+      expect(row['id'], p);
+      expect(
+        row['sync_version'],
+        0,
+        reason: '必须给 sync_version —— 客户端下次 update 要拿它当 base_version',
+      );
+      expect(row.containsKey('updated_at'), isTrue, reason: '游标列必须在响应里');
+
+      final SyncCursor parsed = SyncCursor.parse(
+        result.nextCursors[SyncCursorKeys.products]!,
+      );
+      expect(parsed.stamp, row['updated_at']);
+      expect(parsed.id, row['id']);
+    });
+
+    test('A 改了价格 → B 带游标 pull 就能拿到新价（R-13 的核心场景）', () {
+      final String p = syncProduct(code: 'P951', costPrice: 100);
+
+      // B 首次全量拉取，记下游标
+      final SyncPullResult bFirst = server.pull();
+      expect(bFirst.entities['products']!.single['cost_price'], 100);
+
+      // A 改价
+      final SyncResponse update = server.handle(
+        opMaster(
+          'products',
+          p,
+          SyncOpType.updateMasterData,
+          payload: <String, Object?>{'cost_price': 120},
+          baseVersion: 0,
+        ),
+        now: now(),
+      );
+      expect(update.status, SyncStatus.applied, reason: update.reason);
+
+      // B 增量拉取
+      final SyncPullResult bSecond = server.pull(
+        productsSince: bFirst.nextCursors[SyncCursorKeys.products]!,
+      );
+      expect(bSecond.entities['products']!, hasLength(1), reason: '改动必须可见');
+      final Map<String, Object?> changed = bSecond.entities['products']!.single;
+      expect(changed['cost_price'], 120);
+      expect(changed['sync_version'], 1, reason: '乐观锁计数 +1');
+      expect(changed['updated_at'], greaterThan(bFirst.entities['products']!.single['updated_at'] as int));
+    });
+
+    test('未改动的主数据不会重复出现在增量页里', () {
+      final String kept = syncProduct(code: 'P952');
+      final SyncPullResult first = server.pull();
+      final String cursor = first.nextCursors[SyncCursorKeys.products]!;
+
+      final SyncPullResult second = server.pull(productsSince: cursor);
+      expect(second.entities['products'], isEmpty, reason: '没有改动就没有行');
+      expect(second.nextCursors[SyncCursorKeys.products], cursor);
+      expect(kept, isNotEmpty);
+    });
+
+    test('软删的行照常返回（客户端据此在本地标记删除）', () {
+      final String p = syncProduct(code: 'P953');
+      final SyncPullResult before = server.pull();
+
+      final SyncResponse deleted = server.handle(
+        opMaster('products', p, SyncOpType.deleteMasterData),
+        now: now(),
+      );
+      expect(deleted.status, SyncStatus.applied, reason: deleted.reason);
+
+      final SyncPullResult after = server.pull(
+        productsSince: before.nextCursors[SyncCursorKeys.products]!,
+      );
+      expect(after.entities['products']!, hasLength(1), reason: '软删必须可见，否则客户端永远不知道');
+      expect(after.entities['products']!.single['is_active'], 0);
+    });
+
+    test('从未见过该商品的新客户端：全量首拉就能拿到 is_active = 0 的行', () {
+      final String p = syncProduct(code: 'P954');
+      server.handle(
+        opMaster('products', p, SyncOpType.deleteMasterData),
+        now: now(),
+      );
+
+      final SyncPullResult fresh = server.pull(); // 无游标 = 全量
+      expect(fresh.entities['products']!, hasLength(1));
+      expect(fresh.entities['products']!.single['is_active'], 0);
+    });
+
+    test('同一毫秒内多次更新 → (updated_at, id) 游标不丢行、不重复、必推进', () {
+      final int stamp = now();
+      const int count = 3;
+
+      for (int i = 0; i < count; i++) {
+        final String id = newId();
+        final SyncResponse response = server.handle(
+          opMaster('products', id, SyncOpType.createMasterData, payload: <String, Object?>{
+            'code': 'P96$i',
+            'name': '商品$i',
+          }),
+          now: stamp, // ← 刻意同一毫秒
+        );
+        expect(response.status, SyncStatus.applied, reason: response.reason);
+      }
+
+      final Set<String> seen = <String>{};
+      String cursor = '';
+      for (int page = 0; page < 10; page++) {
+        final SyncPullResult result = server.pull(
+          productsSince: cursor,
+          limit: 1,
+        );
+        final List<Map<String, Object?>> rows = result.entities['products']!;
+        if (rows.isEmpty) break;
+        seen.add(rows.single['id']! as String);
+        final String next = result.nextCursors[SyncCursorKeys.products]!;
+        expect(next, isNot(cursor), reason: '游标必须推进，否则会死循环');
+        cursor = next;
+      }
+      expect(seen, hasLength(count), reason: '同一 updated_at 的行都被取到且不重复');
+    });
+
+    test('主数据游标格式错误 → 抛 FormatException', () {
+      expect(
+        () => server.pull(productsSince: 'oops'),
+        throwsFormatException,
       );
     });
   });
