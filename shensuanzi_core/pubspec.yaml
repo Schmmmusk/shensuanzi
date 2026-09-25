@@ -1,0 +1,21 @@
+name: shensuanzi_core
+description: 神算子核心数据层：SQLite 建表、实体模型、DAO、业务规则
+version: 0.4.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  # SQLite 的 Dart 绑定。
+  # ⚠️ 本包是**纯 Dart 包**，只依赖 sqlite3 绑定；原生库由使用方提供：
+  #   - Flutter 应用（仓库根 pubspec.yaml）必须依赖 sqlite3_flutter_libs
+  #   - 纯 Dart 测试环境需自行准备 sqlite3.dll（Windows），见 docs/testing.md
+  sqlite3: ^2.4.0
+  uuid: ^4.5.1
+  path: ^1.9.0
+  collection: ^1.18.0
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^6.0.0
