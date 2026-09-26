@@ -24,6 +24,8 @@
 | `docs/rules.md` | 实施者 | 业务规则 RULE-001 ~ RULE-009 |
 | `docs/threat_model.md` | 所有人 | 信任边界与已知风险 |
 | `docs/testing.md` | 实施者 | 测试要求（DAO / 不变量 / 规则 / 同步 / 端到端） |
+| `docs/data_directory.md` | 实施者 / 所有人 | 数据放哪、怎么校验、怎么找回 |
+| `docs/ui_principles.md` | UI 实现者 | 面向中老年用户的界面原则 |
 
 ## 目录结构
 
@@ -36,27 +38,35 @@ repo/
 │   ├── sync_protocol.md
 │   ├── rules.md
 │   ├── threat_model.md
+│   ├── data_directory.md
+│   ├── ui_principles.md
 │   └── testing.md
 ├── packages/
-│   ├── shensuanzi_core/     # 纯 Dart：模型 / DAO / 规则 / 同步协议（DTO + 白名单）
-│   └── shensuanzi_host/     # 纯 Dart：shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据
+│   ├── shensuanzi_core/     # 纯 Dart：模型 / DAO / 规则 / 同步协议（DTO + 白名单 + 客户端）
+│   ├── shensuanzi_host/     # 纯 Dart：shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据
+│   └── shensuanzi_app/      # 纯 Dart：数据目录策略 / 配置 / 标记文件 / 启动恢复
 └── lib/ test/ windows/ android/    # Flutter 壳（Windows 主机 + Android 客户端）
 ```
 
-**包边界**（2026-09-25 裁定）：
+**包边界**（2026-09-25 / 09-26 裁定）：
 
 ```text
-shensuanzi_core        纯 Dart   模型 / DAO / 规则引擎 / 同步协议（DTO / 白名单 / 游标）
+shensuanzi_core        纯 Dart   模型 / DAO / 规则引擎 / 同步协议（DTO / 白名单 / 游标）/ SyncClient
       ↑
 shensuanzi_host        纯 Dart   shelf / SyncServer / 令牌 / 端口探测 / 二维码数据
       ↑
-Flutter 应用(Windows)  Flutter   UI + 二维码渲染 + 调用 host
+shensuanzi_app         纯 Dart   数据目录策略 / 配置文件 / 标记文件 / 启动恢复 / 界面缩放档位
+      ↑
+Flutter 应用(Windows)  Flutter   UI + 二维码渲染 + 调用 host + app
 Flutter 应用(Android)  Flutter   UI + 调用 core.client（**不依赖 host**）
 ```
 
-两个包**都无 Flutter 依赖**，所以 `dart test` 全程可跑。
+**三个包都无 Flutter 依赖**，所以 `dart test` 全程可跑。
 二维码**生成**在 host（`qr`，纯 Dart），**渲染**在 Flutter 层（`qr_flutter`）——
 把「生成」与「渲染」拆开，是为了让逻辑都能被测试。
+
+`shensuanzi_app` 单独成包的理由：数据目录策略既不是业务规则也不是主机服务，
+它是**运行环境**；塞进 core / host 会污染那两个包的语义。
 
 ## 威胁模型
 
@@ -67,6 +77,25 @@ Flutter 应用(Android)  Flutter   UI + 调用 core.client（**不依赖 host**�
 ```
 
 完整内容见 [`docs/threat_model.md`](docs/threat_model.md)。
+
+## 数据在哪
+
+**你的经营数据放在你自己的电脑里，不在我们的服务器上。**
+
+首次启动会让你选一个文件夹，默认建议：
+
+```text
+D:\神算子数据\                     ← 有非系统盘时优先（重装系统不会丢）
+否则 C:\Users\<你>\神算子数据\
+```
+
+- 数据目录里有一个 `.shensuanzi-data` 标记文件。
+  就算设置被清理软件删掉，只要重选原来的文件夹，数据立刻回来
+- **不要放在 U 盘或网盘同步文件夹里** —— 拔盘后打不开，
+  而 OneDrive 这类同步盘有把数据库写坏的风险（软件会警告你）
+- 备份放在**数据目录旁边**（如 `D:\神算子备份\`），保留最近 30 天
+
+完整规则见 [`docs/data_directory.md`](docs/data_directory.md)。
 
 ## 当前状态
 
@@ -92,6 +121,7 @@ v0.4 — 规范冻结，进入实施。
 | **`SyncClient`**（游标 / 离线队列 / pull 应用 / 退避与死信） | core | ✅ 含 R-14 的 `sync_cursor` 表 |
 | 未同步影响（`sync_queue` 派生的 ± 数量 delta） | core | ✅ 只算数量，不算成本/往来/盘点 |
 | 端到端：一台主机 + 两台客户端（真实 HTTP） | host | ✅ `client_server_test` + 镜像自检 |
-| Windows UI · Android UI · 备份打包 | Flutter | 未开始 |
+| **数据目录策略**（默认 / 校验三档 / 标记文件 / 启动恢复 / 迁移） | app | ✅ 含配置文件与界面缩放档位 |
+| Windows UI · Android UI · 备份打包 | Flutter | 未开始（**下一步：Windows 最小闭环**） |
 
 运行与验证方式（含本机限制）见 [`docs/testing.md` §零](docs/testing.md)。

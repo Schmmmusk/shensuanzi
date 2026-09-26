@@ -1,0 +1,18 @@
+name: shensuanzi_app
+description: 神算子应用运行时：数据目录策略 / 配置 / 标记文件 / 备份位置（纯 Dart，可测）
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  # 只为 `Db` / `Schema`（打开数据库、读 schema version）—— 本包不碰规则与查询
+  shensuanzi_core:
+    path: ../shensuanzi_core
+  # 路径拼接与规范化（Windows 分隔符 / 盘符语义）
+  path: ^1.9.0
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^6.0.0

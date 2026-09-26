@@ -28,6 +28,11 @@ dart test
 cd packages/shensuanzi_host
 dart pub get
 dart test
+
+# 应用运行时（数据目录策略 / 配置 / 标记 / 恢复）
+cd packages/shensuanzi_app
+dart pub get
+dart test
 ```
 
 `dart test` 需要能创建子进程的环境（测试跑在独立 isolate 里）。此外：
@@ -60,7 +65,16 @@ dart run tool/selfcheck_sync.dart      # SyncServer（五类操作 + 白名单 +
 dart run tool/selfcheck_host.dart      # 令牌 / 主机身份 / 配对载荷 / 二维码数据 / shelf HTTP
 dart run tool/selfcheck_client_server.dart # 端到端：一台主机 + 两台客户端，真实 HTTP
 dart run tool/typecheck.dart
+
+# 应用运行时
+cd packages/shensuanzi_app
+dart run tool/selfcheck_app.dart       # 数据目录策略 / 校验三档 / 配置 / 标记 / 启动恢复
+dart run tool/typecheck.dart
 ```
+
+> ⚠️ **应用层的测试必须用临时目录**，绝不能碰真实的 `%APPDATA%` ——
+> 那会把开发者自己的配置写坏。夹具 `sandbox()` 提供用完即弃的临时目录，
+> 且 `AppBootstrap` 的 `configStore` **必须注入**（指向沙箱），不要用默认值。
 
 镜像关系（**改一边必须改另一边**）：
 
@@ -75,6 +89,8 @@ dart run tool/typecheck.dart
 | **core** | `selfcheck_sync_client.dart` | `sync_client_test.dart` |
 | **host** | `selfcheck_sync.dart` | `sync_server_test.dart` |
 | **host** | `selfcheck_host.dart` | `auth_test` + `pairing_test` + `http_server_test` |
+| **host** | `selfcheck_client_server.dart` | `client_server_test.dart` |
+| **app** | `selfcheck_app.dart` | `data_directory_test` + `app_config_test` + `bootstrap_test` |
 | **host** | `selfcheck_client_server.dart` | `client_server_test.dart` |
 
 > ⚠️ **`typecheck.dart` 必须 import 全部入口，包括 `tool/` 下每个自检脚本本身。**
@@ -105,6 +121,22 @@ dart run tool/typecheck.dart
 > ⚠️ **断言 `status` 时必须把 `reason` 带进 `reason:`**。
 > 「`rejected`」本身不告诉你为什么，得回头加打印再跑一遍才算定位 ——
 > 上面那次失败的输出里只有 `'applied'` vs `'rejected'`，白跑了一轮。
+>
+> ⚠️ **涉及时间算术的断言必须用「固定时钟」的实例**（`clock: () => fixed`）。
+> 本机时钟夹具 `now()` 是**每次调用 +1** 的计数器，于是「差值」里会混进
+> **调用次数**而不是被测的时间长度。第四、五次踩到（2026-09-26）：
+> `expect(nextRetryAt, t + 1000)` 失败，因为 `push` 自己也会读一次时钟
+> （实际是 `t + 1 + 1000`）；退避序列断言同理。
+>
+> ⚠️ **共享的夹具助手会带入它自己的隐含假设**。第六次踩到（2026-09-26）：
+> delta 用例的 `queueDoc(...)` 助手把明细的 `product_id` 写成 `p0` / `p1`
+> （为「多行累加」用例设计的），却被拿去做 `stockViewOf(productId)` 的断言 ——
+> 结果 `unsynced` 是 `0` 而不是 `-3`。**用助手之前先看它的隐含假设，
+> 语义不同就自己拼夹具。**
+>
+> 📌 观察到的规律：**同一个场景里，后写的那个门禁往往是对的**。
+> 本仓已出现 6 次漂移，其中 3 次是「正式测试错、自检对」——
+> 若两边不一致，别默认正式测试是对的，**先看哪个更符合规范条文**。
 
 ## A. DAO 层
 
@@ -357,3 +389,53 @@ dart run tool/typecheck.dart
 - 未同步影响：push 后显示库存立刻包含刚卖的货；pull 确认后归零
 - 乐观锁冲突：两台同时改同一商品 → 后到者 `conflict` + 本地被覆盖（主机赢）
 - v1 边界：`documentAction` → `rejected` + 进重试（非死信）；错令牌 → 401
+
+## K. 应用运行时（`packages/shensuanzi_app/`）
+
+**目标**：数据目录策略全部可测 —— **用代码构造机器**，不依赖真机。
+
+真机取值只在 `AppEnvironment.detect()` 做一次，所有判断都是纯函数；
+测试可以造出「有 U 盘 / 有网盘 / 无 D 盘 / 盘类型未知」的机器，
+**不需要真的插一个 U 盘**。
+
+**必测清单**：
+
+- **默认位置**：优先非系统盘；无可用的非系统盘 → 用户目录；
+  U 盘 / 网络盘 / 空间不足的盘**不作默认**；固定盘优先于 U 盘；
+  连 HOME 都拿不到 → 兜底系统盘
+- **拒绝**：空路径、相对路径、系统盘根、`C:\Windows`（含子路径）、
+  `C:\Program Files`（含 x86）、**大小写变体**（`c:\windows\`）
+- **警告**：`%LOCALAPPDATA%` / `%APPDATA%` / `%TEMP%`、网盘同步目录
+  （OneDrive / 坚果云 / Dropbox / 百度网盘）、可移动盘、网络盘、
+  剩余空间不足、非系统盘根
+- **放行**：用户自起名的目录；**名字里带 `Windows` 但不是系统目录**
+  （`D:\Windows备份`）—— 防止「前缀匹配」写成误判
+- **警告与拒绝的边界**：`warn` 必须 `isUsable`（**警告不拦人**）
+- **配置**：缺失 / 语法坏 / 顶层非对象 / 值类型不对 → 一律退回默认且**不抛**；
+  往返一致；未知缩放值退回 125%
+- **标记文件**：写读往返；字段缺失或类型不对 → `null`；
+  **标记损坏时 `contentsOf` 仍算 `ours`，但 `read` 返回 `null`**
+- **启动恢复**：没配过 → 走向导；配过且有标记 → 复用；配置被清 → 走向导
+  **但标记还在**；重选原目录 → **数据立刻回来**；配置指向 foreign /
+  已删 / 非法目录 → 走向导
+- **向导**：空目录 → 创建 + 写标记 + 记配置；再选同目录 → 复用且
+  **不重写标记**；非空无标记 → 拒绝且**不写配置、不写标记**；
+  用户确认后放行且**不动里面已有的文件**；非法位置一律拒绝
+- **备份**：是数据目录的**兄弟目录**；数据目录自己叫「神算子备份」时
+  **让位**（不允许与数据目录重合）
+- **迁移**：新在旧里面 / 旧在新里面 → 拒绝；并列 → 放行；
+  目标非法 → 直接返回该结论
+- **打开数据库**：`user_version` = `Schema.version`；主机端**外键开着**
+  （与客户端镜像相反）
+
+**两个真实踩到的 bug**（都已补回归断言）：
+
+1. **盘根作容器时 `isNested` 静默失效** —— `_key` 只剥掉长度 > 3 的末尾分隔符，
+   `C:\` 会原样保留反斜杠，于是拼出的前缀是 `C:\\`，任何子路径都匹配不上。
+   后果：`inspectMigration('D:\', 'D:\数据')` **放行** —— 会把数据搬进自己的子目录。
+2. **系统盘根被当成普通盘根放行** —— `_key` 转小写，而比较串用的是**大写**的
+   `systemLetter`，`'c:\' == 'C:\'` **永远为 false**，于是 `C:\` 返回 `warn`
+   而不是 `reject`。**大小写归一化必须两边同源。**
+
+**沙箱纪律**：测试与自检**必须**用临时目录，且 `AppBootstrap` 的 `configStore`
+必须注入到沙箱 —— 绝不能让测试写真实的 `%APPDATA%`。

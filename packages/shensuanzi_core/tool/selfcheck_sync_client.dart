@@ -601,6 +601,9 @@ Future<void> main() async {
     check('没有回执 → 该条排重试', missing.retried >= 1);
     check('无回执条目仍 pending',
         backoff.queue.findById(noReceipt.id)!.status == SyncQueueStatus.pending);
+    check('无回执的原因写明「主机未返回回执」',
+        backoff.queue.findById(noReceipt.id)!.lastError == '主机未返回该条目的回执',
+        '${backoff.queue.findById(noReceipt.id)!.lastError}');
 
     backoff.queue.markFailed(noReceipt.id,
         error: 'x', retryCount: 0, nextRetryAt: 0, dead: false);

@@ -676,20 +676,29 @@ void main() {
 
     test('rejected → 重试计数 +1、退避 1s、记原因（含 v1 的 action_not_implemented）',
         () async {
+      // 固定时钟：退避是「从本次尝试时刻起算」，而 `push` 自己会读一次时钟 ——
+      // 用会推进的时钟做算术，差值里会混进「调用次数」而不是退避长度。
+      const int fixed = 1700000000000;
+      final SyncClient c = SyncClient(
+        db: db,
+        transport: transport,
+        baseUri: Uri.parse('http://127.0.0.1:17890'),
+        token: 't',
+        clock: () => fixed,
+      );
       final SyncQueueEntry entry = enqueueDoc('d1');
-      final int t = now();
       transport.replyJson(
         pushBody(<Map<String, Object?>>[
           receipt('d1', 'rejected', reason: 'action_not_implemented'),
         ]),
       );
 
-      await client.push();
+      await c.push();
 
-      final SyncQueueEntry after = client.queue.findById(entry.id)!;
+      final SyncQueueEntry after = c.queue.findById(entry.id)!;
       expect(after.retryCount, 1);
       expect(after.lastError, 'action_not_implemented');
-      expect(after.nextRetryAt, t + 1000, reason: '首次退避 1s');
+      expect(after.nextRetryAt, fixed + 1000, reason: '首次退避 1s');
       expect(after.isDue(after.nextRetryAt - 1), isFalse);
     });
 
@@ -802,7 +811,10 @@ void main() {
       expect(report.retried, 1);
       expect(client.queue.findById(a.id)!.status, SyncQueueStatus.sent);
       expect(client.queue.findById(b.id)!.status, SyncQueueStatus.pending);
-      expect(client.queue.findById(b.id)!.lastError, contains('无回执'));
+      expect(
+        client.queue.findById(b.id)!.lastError,
+        '主机未返回该条目的回执',
+      );
     });
 
     test('传输层异常 → 整批退避、状态仍 pending、**不抛异常**', () async {
@@ -924,10 +936,32 @@ void main() {
     });
 
     test('stockViewOf：权威 + 未同步，并给出贡献者', () {
-      // 权威镜像：stock_ledger 有 +10
+      // 权威镜像：stock_ledger 有 +10（`seedMinimal` 建的就是 `productId`）
       seedMinimal(db);
       insertStock(db.raw, 's1', quantity: 10, totalCost: 1000);
-      final SyncQueueEntry sale = queueDoc('a', 'sale', <int>[3]);
+      // ⚠️ 这里必须用**真实的 `productId`**：`queueDoc` 助手的明细用的是
+      // `p0` / `p1`（为多行累加用例设计的），拿它断言 `productId` 会得到 0。
+      final SyncQueueEntry sale = client.queue.enqueue(
+        SyncQueueEntry.create(
+          SyncOperation(
+            entity: Schema.documents,
+            entityId: 'a',
+            operation: SyncOpType.createDocument,
+            payload: <String, Object?>{
+              'document': <String, Object?>{'id': 'a', 'doc_type': 'sale'},
+              'lines': <Object?>[
+                <String, Object?>{
+                  'product_id': productId,
+                  'quantity': 3,
+                  'unit_price': 100,
+                  'amount': 300,
+                },
+              ],
+            },
+          ),
+          now: now(),
+        ),
+      );
 
       final StockView view = client.stockViewOf(productId);
 

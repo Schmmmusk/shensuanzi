@@ -71,7 +71,10 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | **客户端镜像** | 必须 `foreignKeys: false`（否则 pull 变毒丸）；落库按**依赖顺序**（主数据在前），不照 §8.2 的字段顺序（2026-09-26） |
 | **客户端传输** | `Transport` 抽象类（请求/响应对象 + `method`/`headers`）；**绑定由应用层提供**，core 零新依赖。⚠️ 实现方必须**显式 utf8 编码**请求体（中文 payload 否则直接抛） |
 | SyncServer 边界 | **不含 HTTP**。接 `SyncOperation`、返 `SyncResponse`；shelf 适配层属 Windows 应用侧。保持纯 Dart、零新依赖 |
-| **包边界** | `shensuanzi_core` = 模型 / DAO / 规则 / **同步协议（DTO + 白名单 + 游标）+ `SyncClient`**；`shensuanzi_host` = **shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据**；二维码**渲染**留 Flutter 层。两包都无 Flutter 依赖 ⇒ `dart test` 全程可跑（2026-09-25） |
+| **包边界** | `shensuanzi_core` = 模型 / DAO / 规则 / **同步协议（DTO + 白名单 + 游标）+ `SyncClient`**；`shensuanzi_host` = **shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据**；`shensuanzi_app` = **数据目录策略 / 配置 / 标记文件 / 启动恢复 / 缩放档位**；二维码**渲染**留 Flutter 层。三包都无 Flutter 依赖 ⇒ `dart test` 全程可跑（2026-09-25 / 09-26） |
+| **数据目录** | **默认非系统盘 + 用户可改 + 立刻校验**（三档：拒绝 / 警告 / 放行）。**警告不拦人** —— 中老年用户被拦住会认为「软件坏了」。配置（`%APPDATA%\神算子\config.json`）与数据分离；数据目录里放 `.shensuanzi-data` 标记，**配置被清后重选原目录即可复用**（2026-09-26） |
+| **备份位置** | 数据目录的**兄弟目录**（`D:\神算子数据\` + `D:\神算子备份\`），**不放 `文档`**（OneDrive 会同步它，SQLite 有损坏风险） |
+| **UI 基线** | 面向中老年用户：**所有功能有常驻可见入口 + 文字标签**（图标可以加，文字必须在）；尺寸用相对单位；错误信息**说「怎么办」不说「哪里错了」**，且由领域层给出、UI 不造句。见 `docs/ui_principles.md` |
 
 ## 五、待裁定清单
 
@@ -103,7 +106,9 @@ R-7（负数舍入 = 半数远离零，随实现确定）、
 - `docs/data_model.md` —— 实体、字段、索引、不变量
 - `docs/sync_protocol.md` —— 幂等、冲突、重试、同步队列
 - `docs/rules.md` —— RULE-001 ~ RULE-009 + 核销约束
-- `docs/threat_model.md` —— 信任边界、已知风险、缓解措施
+- `docs/threat_model.md` —— 信任边界、已知风险、缓解措施（含 §4.4 数据目录策略）
+- `docs/data_directory.md` —— 数据放哪、校验规则、标记文件、恢复与迁移
+- `docs/ui_principles.md` —— 面向中老年用户的界面原则（字号 / 对比度 / 缩放 / 向导 / 错误信息）
 - `docs/testing.md` —— 测试要求（DAO / 不变量 / 规则 / 同步 / 端到端）
 
 **过程文档**：
@@ -127,3 +132,8 @@ R-7（负数舍入 = 半数远离零，随实现确定）、
 7. Android 客户端 + SyncClient
 8. 备份 + 打包
 9. 端到端 + 开源准备
+
+> **进度（2026-09-26）**：1–5、7 的**逻辑层**已完成（同步协议 / schema + DAO /
+> RuleEngine / 不变量与核销测试 / shelf + SyncServer / `SyncClient`），
+> 加上 6 的前置「数据目录策略」；当前进行到 **6. Windows UI**。
+> 剩余：备份打包（8）、开源准备（9）。
