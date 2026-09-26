@@ -337,6 +337,9 @@ class SyncServer {
   /// **不额外截断** —— 截断会造出「有主单但明细不全」的镜像，
   /// 而那恰恰是「明细随主单走」要避免的状态。
   ///
+  /// 对称地，明细也**不会越过本页**：`limit=1` 时只返回那 1 张主单的明细。
+  /// 「不截断」与「不越界」是两件事 —— 前者指本页明细全给，后者指页边界一致。
+  ///
   /// [limit] 对**每个分页实体独立生效**，各自推进：某一个先拉完不影响其它。
   SyncPullResult pull({
     String stockSince = '0',
@@ -390,14 +393,19 @@ class SyncServer {
     bySeqNo(Schema.partyLedger, SyncCursorKeys.party, partySince);
     bySeqNo(Schema.settlements, SyncCursorKeys.settle, settleSince);
 
-    // documents 与「它这一页的明细」用**同一个页边界**，保证不漏不串。
+    // documents 与「它这一页的明细」用**同一个页边界**：明细直接从
+    // 本页 documents 的结果派生（见 [_linesOf]），不重跑一遍谓词，
+    // 从结构上排除「两次查询页边界不一致」。
     byStampCursor(
       Schema.documents,
       'created_at',
       SyncCursorKeys.doc,
       docSince,
     );
-    entities[Schema.documentLines] = _linesOfPage(SyncCursor.parse(docSince));
+    entities[Schema.documentLines] = _linesOf(<String>[
+      for (final Map<String, Object?> doc in entities[Schema.documents]!)
+        doc['id']! as String,
+    ]);
 
     // 主数据（R-13 方案 A）：软删行**照常返回**（客户端据此在本地标记删除），
     // 列**全给** —— 客户端要 `sync_version` 做下次更新的 `base_version`、
@@ -425,13 +433,37 @@ class SyncServer {
   }
 
   /// 取「本页 `documents` 的全部明细」。谓词与主单页边界**完全一致**。
-  List<Map<String, Object?>> _linesOfPage(SyncCursor from) => _select(
-    'SELECT dl.* FROM ${Schema.documentLines} dl '
-    'JOIN ${Schema.documents} d ON d.id = dl.document_id '
-    'WHERE d.created_at > ? OR (d.created_at = ? AND d.id > ?) '
-    'ORDER BY d.created_at, d.id, dl.id',
-    <Object?>[from.stamp, from.stamp, from.id],
-  );
+  /// 本页主单的明细。
+  ///
+  /// ⚠️ [documentIds] 直接来自**本页 `documents` 的实际结果**，
+  /// 而不是把 `documents` 的谓词**再写一遍** —— 两次查询的页边界一旦
+  /// 写法不同就会错位。曾经就是这样：明细查询漏了 `LIMIT`，
+  /// 于是每一页都带上**后面所有主单**的明细（第 1 页就返回全量明细，
+  /// 客户端还会先收到「主单还没到」的孤儿明细行）。
+  ///
+  /// 分批绑定参数：`IN (?, ?, …)` 的占位符数量受
+  /// `SQLITE_MAX_VARIABLE_NUMBER` 约束（旧版 999），
+  /// 而 `limit` 是客户端可控的，所以不假设它一定很小。
+  List<Map<String, Object?>> _linesOf(List<String> documentIds) {
+    const int batch = 500;
+    final List<Map<String, Object?>> rows = <Map<String, Object?>>[];
+    for (int start = 0; start < documentIds.length; start += batch) {
+      final int end = start + batch > documentIds.length
+          ? documentIds.length
+          : start + batch;
+      final List<String> chunk = documentIds.sublist(start, end);
+      rows.addAll(
+        _select(
+          'SELECT * FROM ${Schema.documentLines} '
+          'WHERE document_id IN '
+          '(${List<String>.filled(chunk.length, '?').join(', ')}) '
+          'ORDER BY document_id, id',
+          chunk,
+        ),
+      );
+    }
+    return rows;
+  }
 
 
   // ------------------------------------------------------------ 内部

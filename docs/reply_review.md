@@ -411,7 +411,8 @@ v0.4 冻结版已落地于仓库内（`README.md` / `Agents.md` / `docs/{data_mo
 > `action_not_implemented`；签收走主机本地 `RuleEngine.markDelivered`
 > （幂等判定**基于状态**，是 R-3.1 的候选答案）。
 >
-> 进入同步层时需回答 R-3.1 ~ R-3.5，清单见 `docs/reply.md`。
+> 进入同步层时需回答 R-3.1 ~ R-3.5，
+> 清单见本文件 §H「R-3.1 ~ R-3.5 待答清单」。
 
 `sync_protocol.md` §三 用 `(document_id, action, occurred_at)` 判定"已处理"，
 但主机**没有任何表记录已执行的动作**（`data_model.md` 无 `document_actions` 之类）。
@@ -653,6 +654,27 @@ v0.4 冻结版已落地于仓库内（`README.md` / `Agents.md` / `docs/{data_mo
 **不会被任何门禁发现**（`dart test` 也只跑 `test/`）。已把 5 个自检脚本全部纳入
 `typecheck.dart`，入口数 7 → 12。
 
+### R-3.1 ~ R-3.5 待答清单（2026-09-26 迁入）
+
+> ⚠️ 这份清单**原先只写在 `docs/reply.md`**，而 `reply.md` 是**逐轮改写的裁定书**
+> （每轮被新裁定覆盖）。它被 R-13 覆盖后，`Agents.md` / `sync_protocol.md` /
+> `rules.md` 里三处「见 `docs/reply.md`」的引用**全部悬空**。
+> 现从 git 历史（`bdf71eb:docs/reply.md`）中取回，**迁到本台账** —— 这里只增不改。
+
+写 `SyncServer._applyAction` 时必然会撞上这五问：
+
+| # | 问题 | 影响面 |
+|---|---|---|
+| R-3.1 | 动作能否全部归约为 `status` 判定？ | 若可以，不建表；若不可以，需 `document_actions` 表 |
+| R-3.2 | 同一 `document_id` 上的多个动作是否有序？ | 决定是否需要 `action_seq` |
+| R-3.3 | 动作的 `occurred_at` 由客户端提供，冲突时按哪个时间判？ | 与 §七 的 `seq_no` 排序一致性 |
+| R-3.4 | 动作失败（如已 `cancelled` 的单据收到 `mark_delivered`）如何返回？ | `rejected` 还是 `conflict`？语义不同 |
+| R-3.5 | 一台 Android 离线签收，另一台同时取消该单，谁赢？ | 「主机赢」在动作层面如何具体化 |
+
+**当前的候选答案**（未裁定）：`RuleEngine.markDelivered` 的幂等**基于状态**
+（已是 `delivered` / `settled` → `alreadyExists`），这是 R-3.1 「可以归约」的一个证据，
+但**不覆盖** R-3.2 ~ R-3.5（多动作有序性、时间判定、失败语义、并发胜负）。
+
 ## I. RULE-006 + SyncServer 落地记录（2026-09-25）
 
 规则集到此齐了（RULE-001 ~ RULE-009 全部落地），并补上主机侧同步领域层。
@@ -788,3 +810,54 @@ v0.4 冻结版已落地于仓库内（`README.md` / `Agents.md` / `docs/{data_mo
 已把「夹具别手写 wire JSON」「断言 status 要带 reason」两条写进 `docs/testing.md` 的镜像纪律块。
 
 **门禁**：core 8 测试 + 6 自检（371 项）；host 4 测试 + 2 自检（**209** 项，自检 189 → 209）。
+
+## L. R-13 方案 A 落地核验 + 文档补齐（2026-09-26）
+
+**裁定**：R-13 选**方案 A** —— 主数据并入 `pull`，游标 `(updated_at, id)`。
+完整论述见 `docs/reply.md`（逐轮覆盖）。
+
+**核验时的仓库状态**：代码与测试**已在**（`3d354af`），但**文档全没跟上**：
+
+| 位置 | 核验前 | 已补 |
+|---|---|---|
+| `sync_protocol.md` §8.2 | 仍写 6 个实体、4 个游标、`doc_since` 单时间戳 | 9 个实体、8 个游标、主数据游标与返回语义表 |
+| `sync_protocol.md` §8.3 | 仍挂着「已知缺口：主数据的增量同步没有游标……待裁定」 | 改为「⛔ 本节**不承担同步职责**」+ 三行职责表 |
+| `sync_protocol.md` §十一 | 仍写「恰好 6 个业务实体」 | 9 个实体 + 6 条主数据同步测试项 |
+| `data_model.md` §2.1/§2.2/§2.3 | 只有 `idx_products_barcode` / `idx_parties_phone`；`accounts` 无索引行 | 各补 `(updated_at, id)` 复合索引 + 为什么必须带 `id` |
+| `data_model.md` §五 | 无 B7 | 新增 **B7**：主数据 `updated_at` 每次写操作后刷新（含软删） |
+| `testing.md` §B | 无 B7 | 补 B7 |
+| `testing.md` §G2 | 「恰好 6 个业务实体」「不含主数据」「待裁定」 | 9 个实体 + 主数据游标语义 + 跨设备可见的测试要点 |
+| `Agents.md` §五 | R-13 标「待裁定」 | 移入「已裁定并落地」；§四 补「同步游标」「pull 的实体面」两行 |
+| `README.md` | 「主数据 REST + 增量同步｜未开始（缺口）」；索引数 23 | 拆成「主数据增量同步 ✅」+「§8.3 便利接口 未开始（有意）」；索引数改 26 |
+
+**发现并修掉一个真 bug（`_linesOfPage` 越过页边界）**：
+
+`documents` 的分页有 `LIMIT`，而明细查询**没有** —— 谓词只写了游标条件。
+于是 `limit=1` + 3 张单时，`document_lines` 返回 **3 条**（后面所有主单的明细）。
+页数越多越糟（第 1 页就返回全量明细），客户端还会先收到「主单还没到」的孤儿明细行。
+
+- **不是本轮引入**：父提交 `579e48b` 里 `_linesOfPage(from, limit)` 的 `limit`
+  参数**从未被使用**，注释却写着「谓词与主单页边界完全一致」。典型的「注释承诺 > 实现」。
+- **修法不是把谓词再写一遍**（两次查询的页边界一旦写法不同就会错位，这次就是），
+  而是**明细直接由本页 `documents` 的实际结果派生**：
+  `WHERE document_id IN (本页主单 id…)`，分批绑定参数（`IN` 占位符受
+  `SQLITE_MAX_VARIABLE_NUMBER` 限制，而 `limit` 客户端可控）。
+  **从结构上排除**「两次查询页边界不一致」这一类 bug。
+- 顺带明确两个**不同**的语义：**不截断**（本页明细全给）与**不越界**（页边界一致）。
+
+**另一处治理问题：悬空引用**。
+
+`R-3.1 ~ R-3.5` 五问清单**原先只写在 `docs/reply.md`**，而那是**逐轮覆盖的裁定书**。
+被 R-13 覆盖后，`Agents.md` / `sync_protocol.md` / `rules.md` / `reply_review.md` 里
+**四处**「见 `docs/reply.md`」全部指向不存在的内容。
+
+已从 git 历史（`bdf71eb:docs/reply.md`）取回清单，**迁进本文件 §H**，
+四处引用改指本文件；并在 `Agents.md` §六 写入文档治理规则：
+
+> `reply.md` 是**逐轮覆盖**的裁定书 —— 规范条文不要引用它；
+> 需要长期有效的东西（清单、候选答案）**必须迁进 `reply_review.md`**；
+> 已被覆盖的内容从 git 历史取（`git show <commit>:docs/reply.md`）。
+
+**门禁**：core 8 测试 + 6 自检（374 项，84 项含 3 个新索引断言）；
+host 4 测试 + 2 自检（258 项，142 + 116）。两包 typecheck 各 14 / 6 入口。
+**索引三处一致**：`schema.dart` 实际 26 个 = `schema_test` 期望 26 个 = `selfcheck.dart` 期望 26 个（已 diff 核对）。

@@ -890,6 +890,31 @@ void main() {
       );
     });
 
+    // 「不按 limit 截断」**不等于**「可以越过本页主单的边界」：
+    // 明细必须恰好是本页那批主单的明细。修复前明细查询没有 `LIMIT`，
+    // 于是每页都带上后面所有主单的明细（第 1 页就返回全量明细）。
+    test('明细不越过本页主单的边界：limit=1 时不含后面主单的明细', () {
+      final String p = syncProduct(code: 'P947');
+      final String party = syncParty();
+      for (int i = 0; i < 3; i++) {
+        syncPurchase(p, party, 1, 100);
+      }
+
+      final SyncPullResult result = server.pull(limit: 1);
+
+      expect(result.countOf('documents'), 1);
+      expect(
+        result.countOf('document_lines'),
+        1,
+        reason: 'limit=1 只该返回那 1 张主单的明细，不是全部 3 条',
+      );
+      expect(
+        result.entities['document_lines']!.single['document_id'],
+        result.entities['documents']!.single['id'],
+        reason: '明细的 document_id 必须指向本页返回的主单',
+      );
+    });
+
     // ---------------------------------------------- 主数据（R-13 方案 A）
 
     test('主数据随 pull 返回，游标是 "<updated_at>|<id>"，且返回全部列', () {

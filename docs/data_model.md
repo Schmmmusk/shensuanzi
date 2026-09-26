@@ -37,7 +37,7 @@
 | `updated_at` | INTEGER | |
 | `sync_version` | INTEGER | 默认 0 |
 
-索引：`idx_products_barcode(barcode)`
+索引：`idx_products_barcode(barcode)`、`idx_products_updated(updated_at, id)`
 
 ### 2.2 `parties`（往来方）
 
@@ -57,7 +57,7 @@
 | `updated_at` | INTEGER | |
 | `sync_version` | INTEGER | 默认 0 |
 
-索引：`idx_parties_phone(phone)`
+索引：`idx_parties_phone(phone)`、`idx_parties_updated(updated_at, id)`
 
 ### 2.3 `accounts`（资金账户）
 
@@ -71,6 +71,12 @@
 | `created_at` | INTEGER | |
 | `updated_at` | INTEGER | |
 | `sync_version` | INTEGER | 默认 0 |
+
+索引：`idx_accounts_updated(updated_at, id)`
+
+> **三张主数据表的 `(updated_at, id)` 复合索引**是 §8.2 增量拉取的游标索引
+> （R-13 方案 A，`sync_protocol.md` §8.2）。`updated_at` **不唯一**，
+> 单列游标会丢行或死循环，所以索引必须带上 `id`。
 
 **注意**：修改 `initial_balance` 会重算全部历史余额。UI 需提示。
 
@@ -377,7 +383,7 @@ UI 单据列表默认用 `ref_doc_id IS NOT NULL` 过滤掉自动生成的收付
 主机收到后，在事务内执行动作并更新 `status`。动作本身不产生新 `Document`。
 
 > ⚠️ **v1 状态**：「动作」这一抽象的**幂等判定与存储**尚未定型（待裁定项 **R-3**，
-> 见 `docs/reply.md`）。因此：
+> 五问清单见 `docs/reply_review.md` §H）。因此：
 >
 > - **枚举值保留**（客户端仍可入队），但 `SyncServer` 一律返回
 >   `rejected` + 错误码 `action_not_implemented`
@@ -411,6 +417,11 @@ UI 单据列表默认用 `ref_doc_id IS NOT NULL` 过滤掉自动生成的收付
    - `stocktake`：`total_amount = 0`
    - `receipt` / `payment`：`total_amount` = 收/付款金额，`document_lines` 为空
 7. `SUM(stock_ledger.quantity) × 单价区间` 与 `SUM(total_cost)` 的关系仅通过 `unit_cost` 派生
+8. **B7**：主数据（`products` / `parties` / `accounts`）的 `updated_at`
+   在**每次写操作后**由主机刷新为主机当前时钟 —— 它是 §8.2 增量拉取的游标列
+   （R-13 方案 A）。不刷新，客户端就永远感知不到「另一台设备改了价格」。
+   「写操作」含 `createMasterData` / `updateMasterData` / `deleteMasterData`
+   （**软删也算写**：`is_active = 0` 必须让另一台设备看得见）
 
 ## 六、成本口径边界
 

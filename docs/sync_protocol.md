@@ -38,7 +38,7 @@ RuleEngine 落地                 调 API 提交动作
 
 **业务数据永不 update / delete**。客户端只能 create 或执行 action。
 
-> ⚠️ **`documentAction` 在 v1 不落地**（2026-09-25 裁定，见 `docs/reply.md`）。
+> ⚠️ **`documentAction` 在 v1 不落地**（2026-09-25 裁定，落地记录见 `docs/reply_review.md` §H）。
 >
 > 「动作」这个抽象还没定型 —— 它会影响 `sync_queue` 的操作枚举、`SyncServer`
 > 的处理路径、甚至是否需要一张动作表。现在猜，等于把 `sync_queue` 的字段设计
@@ -48,7 +48,8 @@ RuleEngine 落地                 调 API 提交动作
 > - **Android 端的"签收"按钮在 v1 禁用**（标注"v1.1 开放"）
 > - v1 的签收走**主机本地**路径：`RuleEngine.markDelivered`（`rules.md` RULE-003）
 >
-> 进入同步层时需要回答的五个问题（R-3.1 ~ R-3.5）见 `docs/reply.md`。
+> 进入同步层时需要回答的五个问题（R-3.1 ~ R-3.5）见
+> `docs/reply_review.md` §H「R-3.1 ~ R-3.5 待答清单」。
 
 ## 四、主机赢（Host-Wins）
 
@@ -233,7 +234,11 @@ GET /api/sync/pull
   &money_since=45
   &party_since=67
   &settle_since=12
-  &doc_since=1700000000000
+  &doc_since=1700000000000|0192…
+  &products_since=1700000000000|0192…
+  &parties_since=1700000000000|0192…
+  &accounts_since=1700000000000|0192…
+  &limit=100
 Authorization: Bearer <token>
 Response: {
   "documents": [...],
@@ -242,18 +247,32 @@ Response: {
   "money_ledger": [...],
   "party_ledger": [...],
   "settlements": [...],
-  "next_cursors": { "stock_since": "200", "doc_since": "1700000000000|0192…" }
+  "products": [...],
+  "parties": [...],
+  "accounts": [...],
+  "next_cursors": {
+    "stock_since": "200",
+    "doc_since": "1700000000000|0192…",
+    "products_since": "1700000000000|0192…",
+    "parties_since": "1700000000000|0192…",
+    "accounts_since": "1700000000000|0192…"
+  }
 }
 ```
 
+**`pull` 是同步的唯一入口**（R-13 方案 A，2026-09-26）—— **9 个实体**：
+6 个业务实体 + 3 个主数据实体。主数据的增删改**不再只靠** §8.3 的 GET
+（那组接口不承担同步职责，见 §8.3）。
+
 **为什么按实体分开传游标**：`seq_no` 每表独立，单游标无法跨表分页。
 
-**游标语义（R-4 处置，2026-09-25）**：
+**游标语义（R-4 + R-13 处置）**：
 
 | 实体 | 游标 | 取值 |
 |---|---|---|
 | `stock_ledger` / `money_ledger` / `party_ledger` / `settlements` | `seq_no` | 整数字符串，**开区间** `seq_no > ?` |
 | `documents` | `(created_at, id)` 复合 | 形如 `"1700000000000\|0192…"` |
+| `products` / `parties` / `accounts` | `(updated_at, id)` 复合 | 同上形态 |
 | `document_lines` | **无独立游标** | 随主单同页返回，见下 |
 
 **为什么 `documents` 不能用单个 `created_at`**：它**不唯一**。
@@ -262,14 +281,37 @@ Response: {
 又能**保证推进**的方案，且与 §七「客户端按 `(created_at, id)` 排序」一致。
 为此新增索引 `idx_documents_created`（`data_model.md` §3.1）。
 
+**为什么主数据游标用 `updated_at` 而不是 `created_at` / `sync_version`**（R-13）：
+
+- **不是 `created_at`**：主数据**会被更新**，`created_at` 从不变 ——
+  用它做游标，客户端永远拉不到「改了价格」这件事
+- **不是 `sync_version`**：它是**每实体独立的乐观锁计数**，
+  实体 A 的 `sync_version = 5` 与实体 B 的 `sync_version = 5`
+  之间没有任何顺序关系，做游标会在分页时丢行或死循环
+- **`updated_at` 也不唯一**，所以同样要 `(updated_at, id)` 复合。
+  为此新增三个索引（`data_model.md` §2.1 / §2.2 / §2.3）
+
+**主数据的返回语义**（R-13）：
+
+| 项 | 决定 | 为什么 |
+|---|---|---|
+| **软删行** | **照常返回**（`is_active = 0`） | 不返回则客户端永远无法感知删除。客户端据此在本地把该行标为非活跃 |
+| **返回列** | **全部列**（含 `sync_version` / `updated_at` / `created_at`） | 客户端要 `sync_version` 做下次 `updateMasterData` 的 `base_version`，要 `updated_at` 存游标 |
+| **`limit`** | 对**每个分页实体独立生效**、各自推进 | 某一个先拉完不影响其它 |
+
 **为什么 `document_lines` 没有独立游标**：它**没有时间列**（`data_model.md` §3.2），
-且明细与主单**在同一事务里写入**、永远不会单独存在。所以它按「本页 `documents`」
-取（谓词与主单页边界完全一致），这正是本节只列 `doc_since` 的原因。
+且明细与主单**在同一事务里写入**、永远不会单独存在。所以它**直接由本页
+`documents` 的结果派生**（`WHERE document_id IN (本页主单 id)`），
+这正是本节只列 `doc_since` 的原因。
 
 - `limit` 限制的是**主单条数**；明细条数由「本页主单的明细总数」决定，
   **不额外截断** —— 截断会造出「有主单但明细不全」的镜像
-- 四张流水表的游标是**开区间**（`seq_no` 唯一），`documents` 是**闭区间 + id 判别**
-  （`created_at` 不唯一），两者语义不同，不可互换
+- 对称地，明细**不越过本页**：`limit=1` 时只返回那 1 张主单的明细。
+  「不截断」与「不越界」是两件事 —— 前者指本页明细全给，后者指页边界一致。
+  实现上不重写一遍谓词，而是从本页 `documents` 的实际结果派生，
+  **从结构上排除两次查询页边界错位**
+- 四张流水表的游标是**开区间**（`seq_no` 唯一），`documents` 与主数据是
+  **闭区间 + id 判别**（时间列不唯一），两者语义不同，不可互换
 
 **wire 值的形态**：**列名 = 数据库列名（snake_case），值 = `toRow()` 的形态** ——
 布尔用 `1` / `0`，时间用 UTC 毫秒整数，金额用整数分。
@@ -311,25 +353,26 @@ GET    /api/party_ledger?party_id=&since=
 
 > ⚠️ **v1 未实现**。本节是**便利接口**：同步本身不依赖它 ——
 > 主数据的增删改都走 §8.1 的 `createMasterData` / `updateMasterData` /
-> `deleteMasterData`。本节留给 Windows UI 与手工调用，实现优先级低于
-> 「主数据增量同步」这条缺口（见下）。
+> `deleteMasterData`，主数据的**增量拉取**走 §8.2 的 `pull`。
+> 本节留给 Windows UI 的查询与调试，实现优先级最低。
 >
-> ⚠️ **已知缺口：主数据的增量同步没有游标。**
+> ### ⛔ 本节**不承担同步职责**（R-13 裁定，2026-09-26）
 >
-> §8.2 的 `pull` **只返回 6 个业务实体**（`documents` / `document_lines` /
-> 四张流水），**不含主数据**；而本节这些 GET 接口只有 `?q=&active=`，
-> 没有 `since`。两端合起来的结果是：
+> 增量同步**一律**走 §8.2 的 `pull`。本节这些 GET 接口**不会**加 `?since=`，
+> 也**不要求**客户端在这里轮询 —— 客户端的两条数据通路必须清晰：
 >
-> **一台客户端改了商品价格，另一台客户端无法通过 `pull` 得知。**
->
-> 修法有两种，各有代价：
->
-> | 方案 | 代价 |
+> | 目的 | 走哪 |
 > |---|---|
-> | A. 把主数据并入 `pull`（`products_since` / `parties_since` / `accounts_since`） | 要决定主数据的游标列（`updated_at`？`sync_version`？软删怎么表达？） |
-> | B. 给本节接口加 `?since=` | 拉取要分两个端点，客户端逻辑分叉 |
+> | 增量同步（业务数据 + 主数据） | §8.2 `pull`，**唯一入口** |
+> | 主数据的写入 | §8.1 `createMasterData` / `updateMasterData` / `deleteMasterData` |
+> | 人看数据 / UI 查询 / 调试 | 本节（可选，v1 未实现） |
 >
-> **待裁定**（列在 `docs/reply_review.md` 附录 J）。
+> **这条写在这里是为了防止未来有人再把同步职责往这两个端点里塞。**
+> 方案 B（给本节加 `?since=`）曾在 R-13 里被否决：它会把一个定位为
+> 「便利接口」的端点**升级成 v1 必须实现的增量同步端点**，
+> 客户端也要维护两套循环与两套游标状态 —— 与「最小 v1」相悖。
+> 完整论述见 `docs/reply_review.md` §L（**不引用 `docs/reply.md`** ——
+> 那是逐轮覆盖的裁定书，见 `Agents.md` §六的文档治理规则）。
 
 ### 8.4 表名 / 列名白名单
 
@@ -428,11 +471,18 @@ documentAction → rejected + action_not_implemented（v1 不落地）
 批量 push 里一条失败不影响其它条目
 同一 created_at 的多张单：分页不丢行、不重复、游标必推进
 明细随主单同页返回，且不按 limit 截断
+明细不越过本页主单的边界（limit=1 → 只有那 1 张主单的明细）
 health 不需要鉴权，且不泄露业务数据
 push / pull 缺令牌或错令牌 → 401
 请求体不是 JSON / 缺 operations → 400
-`pull` 恰好返回 6 个业务实体 + next_cursors（**不含主数据**）
+`pull` 恰好返回 9 个实体（6 业务 + 3 主数据）+ next_cursors（R-13 方案 A）
+客户端 A 改商品价格 → 客户端 B 带游标 pull → B 拿到新价格
+客户端 A 软删商品 → 客户端 B pull → B 拿到 is_active = 0 的行
+从未见过该商品的新客户端：全量首拉就能拿到 is_active = 0 的行
+同一毫秒内多次更新主数据：(updated_at, id) 游标不丢行、不重复、必推进
+未改动的主数据不会重复出现在增量页里
+§8.3 的 GET 接口与 pull 互不影响（两个端点返回的主数据视图一致）
 ```
 
-> ⏸ **暂缓**：原「`documentAction` 幂等」一项**推迟到 R-3 裁定后**（见 `docs/reply.md`）。
+> ⏸ **暂缓**：原「`documentAction` 幂等」一项**推迟到 R-3 裁定后**（见 `docs/reply_review.md` §H）。
 > 其余各项不受影响。

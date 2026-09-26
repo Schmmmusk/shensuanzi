@@ -163,10 +163,11 @@
 | 创建 | 主机**强制** `status = in_transit`（调用方传什么都会被覆盖） |
 | `paid_amount` | 仍按 `SUM(settlements.amount)` 刷新（不变量 B4 无例外），但**不驱动** `status` |
 | 签收 | **主机本地**路径：`RuleEngine.markDelivered(documentId)` —— 司机回店后由主机 UI 手动标记 |
-| 离线签收 | **暂缓**。`documentAction: mark_delivered` 的幂等判定与存储属 **R-3**，随 `SyncServer` 落地（见 `docs/reply.md`） |
+| 离线签收 | **暂缓**。`documentAction: mark_delivered` 的幂等判定与存储属 **R-3**，随同步层落地（清单见 `docs/reply_review.md` §H） |
 | 签收后收满款 | `_refreshPaidAmount` 把 `delivered` 提升为 `settled`（纯派生，不依赖 R-3） |
 
-**`markDelivered` 的幂等判定基于状态**（`docs/reply.md` R-3.1 的**候选**答案，尚未裁定）：
+**`markDelivered` 的幂等判定基于状态**（R-3.1 的**候选**答案，尚未裁定；
+清单见 `docs/reply_review.md` §H）：
 
 ```text
 in_transit                 → delivered；若已收满款，同一事务内直接到 settled

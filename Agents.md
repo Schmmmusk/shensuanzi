@@ -62,7 +62,8 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | 退货成本 | 按**原单比例精确回退**（累计分摊 − 已分摊，消除多次退货的舍入余数）。不加 `document_line_id`（R-11 / 2026-09-25） |
 | 送货签收 | v1 走**主机本地** `RuleEngine.markDelivered`；**离线签收**（`documentAction`）推迟到 R-3（2026-09-25） |
 | 拒收 | `sale_return.ref_doc_id` 可指向 `delivery`，成本按原送货单比例回退（RULE-003 → RULE-007） |
-| 同步游标 | 四张流水用 `seq_no`（开区间）；`documents` 用 **`(created_at, id)` 复合**；`document_lines` **无独立游标**（随主单同页）。见 §8.2（R-4 / 2026-09-25） |
+| 同步游标 | 四张流水用 `seq_no`（开区间）；`documents` 用 **`(created_at, id)`**、主数据用 **`(updated_at, id)`**（均复合）；`document_lines` **无独立游标**（由本页 `documents` 派生）。见 §8.2（R-4 / R-13） |
+| pull 的实体面 | **9 个实体**（6 业务 + 3 主数据），是同步的**唯一入口**；§8.3 的 REST **不承担同步职责**（R-13 方案 A / 2026-09-26） |
 | wire 形态 | **列名 = 数据库列名（snake_case），值 = `toRow()` 的形态** —— 布尔 `1/0`、时间毫秒、金额整数分。模型自带编解码器，无转换层 |
 | SyncServer 边界 | **不含 HTTP**。接 `SyncOperation`、返 `SyncResponse`；shelf 适配层属 Windows 应用侧。保持纯 Dart、零新依赖 |
 | **包边界** | `shensuanzi_core` = 模型 / DAO / 规则 / **同步协议（DTO + 白名单 + 游标）**；`shensuanzi_host` = **shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据**；二维码**渲染**留 Flutter 层。两包都无 Flutter 依赖 ⇒ `dart test` 全程可跑（2026-09-25） |
@@ -78,23 +79,36 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 
 | 编号 | 内容 | 处理 |
 |---|---|---|
-| R-3 | `documentAction` 的幂等判定与存储 | 待同步层实现时裁定。目前 RULE-003 的动作部分暂缓，v1 用主机本地改状态替代 |
-| **R-13** | **主数据的增量同步没有游标** —— `pull` 只返 6 个业务实体，§8.3 的 GET 也没有 `since` ⇒ 一台客户端改了商品价格，另一台无法感知 | **待裁定**：A. 并入 `pull`（需决定游标列与软删表达）/ B. 给 §8.3 加 `?since=`。见 `sync_protocol.md` §8.3 |
+| R-3 | `documentAction` 的幂等判定与存储 | 待同步层实现时裁定。目前 RULE-003 的动作部分暂缓，v1 用主机本地改状态替代。**R-3.1 ~ R-3.5 五问清单**见 `docs/reply_review.md` §H |
 | R-8 / R-9 / R-10 / R-12 | 实现期边界（盘盈无成本、超卖符号、`delivery` 状态机、散客赊账） | 已按当前处置实现、**不阻断**；详见 `docs/reply_review.md` 附录 D |
 
 **已裁定并落地**：R-1（`allocations` 随 payload）、R-2（B5 排除收付款单）、
 R-6（方案 C：任何资金流都挂收付款单）、R-11（退货成本精确回退）、
-R-7（负数舍入 = 半数远离零，随实现确定）。
+R-7（负数舍入 = 半数远离零，随实现确定）、
+**R-13（方案 A：主数据并入 `pull`，游标 `(updated_at, id)`）**。
 
-**进入同步层时要回答的 5 个动作问题**（R-3.1 ~ R-3.5）见 `docs/reply.md`。
+**进入同步层时要回答的 5 个动作问题**（R-3.1 ~ R-3.5）见
+`docs/reply_review.md` §H（**不要在 `reply.md` 里找——那是逐轮覆盖的裁定书**）。
 
 ## 六、文档索引
+
+**权威规范**（只增不改，改动必须同步引用方）：
 
 - `docs/data_model.md` —— 实体、字段、索引、不变量
 - `docs/sync_protocol.md` —— 幂等、冲突、重试、同步队列
 - `docs/rules.md` —— RULE-001 ~ RULE-009 + 核销约束
 - `docs/threat_model.md` —— 信任边界、已知风险、缓解措施
 - `docs/testing.md` —— 测试要求（DAO / 不变量 / 规则 / 同步 / 端到端）
+
+**过程文档**：
+
+- `docs/reply_review.md` —— **裁定台账**（只增不改）。待裁定项、落地记录、
+  长期有效的清单都放这里
+- `docs/reply.md` —— ⚠️ **逐轮覆盖的裁定书**。每轮由用户重写为新裁定的内容，
+  **旧内容会被覆盖**。因此：
+  - 规范条文**不要**用「见 `docs/reply.md`」引用它 —— 指向 `reply_review.md` 的对应小节
+  - 从它里面摘出来的、需要长期有效的东西（清单、候选答案），**必须迁进 `reply_review.md`**
+  - 已被覆盖仍需追溯的内容 → 从 git 历史取（`git show <commit>:docs/reply.md`）
 
 ## 七、开发顺序
 

@@ -783,6 +783,33 @@ void main() {
     db.close();
   }
 
+  // ⚠️ 「不按 limit 截断」**不等于**「可以越过本页主单的边界」。
+  // 明细必须恰好是本页那批主单的明细：`documents` 有 `LIMIT`，明细查询也必须
+  // 落在同一批主单之内。否则每一页都会带上**后面所有主单**的明细 ——
+  // 页数越多越糟（第 1 页就返回全量的明细），客户端还会先收到
+  // 「主单还没到」的孤儿明细行。
+  section('pull · 明细限制在本页主单内');
+  {
+    freshDb();
+    final String p = syncProduct(code: 'PN3');
+    final String party = syncParty();
+    for (int i = 0; i < 3; i++) {
+      syncPurchase(p, party, 1, 100);
+    }
+
+    final SyncPullResult result = server.pull(limit: 1);
+    check('limit=1 取到 1 张主单', result.countOf('documents') == 1,
+        '${result.countOf('documents')}');
+    check('明细也只属于这 1 张主单（不是 3 条）',
+        result.countOf('document_lines') == 1,
+        '${result.countOf('document_lines')}');
+    check('明细的 document_id = 本页唯一主单',
+        result.countOf('document_lines') == 1 &&
+            result.entities['document_lines']!.single['document_id'] ==
+                result.entities['documents']!.single['id']);
+    db.close();
+  }
+
   // ============================================================ 主数据（R-13 方案 A）
   section('pull · 主数据');
   {

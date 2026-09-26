@@ -122,6 +122,7 @@ dart run tool/typecheck.dart
 | B4 | 单据已收额 = `SUM(settlements.amount)` GROUP BY `target_doc_id` |
 | B5 | `SUM(document_lines.amount) = document.total_amount`（`stocktake` 除外） |
 | B6 | `seq_no` 在每张流水表内**唯一且单调递增** |
+| B7 | 主数据（`products` / `parties` / `accounts`）的 `updated_at` 在每次写操作（含软删）后由主机刷新 —— 它是增量拉取的游标列（R-13） |
 
 ## C. 业务规则 RULE-001 ~ RULE-009
 
@@ -216,7 +217,7 @@ dart run tool/typecheck.dart
   明细**不按 `limit` 截断**
 
 > ⏸ **暂缓**：原「`documentAction` 幂等」一项推迟到 **R-3** 裁定后
-> （见 `docs/reply.md`）。v1 只需要断言 `documentAction` → `rejected` +
+> （见 `docs/reply_review.md` §H）。v1 只需要断言 `documentAction` → `rejected` +
 > `action_not_implemented`。
 
 ## G2. 主机端传输层（`packages/shensuanzi_host/`）
@@ -245,17 +246,21 @@ dart run tool/typecheck.dart
 - `/api/sync/push` 与 `/api/sync/pull` **缺令牌 / 错令牌 → 401**
 - 合法 push → 200 + `results`；**一条被拒不拖累同批其它条目**
 - 请求体不是 JSON / 缺 `operations` → 400
-- pull 返回**恰好 6 个业务实体 + `next_cursors`**，
-  **不含主数据**（主数据走 §8.3，见下）
+- pull 返回**恰好 9 个实体 + `next_cursors`** =
+  6 个业务实体（四张流水 + `documents` + `document_lines`）
+  + 3 个主数据实体（`products` / `parties` / `accounts`）（R-13 方案 A）
+- 主数据的游标是 `"<updated_at>|<id>"`，**软删行照常返回**（`is_active = 0`）、
+  **返回全部列**（含 `sync_version`，客户端要拿它做下次 `base_version`）
 - 游标非法 → 400
 - **`createDocument` 全链路**（HTTP → `SyncServer` → `RuleEngine` → 四张流水 → 再 pull 回来）：
   推送采购单 → 两条回执 `applied`；单据落库且**主机分配正式单号**（不再是 `pendingDocNoPrefix`）；
   `document_lines` / `stock_ledger` / `party_ledger` 各 1 行；
   `next_cursors` 的 `stock_since` 推进到 `1`、`doc_since` 不再等于 `'0|'`；
   **带这两个游标再拉一次 → `documents` 与 `stock_ledger` 都为空**（增量语义）
-
-> ⚠️ **`/api/sync/pull` 不返回主数据**。主数据的增量同步目前**没有游标**
-> （§8.3 的 REST 接口只有 `?q=&active=`），这是一个已知缺口，待裁定。
+- **主数据跨设备可见**（R-13 的核心主张）：设备 A 改价 → 设备 B 带游标 pull 拿到新价；
+  设备 A 软删 → 设备 B pull 拿到 `is_active = 0` 的行；
+  从未见过该商品的新客户端**全量首拉**就能拿到 `is_active = 0` 的行
+- **`(updated_at, id)` 游标**：同一毫秒内多次更新 → 不丢行、不重复、必推进
 
 ## H. 时钟
 
