@@ -41,6 +41,9 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 打开着的数据库；成功后一直持有，供后续功能页使用
   Db? _db;
 
+  /// 商品建档服务（数据库打开成功才有）
+  ProductService? _products;
+
   /// 开库失败的原因（含「怎么办」）
   String? _dbFailure;
 
@@ -80,12 +83,14 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       setState(() {
         _location = location;
         _db = db;
+        _products = ProductService(db);
         _dbFailure = null;
       });
     } catch (error) {
       setState(() {
         _location = location;
         _db = null;
+        _products = null;
         _dbFailure = '数据文件打不开（$error）。'
             '如果这个文件夹在 U 盘或网盘里，请换到本机磁盘上的文件夹。';
       });
@@ -135,6 +140,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       backupDirectory: location.backupDirectory,
       schemaVersion: location.marker.schemaVersion,
       databaseReady: _db != null,
+      products: _products,
     );
   }
 }

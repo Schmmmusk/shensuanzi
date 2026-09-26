@@ -56,6 +56,7 @@ dart run tool/selfcheck_payments.dart  # 方案 C：立即收付款自动生成�
 dart run tool/selfcheck_delivery.dart  # RULE-003 送货（含 R-10 的 status 例外、签收、在途视图）
 dart run tool/selfcheck_returns.dart   # RULE-007 / RULE-008（含 R-11 成本分摊、拒收）
 dart run tool/selfcheck_query.dart     # RULE-006 查询（库存 / 余额 / 在途 / 在店可售）
+dart run tool/selfcheck_products.dart  # 商品建档（金额解析 / 表单校验 / 编码生成 / 编辑停用）
 dart run tool/selfcheck_sync_client.dart # SyncClient（游标 / pull 事务性 / push 退避 / delta）
 dart run tool/typecheck.dart           # 编译校验：import 全部入口但不执行
 
@@ -86,11 +87,12 @@ dart run tool/typecheck.dart
 | core | `selfcheck_delivery.dart` | `delivery_test.dart` |
 | core | `selfcheck_returns.dart` | `return_test.dart` |
 | core | `selfcheck_query.dart` | `query_test.dart` |
+| core | `selfcheck_products.dart` | `product_service_test.dart` |
 | **core** | `selfcheck_sync_client.dart` | `sync_client_test.dart` |
 | **host** | `selfcheck_sync.dart` | `sync_server_test.dart` |
 | **host** | `selfcheck_host.dart` | `auth_test` + `pairing_test` + `http_server_test` |
 | **host** | `selfcheck_client_server.dart` | `client_server_test.dart` |
-| **app** | `selfcheck_app.dart` | `data_directory_test` + `app_config_test` + `bootstrap_test` |
+| **app** | `selfcheck_app.dart` | `data_directory_test` + `data_directory_service_test` + `app_config_test` + `bootstrap_test` + `dialog_model_test` + `navigation_test` |
 | **host** | `selfcheck_client_server.dart` | `client_server_test.dart` |
 
 > ⚠️ **`typecheck.dart` 必须 import 全部入口，包括 `tool/` 下每个自检脚本本身。**
@@ -111,6 +113,14 @@ dart run tool/typecheck.dart
 > 却断言 `contains(p)` —— 而 `selfcheck_query.dart` 里同一场景**先 seed 了库存**，所以那边是绿的。
 > **搬一个场景时，把它的夹具调用（seed / 建单 / 定价）一起搬过去**，
 > 不要凭「上一个用例的上下文」补脑子里的前置条件。
+>
+> ⚠️ **自检里跨段复用同一个对象时，断言要对齐「最近一次操作之后」的状态**。
+> 第三次同源漂移（2026-09-26）：`selfcheck_products.dart` 里的 `before` 已经被成功
+> `update` 过一次，我却拿它**更新前**的 `syncVersion` 去比，于是
+> 「编辑校验不过 → 库里原值不变」**假失败**；而 `test/` 版里每个用例都是全新状态，
+> 所以正式测试是对的。
+> **根因还是那条**：自检是**一个长脚本**（对象跨段复用），测试是**互相隔离的用例**。
+> 搬场景时要么给它一个独立的内存库，要么把断言显式对齐到最近一次操作之后。
 >
 > ⚠️ **夹具里的 wire 行不要手写 JSON —— 用模型的 `toRow()` 生成。**
 > wire 约定是「值 = `toRow()` 的形态」（`sync_protocol.md` §8.2 前），手写必然漏字段。
@@ -439,6 +449,31 @@ dart run tool/typecheck.dart
 
 **沙箱纪律**：测试与自检**必须**用临时目录，且 `AppBootstrap` 的 `configStore`
 必须注入到沙箱 —— 绝不能让测试写真实的 `%APPDATA%`。
+
+## M. 商品建档（`packages/shensuanzi_core/`）
+
+对应 `test/product_service_test.dart` 与 `tool/selfcheck_products.dart`。
+字段范围见 `docs/reply.md`（6 个字段，`code` 由系统生成）。
+
+**必测清单**：
+
+- **金额解析**（`Money.tryParseYuan`）：整数 / 一位 / 两位小数；`.5`；前后空格；
+  **符号保留**（「不能为负」是业务校验）；**`1.005` 直接拒绝**（不走 `double`，
+  否则 `*100` 的二进制误差会舍成 100）；非法输入一律 `null`；位数过长防溢出
+- **表单校验**：名称必填 + 超长；单位必填；售价必填 / 不能负 / 只能是数字；
+  **进价与安全库存可空**（空 = 0）；安全库存只收整数；条码可空 + 过长要报；
+  **一次能报多个字段**（界面标红多栏）；**空条码归一成 `NULL` 而不是空串**
+- **建档**：编码从 `P0001` 起递增；补上 `id` / 时间戳 / `sync_version` / `is_active`；
+  6 个字段都落库（含金额转分）；**校验不过时抛 `ProductDraftInvalid` 且库里不留半条记录**
+- **编码位数边界（关键回归守卫）**：`P9999 → P10000`，以及
+  **已有 `P10000` 时必须得到 `P10001`** —— 这条**会失败在「只按 `code DESC` 排序」的实现上**
+  （`P10000` 的字典序小于 `P9999`，会取回 `P9999` 再算出 `P10000` ⇒ 撞 UNIQUE）
+- **编辑**：保留 `id` / `code` / `created_at`；`sync_version + 1`；
+  **表单没有的列（`category` / `remark` / `is_active`）保持原值**；
+  校验不过时**库里原值不变**（含版本号与 `updated_at`）
+- **停用 / 恢复**：软删（行还在）、版本 +1；列表默认只看启用中的
+- **列表**：排序 = 建档顺序（**不是编码字典序**）；`query` 命中名称 / 编码 / 条码
+- **事务硬约束**：`ProductCodeGenerator` 在事务外调用 → `StateError`
 
 ## L. 根 Flutter 应用（`lib/`）
 

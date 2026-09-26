@@ -46,6 +46,11 @@ class ProductDao {
   }
 
   /// 列表查询。[query] 模糊匹配 `code` / `name` / `barcode`。
+  ///
+  /// ⚠️ 排序用 `(created_at, id)` 而不是 `code`：编码虽然是补零的，
+  /// 但**定宽总会在某个位数上断掉**（`P10000` 的字典序小于 `P9999`），
+  /// 一旦断掉列表顺序就会诡异地跳动。`(created_at, id)` 是真正的建档顺序，
+  /// 也与 `sync_protocol.md` §七 的排序约定一致。
   List<Product> findAll({String? query, bool? active, int limit = 200}) {
     final List<String> conditions = <String>[];
     final List<Object?> args = <Object?>[];
@@ -64,11 +69,41 @@ class ProductDao {
     args.add(limit);
     return _raw
         .select(
-          'SELECT * FROM ${Schema.products}$where ORDER BY code LIMIT ?',
+          'SELECT * FROM ${Schema.products}$where '
+          'ORDER BY created_at, id LIMIT ?',
           args,
         )
         .map(Product.fromRow)
         .toList(growable: false);
+  }
+
+  /// 当前最大的商品编码（`P0001` 里的 `P` 前缀 + 数字）。
+  ///
+  /// ⚠️ **排序必须 `LENGTH(code) DESC, code DESC`，不能只按 `code DESC`**：
+  /// 编码是**定宽补零**的，4 位之后（`P10000`）字典序小于 `P9999`，
+  /// 只按 `code DESC` 会取回 `P9999` ⇒ 生成器算出 `P10000` ⇒ **撞 UNIQUE**。
+  /// 先比长度再比字典序，等价于「数值最大」。
+  ///
+  /// 只认 `P` 前缀，用户手工写过的其它编码不参与（也不会被覆盖）。
+  String? latestCode() {
+    final ResultSet rows = _raw.select(
+      "SELECT code FROM ${Schema.products} WHERE code LIKE 'P%' "
+      'ORDER BY LENGTH(code) DESC, code DESC LIMIT 1',
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['code']! as String;
+  }
+
+  /// 按条码找商品（扫码开单要用）。条码**不唯一**，故取最早建档的那条。
+  Product? findByBarcode(String barcode) {
+    if (barcode.isEmpty) return null;
+    final ResultSet rows = _raw.select(
+      'SELECT * FROM ${Schema.products} WHERE barcode = ? '
+      'ORDER BY created_at, id LIMIT 1',
+      <Object?>[barcode],
+    );
+    if (rows.isEmpty) return null;
+    return Product.fromRow(rows.first);
   }
 
   /// 主数据允许 UPDATE。`sync_version` 由调用方（`SyncServer`）决定新值。
@@ -104,6 +139,15 @@ class ProductDao {
   void softDelete(String id, {required int updatedAt}) {
     _raw.execute(
       'UPDATE ${Schema.products} SET is_active = 0, sync_version = sync_version + 1, '
+      'updated_at = ? WHERE id = ?',
+      <Object?>[updatedAt, id],
+    );
+  }
+
+  /// 恢复启用（与 [softDelete] 对称，`sync_version` 同样 +1）
+  void activate(String id, {required int updatedAt}) {
+    _raw.execute(
+      'UPDATE ${Schema.products} SET is_active = 1, sync_version = sync_version + 1, '
       'updated_at = ? WHERE id = ?',
       <Object?>[updatedAt, id],
     );

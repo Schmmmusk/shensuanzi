@@ -7,6 +7,53 @@ class Money {
   /// 元 → 分
   static int fromYuan(double yuan) => (yuan * 100).round();
 
+  /// 解析**用户输入的「元」字符串** → 分；不合法返回 `null`。
+  ///
+  /// ⚠️ **刻意不经过 `double`**：`double.parse('1.005') * 100` 得到的是
+  /// `100.49999999999999`，四舍五入后与「1.005 元 = 1.01 元」的直觉不符。
+  /// 这里按小数点切分后用整数拼，**误差为零**。
+  ///
+  /// 接受：`12` / `12.3` / `12.34` / `.5` / `-12.34` / 前后带空格；
+  /// 拒绝（返回 `null`）：空串、多个小数点、非数字、**超过两位小数**、
+  /// 位数过长（防 `int.parse` 溢出）。
+  ///
+  /// 符号由这里保留 —— 「售价不能为负」是**业务校验**的事，不是解析的事。
+  static int? tryParseYuan(String raw) {
+    final String text = raw.trim();
+    if (text.isEmpty) return null;
+
+    final bool negative = text.startsWith('-');
+    final String body = (negative || text.startsWith('+'))
+        ? text.substring(1)
+        : text;
+    if (body.isEmpty) return null;
+
+    final int dot = body.indexOf('.');
+    if (dot != body.lastIndexOf('.')) return null; // 多个小数点
+
+    final String whole = dot < 0 ? body : body.substring(0, dot);
+    final String fraction = dot < 0 ? '' : body.substring(dot + 1);
+    if (whole.isEmpty && fraction.isEmpty) return null; // 只有一个 "."
+    if (fraction.length > 2) return null; // 金额最小到分
+    if (whole.length > 15) return null; // 防 int 溢出
+    if (!_isDigits(whole) || !_isDigits(fraction)) return null;
+
+    final int yuanPart = whole.isEmpty ? 0 : int.parse(whole);
+    final int centPart = fraction.isEmpty
+        ? 0
+        : int.parse(fraction.padRight(2, '0'));
+    final int cents = yuanPart * 100 + centPart;
+    return negative ? -cents : cents;
+  }
+
+  static bool _isDigits(String text) {
+    for (int i = 0; i < text.length; i++) {
+      final int code = text.codeUnitAt(i);
+      if (code < 0x30 || code > 0x39) return false;
+    }
+    return true; // 空串视为「这半边没写」，由调用方按需处理
+  }
+
   /// 分 → 元（仅用于展示）
   static double toYuan(int cents) => cents / 100.0;
 

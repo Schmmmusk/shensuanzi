@@ -15,9 +15,11 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
+import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'nav_icons.dart';
 import 'overview_page.dart';
+import 'products_page.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -26,6 +28,7 @@ class AppShell extends StatefulWidget {
     required this.backupDirectory,
     required this.schemaVersion,
     required this.databaseReady,
+    this.products,
     this.initialDestinationId,
   });
 
@@ -33,6 +36,9 @@ class AppShell extends StatefulWidget {
   final String backupDirectory;
   final int schemaVersion;
   final bool databaseReady;
+
+  /// 商品建档服务（数据库打开成功才有；为 `null` 时商品页显示「数据文件还没就绪」）
+  final ProductService? products;
 
   /// 从哪个入口开始（不传 = 概览）
   final String? initialDestinationId;
@@ -74,14 +80,20 @@ class _AppShellState extends State<AppShell> {
   Widget _content() {
     final NavDestination current = _current;
 
-    final Widget page = current.id == 'overview'
-        ? OverviewPage(
-            dataDirectory: widget.dataDirectory,
-            backupDirectory: widget.backupDirectory,
-            schemaVersion: widget.schemaVersion,
-            databaseReady: widget.databaseReady,
-          )
-        : _PendingPage(destination: current);
+    final Widget page;
+    if (current.id == 'overview') {
+      page = OverviewPage(
+        dataDirectory: widget.dataDirectory,
+        backupDirectory: widget.backupDirectory,
+        schemaVersion: widget.schemaVersion,
+        databaseReady: widget.databaseReady,
+      );
+    } else if (current.id == 'products') {
+      // 商品是核心闭环的第一块 —— 已实现，不再是占位页
+      page = ProductsPage(service: widget.products);
+    } else {
+      page = _PendingPage(destination: current);
+    }
 
     // 沉浸模式：开单是**连续的动作流程**，不显示面包屑与工具栏
     // （`docs/reply.md` §三）。左侧导航仍在 —— 用户可以随时跳去建商品。

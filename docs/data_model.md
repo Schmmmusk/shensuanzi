@@ -23,7 +23,7 @@
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `id` | TEXT PK | UUIDv7 |
-| `code` | TEXT UNIQUE | 商品编码 |
+| `code` | TEXT UNIQUE | 商品编码。**由系统生成**（`P0001` 起，见 `docs/reply.md`），用户不填 |
 | `name` | TEXT | 名称 |
 | `barcode` | TEXT NULL | 条码，索引 |
 | `unit` | TEXT | 单位，默认"件" |
@@ -38,6 +38,19 @@
 | `sync_version` | INTEGER | 默认 0 |
 
 索引：`idx_products_barcode(barcode)`、`idx_products_updated(updated_at, id)`
+
+**⚠️ `code` 是系统生成的，所以它不能用来排序**：编码是定宽补零的
+（`P0001`），**定宽总会在某个位数上断掉** —— `P10000` 的字典序小于 `P9999`。
+所以：
+
+- **列表排序用 `(created_at, id)`**（= 建档顺序，与 `sync_protocol.md` §七 一致）
+- **取最大编码时必须 `ORDER BY LENGTH(code) DESC, code DESC`** —— 先比长度再比字典序，
+  等价于「数值最大」。只按 `code DESC` 会取回 `P9999`，生成器算出 `P10000` ⇒ **撞 UNIQUE**
+  （`ProductCodeGenerator` 的回归守卫钉住了这条）
+
+`barcode` 有索引但**不唯一**：两条商品可以共用同一个条码（真实世界里会发生，
+比如同一箱货拆开卖）。扫码时取**最早建档**的那条 —— 若将来要改成「拒绝重复」，
+那是规格变更，需要裁定（见 `docs/reply_review.md` 附录的待裁定项）。
 
 ### 2.2 `parties`（往来方）
 

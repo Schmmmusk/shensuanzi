@@ -61,10 +61,17 @@ void main() {
     await tester.pumpWidget(shell());
     await tapNav(tester, 'products');
 
-    expect(find.text('商品：正在开发'), findsOneWidget);
+    expect(find.textContaining('数据文件还没就绪'), findsOneWidget);
     expect(find.textContaining('数据文件已就绪'), findsNothing);
     // 概览只剩导航里那一个（内容区已经换掉了）
     expect(find.text('概览'), findsOneWidget);
+  });
+
+  testWidgets('商品页：数据库没就绪时给出「怎么办」，不是一片空白', (WidgetTester tester) async {
+    await tester.pumpWidget(shell(databaseReady: false));
+    await tapNav(tester, 'products');
+
+    expect(find.textContaining('选好存放位置'), findsOneWidget);
   });
 
   testWidgets('开单页是沉浸模式：只剩导航项，没有面包屑', (WidgetTester tester) async {

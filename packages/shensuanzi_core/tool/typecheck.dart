@@ -16,6 +16,8 @@ import '../test/delivery_test.dart' as delivery_test;
 // ignore: unused_import
 import '../test/immediate_payment_test.dart' as immediate_payment_test;
 // ignore: unused_import
+import '../test/product_service_test.dart' as product_service_test;
+// ignore: unused_import
 import '../test/query_test.dart' as query_test;
 // ignore: unused_import
 import '../test/return_test.dart' as return_test;
@@ -38,6 +40,8 @@ import 'selfcheck_delivery.dart' as selfcheck_delivery;
 // ignore: unused_import
 import 'selfcheck_payments.dart' as selfcheck_payments;
 // ignore: unused_import
+import 'selfcheck_products.dart' as selfcheck_products;
+// ignore: unused_import
 import 'selfcheck_query.dart' as selfcheck_query;
 // ignore: unused_import
 import 'selfcheck_returns.dart' as selfcheck_returns;
@@ -53,6 +57,7 @@ void main() {
     database_test.main,
     delivery_test.main,
     immediate_payment_test.main,
+    product_service_test.main,
     query_test.main,
     return_test.main,
     rule_engine_test.main,
@@ -63,13 +68,14 @@ void main() {
     selfcheck.main,
     selfcheck_delivery.main,
     selfcheck_payments.main,
+    selfcheck_products.main,
     selfcheck_query.main,
     selfcheck_returns.main,
     selfcheck_rules.main,
     selfcheck_sync_client.main,
   ];
   print(
-    '编译通过：9 个测试文件 + 7 个自检脚本已通过类型检查（未执行）。'
+    '编译通过：10 个测试文件 + 8 个自检脚本已通过类型检查（未执行）。'
     '（共 ${entries.length} 个入口）',
   );
 }

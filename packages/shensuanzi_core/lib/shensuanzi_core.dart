@@ -61,8 +61,14 @@ export 'src/dao/sync_dao.dart' show ClockOffsetDao, SyncCursorDao, SyncQueueDao;
 export 'src/rules/cost_policy.dart' show CostPolicy;
 export 'src/rules/doc_no_generator.dart' show DocNoGenerator;
 export 'src/rules/payment_entry.dart' show Allocation, PaymentEntry;
+export 'src/rules/product_code_generator.dart' show ProductCodeGenerator;
 export 'src/rules/rule_engine.dart' show RuleEngine, RuleOutcome, RuleStatus;
 export 'src/rules/seq_counter.dart' show SeqCounter;
+
+// 主数据建档（商品；往来方 / 账户将来同放这里）
+export 'src/master_data/product_draft.dart' show ProductDraft, ProductField;
+export 'src/master_data/product_service.dart'
+    show ProductDraftInvalid, ProductService;
 
 // 同步（协议层：DTO + 白名单。**服务端实现在 `shensuanzi_host`**）
 export 'src/sync/sync_operation.dart'
