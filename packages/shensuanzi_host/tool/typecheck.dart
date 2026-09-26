@@ -11,12 +11,16 @@
 // ignore: unused_import
 import '../test/auth_test.dart' as auth_test;
 // ignore: unused_import
+import '../test/client_server_test.dart' as client_server_test;
+// ignore: unused_import
 import '../test/http_server_test.dart' as http_server_test;
 // ignore: unused_import
 import '../test/pairing_test.dart' as pairing_test;
 // ignore: unused_import
 import '../test/sync_server_test.dart' as sync_server_test;
 
+// ignore: unused_import
+import 'selfcheck_client_server.dart' as selfcheck_client_server;
 // ignore: unused_import
 import 'selfcheck_host.dart' as selfcheck_host;
 // ignore: unused_import
@@ -26,15 +30,17 @@ void main() {
   final List<void Function()> entries = <void Function()>[
     // test/
     auth_test.main,
+    client_server_test.main,
     http_server_test.main,
     pairing_test.main,
     sync_server_test.main,
     // tool/
+    selfcheck_client_server.main,
     selfcheck_host.main,
     selfcheck_sync.main,
   ];
   print(
-    '编译通过：4 个测试文件 + 2 个自检脚本已通过类型检查（未执行）。'
+    '编译通过：5 个测试文件 + 3 个自检脚本已通过类型检查（未执行）。'
     '（共 ${entries.length} 个入口）',
   );
 }

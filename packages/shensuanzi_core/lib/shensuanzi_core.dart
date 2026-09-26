@@ -44,6 +44,7 @@ export 'src/models/party_ledger.dart' show PartyLedger;
 export 'src/models/product.dart' show Product;
 export 'src/models/settlement.dart' show Settlement;
 export 'src/models/stock_ledger.dart' show StockLedger;
+export 'src/models/sync_queue_entry.dart' show SyncQueueEntry, SyncQueueStatus;
 
 // DAO
 export 'src/dao/account_dao.dart' show AccountDao;
@@ -54,6 +55,7 @@ export 'src/dao/party_dao.dart' show PartyDao;
 export 'src/dao/product_dao.dart' show ProductDao;
 export 'src/dao/query_dao.dart' show QueryDao;
 export 'src/dao/settlement_dao.dart' show SettlementDao;
+export 'src/dao/sync_dao.dart' show ClockOffsetDao, SyncCursorDao, SyncQueueDao;
 
 // 规则
 export 'src/rules/cost_policy.dart' show CostPolicy;
@@ -74,3 +76,9 @@ export 'src/sync/sync_operation.dart'
 export 'src/sync/sync_pull.dart'
     show SyncCursor, SyncCursorKeys, SyncPullResult;
 export 'src/sync/whitelist.dart' show SyncValueCheck, SyncWhitelist;
+
+// 同步（客户端：离线队列 + 拉取应用。**不含传输实现**）
+export 'src/sync/sync_client.dart'
+    show StockView, SyncClient, SyncPullReport, SyncPushReport;
+export 'src/sync/transport.dart'
+    show SyncHttpException, Transport, TransportRequest, TransportResponse;

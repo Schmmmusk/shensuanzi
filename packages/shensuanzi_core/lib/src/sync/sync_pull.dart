@@ -94,6 +94,47 @@ class SyncCursor {
 class SyncPullResult {
   const SyncPullResult({required this.entities, required this.nextCursors});
 
+  /// 解析 §8.2 的响应体。
+  ///
+  /// **只收 [entityNames] 里那 9 个实体**：未知键一律忽略 ——
+  /// 这样「主机新增实体」不会让旧客户端崩，同时
+  /// **`SyncClient` 落库时的表名天然不可能越界**（表名白名单由构造保证，
+  /// 而不是靠调用点自觉）。`next_cursors` 单独解析，不进 [entities]。
+  ///
+  /// 游标值必须是**字符串**（§8.2 的响应示例就是字符串）。
+  /// 不接受数字：那会掩盖「主机换成了非字符串游标」这类契约变更。
+  factory SyncPullResult.fromJson(Map<String, Object?> json) {
+    final Object? rawCursors = json['next_cursors'];
+    if (rawCursors is! Map) {
+      throw const FormatException('拉取响应体缺少 next_cursors 对象');
+    }
+    final Map<String, String> cursors = <String, String>{};
+    rawCursors.forEach((Object? key, Object? value) {
+      if (value is! String) {
+        throw FormatException('游标 $key 必须是字符串，实际 ${value.runtimeType}');
+      }
+      cursors['$key'] = value;
+    });
+
+    final Map<String, List<Map<String, Object?>>> entities =
+        <String, List<Map<String, Object?>>>{};
+    for (final String name in entityNames) {
+      final Object? rows = json[name];
+      if (rows == null) continue;
+      if (rows is! List) {
+        throw FormatException('实体 $name 必须是数组，实际 ${rows.runtimeType}');
+      }
+      entities[name] = <Map<String, Object?>>[
+        for (final Object? row in rows)
+          if (row is Map)
+            Map<String, Object?>.from(row)
+          else
+            throw FormatException('实体 $name 的元素必须是对象'),
+      ];
+    }
+    return SyncPullResult(entities: entities, nextCursors: cursors);
+  }
+
   /// 响应体里的 9 个实体（顺序即 §8.2 的字段顺序）。
   ///
   /// **单一定义**：host 据此拼响应，测试据此断言「恰好 9 个」——

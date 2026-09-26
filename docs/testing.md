@@ -51,12 +51,14 @@ dart run tool/selfcheck_payments.dart  # 方案 C：立即收付款自动生成�
 dart run tool/selfcheck_delivery.dart  # RULE-003 送货（含 R-10 的 status 例外、签收、在途视图）
 dart run tool/selfcheck_returns.dart   # RULE-007 / RULE-008（含 R-11 成本分摊、拒收）
 dart run tool/selfcheck_query.dart     # RULE-006 查询（库存 / 余额 / 在途 / 在店可售）
+dart run tool/selfcheck_sync_client.dart # SyncClient（游标 / pull 事务性 / push 退避 / delta）
 dart run tool/typecheck.dart           # 编译校验：import 全部入口但不执行
 
 # 主机端
 cd packages/shensuanzi_host
 dart run tool/selfcheck_sync.dart      # SyncServer（五类操作 + 白名单 + 拉取游标）
 dart run tool/selfcheck_host.dart      # 令牌 / 主机身份 / 配对载荷 / 二维码数据 / shelf HTTP
+dart run tool/selfcheck_client_server.dart # 端到端：一台主机 + 两台客户端，真实 HTTP
 dart run tool/typecheck.dart
 ```
 
@@ -70,8 +72,10 @@ dart run tool/typecheck.dart
 | core | `selfcheck_delivery.dart` | `delivery_test.dart` |
 | core | `selfcheck_returns.dart` | `return_test.dart` |
 | core | `selfcheck_query.dart` | `query_test.dart` |
+| **core** | `selfcheck_sync_client.dart` | `sync_client_test.dart` |
 | **host** | `selfcheck_sync.dart` | `sync_server_test.dart` |
 | **host** | `selfcheck_host.dart` | `auth_test` + `pairing_test` + `http_server_test` |
+| **host** | `selfcheck_client_server.dart` | `client_server_test.dart` |
 
 > ⚠️ **`typecheck.dart` 必须 import 全部入口，包括 `tool/` 下每个自检脚本本身。**
 > `dart test` 只跑 `test/`，脚本自身的编译错误不会被任何门禁发现 ——
@@ -123,6 +127,7 @@ dart run tool/typecheck.dart
 | B5 | `SUM(document_lines.amount) = document.total_amount`（`stocktake` 除外） |
 | B6 | `seq_no` 在每张流水表内**唯一且单调递增** |
 | B7 | 主数据（`products` / `parties` / `accounts`）的 `updated_at` 在每次写操作（含软删）后由主机刷新 —— 它是增量拉取的游标列（R-13） |
+| B8 | 成功 `pull` 后 `sync_cursor` 的 8 行与响应体 `next_cursors` **逐字段一致**（直接比 map，R-14） |
 
 ## C. 业务规则 RULE-001 ~ RULE-009
 
@@ -262,6 +267,57 @@ dart run tool/typecheck.dart
   从未见过该商品的新客户端**全量首拉**就能拿到 `is_active = 0` 的行
 - **`(updated_at, id)` 游标**：同一毫秒内多次更新 → 不丢行、不重复、必推进
 
+## G3. 客户端同步引擎（`packages/shensuanzi_core/`，R-14 落地）
+
+**游标（`SyncCursorDao`）**：
+
+- 空表 → 空 map（**没有行 = 从头拉**，不需要「已初始化」标志）
+- 写入 / 覆盖；**不透明游标**（base64 风格）也照样存与回传
+- **B8**：pull 后 `sync_cursor` 与 `next_cursors` 逐字段相等
+
+**队列（`SyncQueueDao`）**：
+
+- 入队 → `pending` 且立即可送；`markSent` 后不再是到期条目（但仍在表里）
+- `markFailed(dead: false)` → 仍 `pending` + 退避；`dead: true` → 死信
+- **死信退出自动重试**：`due()` 不含 `failed`；`requeue` 放回并清零
+- `clearConfirmed`：只清 `sent` 且 `entity_id` 命中的条目；
+  **`pending` 的即使命中也不清**（它还没推送成功）
+
+**拉取**：
+
+- 请求形状：`GET /api/sync/pull` + Bearer + `limit`；**首次不带 `since`**
+- 已存游标**原样**进查询串
+- 落库 + 存游标 + 清已确认条目**同事务**
+- **非法行（缺 id）→ 整批回滚**（行与游标都不落库）
+- 幂等：同一页重复拉不产生重复行；本地占位单据被主机版本覆盖（含 `doc_no` 回填）
+- 未知实体键**被忽略**且不落库（也不会被当表名拼进 SQL）
+- `doc_no` 撞车 → **带上下文**的 `StateError`（非裸 `SqliteException`）+ 整批回滚
+- 非 200 → `SyncHttpException`（401 可识别为需重新配对）
+- 缺 `next_cursors` / 游标非字符串 → `FormatException`
+
+**推送**：
+
+- 空队列不发请求；回执**按 `entity_id` 配对**（顺序打乱不影响）
+- `applied` / `already_exists` → `sent`（**不删除**）；`rejected` → 退避 + 记原因
+- 退避序列 **1s / 4s / 16s / 64s**；`> 10` → 死信
+- `conflict` → `server_state` 覆盖本地 + 删除条目
+- 某条无回执 → 只影响该条
+- **传输异常 / 非 200 → 整批退避且仍为 `pending`**（不伪装成业务拒绝）
+- 已 `sent` 的条目不会被再次推送
+
+**未同步影响（delta）**：
+
+- 符号表：`purchase` / `sale_return` → `+`；`sale` / `delivery` / `purchase_return` → `−`；
+  `stocktake` / `receipt` / `payment` → `0`（客户端**算不出**盘点影响，也不估算资金）
+- 多行分别累计；主数据操作不影响库存
+- `unsyncedDelta` 合计 `pending` + `sent` + `failed`
+- `stockViewOf` = 权威镜像 + 未同步影响，并给出**贡献者**（UI 展开「这 3 件是哪张单卖的」）
+
+**镜像契约**：
+
+- 开着外键的镜像 → 构造 `SyncClient` 时**明确拒绝**（否则 pull 会变成毒丸）
+- 落库顺序**按依赖排**（主数据在前），与 §8.2 的字段顺序不同
+
 ## H. 时钟
 
 - 客户端时钟偏移 +1 小时 → `seq_no` 顺序仍正确
@@ -281,3 +337,23 @@ dart run tool/typecheck.dart
 - Windows 启动 → Android 配对 → 入库 → 销售 → 收款 → 库存 / 余额 / 往来全部正确
 - Windows 关机 → Android 离线开单 → Windows 开机 → 同步 → 数据一致
 - 同一 `Document` 重复推送 → 数据库仅一条
+
+**已自动化的一层**（`client_server_test.dart` / `selfcheck_client_server.dart`）：
+**一台主机 + 两台客户端，真实 HTTP**（`dart:io HttpClient` 做传输）。
+它需要 `SyncServer`（host）与 `SyncClient`（core）**同场**，
+所以放在 host 包（依赖方向 host → core）。
+
+- **陷阱 1 回归守卫**（R-14 的核心，**这条会明确失败在「从镜像水位推算游标」的实现上**）：
+  ```
+  A pull → 游标停在 0
+  B 在 A 不知情时写 5 张单（seq 1..5）
+  A 离线开单并 push 成功（主机分配 seq 6）
+     → 断言 A 的游标**仍是 0**（push 不推进拉取游标）
+  A 再 pull → **必须拉到 6 条**（B 的 5 + A 的 1）
+     → 若实现从 MAX(镜像) 推算，B 的 5 张会被**永久跳过**
+  ```
+- **陷阱 2 回归守卫**：客户端时钟快 1 小时 → pull 仍不跳过服务器数据
+- 跨设备可见：A 推的单，B 拉得到**主机分配的正式单号**；重复 pull 幂等
+- 未同步影响：push 后显示库存立刻包含刚卖的货；pull 确认后归零
+- 乐观锁冲突：两台同时改同一商品 → 后到者 `conflict` + 本地被覆盖（主机赢）
+- v1 边界：`documentAction` → `rejected` + 进重试（非死信）；错令牌 → 401

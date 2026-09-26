@@ -28,11 +28,10 @@ void main() {
       .map((Row r) => r['name'])
       .toSet();
 
-  test('建出全部 11 张表', () {
-    final Set<Object?> tables = objectsOfType('table');
-    for (final String table in Schema.allTables) {
-      expect(tables, contains(table), reason: '缺少表 $table');
-    }
+  test('建出全部 12 张表，且没有多余的', () {
+    // 双向断言：既查「`allTables` 里的都建了」，也查「建出来的都在 `allTables` 里」。
+    // 单向 contains 抓不到「加了表却忘了登记进 allTables」。
+    expect(objectsOfType('table'), Schema.allTables.toSet());
   });
 
   test('user_version 写入 Schema.version', () {

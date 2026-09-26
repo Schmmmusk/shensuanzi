@@ -917,3 +917,53 @@ CREATE TABLE sync_cursor (
 
 切换成本不对称：**A 之后想省表**只需删表（游标随时能从水位重算一次）；
 **B 之后想修复丢数据**却需要先补表、再让所有已丢失的数据重新拉回来 —— 未必可恢复。
+
+## N. R-14 方案 A 落地记录（2026-09-26）
+
+**裁定**：方案 A —— 新表 `sync_cursor` 存拉取游标；客户端**不跑规则**，
+只做数量累加。完整论述见 `docs/reply.md`（逐轮覆盖）。
+
+### 落地内容
+
+| 层 | 内容 |
+|---|---|
+| `schema.dart` | 新增 `sync_cursor(entity PK, cursor, updated_at)`（表数 11 → **12**）；把 `sync_queue` / `clock_offset` / `sync_cursor` 归入 `Schema.clientTables`，与 `serverTables` 分开（R-14 §五 建议的 P2-3，先做**常量分组**） |
+| `data_model.md` | §4.1 补 `status` 生命周期（`sent` 不删、`failed` 退自动重试、按 `entity_id` 逐条确认）；§4.3 换成 `sync_cursor` 正式定义（含「为什么不解析」「为什么不能从镜像推算」）；新增 §4.4 客户端镜像两条硬约束；§五 加 **B8**；§七 加「客户端不跑业务规则」 |
+| `sync_protocol.md` | §一 架构图补 `pending_delta` / `in_flight_delta`；§六 重写重试策略（push 成功 → `sent`、pull 确认 → 删除）并区分「协议层失败 vs 业务拒绝」；§8.2 补客户端落库四条约束；§十一 补客户端测试项 |
+| `testing.md` | §B 补 B8；§零 补两个自检命令与镜像表两行；新增 **§G3 客户端同步引擎**；§J 补「已自动化的一层」（含陷阱 1/2 的守卫说明） |
+| `Agents.md` | §四 新增 5 行裁定（客户端游标 / 客户端不跑规则 / 未同步影响 / 客户端镜像 / 客户端传输）；§五 把 R-14 移入「已裁定并落地」 |
+| `README.md` | 进度表：表数 12、`SyncClient` ✅、未同步影响 ✅、端到端 ✅ |
+
+### 代码
+
+- **`sync_dao.dart`**：`SyncCursorDao`（`getAll` / `upsertAll` / `clear`）、
+  `SyncQueueDao`（`enqueue` / `due` / `markSent` / `markFailed` / `requeue` /
+  `clearConfirmed`）、`ClockOffsetDao`
+- **`sync_queue_entry.dart`**：`SyncQueueEntry` + `SyncQueueStatus`
+  （**不继承** `ImmutableEntity` —— 队列条目是传输状态，不是业务记录）
+- **`transport.dart`**：`TransportRequest` / `TransportResponse` / `Transport`
+  抽象类 + `SyncHttpException`（区分协议层失败与业务 `rejected`）
+- **`sync_client.dart`**：`push` / `pull` / `deltaOf` / `unsyncedDelta` /
+  `stockViewOf` / `recordClockOffset`；`SyncPullReport` / `SyncPushReport` / `StockView`
+- **`sync_pull.dart`**：`SyncPullResult.fromJson`（只收 9 个实体 ⇒ 落库表名天然不越界）
+
+### 过程中自检抓出的 5 个真问题（都不是靠人眼）
+
+| # | 问题 | 处置 |
+|---|---|---|
+| 1 | **落库顺序撞外键**：§8.2 字段顺序把主数据列在**最后**，而 `document_lines` / `stock_ledger` 都引用 `products` | 新增 `SyncClient.applyOrder`（依赖优先），并明确「不照 §8.2 字段顺序」 |
+| 2 | **镜像的 FK 契约没定**：某行引用的主数据落在页外时，开着 FK 会让 pull **永久失败**（毒丸） | `SyncClient` 构造时**显式拒绝**开着外键的镜像（`PRAGMA foreign_keys` 在事务内是 no-op，只能打开时定） |
+| 3 | **`SyncPushReport.rejected` 从未被累加**（我把计数记进了 `retried`） | 修正：`rejected` 是「为什么失败」的归类，`retried` 是「接下来怎么办」的处置 |
+| 4 | **`due()` 把死信也当可自动重试** —— 与「`> 10` → UI 提示人工处理」矛盾 | `due()` 只取 `pending`；新增 `requeue` 供人工处理后放回 |
+| 5 | **传输实现必须显式 utf8**：`HttpClientRequest.write` 默认编码不是 UTF-8，中文 payload 直接抛 `Invalid argument: Contains invalid characters` | 端到端测试改为 `add(utf8.encode(body))`；把这条写进 `transport.dart` 的实现提示 |
+
+**其中 #1 / #2 会直接导致「同步永远不成功」，#3 / #4 是静默行为错误。**
+
+### 门禁
+
+- core：`typecheck` 16 入口（9 测试 + 7 自检）；自检 **462 项**
+  （含新增 `selfcheck_sync_client` **86 项**）
+- host：`typecheck` 8 入口（5 测试 + 3 自检）；自检 **288 项**
+  （含新增 `selfcheck_client_server` **30 项**）
+- **陷阱 1 的回归守卫已通过**：`push 不推进拉取游标` + `A 再拉必须拿到 B 的 5 张`
+  —— 这条会明确失败在「从镜像水位推算游标」的实现上

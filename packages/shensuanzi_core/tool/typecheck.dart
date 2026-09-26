@@ -24,6 +24,8 @@ import '../test/rule_engine_test.dart' as rule_engine_test;
 // ignore: unused_import
 import '../test/schema_test.dart' as schema_test;
 // ignore: unused_import
+import '../test/sync_client_test.dart' as sync_client_test;
+// ignore: unused_import
 import '../test/util_test.dart' as util_test;
 
 // ⚠️ `tool/` 下的自检脚本也必须纳入 —— 它们**不被 `test/` 引用**，
@@ -41,6 +43,8 @@ import 'selfcheck_query.dart' as selfcheck_query;
 import 'selfcheck_returns.dart' as selfcheck_returns;
 // ignore: unused_import
 import 'selfcheck_rules.dart' as selfcheck_rules;
+// ignore: unused_import
+import 'selfcheck_sync_client.dart' as selfcheck_sync_client;
 
 void main() {
   // 只引用函数值，确保编译器保留（不调用）。
@@ -53,6 +57,7 @@ void main() {
     return_test.main,
     rule_engine_test.main,
     schema_test.main,
+    sync_client_test.main,
     util_test.main,
     // tool/
     selfcheck.main,
@@ -61,9 +66,10 @@ void main() {
     selfcheck_query.main,
     selfcheck_returns.main,
     selfcheck_rules.main,
+    selfcheck_sync_client.main,
   ];
   print(
-    '编译通过：8 个测试文件 + 6 个自检脚本已通过类型检查（未执行）。'
+    '编译通过：9 个测试文件 + 7 个自检脚本已通过类型检查（未执行）。'
     '（共 ${entries.length} 个入口）',
   );
 }

@@ -353,11 +353,35 @@ UI 单据列表默认用 `ref_doc_id IS NOT NULL` 过滤掉自动生成的收付
 | `operation` | TEXT | 见下 |
 | `base_version` | INTEGER NULL | `update` 时必填 |
 | `payload` | TEXT | JSON |
-| `status` | TEXT | `pending` / `sent` / `failed` |
+| `status` | TEXT | `pending` / `sent` / `failed` —— 生命周期见下 |
 | `retry_count` | INTEGER | 默认 0 |
 | `last_error` | TEXT NULL | |
 | `created_at` | INTEGER | |
 | `next_retry_at` | INTEGER | 默认 0 |
+
+**`status` 的生命周期**（R-14 附带的「未同步影响」，2026-09-26 裁定）：
+
+| 状态 | 含义 | 进入 | 离开 |
+|---|---|---|---|
+| `pending` | 本地已开单、**尚未 push 成功**（或 push 失败待重试） | 用户开单（`next_retry_at = 0`） | push 成功 → `sent` |
+| `sent` | 已 push 成功、主机已收下，但**拉取尚未确认** | push 回执 `applied` / `already_exists` | **pull 见到该 `entity_id`** → 删除 |
+| `failed` | **死信**：`retry_count > 10`，**退出自动重试**，等人工处理 | 重试超限 | 人工 `requeue` → `pending` |
+
+⚠️ **`sent` 不删除、只在 pull 确认后删除**：
+
+> 如果 push 成功就删条目，用户在下次 pull 之前**看不到自己刚做的生意** ——
+> 界面会显示「库存 10」而用户刚刚卖了 3 件。保留 `sent` 条目正是为了让
+> 「主机已收下、但我还没在权威状态里见到」这段窗口**可见**。
+
+⚠️ **`failed` 必须退出自动重试**：`retry_count > 10` 之后继续自动重试
+等于无限重试（只是越来越慢），而规范要的是「UI 提示人工处理」。
+
+⚠️ **清除 `sent` 按 `entity_id` 逐条确认，不是「pull 成功就清全部」**：
+`pull` 是**分页**的，刚 push 的单可能落在本页之外（`seq_no` 更大）；
+一刀切会把未同步影响提前归零，界面就会把刚卖掉的货又加回来。
+
+**自动重试的对象**：只取 `pending` 且 `next_retry_at <= now` 的条目
+（见 `SyncQueueDao.due`）。`sent` 与 `failed` 都不参与自动推送。
 
 **`operation` 枚举**：
 
@@ -400,20 +424,52 @@ UI 单据列表默认用 `ref_doc_id IS NOT NULL` 过滤掉自动生成的收付
 | `offset_ms` | INTEGER | `server_time - client_time` |
 | `updated_at` | INTEGER | |
 
-### 4.3 拉取游标的存储（**未定义**，待裁定 R-14）
+### 4.3 `sync_cursor`（仅客户端）—— 拉取游标
 
-§8.2 要求客户端保存 **8 个拉取游标**（4 个流水 `seq_no` + `documents` + 3 个主数据），
-但本节目前只有 `sync_queue` / `clock_offset` 两张表 —— **游标没有存储位置**。
+**R-14 方案 A**（2026-09-26 裁定，论述见 `docs/reply.md`）。
 
-这不是疏漏可以带过的：它**会反向决定表结构**（新增表 or 不新增），
-按 §五 的冻结标准属「动工前必须裁定」。
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `entity` | TEXT PK | **§8.2 的键名**（`stock_since` / `doc_since` / `products_since` …），**不是表名** |
+| `cursor` | TEXT | **原样保存**主机返回的 `next_cursors` 值；客户端**从不解析** |
+| `updated_at` | INTEGER | 本游标最后一次推进的主机毫秒时间戳 |
 
-两选（分析见 `docs/reply_review.md` §M）：
+**设计取舍**：
 
-- **A. 新表 `sync_cursor(entity, cursor, updated_at)`** —— 游标原样保存主机返回值（推荐）
-- **B. 从本地镜像水位推算** —— 零新表，但客户端时钟快于主机时会**静默丢数据**
+| 决策 | 理由 |
+|---|---|
+| `entity` 作 PK，**不是 `id = 1` 的单行表** | 加同步实体 = **插一行**，不是加一列。8 列变 9 列的迁移比 1 行变 2 行的迁移痛得多 |
+| `cursor` 统一 `TEXT` | `seq_no` 的整数字符串与复合游标的 `"1700000000000\|0192…"` 形态统一；客户端**原样回传** |
+| `entity` 存**键名**而非表名 | 不变量 B8 要求本表与 `next_cursors` **逐字段一致** —— 存键名时那就是两个 map 的**直接相等**，不需要映射层（与「wire 值 = `toRow()` 形态」同一条原则）。键的单一出处是 `SyncCursorKeys.all` |
+| **不存「是否已初始化」标志** | **没有行 = 从头拉**，这是正确的默认，不需要额外状态 |
+| `updated_at` 是**主机毫秒**，不是本地时钟 | 仅供审计与 UI 显示「镜像新鲜度」，不参与计算 |
 
-**R-14 裁定前，`SyncClient` 不动工。**
+**为什么游标不解析**（协议特性，不是妥协）：
+
+- 主机可以**换游标编码**（例如从 `"1700000000000|0192"` 换成 base64）而**不需要客户端升级**
+- 客户端不需要知道 `seq_no` 或 `(created_at, id)` 的语义 —— 它只负责原样回传
+- 客户端本地排序用 `(created_at, id)` 是**展示层的需要**，与同步游标无关
+
+**为什么不能从本地镜像推算**（这是 R-14 的核心）：
+
+游标回答的是「**服务器已交付到哪里**」（通信状态），
+`MAX(本地镜像)` 回答的是「**我本地有什么**」（数据状态）。
+神算子的写入路径有**三条**（pull、push 的回程、本地离线写），
+后两条会让本地镜像**越过**服务器已交付的水位 —— 于是推算出的游标会
+**静默跳过**其它设备在中间写入的数据。**详见 `docs/reply_review.md` §M。**
+
+### 4.4 客户端镜像的两条硬约束
+
+1. **镜像必须关闭外键**：`Db.open(path, foreignKeys: false)`。
+   主机是权威，完整性由主机保证；客户端一侧的 FK 会让 `pull` 变成**毒丸** ——
+   某一行引用的主数据若落在本页之外（`limit` 分页），该行永远插不进去，
+   于是 pull 每次整批回滚、游标退回，形成死循环。
+   （`PRAGMA foreign_keys` 在事务内是 **no-op**，所以只能在打开时定。）
+   `SyncClient` 构造时会**显式拒绝**开着外键的镜像。
+2. **本地占位单号必须唯一**，且不得与主机单号同形：本地乐观写入用
+   `Document.pendingDocNoPrefix + <本地唯一后缀>`；主机回填正式单号后覆盖。
+   （`documents.doc_no` 有 UNIQUE 约束；撞车意味着镜像已损坏，
+   `pull` 会抛**带上下文**的 `StateError`，修复路径是重建镜像 + 重拉。）
 
 ## 五、不变量
 
@@ -437,6 +493,11 @@ UI 单据列表默认用 `ref_doc_id IS NOT NULL` 过滤掉自动生成的收付
    （R-13 方案 A）。不刷新，客户端就永远感知不到「另一台设备改了价格」。
    「写操作」含 `createMasterData` / `updateMasterData` / `deleteMasterData`
    （**软删也算写**：`is_active = 0` 必须让另一台设备看得见）
+9. **B8**：每次成功 `pull` 后，`sync_cursor` 的 8 行（首次为 8 条插入）
+   与响应体的 `next_cursors` **逐字段一致**。
+   任何一行不一致即同步实现 bug。
+   *这条可以直接在测试里断言*：把主机的 `next_cursors` 与
+   `SELECT * FROM sync_cursor` 做**等值比较**（这也是 `entity` 存键名而非表名的原因）。
 
 ## 六、成本口径边界
 
@@ -451,6 +512,18 @@ UI 单据列表默认用 `ref_doc_id IS NOT NULL` 过滤掉自动生成的收付
 - `occurred_at` 仅用于展示与筛选
 - Android 端本地排序用 `(created_at, id)`。`seq_no` 是主机内部概念，**客户端不持久化、不引用**
 - Android 端离线产生的记录 `time_estimated = 1`。主机保留该标记，用于审计
+
+**客户端不跑业务规则**（R-14 附带问题 3 的裁定，2026-09-26）：
+
+客户端**不实现 `RuleEngine`**，只维护一个「已发生、但权威状态还没包含」的
+**数量 delta**（由 `sync_queue` 派生，见 `sync_protocol.md` §一）：
+
+- **只做 `±quantity` 累加**：算不出加权成本，因为那依赖 `seq_no`；
+  算不出盘点影响，因为那需要账面数量
+- **不算成本、不算往来余额**：宁可**诚实地不提供**，也不要「看起来精确的错误」
+- 客户端算出的成本/余额与主机**必然有偏差**，且偏差随离线时长增长 ——
+  跑规则不是「更准的估算」，而是「看起来更准的错误」，且**没有任何门禁能发现**
+  （主机侧有 9 条规则的门禁，客户端侧没有）
 
 ## 八、盘点语义
 

@@ -65,8 +65,13 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | 同步游标 | 四张流水用 `seq_no`（开区间）；`documents` 用 **`(created_at, id)`**、主数据用 **`(updated_at, id)`**（均复合）；`document_lines` **无独立游标**（由本页 `documents` 派生）。见 §8.2（R-4 / R-13） |
 | pull 的实体面 | **9 个实体**（6 业务 + 3 主数据），是同步的**唯一入口**；§8.3 的 REST **不承担同步职责**（R-13 方案 A / 2026-09-26） |
 | wire 形态 | **列名 = 数据库列名（snake_case），值 = `toRow()` 的形态** —— 布尔 `1/0`、时间毫秒、金额整数分。模型自带编解码器，无转换层 |
+| **客户端游标** | **原样保存主机返回的 `next_cursors`**（`sync_cursor` 表），**不得从本地镜像推算** —— 游标是「服务器已交付到哪里」（通信状态），不是「我本地有什么」（数据状态）（R-14 方案 A / 2026-09-26） |
+| **客户端不跑规则** | 客户端**不实现 `RuleEngine`**，只做 `±quantity` 数量累加（由 `sync_queue` 派生）。**不算成本、不算往来、不算盘点** —— 宁可诚实地不提供，也不要「看起来精确的错误」，因为客户端侧**没有任何门禁**能发现规则漂移（R-14 附带问题 3 / 2026-09-26） |
+| **未同步影响** | push 成功后队列条目转 `sent` 而**不删除**，等 pull 确认后才删 —— 否则「用户刚卖的货」在下次 pull 前不可见。UI：`显示 = 权威镜像 + 未同步影响`（R-14 附带问题 3 / 2026-09-26） |
+| **客户端镜像** | 必须 `foreignKeys: false`（否则 pull 变毒丸）；落库按**依赖顺序**（主数据在前），不照 §8.2 的字段顺序（2026-09-26） |
+| **客户端传输** | `Transport` 抽象类（请求/响应对象 + `method`/`headers`）；**绑定由应用层提供**，core 零新依赖。⚠️ 实现方必须**显式 utf8 编码**请求体（中文 payload 否则直接抛） |
 | SyncServer 边界 | **不含 HTTP**。接 `SyncOperation`、返 `SyncResponse`；shelf 适配层属 Windows 应用侧。保持纯 Dart、零新依赖 |
-| **包边界** | `shensuanzi_core` = 模型 / DAO / 规则 / **同步协议（DTO + 白名单 + 游标）**；`shensuanzi_host` = **shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据**；二维码**渲染**留 Flutter 层。两包都无 Flutter 依赖 ⇒ `dart test` 全程可跑（2026-09-25） |
+| **包边界** | `shensuanzi_core` = 模型 / DAO / 规则 / **同步协议（DTO + 白名单 + 游标）+ `SyncClient`**；`shensuanzi_host` = **shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据**；二维码**渲染**留 Flutter 层。两包都无 Flutter 依赖 ⇒ `dart test` 全程可跑（2026-09-25） |
 
 ## 五、待裁定清单
 
@@ -80,13 +85,13 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | 编号 | 内容 | 处理 |
 |---|---|---|
 | R-3 | `documentAction` 的幂等判定与存储 | 待同步层实现时裁定。目前 RULE-003 的动作部分暂缓，v1 用主机本地改状态替代。**R-3.1 ~ R-3.5 五问清单**见 `docs/reply_review.md` §H |
-| **R-14** | **客户端拉取游标存哪没定义** —— §8.2 要求客户端「存游标」，但 `data_model.md` §四 只有 `sync_queue` / `clock_offset` | **阻断 `SyncClient`**（`IS-A-表结构` 类问题）。两选见 `docs/reply_review.md` §M：A. 新表 `sync_cursor` / B. 从镜像水位推算 |
 | R-8 / R-9 / R-10 / R-12 | 实现期边界（盘盈无成本、超卖符号、`delivery` 状态机、散客赊账） | 已按当前处置实现、**不阻断**；详见 `docs/reply_review.md` 附录 D |
 
 **已裁定并落地**：R-1（`allocations` 随 payload）、R-2（B5 排除收付款单）、
 R-6（方案 C：任何资金流都挂收付款单）、R-11（退货成本精确回退）、
 R-7（负数舍入 = 半数远离零，随实现确定）、
-**R-13（方案 A：主数据并入 `pull`，游标 `(updated_at, id)`）**。
+**R-13（方案 A：主数据并入 `pull`，游标 `(updated_at, id)`）**、
+**R-14（方案 A：新表 `sync_cursor` 存拉取游标；客户端只做数量累加）**。
 
 **进入同步层时要回答的 5 个动作问题**（R-3.1 ~ R-3.5）见
 `docs/reply_review.md` §H（**不要在 `reply.md` 里找——那是逐轮覆盖的裁定书**）。

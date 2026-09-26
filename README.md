@@ -76,7 +76,7 @@ v0.4 — 规范冻结，进入实施。
 
 | 项 | 包 | 状态 |
 |---|---|---|
-| `schema`（11 表 + 26 索引）、可重入事务、迁移 | core | ✅ |
+| `schema`（**12 表** + 26 索引）、可重入事务、迁移 | core | ✅ |
 | 模型 + DAO（主数据 / 单据 / 四张流水 / 查询） | core | ✅ |
 | RULE-001 采购入库 · RULE-002 店内销售 | core | ✅ |
 | RULE-003 送货 | core | ✅ 创建 + **主机本地签收**（`markDelivered`）；离线签收待 `documentAction`（R-3） |
@@ -89,7 +89,9 @@ v0.4 — 规范冻结，进入实施。
 | shelf HTTP 服务 · Bearer 鉴权 · 端口探测 · 二维码数据 | host | ✅ |
 | 主数据增量同步（R-13 方案 A：并入 `pull`，游标 `(updated_at, id)`） | core + host | ✅ 含软删可见、全部列、跨设备可见 |
 | 主数据 REST 接口（§8.3） | host | 未开始（**有意**：便利接口，不承担同步职责） |
-| `SyncClient`（Android 离线队列） | core | 未开始 |
+| **`SyncClient`**（游标 / 离线队列 / pull 应用 / 退避与死信） | core | ✅ 含 R-14 的 `sync_cursor` 表 |
+| 未同步影响（`sync_queue` 派生的 ± 数量 delta） | core | ✅ 只算数量，不算成本/往来/盘点 |
+| 端到端：一台主机 + 两台客户端（真实 HTTP） | host | ✅ `client_server_test` + 镜像自检 |
 | Windows UI · Android UI · 备份打包 | Flutter | 未开始 |
 
 运行与验证方式（含本机限制）见 [`docs/testing.md` §零](docs/testing.md)。

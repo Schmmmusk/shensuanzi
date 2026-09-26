@@ -106,6 +106,10 @@ void main() {
   for (final String table in Schema.allTables) {
     check('表 $table', tables.contains(table));
   }
+  // 双向：也查「建出来的都在 allTables 里」——单向包含抓不到「加了表却忘了登记」
+  check('没有多余的表（表集与 Schema.allTables 相等）',
+      tables.difference(Schema.allTables.toSet()).isEmpty,
+      '${tables.difference(Schema.allTables.toSet())}');
   check('schema 版本 = ${Schema.version}', db.schemaVersion == Schema.version,
       '实际 ${db.schemaVersion}');
 

@@ -27,8 +27,34 @@ class Schema {
   static const String settlements = 'settlements';
   static const String syncQueue = 'sync_queue';
   static const String clockOffset = 'clock_offset';
+  static const String syncCursor = 'sync_cursor';
 
-  /// 全部业务表（供自检与白名单校验使用）
+  /// **主机与客户端共用**的表（业务 + 主数据）
+  static const List<String> serverTables = <String>[
+    products,
+    parties,
+    accounts,
+    documents,
+    documentLines,
+    stockLedger,
+    moneyLedger,
+    partyLedger,
+    settlements,
+  ];
+
+  /// **仅客户端**的表（同步状态）。
+  ///
+  /// 主机**不应**创建这三张表 —— `SyncServer` 的运行不依赖它们。
+  /// （R-14 裁定时提出的 P2-3：在 `schema.dart` 里显式区分，
+  /// 让「主机不该碰同步状态」这件事有据可查，而不是靠记忆。
+  /// 当前只是**常量分组**；用类型把 `SyncServer` 的 `Db` 排除掉属后续工作。）
+  static const List<String> clientTables = <String>[
+    syncQueue,
+    clockOffset,
+    syncCursor,
+  ];
+
+  /// 全部表（供自检与白名单校验使用）
   static const List<String> allTables = <String>[
     products,
     parties,
@@ -41,6 +67,7 @@ class Schema {
     settlements,
     syncQueue,
     clockOffset,
+    syncCursor,
   ];
 
   /// **主数据**：允许 UPDATE，受 `sync_version` 乐观锁保护。
@@ -273,6 +300,21 @@ class Schema {
     CREATE TABLE $clockOffset (
       id          INTEGER PRIMARY KEY CHECK (id = 1),
       offset_ms   INTEGER NOT NULL DEFAULT 0,
+      updated_at  INTEGER NOT NULL
+    )
+    ''',
+
+    // ============================ 拉取游标（仅客户端使用） ============================
+    // R-14 方案 A。**游标是「服务器已交付到哪里」的凭证，不是「本地有什么」的推导**：
+    // 客户端只**原样保存**主机返回的 `next_cursors` 值，从不解析、从不从镜像水位推算。
+    //
+    // 为什么不从 `MAX(本地镜像)` 推算：写入路径有三条 —— pull、push 的回程、
+    // 本地离线写。后两条会让本地镜像**越过**服务器已交付的水位，
+    // 于是推算出的游标会跳过后一段服务器数据，且**静默丢数据**（不报错、不自愈）。
+    '''
+    CREATE TABLE $syncCursor (
+      entity      TEXT PRIMARY KEY,
+      cursor      TEXT NOT NULL,
       updated_at  INTEGER NOT NULL
     )
     ''',

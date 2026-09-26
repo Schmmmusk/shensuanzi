@@ -73,7 +73,7 @@ class SyncServer {
           return SyncResponse.rejected(
             op.entityId,
             'action_not_implemented: v1 不落地「动作」通道'
-            '（R-3，见 docs/reply.md）',
+            '（R-3，五问清单见 docs/reply_review.md §H）',
           );
       }
     } on FormatException catch (error) {
