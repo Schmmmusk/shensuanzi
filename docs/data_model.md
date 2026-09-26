@@ -400,6 +400,21 @@ UI 单据列表默认用 `ref_doc_id IS NOT NULL` 过滤掉自动生成的收付
 | `offset_ms` | INTEGER | `server_time - client_time` |
 | `updated_at` | INTEGER | |
 
+### 4.3 拉取游标的存储（**未定义**，待裁定 R-14）
+
+§8.2 要求客户端保存 **8 个拉取游标**（4 个流水 `seq_no` + `documents` + 3 个主数据），
+但本节目前只有 `sync_queue` / `clock_offset` 两张表 —— **游标没有存储位置**。
+
+这不是疏漏可以带过的：它**会反向决定表结构**（新增表 or 不新增），
+按 §五 的冻结标准属「动工前必须裁定」。
+
+两选（分析见 `docs/reply_review.md` §M）：
+
+- **A. 新表 `sync_cursor(entity, cursor, updated_at)`** —— 游标原样保存主机返回值（推荐）
+- **B. 从本地镜像水位推算** —— 零新表，但客户端时钟快于主机时会**静默丢数据**
+
+**R-14 裁定前，`SyncClient` 不动工。**
+
 ## 五、不变量
 
 以下不变量必须在测试中断言：

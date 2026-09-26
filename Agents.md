@@ -80,6 +80,7 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | 编号 | 内容 | 处理 |
 |---|---|---|
 | R-3 | `documentAction` 的幂等判定与存储 | 待同步层实现时裁定。目前 RULE-003 的动作部分暂缓，v1 用主机本地改状态替代。**R-3.1 ~ R-3.5 五问清单**见 `docs/reply_review.md` §H |
+| **R-14** | **客户端拉取游标存哪没定义** —— §8.2 要求客户端「存游标」，但 `data_model.md` §四 只有 `sync_queue` / `clock_offset` | **阻断 `SyncClient`**（`IS-A-表结构` 类问题）。两选见 `docs/reply_review.md` §M：A. 新表 `sync_cursor` / B. 从镜像水位推算 |
 | R-8 / R-9 / R-10 / R-12 | 实现期边界（盘盈无成本、超卖符号、`delivery` 状态机、散客赊账） | 已按当前处置实现、**不阻断**；详见 `docs/reply_review.md` 附录 D |
 
 **已裁定并落地**：R-1（`allocations` 随 payload）、R-2（B5 排除收付款单）、
