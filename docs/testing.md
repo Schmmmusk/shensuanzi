@@ -465,6 +465,12 @@ dart run tool/typecheck.dart
 **沙箱纪律**：测试与自检**必须**用临时目录，且 `AppBootstrap` 的 `configStore`
 必须注入到沙箱 —— 绝不能让测试写真实的 `%APPDATA%`。
 
+**同一条纪律适用于 Flutter 层**：`ShensuanziApp(configStore:)` **必须**指向沙箱
+（`test/startup_test.dart` 就是这么做的）。这一条曾经**无法被遵守** ——
+`docs/testing.md` 早就写了「绝不能碰真实 `%APPDATA%`」，但从 `ShensuanziApp`
+外面看**没有地方能指到沙箱**；补上 `configStore` 之后纪律和代码才对齐
+（`docs/reply_review.md` §W 六）。
+
 ## M. 商品建档（`packages/shensuanzi_core/`）
 
 对应 `test/product_service_test.dart` 与 `tool/selfcheck_products.dart`。
@@ -509,8 +515,8 @@ dart run tool/typecheck.dart
 | 手段 | 能查出什么 |
 |---|---|
 | `flutter analyze`（**在仓库根跑**） | 类型错误、未使用导入、lint（**首选**） |
-| `flutter test` | widget 测试。⚠️ **只测不需要磁盘与插件的东西** —— 启动流程会读配置、弹对话框、调文件夹选择器，这些在 widget 测试里会炸或需要 mock |
-| `dart format --output=none lib test` | **语法**（解析文件但不解析导入）。当 `flutter analyze` 跑不了时，这是唯一还能用的门禁 —— 它能抓住括号不配对、字符串未闭合这类错误 |
+| `flutter test` | widget 测试（`test/widget_test.dart` + `test/startup_test.dart`）。启动流程靠**两个注入点**变得可测：`pickDirectory`（会真弹系统框）+ `configStore`（**不注入就会读写开发者真实的 `%APPDATA%`**）。⚠️ 还要 `useLocalSqlite()` —— `sqlite3_flutter_libs` 只把 DLL 放进**应用目录**，`flutter test` 不打包它 |
+| `dart format --output=none lib test` | **语法**（解析文件但不解析导入）。当 `flutter analyze` 跑不了时，这是唯一还能用的门禁 —— 它能抓住括号不配对、字符串未闭合这类错误。⚠️ **别用管道接它再取 `$?`** —— 管道后取到的是 `tail` 的退出码，**语法错误会被静默放行**（2026-09-26 真实漏过一次）。要么直跑，要么取 `${PIPESTATUS[0]}` |
 
 > ⚠️ **`flutter analyze` 是本项目唯一的全仓 lint 门禁。**
 >
@@ -525,22 +531,28 @@ dart run tool/typecheck.dart
 > 全仓按新风格格式化会产生一个**纯风格的大 diff**（实测 `core` 32/53 文件、
 > `host` 11/15、`app` 14/16 都会变）。要统一风格就单独提一个提交。
 
-**已自动化的**（`test/widget_test.dart`）：主界面把「数据在哪」说清楚、
-闭环入口常驻可见、数据库没就绪时给出「怎么办」。
+**已自动化的**：
 
-**⏳ 待补：启动流程（`ShensuanziApp`）本身没有断言。**
-`test/widget_test.dart` 挂的是 **`AppShell`**，**不经过启动流程** ——
-「什么时候弹对话框、拿到结果之后干什么」这段接线无人看守，改坏只会**静默跳过对话框**。
-2026-09-26 真踩过一次：`No MaterialLocalizations found.`（在 `MaterialApp` 之上拿 context
-弹对话框），界面停在兜底页，看着像「按钮没反应」，而所有单元测试都是绿的。
+| 文件 | 覆盖 |
+|---|---|
+| `test/widget_test.dart` | 主界面把「数据在哪」说清楚、闭环入口常驻可见、数据库没就绪时给出「怎么办」 |
+| **`test/startup_test.dart`** | **启动流程五条**：① 没配置过 → 弹对话框 ② 配置过且可用 → 不弹、直接进主界面 ③ 选了目录 → 对话框消失、进主界面、配置落到**沙箱** ④ 选择器取消（`null`）→ 对话框仍在、不崩 ⑤ 目录能用但**库打不开** → 错误页 |
 
-`ShensuanziApp(pickDirectory:)` 已经能注入，但五个场景**暂时还写不了**：
-配置文件的落点是真实 `%APPDATA%`（`AppEnvironment.detect()` 推出），
-不注入 `configStore` 的话测试**既不确定、又会写坏开发者自己的配置**
-（违反 §K 的沙箱纪律）。缺口与最小解法见 `docs/reply_review.md` §V 三。
+启动流程这五条以前**一条都没有**，根因是缺接缝：只有 `pickDirectory` 不够，
+还得有 `configStore` —— 否则测试既**不确定**（真机上配置已存在，对话框永远不弹），
+又**有破坏性**（`prepare()` 会把真实配置改写成测试的临时目录）。
+2026-09-26 真踩过一次同类问题：在 `MaterialApp` **之上**拿 context 弹对话框 ⇒
+`No MaterialLocalizations found.`，界面停在兜底页，看着像「按钮没反应」，
+而所有单元测试都是绿的。裁定与论证见 `docs/reply_review.md` §W。
+
+> ⚠️ **写 widget 断言前，先想想「同一段文字会不会在屏幕上出现两次」。**
+> 首轮 `startup_test` 三条红，全是同一个原因：断言对话框标题用了裸
+> `find.text('选择数据存放位置')`，而**兜底页的按钮文字也叫这个** ——
+> 对话框开着时底下那个按钮还在，恰好找到 2 个。
+> 「某 UI 元素在不在」要**限定作用域**（`find.descendant(of: find.byType(AlertDialog), …)`），
+> 不要靠「恰好只有一个」碰运气。
 
 **不能自动化的**（必须手动跑一次真机）：
 
-- 启动流程：首次 → 弹数据目录对话框 → 建目录 + 写标记 → 开库 → 主界面
-- 系统「选择文件夹」对话框（`file_selector` 插件）
+- 系统「选择文件夹」对话框本身（`file_selector` 插件）
 - 真实盘类型与剩余空间（纯 Dart 拿不到，需要 Win32 / 插件）

@@ -17,7 +17,8 @@
 >
 > **过程记录**：§F 方案 C │ §G R-11 │ §H R-3 │ §I RULE-006 + SyncServer │ §J 包拆分 + host 传输层 │
 > §K 首轮修复 │ §L R-13 │ §N R-14 │ §O 数据目录策略 │ §P 数据目录对话框 │ §Q lint 清零 + 左侧导航 │
-> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑 │ §U 界面字体 │ §V 窗口标题 + 注入 pickDirectory
+> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑 │ §U 界面字体 │ §V 窗口标题 + 注入 pickDirectory │
+> §W 启动流程可测化：注入 configStore
 
 ## 0. 结论速览
 
@@ -1357,8 +1358,8 @@ Navigator 的 context 在 `MaterialApp` **下面**，这是「从树外面弹对
 `test/widget_test.dart` 挂的是 **`AppShell`**，不是 `ShensuanziApp` ——
 它压根不经过启动流程，所以这条路径从来没被任何门禁覆盖过
 （文件注释里也写了「启动流程会读配置、弹对话框，widget 测试里会炸」）。
-**可选的补救**：让 `ShensuanziApp` 接受注入的 `DataDirectoryService` / `pickDirectory`，
-就能加一条「启动后对话框出现且无异常」的 widget 测试。**待裁定**（要动构造函数）。
+**可选的补救** → **已裁定**：注入 `pickDirectory` + `configStore`
+（**不是** `DataDirectoryService`），见 §V / §W。
 
 ---
 
@@ -1425,6 +1426,8 @@ const ShensuanziApp({
 
 ### 三、⚠️ 但五个场景现在**写不了** —— 沙箱缺口（待裁定）
 
+> ✅ **已裁定：采纳建议的 `configStore` 方案 → 落地见 §W。** 以下保留当时的论证。
+
 裁定里说「`DataDirectoryService` 不用注入 —— **指到临时目录就行**」。
 核对源码后发现**做不到**：它指向哪个目录，不取决于 `pickDirectory`，
 而取决于**配置文件在哪**；配置文件的位置由 `AppEnvironment.detect()` 从 `%APPDATA%` 推出：
@@ -1470,6 +1473,11 @@ const ShensuanziApp({
 
 **裁定前不动**：五个场景的 widget 测试**一行都没写** —— 写了就会碰真实配置。
 
+> **【已裁定】**（`docs/reply.md`）：采纳 `configStore` 可选参数方案。理由三条——
+> ① 它是 `AppBootstrap` **已有的接缝**，只是往上提一层；② `AppEnvironment` 必须保持真实，
+> 否则变成「在假机器上跑假配置」，每个场景还得自己造盘符；③ 粒度与 `pickDirectory` 对称，
+> 两个参数正好收拢启动流程的**全部系统交互**。落地记录见 **§W**。
+
 ### 四、回头补的坑：C4819（我自己捅的）
 
 上面第一节把窗口标题写成 `L"\u795e\u7b97\u5b50"` 是对的，
@@ -1509,6 +1517,142 @@ target_compile_options(${BINARY_NAME} PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:/utf-
 （`rc.exe` 不认 `/utf-8`，少了限定就会在资源编译上再炸一次。）
 
 完整论述与排查手法写进 `docs/windows_build.md` **§七**。
+
+---
+
+## W. 启动流程可测化：注入 `configStore`（2026-09-26）
+
+**裁定**（`docs/reply.md`）：采纳 `configStore` 可选参数，默认 `null`，在字段初始化时
+`??` 解析；**`AppEnvironment` 保持真实**，`DataDirectoryService` 与 `AppBootstrap`
+**都不注入**。
+
+### 一、补的是哪个缺口
+
+`ShensuanziApp` 内部是 `DataDirectoryService(environment: AppEnvironment.detect())`，
+**没传 `configStore`** ⇒ 配置落在**真实 `%APPDATA%\神算子\config.json`** ⇒
+启动流程的测试既**不确定**（真机已有配置 → 对话框永远不弹），又**有破坏性**
+（`prepare()` 会把真实配置改写成测试用的临时目录，而临时目录随后被清理）。
+
+### 二、为什么是 `configStore`，不是别的
+
+| 备选 | 不采纳的原因 |
+|---|---|
+| 注入 `AppEnvironment` | 测试要伪造 `home` / `appData` / 系统盘 / 每个盘的字母与剩余空间 —— **造机器的工作量会盖过测启动流程本身**。真想测的是「**真实机器 + 沙箱配置**」 |
+| 注入 `DataDirectoryService` | 把「环境 + 配置 + 策略」捆成一团；服务本身已经有纯 Dart 测试 |
+| 注入 `AppBootstrap` | 它是一个**流程**，不是依赖 —— 注入它，测的就成了「我传的假 bootstrap 会不会按我想的返回」，**测的是 mock** |
+
+`configStore` 还占一条便宜：它**本来就是 `AppBootstrap` 已有的接缝**
+（`configStore = configStore ?? AppConfigStore.forEnvironment(environment)`），
+这次只是把它**往上提一层**。
+
+### 三、两个注入点形状不同，表达的是同一件事
+
+| 参数 | 默认值 | 为什么是这样 |
+|---|---|---|
+| `pickDirectory` | `pickFolderFromSystem` | 函数引用是**编译期常量**，能直接内联进参数默认值 |
+| `configStore` | `null` | 真实位置依赖**运行时环境**（`AppEnvironment.detect()`），编译期算不出来 ⇒ 用 `null` 表示「用默认的」，在字段初始化时 `??` 解析 |
+
+两者都是「**不传就用生产行为**」。`const ShensuanziApp()` 一个字没改。
+
+### 四、落地
+
+- `lib/src/app.dart`：`_environment`（`final`）→ `_configStore` → `_service`；
+  后两个用 `late final`（要读 `widget.configStore`）
+- **新增 `test/startup_test.dart`**：五条场景全部落地
+- ⚠️ **测试必须调 `useLocalSqlite()`**：`sqlite3_flutter_libs` 只把 `sqlite3.dll`
+  放进**应用目录**，`flutter test` 不打包它 ⇒ 不覆盖加载就一律开库失败，
+  场景 ②/③/⑤ 会**假失败**（绿不了的绿比红更危险）
+- 场景 ⑤ 的构造手法：把 `shensuanzi.db` 写成一个**非空的非法字符串** ⇒
+  `Db.open` 首次执行 `PRAGMA journal_mode=WAL` 时抛 `SqliteException`，被
+  `_openDatabase` 的 catch 捕获 → 错误页。这条路径（目录能建、库打不开）正是
+  `app.dart` 里那个错误页存在的理由
+- 前置状态（场景 ②/⑤）用 `DataMarker.write` + `store.save(AppConfig(...))`
+  直接造，不调 `prepare()` —— 那样会**多写一次配置**（`prepare` 自己会
+  `saveConfig`），且场景 ⑤ 要造的正是「prepare 放行、open 失败」的分叉，
+  调 `prepare` 反而绕远了
+- **场景 ③/⑤ 必须先点「更改」再点「开始使用」**：`DataDirectoryDialogModel.open()`
+  用 `resolveDefault()` 起步，而那是**真实默认路径**（`D:\神算子数据`）——
+  不先「更改」到沙箱目录，测试就会在开发者磁盘上真建目录
+
+### 五、门禁
+
+- `flutter test`：`widget_test` 6 + `startup_test` **5** = **11 个用例**
+- `flutter analyze`：0 issues。新增测试 `import package:path`，根 `pubspec.yaml`
+  因此**显式声明 `path: ^1.9.0`**（否则 `depend_on_referenced_packages` 会报：
+  直接 import 的包必须是直接依赖）
+- ✅ **已实测通过**（2026-09-26，用户复跑：11/11 全过）。首轮与二轮的两次红
+  分别见上方的 **§七（finder 歧义）** 与 **§八（getter 写进函数体）**，
+  根因都在**测试代码**，五条场景的业务逻辑一次通过
+
+### 六、纪律与代码对齐（顺带的观察）
+
+`docs/testing.md §K` 早就写了「绝不能碰真实 `%APPDATA%`」，
+但**从 `ShensuanziApp` 外面看根本没有地方能指到沙箱** ——
+这条纪律在这一层**无法被遵守**，只是暂时没人去触碰而已。
+补上 `configStore` 之后，纪律和代码才对齐。
+
+**写下的纪律必须能在代码里被执行，否则它只是一句话。**
+
+### 七、首轮跑出的一处 finder 缺陷（3 条红，根因同一个）
+
+首轮 `flutter test`：**场景 ① / ③ / ④ 红**，报
+`Expected: exactly one matching candidate / Found 2 widgets with text "选择数据存放位置"`。
+
+**根因**：启动兜底页（`_StartupPage`）的按钮文字**也叫「选择数据存放位置」**，
+而对话框开着时**底下的兜底页还在** —— 标题一个、按钮一个，恰好 2 个。
+裸 `find.text(...)` 直接撞上歧义。
+
+**修法**：把「对话框在不在」的断言**限定在 `AlertDialog` 里面**：
+
+```dart
+Finder get dialog => find.byType(AlertDialog);
+Finder get dialogTitle =>
+    find.descendant(of: dialog, matching: find.text('选择数据存放位置'));
+```
+
+**顺带一个好消息**：首轮 **8 过 3 红**，而 3 条红是**同一个 finder 问题** ——
+也就是说 `useLocalSqlite()` 在 tester 里**真能加载 `winsqlite3.dll`**（场景 ②/③ 开库成功）、
+场景 ⑤ 的「非法库 → 错误页」成立、对话框的「更改 / 开始使用」交互可点。
+五条场景的**逻辑**全部一次通过，红的全是查找器写法。
+
+### 八、二轮翻车：getter 写进了函数体（编译都没过）
+
+修好 finder 后我把它写成 `Finder get dialog => …` —— **但这段代码在 `main()` 里面**，
+getter 只能声明在类 / 库顶层 ⇒ 整个测试文件**编译失败**：
+
+```text
+test/startup_test.dart:63:10: Error: Expected ';' after this.
+  Finder get dialog => find.byType(AlertDialog);
+```
+
+**修法**：函数体内用局部 `final` 变量（同样是常量语义，但语法合法）：
+
+```dart
+final Finder dialog = find.byType(AlertDialog);
+final Finder dialogTitle = find.descendant(of: dialog, matching: find.text('…'));
+```
+
+### 九、⚠️ 我的语法门禁为什么会放行它 —— 退出码被管道吞了
+
+我跑的是：
+
+```bash
+dart format --output=none test/startup_test.dart 2>&1 | tail -2
+echo "rc=$?"        # ← 取到的是 tail 的退出码，永远是 0
+```
+
+**`dart format` 其实报错了**（输出里有 `╵` 那个语法错误标记），但管道之后的 `$?`
+是 `tail` 的退出码 —— 门禁被我自己的取码方式**静默放行**。
+
+**正确写法**（二选一）：
+
+```bash
+dart format --output=none test/startup_test.dart          # 直跑，$? 就是它
+dart format --output=none f.dart 2>&1 | tail -2; echo "${PIPESTATUS[0]}"   # 取第一个
+```
+
+这条已写进 `docs/testing.md` §L 的门禁表。
+
 
 
 

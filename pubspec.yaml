@@ -51,6 +51,11 @@ dependencies:
   # （ShensuanziApp(pickDirectory:)），测试传桩、生产用默认值。
   file_selector: ^1.1.0
 
+  # 路径拼接（`test/startup_test.dart` 用 `p.join` 拼沙箱路径）。
+  # 虽然 `shensuanzi_app` 已经间接带着它，但根测试**直接** `import` 它，
+  # 按 `depend_on_referenced_packages` 必须在这里显式声明。
+  path: ^1.9.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

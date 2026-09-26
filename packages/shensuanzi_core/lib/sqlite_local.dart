@@ -1,8 +1,12 @@
 // 本地（纯 Dart）运行时的 SQLite 原生库加载辅助。
 //
 // **生产路径不依赖本文件**：Flutter 应用由 `sqlite3_flutter_libs` 提供原生库。
-// 本文件只服务于「不启动 Flutter 的本地验证」场景
-// （各包的 `test/` 与 `tool/selfcheck*.dart`）。
+// 本文件服务于「不是从应用目录启动」的场景：
+//
+//   - 各包的 `test/` 与 `tool/selfcheck*.dart`（纯 Dart）
+//   - **根应用的 `flutter test`**：`sqlite3_flutter_libs` 只把 `sqlite3.dll`
+//     放进**应用目录**，而 `flutter test` 不打包它 ⇒ 不显式覆盖加载就会
+//     一律开库失败（`test/startup_test.dart` 因此调它）
 //
 // 放在 `lib/` 而不是 `tool/`：**`shensuanzi_host` 的测试也要用它**，
 // 而包之间只能通过 `package:` 导入。故它是 core 的公开 API 之一，

@@ -31,21 +31,45 @@ class ShensuanziApp extends StatefulWidget {
   const ShensuanziApp({
     super.key,
     this.pickDirectory = pickFolderFromSystem,
+    this.configStore,
   });
 
-  /// 选文件夹。**全项目唯一被注入的依赖** —— 因为它是唯一会「卡住测试」的
-  /// （真弹系统框，widget 测试直接挂死）。数据目录服务与开库都走**真实路径**，
-  /// 测出来的才是真的（`docs/reply_review.md` §V）。
+  /// 选文件夹。**启动流程的两个系统交互之一** —— 它会真弹系统框，
+  /// 不注入的话 widget 测试直接挂死（`docs/reply_review.md` §V）。
   final Future<String?> Function() pickDirectory;
+
+  /// 配置读写（另一个系统交互）。`null` = 用 `%APPDATA%\神算子\config.json`。
+  ///
+  /// 为什么它不像 [pickDirectory] 那样有编译期默认值：真实位置依赖**运行时环境**
+  /// （`AppEnvironment.detect()`），没法写进参数默认值 —— 所以用 `null` 表示
+  /// 「用默认的」，在 `_ShensuanziAppState._configStore` 里 `??` 解析。
+  /// 两者表达的是同一件事：**不传就用生产行为**（`docs/reply_review.md` §W）。
+  ///
+  /// ⚠️ **widget 测试必须把它指向沙箱**：否则测试会读、甚至**改写**开发者真实的
+  /// 配置文件 —— 下次真机启动就会开到测试用的临时目录（`docs/testing.md` §K）。
+  final AppConfigStore? configStore;
 
   @override
   State<ShensuanziApp> createState() => _ShensuanziAppState();
 }
 
 class _ShensuanziAppState extends State<ShensuanziApp> {
-  /// 真机事实只探测一次（盘符 / 环境变量）
-  final DataDirectoryService _service = DataDirectoryService(
-    environment: AppEnvironment.detect(),
+  /// 真机事实只探测一次（盘符 / 环境变量）。
+  ///
+  /// **刻意不注入、保持真实**：启动流程要验证的恰恰是「真实机器 + 沙箱配置」
+  /// 下的行为；把机器也伪造了，就变成「在假机器上跑假配置」，
+  /// 每个场景还得自己造一套盘符（`docs/reply_review.md` §W 二）。
+  final AppEnvironment _environment = AppEnvironment.detect();
+
+  /// 配置读写：测试传沙箱，生产用 `%APPDATA%`。
+  late final AppConfigStore _configStore =
+      widget.configStore ?? AppConfigStore.forEnvironment(_environment);
+
+  /// 数据目录服务。**不注入** —— [configStore] 指向沙箱之后，
+  /// 建目录、写标记、开库全都走真实路径，测出来的才是真的。
+  late final DataDirectoryService _service = DataDirectoryService(
+    environment: _environment,
+    configStore: _configStore,
   );
 
   /// ⚠️ **弹对话框必须用这个 key 的 context，不能用本 State 的 `context`。**
@@ -130,7 +154,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   late final ThemeData _theme = _buildTheme();
 
   ThemeData _buildTheme() {
-    final bool isWindows = _service.environment.isWindows;
+    final bool isWindows = _environment.isWindows;
     return ThemeData(
       // ⚠️ **中文字体必须显式指定**：Flutter 自带的 Roboto 没有中文字形，
       // Windows 上会兜到**宋体**，看着像「外国软件没适配」（`docs/ui_principles.md` §二）。
