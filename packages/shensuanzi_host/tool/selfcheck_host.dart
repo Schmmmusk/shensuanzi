@@ -398,9 +398,7 @@ Future<void> main() async {
     );
     final List<Object?> docResults = docPushJson['results']! as List<Object?>;
     String receipts() => <String>[
-      for (final Object? r in docResults)
-        '${(r! as Map)['status']}'
-            '${(r as Map)['reason'] == null ? '' : ' (${(r as Map)['reason']})'}',
+      for (final Object? r in docResults) receiptLine(r),
     ].join(' | ');
 
     check('createDocument 推送 → 200', docPush == 200, '$docPush');
@@ -601,4 +599,15 @@ Future<void> main() async {
     stdout.writeln('  - $failure');
   }
   exit(1);
+}
+
+/// 把一条推送回执渲染成 `status (reason)`（自检侧不带 `entity_id` 前缀）。
+///
+/// 同 `test/http_server_test.dart`：一次转换，字符串里**不做 `as Map` 强转**。
+String receiptLine(Object? raw) {
+  final Map<String, Object?> item = raw is Map
+      ? Map<String, Object?>.from(raw)
+      : <String, Object?>{};
+  final Object? reason = item['reason'];
+  return '${item['status']}${reason == null ? '' : ' ($reason)'}';
 }

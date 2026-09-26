@@ -41,7 +41,7 @@ class PortRange {
 /// 「这个 IP:端口是不是主机」。它只返回 `ok` / 服务器时间 / schema 版本，
 /// 不含任何业务数据。
 class HostHttpServer {
-  HostHttpServer._(this._server, this.sync, this.identity, this._clock);
+  HostHttpServer._(this._server, this.sync, this.identity);
 
   static const String apiVersion = '1';
 
@@ -51,7 +51,6 @@ class HostHttpServer {
   final SyncServer sync;
 
   final HostIdentity identity;
-  final int Function() _clock;
 
   int get port => _server.port;
 
@@ -88,7 +87,10 @@ class HostHttpServer {
           bind,
           port,
         );
-        return HostHttpServer._(server, routes.sync, identity, now);
+        // ⚠️ 时钟**只交给 _HostRoutes**：它才是真正取时间的地方
+        // （`health` 的 `server_time`、`occurred_at` 回填）。
+        // 这里曾经也存了一份 `_clock` 字段，但从未读过 —— 死状态，已删。
+        return HostHttpServer._(server, routes.sync, identity);
       } on SocketException catch (error) {
         lastError = error;
       }

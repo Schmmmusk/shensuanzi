@@ -156,9 +156,7 @@ void main() {
   /// 只比 `status` 时，`rejected` 本身不告诉你为什么 —— 得回头加打印再跑一遍。
   String reasonsOf(Map<String, Object?> pushJson) => <String>[
     for (final Object? item in pushJson['results']! as List)
-      '${(item! as Map)['entity_id']}: '
-          '${(item as Map)['status']}'
-          '${(item as Map)['reason'] == null ? '' : ' (${(item as Map)['reason']})'}',
+      receiptLine(item),
   ].join(' | ');
 
   /// 经 HTTP 建一个商品，返回 id
@@ -649,4 +647,18 @@ void main() {
       expect(json['documents'], isEmpty, reason: 'limit=0 → 空页');
     });
   });
+}
+
+/// 把一条推送回执渲染成 `entity_id: status (reason)`。
+///
+/// 刻意**不在字符串插值里逐处 `as Map` 强转** —— JSON 解出来是 `Object?`，
+/// 在这里一次性转成 `Map<String, Object?>`，之后全是安全取值。
+/// （原来的写法触发了 `unnecessary_cast`，而且同一表达式里连转四次。）
+String receiptLine(Object? raw) {
+  final Map<String, Object?> item = raw is Map
+      ? Map<String, Object?>.from(raw)
+      : <String, Object?>{};
+  final Object? reason = item['reason'];
+  return '${item['entity_id']}: ${item['status']}'
+      '${reason == null ? '' : ' ($reason)'}';
 }

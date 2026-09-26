@@ -599,6 +599,75 @@ void main() {
         '${m2.notice}');
   }
 
+  // ============================================================ 导航结构
+  section('左侧常驻导航的结构');
+  {
+    final List<NavDestination> all = AppNavigation.destinations;
+    check('每个入口都有非空文字标签 + 图标名',
+        all.every((NavDestination d) =>
+            d.label.trim().isNotEmpty && d.iconKey.trim().isNotEmpty));
+    check('id 唯一',
+        all.map((NavDestination d) => d.id).toSet().length == all.length);
+    check('入口数量 ≥ 9（覆盖核心功能）', all.length >= 9, '${all.length}');
+    check('不留空组（否则会渲染出孤立分隔线）',
+        NavSection.values.every((NavSection s) => AppNavigation.of(s).isNotEmpty));
+    check('分组顺序 = 首页 → 高频动作 → 数据查询 → 系统',
+        NavSection.values.map((NavSection s) => s.name).join(',') ==
+            'home,quick,data,system' &&
+            all.first.section == NavSection.home &&
+            all.last.section == NavSection.system);
+    check('同组必须连成一段（不能穿插）', () {
+      final List<NavSection> contiguous = <NavSection>[];
+      for (final NavDestination d in all) {
+        if (contiguous.isEmpty || contiguous.last != d.section) {
+          contiguous.add(d.section);
+        }
+      }
+      // ⚠️ 必须映射 `.name`：枚举的 `toString()` 是 `NavSection.home`，
+      // 直接 `join()` 会得到 `NavSection.home,...`，永远不等于预期。
+      return contiguous.map((NavSection s) => s.name).join(',') ==
+          'home,quick,data,system';
+    }());
+    check('高频动作 = 销售开单 / 采购入库，且紧随首页',
+        AppNavigation.of(NavSection.quick)
+                .map((NavDestination d) => d.id)
+                .join(',') ==
+            'sale,purchase' &&
+            all[1].section == NavSection.quick);
+    check('数据查询 = 商品 / 库存 / 单据 / 往来方 / 账户',
+        AppNavigation.of(NavSection.data)
+                .map((NavDestination d) => d.label)
+                .join(',') ==
+            '商品,库存,单据,往来方,账户');
+    check('系统 = 设置 / 帮助，且在最末',
+        AppNavigation.of(NavSection.system)
+                .map((NavDestination d) => d.label)
+                .join(',') ==
+            '设置,帮助');
+    check('只有开单页是沉浸模式',
+        <String>{
+          for (final NavDestination d in all)
+            if (d.immersive) d.id,
+        }.join(',') ==
+            'sale,purchase');
+    check('byId 命中 / 未命中 / null → 不抛',
+        AppNavigation.byId('sale')?.label == '销售开单' &&
+            AppNavigation.byId('nope') == null &&
+            AppNavigation.byId(null) == null);
+    check('initial：合法 id 用它；非法 id 退回概览（不空白）',
+        AppNavigation.initial('stock').id == 'stock' &&
+            AppNavigation.initial('已不存在').id == 'overview' &&
+            AppNavigation.initial().id == 'overview');
+    check('fallbackId 真的存在', AppNavigation.byId(AppNavigation.fallbackId) != null);
+    check('宽度：220 / 160 / 仅图标 60；按缩放等比',
+        AppNavigation.widthFor() == 220 &&
+            AppNavigation.widthFor(compact: true) == 160 &&
+            AppNavigation.widthFor(scale: 1.5) == 330 &&
+            AppNavigation.widthFor(scale: 0.2) == AppNavigation.iconOnlyWidth);
+    check('点击区 ≥ 44 且高亮竖条 3px（三重信号之一）',
+        AppNavigation.itemHeight >= 44 && AppNavigation.indicatorWidth == 3);
+  }
+
   // ============================================================ 收尾
   try {
     box.deleteSync(recursive: true);

@@ -10,7 +10,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:shensuanzi_core/shensuanzi_core.dart';
-import 'package:sqlite3/sqlite3.dart';
 
 import 'package:shensuanzi_core/sqlite_local.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
@@ -103,8 +102,8 @@ SyncOperation opCreateDocument(
   payload: <String, Object?>{
     'document': document ?? wireDocument(d),
     'lines': <Object?>[for (final DocumentLine line in lines) line.toRow()],
-    if (immediatePayments != null) 'immediate_payments': immediatePayments,
-    if (allocations != null) 'allocations': allocations,
+    'immediate_payments': ?immediatePayments,
+    'allocations': ?allocations,
   },
 );
 

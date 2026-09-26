@@ -448,9 +448,18 @@ dart run tool/typecheck.dart
 
 | 手段 | 能查出什么 |
 |---|---|
-| `flutter analyze` | 类型错误、未使用导入、lint（**首选**） |
+| `flutter analyze`（**在仓库根跑**） | 类型错误、未使用导入、lint（**首选**） |
 | `flutter test` | widget 测试。⚠️ **只测不需要磁盘与插件的东西** —— 启动流程会读配置、弹对话框、调文件夹选择器，这些在 widget 测试里会炸或需要 mock |
 | `dart format --output=none lib test` | **语法**（解析文件但不解析导入）。当 `flutter analyze` 跑不了时，这是唯一还能用的门禁 —— 它能抓住括号不配对、字符串未闭合这类错误 |
+
+> ⚠️ **`flutter analyze` 是本项目唯一的全仓 lint 门禁。**
+>
+> 在仓库根运行时它会**连带分析 path 依赖的全部包**
+> （`shensuanzi_core` / `shensuanzi_host` / `shensuanzi_app`）。
+> 而 `dart run tool/typecheck.dart` 只**编译**不 **lint** —— 两者不可互相替代。
+>
+> 2026-09-26 第一次跑它时报出 **37 项**（其中 36 项是历次累积的），
+> 说明**不跑就会有 lint 债静默堆积**。已清零，目标维持 **0 issues**。
 
 > ⚠️ **不要为了「格式化」而运行 `dart format`**：Dart 3.7+ 换了默认风格，
 > 全仓按新风格格式化会产生一个**纯风格的大 diff**（实测 `core` 32/53 文件、

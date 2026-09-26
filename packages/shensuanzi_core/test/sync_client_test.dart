@@ -614,7 +614,9 @@ void main() {
         <String, Object?>{
           'entity_id': entityId,
           'status': status,
-          if (reason != null) 'reason': reason,
+          // `?reason` = 空值感知元素：`reason` 为 null 时整个键都不出现
+          // （等价于 `if (reason != null) 'reason': reason`，见 lint use_null_aware_elements）
+          'reason': ?reason,
         };
 
     test('队列为空 → 不发请求', () async {

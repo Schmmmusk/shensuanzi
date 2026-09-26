@@ -148,7 +148,8 @@ Map<String, Object?> receipt(String entityId, String status, {String? reason}) =
     <String, Object?>{
       'entity_id': entityId,
       'status': status,
-      if (reason != null) 'reason': reason,
+      // `?reason` = 空值感知元素（等价于 `if (reason != null) 'reason': reason`）
+      'reason': ?reason,
     };
 
 Map<String, Object?> pushBody(List<Map<String, Object?>> results) =>
@@ -186,7 +187,7 @@ Future<void> main() async {
     }
     check('镜像开着外键 → 构造时明确拒绝',
         thrown is StateError &&
-            (thrown as StateError).message.contains('foreignKeys: false'),
+            thrown.message.contains('foreignKeys: false'),
         '$thrown');
     strict.close();
   }
@@ -391,8 +392,7 @@ Future<void> main() async {
       httpError = error;
     }
     check('401 → SyncHttpException',
-        httpError is SyncHttpException &&
-            (httpError as SyncHttpException).isUnauthorized);
+        httpError is SyncHttpException && httpError.isUnauthorized);
 
     t2.replyJson(<String, Object?>{'documents': <Object?>[]});
     Object? missingCursor;
@@ -525,13 +525,6 @@ Future<void> main() async {
   {
     final Db db4 = Db.openInMemory(foreignKeys: false);
     final FakeTransport t4 = FakeTransport();
-    final SyncClient c4 = SyncClient(
-      db: db4,
-      transport: t4,
-      baseUri: Uri.parse('http://127.0.0.1:17890'),
-      token: 'tok-abc',
-      clock: now,
-    );
 
     section('push · 退避与死信');
     // 固定时钟：退避是「两个时刻之差」，用会推进的时钟算不出确定值

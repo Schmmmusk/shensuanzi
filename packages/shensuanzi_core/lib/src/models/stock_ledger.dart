@@ -44,6 +44,7 @@ class StockLedger extends ImmutableEntity {
 
   static const String table = Schema.stockLedger;
 
+  @override
   final String id;
   final String productId;
   final String documentId;

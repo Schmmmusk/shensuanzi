@@ -37,3 +37,5 @@ export 'src/data_marker.dart'
 export 'src/dialog_model.dart'
     show ConfirmOutcome, DataDirectoryDialogModel, DialogNoticeKind;
 export 'src/environment.dart' show AppEnvironment, DriveInfo, DriveKind;
+export 'src/navigation.dart'
+    show AppNavigation, NavDestination, NavSection;

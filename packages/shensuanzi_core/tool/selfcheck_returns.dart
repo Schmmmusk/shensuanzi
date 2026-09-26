@@ -282,7 +282,7 @@ void main() {
     }
 
     check('三次依次为 -300 / -301 / -400',
-        costs.join(',') == '-300,-301,-400', '${costs.join(',')}');
+        costs.join(',') == '-300,-301,-400', costs.join(','));
     check('三次之和精确为 -1001',
         costs.reduce((int a, int b) => a + b) == -1001);
     check('库存归零', stock.stockOf(p) == 0, '${stock.stockOf(p)}');

@@ -42,6 +42,7 @@ class PartyLedger extends ImmutableEntity {
 
   static const String table = Schema.partyLedger;
 
+  @override
   final String id;
   final String partyId;
   final String documentId;

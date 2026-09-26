@@ -50,6 +50,7 @@ class DocumentLine extends ImmutableEntity {
 
   static const String table = Schema.documentLines;
 
+  @override
   final String id;
   final String documentId;
   final String productId;

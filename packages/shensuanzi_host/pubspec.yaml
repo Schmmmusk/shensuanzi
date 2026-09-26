@@ -21,6 +21,11 @@ dependencies:
   # token 哈希（主机只存 sha256，不存明文）
   crypto: ^3.0.6
 
+  # sqlite3 的 `Database` 类型出现在 SyncServer 的私有 getter 上。
+  # 连接本身由调用方传入，但**本包直接 import 了 sqlite3** ⇒ 必须显式声明
+  # （否则 depend_on_referenced_packages）。版本约束与 core 对齐。
+  sqlite3: ^2.4.0
+
 dev_dependencies:
   test: ^1.25.0
   lints: ^6.0.0

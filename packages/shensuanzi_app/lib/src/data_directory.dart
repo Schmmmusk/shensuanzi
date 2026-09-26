@@ -61,7 +61,9 @@ class DataDirectoryPolicy {
   /// 备份目录的默认名（数据目录的**兄弟目录**）
   static const String backupFolderName = '神算子备份';
 
-  static const String markerFileName = '.shensuanzi-data';
+  // ⚠️ 标记文件名**只有一个出处**：`DataMarker.fileName`（`data_marker.dart`）。
+  // 这里曾经也有一份 `markerFileName`，两个常量指向同一个字符串 ——
+  // 必然漂移的重复，已删（谁拥有这个文件，谁定义它的名字）。
 
   /// 已知的网盘同步目录名片段（小写比较）。
   ///

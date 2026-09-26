@@ -46,7 +46,7 @@ int boolToInt(bool value) => value ? 1 : 0;
 /// （客户端推上来的 JSON），没有列名就等于没有可诊断信息。
 extension RowReader on Map<String, Object?> {
   String requiredString(String column) {
-    final Object? value = _require(column);
+    final Object value = _require(column);
     if (value is String) return value;
     throw _typeError(column, 'String', value);
   }
@@ -58,7 +58,7 @@ extension RowReader on Map<String, Object?> {
   }
 
   int requiredInt(String column) {
-    final Object? value = _require(column);
+    final Object value = _require(column);
     if (value is int) return value;
     throw _typeError(column, 'int', value);
   }
@@ -71,7 +71,7 @@ extension RowReader on Map<String, Object?> {
 
   /// SQLite 的 `INTEGER` 0/1 → `bool`
   bool requiredBool(String column) {
-    final Object? value = _require(column);
+    final Object value = _require(column);
     if (value is int) return value != 0;
     throw _typeError(column, 'int（0/1）', value);
   }

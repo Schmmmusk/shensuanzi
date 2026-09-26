@@ -158,6 +158,6 @@ class SyncQueueEntry {
 
   @override
   String toString() =>
-      'SyncQueueEntry(${operation.wire} ${entity}/${entityId} '
+      'SyncQueueEntry(${operation.wire} $entity/$entityId '
       '${status.wire} retry=$retryCount)';
 }

@@ -45,6 +45,7 @@ class Account extends MutableEntity {
 
   static const String table = Schema.accounts;
 
+  @override
   final String id;
   final String name;
   final AccountType type;

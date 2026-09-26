@@ -35,6 +35,7 @@ class MoneyLedger extends ImmutableEntity {
 
   static const String table = Schema.moneyLedger;
 
+  @override
   final String id;
   final String accountId;
 

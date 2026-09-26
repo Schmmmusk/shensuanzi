@@ -6,7 +6,6 @@
 // ⚠️ 纯 Dart 测试：先 `dart pub get`（`test` 是 dev_dependency），
 // 且 Windows 需要可用的 SQLite 原生库，见 `lib/sqlite_local.dart`。
 import 'package:shensuanzi_core/shensuanzi_core.dart';
-import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
 import 'package:shensuanzi_core/sqlite_local.dart';

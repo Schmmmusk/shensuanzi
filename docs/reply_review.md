@@ -1094,3 +1094,65 @@ delta 夹具改用真实 `productId`），并在 `docs/testing.md` 补了纪律�
 
 **尚缺（不阻断）**：真实盘类型与剩余空间（纯 Dart 拿不到，对话框对 `null` 已处理）；
 界面缩放接入 `textScaler`（第 11 天设置页）。
+
+## Q. lint 债清零 + 左侧常驻导航（2026-09-26）
+
+### 一、`flutter analyze` 揭出一批**从未被发现的** lint 债
+
+用户在仓库根跑了第一次 `flutter analyze`，报 **37 项**。其中**只有 1 项**是本轮
+引入的（`data_marker.dart` 的多余导入），其余全部来自此前几轮 —— 根因是：
+
+> **`flutter analyze` 在仓库根会连带分析 path 依赖的全部包**
+> （`shensuanzi_core` / `shensuanzi_host` / `shensuanzi_app`），
+> 而本机 `dart analyze` 起不来（analysis_server 子进程缺陷）。
+> 我们此前的门禁只有 `dart run tool/typecheck.dart` —— 它**编译**但**不 lint**。
+> 于是 lint 债一路静默累积。
+
+**这说明一件事**：`flutter analyze` 是本项目**唯一的全仓 lint 门禁**，
+必须纳入常规回归（`docs/testing.md` §L）。
+
+### 二、37 项的处置
+
+| 类别 | 数量 | 处置 |
+|---|---|---|
+| `annotate_overrides`（9 个模型的 `final String id`） | 9 | 补 `@override` —— 它确实覆盖 `ImmutableEntity.id` |
+| `unused_import` | 4 | 删除（含 3 处 `package:sqlite3/sqlite3.dart`） |
+| `unnecessary_cast` | 6 | 4 处是 `is T &&` 之后的兑现提升（直接去 cast）；2 处是**字符串插值里连转四次 `as Map`**，改为**一次性 `Map<String, Object?>.from` 的辅助函数** |
+| `use_null_aware_elements` | 5 | 改为 `'k': ?v`（Dart 3.9+ 的空值感知元素，语义等价于 `if (v != null) 'k': v`） |
+| `unnecessary_nullable_for_final_variable_declarations` | 3 | `_require()` 返回非空 `Object` ⇒ 去掉 `Object?` |
+| `unnecessary_brace_in_string_interps` / `unnecessary_string_interpolations` | 3 | 去掉多余花括号 / 直接传值 |
+| `unused_field`（`HostHttpServer._clock`） | 1 | **删除字段**。时钟只交给 `_HostRoutes`（真正取时间的地方），这个字段从未被读过 —— 死状态 |
+| `unused_local_variable`（`c4`） | 1 | 删除（重构后遗留） |
+| `depend_on_referenced_packages`（host 直接用写 `sqlite3` 类型） | 3 | host 的 `pubspec.yaml` **显式声明 `sqlite3: ^2.4.0`**（与 core 对齐）；另外 2 处是未使用导入，直接删 |
+
+**顺带清掉一处重复**：`DataDirectoryPolicy.markerFileName` 与
+`DataMarker.fileName` 是**同一个字符串的两个出处**（必然漂移），已删前者 ——
+**谁拥有这个文件，谁定义它的名字**。
+
+### 三、左侧常驻导航（裁定落地）
+
+按 `docs/reply.md`：**左侧常驻导航 + 分组 + 图标与文字 + 三重高亮 + 开单页沉浸模式**。
+
+| 层 | 内容 |
+|---|---|
+| **结构**（纯 Dart，`dart test` 覆盖） | `navigation.dart`：`NavSection`（首页 / 高频动作 / 数据查询 / 系统）、`NavDestination`（id / label / iconKey / section / immersive）、`AppNavigation`（destinations / of / byId / initial / widthFor） |
+| **图标映射** | `lib/src/ui/nav_icons.dart`：`iconKey` → `IconData`，查不到用兜底（**不崩** —— 导航在启动路径上） |
+| **摆放** | `lib/src/ui/app_shell.dart`：220px 列 + 分隔线分组 + 三重高亮 + 面包屑；`overview_page.dart`（原 `home_page.dart` 改名）承载「数据在哪」 |
+
+**把结构放进纯 Dart 的收益是具体的**：把几条界面**原则**变成了可执行断言 ——
+
+- 「所有功能必须有常驻可见入口 + 文字标签」→ 断言每个入口 `label` 非空、入口数 ≥ 9
+- 「分组清晰、不穿插」→ 断言 section 在列表里**分段连续**
+- 「开单页是沉浸模式」→ 断言只有 `sale` / `purchase` 带 `immersive`
+- 「点击区 ≥ 44」「导航 220 × 缩放」→ 断言常量
+
+**一处对裁定书列表的增补**：「概览」不在原 9 项里，但新版安装没有任何数据，
+直接落在沉浸式开单页是坏的落地体验，且「你的数据在哪」这个承诺需要常驻位置。
+已作为**首页组**加入（列表第 1 项），**待你确认**。
+
+### 四、门禁
+
+- core 463 / host 288 / app **116**（+15 导航断言）= 合计 **867 项全绿**
+- app `test/` **137 个用例**（+20 导航）
+- Flutter 侧：`dart format --output=none` 语法通过 8/8 文件
+- **待用户复跑**：`flutter analyze`（预期 **0 issues**）、`flutter test`（预期 5 个用例）

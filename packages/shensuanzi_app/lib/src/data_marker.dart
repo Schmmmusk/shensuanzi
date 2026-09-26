@@ -15,8 +15,6 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-import 'data_directory.dart';
-
 class DataMarker {
   const DataMarker({
     required this.schemaVersion,

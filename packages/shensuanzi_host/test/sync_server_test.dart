@@ -9,7 +9,6 @@
 import 'dart:convert';
 
 import 'package:shensuanzi_core/shensuanzi_core.dart';
-import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
 import 'package:shensuanzi_core/sqlite_local.dart';
@@ -89,8 +88,8 @@ void main() {
     payload: <String, Object?>{
       'document': document ?? wireDocument(d),
       'lines': <Object?>[for (final DocumentLine line in lines) line.toRow()],
-      if (immediatePayments != null) 'immediate_payments': immediatePayments,
-      if (allocations != null) 'allocations': allocations,
+      'immediate_payments': ?immediatePayments,
+      'allocations': ?allocations,
     },
   );
 

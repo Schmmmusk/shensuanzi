@@ -41,6 +41,7 @@ class Settlement extends ImmutableEntity {
 
   static const String table = Schema.settlements;
 
+  @override
   final String id;
 
   /// 收款单 / 付款单。**不会指向主单**（B4'）

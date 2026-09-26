@@ -20,8 +20,8 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'folder_picker.dart';
+import 'ui/app_shell.dart';
 import 'ui/data_directory_dialog.dart';
-import 'ui/home_page.dart';
 
 class ShensuanziApp extends StatefulWidget {
   const ShensuanziApp({super.key});
@@ -130,7 +130,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       );
     }
 
-    return HomePage(
+    return AppShell(
       dataDirectory: location.directory,
       backupDirectory: location.backupDirectory,
       schemaVersion: location.marker.schemaVersion,

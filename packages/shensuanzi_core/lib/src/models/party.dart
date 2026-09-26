@@ -70,6 +70,7 @@ class Party extends MutableEntity {
 
   static const String table = Schema.parties;
 
+  @override
   final String id;
   final String name;
   final String? phone;

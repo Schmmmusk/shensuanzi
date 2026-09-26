@@ -482,8 +482,7 @@ Future<void> main() async {
       thrown = error;
     }
     check('错令牌 → SyncHttpException(401)',
-        thrown is SyncHttpException &&
-            (thrown as SyncHttpException).isUnauthorized,
+        thrown is SyncHttpException && thrown.isUnauthorized,
         '$thrown');
     await w.dispose();
   }

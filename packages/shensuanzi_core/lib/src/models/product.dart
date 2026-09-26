@@ -39,6 +39,7 @@ class Product extends MutableEntity {
 
   static const String table = Schema.products;
 
+  @override
   final String id;
   final String code;
   final String name;

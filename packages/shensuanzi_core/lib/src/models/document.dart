@@ -104,6 +104,7 @@ class Document extends ImmutableEntity {
     'updated_at',
   };
 
+  @override
   final String id;
 
   /// 正式单号，**由主机生成**（客户端离线期用 `待同步-XXXXXX` 临时展示号）
