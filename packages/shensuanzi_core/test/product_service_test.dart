@@ -117,9 +117,12 @@ void main() {
 
     test('名称超长 → 提示删到 60 字以内', () {
       final ProductDraft draft = goodDraft(name: '果' * 61);
+      // ⚠️ 必须写 `${...}`：`'$ProductDraft.maxNameLength'` 会被解析成
+      // 「类型 `ProductDraft` 的 toString + 字面量 `.maxNameLength`」，
+      // 等于断言了一个不存在的字符串（`docs/testing.md` §零）。
       expect(
         draft.validate()[ProductField.name],
-        contains('$ProductDraft.maxNameLength'),
+        contains('${ProductDraft.maxNameLength}'),
       );
       expect(goodDraft(name: '果' * 60).validate(), isEmpty);
     });
@@ -463,14 +466,129 @@ void main() {
     });
   });
 
-  group('ProductService.byBarcode', () {
-    test('命中 / 未命中 / 空串', () {
+  // ============================================================ 条码（R-15）
+  group('ProductService.barcodeOwners（条码允许重复）', () {
+    test('命中 / 去空格 / 未命中 / 空串', () {
       service.create(goodDraft(barcode: '6901234567890'), now: 1000);
 
-      expect(service.byBarcode('6901234567890')!.name, '红富士苹果');
-      expect(service.byBarcode(' 6901234567890 '), isNotNull, reason: '去掉空格');
-      expect(service.byBarcode('不存在'), isNull);
-      expect(service.byBarcode(''), isNull);
+      expect(service.barcodeOwners('6901234567890').single.name, '红富士苹果');
+      expect(
+        service.barcodeOwners(' 6901234567890 '),
+        hasLength(1),
+        reason: '去掉空格',
+      );
+      expect(service.barcodeOwners('不存在'), isEmpty);
+      expect(service.barcodeOwners(''), isEmpty);
+    });
+
+    test('重复条码 → 两条都返回，按建档顺序（**不是**静默取最早一条）', () {
+      final Product first = service.create(
+        goodDraft(name: '娃哈哈水 550ml'),
+        now: 1000,
+      );
+      final Product second = service.create(
+        goodDraft(name: '娃哈哈水 550ml（新批次）', sellPrice: '2.50'),
+        now: 2000,
+      );
+
+      // 静默挑一条的实现在这里只能返回一条 —— 那正是 R-15 要禁掉的
+      expect(
+        service.barcodeOwners('6901234567890').map((Product p) => p.id),
+        <String>[first.id, second.id],
+      );
+    });
+
+    test('excludeId 排除自己（编辑时不该提示「已经给自己用过了」）', () {
+      final Product mine = service.create(goodDraft(name: '甲'), now: 1000);
+      final Product other = service.create(goodDraft(name: '乙'), now: 2000);
+
+      expect(service.barcodeOwners('6901234567890'), hasLength(2));
+      expect(
+        service
+            .barcodeOwners('6901234567890', excludeId: mine.id)
+            .map((Product p) => p.id),
+        <String>[other.id],
+      );
+      expect(
+        service.barcodeOwners('6901234567890', excludeId: '匹配不上任何 id'),
+        hasLength(2),
+        reason: '传了个不存在的 id 不该把结果清空',
+      );
+    });
+
+    test('停用的商品也算条码归属（条码不会「凭空消失」）', () {
+      final Product product = service.create(goodDraft(), now: 1000);
+      service.setActive(product.id, false, now: 2000);
+
+      expect(service.barcodeOwners('6901234567890').single.id, product.id);
+    });
+
+    test('建档与编辑都**不**因为条码重复而失败（允许重复）', () {
+      service.create(goodDraft(name: '甲'), now: 1000);
+      final Product second = service.create(goodDraft(name: '乙'), now: 2000);
+
+      expect(second.barcode, '6901234567890');
+      expect(
+        () => service.update(second.id, goodDraft(name: '乙（改名）'), now: 3000),
+        returnsNormally,
+      );
+    });
+  });
+
+  group('ProductDraft.barcodeNotice（内联提示文案）', () {
+    test('没人用过 → null（界面什么都不显示）', () {
+      expect(ProductDraft.barcodeNotice(const <Product>[]), isNull);
+    });
+
+    test('一条占用 → 用商品名，并说清保存后会发生什么', () {
+      final Product owner = service.create(
+        goodDraft(name: '娃哈哈矿泉水 550ml'),
+        now: 1000,
+      );
+      final List<Product> owners = service.barcodeOwners('6901234567890');
+
+      expect(owners.single.id, owner.id);
+      expect(
+        ProductDraft.barcodeNotice(owners),
+        '⚠️ 这个条码已经给「娃哈哈矿泉水 550ml」用过了。\n'
+        '保存后扫码会显示两条商品供选择。',
+      );
+    });
+
+    test('多条占用 → 名字最多列两个，再多就说「等 N 种商品」', () {
+      service.create(goodDraft(name: '甲'), now: 1000);
+      service.create(goodDraft(name: '乙'), now: 2000);
+      expect(
+        ProductDraft.barcodeNotice(service.barcodeOwners('6901234567890')),
+        '⚠️ 这个条码已经给「甲」「乙」用过了。\n保存后扫码会显示三条商品供选择。',
+      );
+
+      service.create(goodDraft(name: '丙'), now: 3000);
+      expect(
+        ProductDraft.barcodeNotice(service.barcodeOwners('6901234567890')),
+        '⚠️ 这个条码已经给「甲」等 3 种商品用过了。\n保存后扫码会显示四条商品供选择。',
+      );
+    });
+
+    test('提示里给的是**商品名**，不是编码（用户认名字不认编号）', () {
+      service.create(goodDraft(name: '甲'), now: 1000);
+
+      final String? notice = ProductDraft.barcodeNotice(
+        service.barcodeOwners('6901234567890'),
+      );
+      expect(notice, contains('「甲」'));
+      expect(notice, isNot(contains('P0001')));
+    });
+
+    test('条数超过 9 → 退回阿拉伯数字（「十一条商品」反而难读）', () {
+      for (int i = 0; i < 10; i++) {
+        service.create(goodDraft(name: '占位$i'), now: 1000 + i);
+      }
+
+      expect(
+        ProductDraft.barcodeNotice(service.barcodeOwners('6901234567890')),
+        contains('11条商品'),
+      );
     });
   });
 }

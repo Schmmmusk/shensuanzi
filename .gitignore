@@ -33,6 +33,10 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# 构建期外部源码：SQLite 源码（一次性准备，跳过构建时联网下载）
+# 见 docs/windows_build.md。想改成「克隆即可离线构建」就把这行去掉并提交目录。
+/third_party/
+
 # Symbolication related
 app.*.symbols
 

@@ -193,4 +193,42 @@ class ProductDraft {
   String toString() =>
       'ProductDraft(name=$name, unit=$unit, sell=$sellPrice, cost=$costPrice, '
       'barcode=${barcode.isEmpty ? '（无）' : barcode}, safety=$safetyStock)';
+
+  // ------------------------------------------------------------ 条码重复提示（R-15）
+  /// 条码已经被别人用过了吗 —— 有就返回给用户看的一句话，没有返回 `null`。
+  ///
+  /// ## 为什么是「提示」而不是「拦」
+  ///
+  /// 条码重复是**真实世界的常态**（同箱拆卖、同款不同批次），拦下来会挡住
+  /// 合法操作；中老年用户被拦住的第一反应是「软件坏了」（`docs/reply.md` R-15）。
+  /// 所以建档照旧放行，只在表单里**内联**提示一句。
+  ///
+  /// ## 为什么第二句不能省
+  ///
+  /// 「已经给谁用过」只说清了现状，用户接下来会担心「那我以后扫码怎么办」。
+  /// 第二句把**下一步会发生什么**讲明白，用户才不会以为软件坏了 ——
+  /// 这也与 `docs/ui_principles.md` §五「说『怎么办』」一致。
+  ///
+  /// [owners] 是 `ProductService.barcodeOwners` 的结果（**调用方负责排除自己**，
+  /// 编辑时用 `excludeId`）；空列表 = 没人用过 = 不显示任何东西。
+  static String? barcodeNotice(List<Product> owners) {
+    if (owners.isEmpty) return null;
+
+    final String names = owners.length <= 2
+        ? owners.map((Product product) => '「${product.name}」').join()
+        : '「${owners.first.name}」等 ${owners.length} 种商品';
+    final String count = _countLabel(owners.length + 1);
+
+    return '⚠️ 这个条码已经给$names用过了。\n保存后扫码会显示$count条商品供选择。';
+  }
+
+  /// 中文小数字：2~9 用「两/三/…」（「两条」比「2 条」更像人话），
+  /// 10 以上退回阿拉伯数字（「十二条商品」反而难读）
+  static String _countLabel(int value) {
+    const List<String> chinese = <String>[
+      '', '', '两', '三', '四', '五', '六', '七', '八', '九',
+    ];
+    if (value >= 2 && value < chinese.length) return chinese[value];
+    return '$value';
+  }
 }

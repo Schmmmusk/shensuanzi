@@ -321,12 +321,83 @@ void main() {
             s4.list(query: '690222').single.id == b.id &&
             s4.list(query: b.code).single.id == b.id &&
             s4.list(query: '查不到').isEmpty);
-    check('byBarcode 命中 / 去空格 / 未命中 / 空串',
-        s4.byBarcode('690222')?.id == b.id &&
-            s4.byBarcode(' 690222 ')?.id == b.id &&
-            s4.byBarcode('不存在') == null &&
-            s4.byBarcode('') == null);
+    check('barcodeOwners 命中 / 去空格 / 未命中 / 空串',
+        s4.barcodeOwners('690222').single.id == b.id &&
+            s4.barcodeOwners(' 690222 ').single.id == b.id &&
+            s4.barcodeOwners('不存在').isEmpty &&
+            s4.barcodeOwners('').isEmpty);
+    // before 此刻已被停用（now: 8000），条码归属仍应算它 ——
+    // 过滤掉 is_active 会让用户以为条码凭空消失
+    check('停用的商品也算条码归属',
+        s4.barcodeOwners('6901234567890').single.id == before.id);
     db4.close();
+
+    // ---- 条码重复（R-15 裁定）----
+    // 单独开一个库：自检是一个长脚本，对象跨段复用会让断言莫名其妙地互相影响
+    final Db db5 = Db.openInMemory();
+    final ProductService s5 = ProductService(db5);
+    final Product first = s5.create(
+      goodDraft(name: '娃哈哈矿泉水 550ml'),
+      now: 1000,
+    );
+    final Product second = s5.create(
+      goodDraft(name: '娃哈哈矿泉水 550ml（新批次）', sellPrice: '2.50'),
+      now: 2000,
+    );
+
+    check('条码重复：两条都返回，按建档顺序（不静默取最早一条）',
+        s5.barcodeOwners('6901234567890').map((Product p) => p.id).join(',') ==
+            '${first.id},${second.id}');
+    check('barcodeOwners 去空格 / 未命中 / 空串',
+        s5.barcodeOwners(' 6901234567890 ').length == 2 &&
+            s5.barcodeOwners('查不到').isEmpty &&
+            s5.barcodeOwners('').isEmpty);
+    check('excludeId 排除自己（编辑时不提示「自己和自己重复」）',
+        s5.barcodeOwners('6901234567890', excludeId: first.id).single.id ==
+                second.id &&
+            s5
+                    .barcodeOwners('6901234567890', excludeId: '匹配不上任何 id')
+                    .length ==
+                2);
+    check('建档 / 编辑都不因条码重复而失败（允许重复）', () {
+      try {
+        s5.update(second.id, goodDraft(name: '娃哈哈矿泉水（改名）'), now: 3000);
+        return s5.byId(second.id)!.name == '娃哈哈矿泉水（改名）';
+      } catch (_) {
+        return false;
+      }
+    }());
+
+    check('barcodeNotice：没人用过 → null',
+        ProductDraft.barcodeNotice(const <Product>[]) == null);
+    check('barcodeNotice：一条占用 → 用商品名 + 说清保存后会发生什么',
+        ProductDraft.barcodeNotice(<Product>[first]) ==
+            '⚠️ 这个条码已经给「娃哈哈矿泉水 550ml」用过了。\n'
+            '保存后扫码会显示两条商品供选择。');
+    check('barcodeNotice：两条占用 → 名字都列出来',
+        ProductDraft.barcodeNotice(<Product>[first, second]) ==
+            '⚠️ 这个条码已经给「娃哈哈矿泉水 550ml」「娃哈哈矿泉水 550ml（新批次）」用过了。\n'
+            '保存后扫码会显示三条商品供选择。');
+    check('barcodeNotice 不含商品编码（用户认名字不认编号）',
+        !(ProductDraft.barcodeNotice(<Product>[first]) ?? '')
+            .contains(first.code));
+
+    s5.setActive(second.id, false, now: 4000);
+    check('停用的商品也算条码归属', s5.barcodeOwners('6901234567890').length == 2);
+
+    s5.create(goodDraft(name: '娃哈哈矿泉水 550ml（第三批）'), now: 5000);
+    check('barcodeNotice：3 条以上 → 「等 N 种商品」',
+        ProductDraft.barcodeNotice(s5.barcodeOwners('6901234567890')) ==
+            '⚠️ 这个条码已经给「娃哈哈矿泉水 550ml」等 3 种商品用过了。\n'
+            '保存后扫码会显示四条商品供选择。');
+
+    for (int i = 0; i < 7; i++) {
+      s5.create(goodDraft(name: '占位$i'), now: 6000 + i);
+    }
+    check('barcodeNotice：超过 9 条退回阿拉伯数字',
+        (ProductDraft.barcodeNotice(s5.barcodeOwners('6901234567890')) ?? '')
+            .contains('11条商品'));
+    db5.close();
   }
 
   // ============================================================ 收尾

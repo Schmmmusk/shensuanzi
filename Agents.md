@@ -82,6 +82,8 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | **商品建档字段** | 第一版**只有 6 个**：名称 / 单位 / 售价 / 进价 / 条码 / 安全库存。**`code` 由系统生成**（`P0001` 起），`category` / `remark` 延后，`is_active` 是列表页的「停用」操作。⚠️ **`barcode` 必须在第一版** —— 它是唯一有「补录成本」的字段（首次录入时手上正好有货，补录时要对着一屋子货逐个扫）；`cost_price` / `safety_stock` 也不能隐藏（隐藏了用户永远不知道有这回事——进价不填则毛利永远是 0）。见 `docs/reply_review.md` §R |
 | **商品编码与排序** | `code` 是定宽补零的，**不能用来排序**（`P10000` 的字典序小于 `P9999`）。列表用 `(created_at, id)`；取最大编码用 `ORDER BY LENGTH(code) DESC, code DESC` |
 | **建档只有一条路径** | 建档 / 编辑必须走 `ProductService`（生成编码 + 补时间戳与版本 + 服务层重新校验）。Windows 界面与将来的 `SyncServer.createMasterData` **共用同一条路径**，不各写一套 |
+| **条码重复** | **允许**（同箱拆卖、同款不同批次是常态，拦下来会挡住合法操作；中老年用户被拦会认为「软件坏了」）。建档时在**条码输入框下方内联提示**（橙色）—— **可以不拦人的提醒一律内联，弹窗只留给重大 / 危险 / 不可逆操作**（`docs/ui_principles.md` §1.3），文案同时说清「已经给谁用过」与「保存后扫码会显示 N 条供选择」。`ProductDao.findByBarcode` **返回 `List<Product>`**，`ProductService.barcodeOwners` **绝不静默挑一条**：0 条说没找到 / 1 条直接用 / **≥ 2 条弹选择器让用户点选**（R-15 / 2026-09-26） |
+| **Windows 构建前提** | `sqlite3_flutter_libs` 在**配置阶段**从 `sqlite.org` 下载 SQLite 源码再现场编译。国内直连会**下载到 0 字节** ⇒ 配置失败 ⇒ **应用一直起不来，且与 Dart 代码无关**（`flutter analyze` / `flutter test` 全绿照样起不来）。把源码放到 `third_party/sqlite3/`（`windows/CMakeLists.txt` 有守卫，有就不联网）。见 `docs/windows_build.md` |
 
 ## 五、待裁定清单
 
@@ -96,13 +98,13 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 |---|---|---|
 | R-3 | `documentAction` 的幂等判定与存储 | 待同步层实现时裁定。目前 RULE-003 的动作部分暂缓，v1 用主机本地改状态替代。**R-3.1 ~ R-3.5 五问清单**见 `docs/reply_review.md` §H |
 | R-8 / R-9 / R-10 / R-12 | 实现期边界（盘盈无成本、超卖符号、`delivery` 状态机、散客赊账） | 已按当前处置实现、**不阻断**；详见 `docs/reply_review.md` 附录 D |
-| **R-15** | **商品条码重复怎么办** —— `barcode` 有索引但不唯一，现在允许两条商品共用，扫码取最早建档的那条 | **不阻断**（v1 还没有扫码功能，但条码已经在录入了）。建议「建档时警告但不拦」，见 `docs/reply_review.md` 附录 R-15 |
 
 **已裁定并落地**：R-1（`allocations` 随 payload）、R-2（B5 排除收付款单）、
 R-6（方案 C：任何资金流都挂收付款单）、R-11（退货成本精确回退）、
 R-7（负数舍入 = 半数远离零，随实现确定）、
 **R-13（方案 A：主数据并入 `pull`，游标 `(updated_at, id)`）**、
-**R-14（方案 A：新表 `sync_cursor` 存拉取游标；客户端只做数量累加）**。
+**R-14（方案 A：新表 `sync_cursor` 存拉取游标；客户端只做数量累加）**、
+**R-15（条码重复：允许 + 建档内联提示 + 扫码多条时选择器；`findByBarcode` 返回列表）**。
 
 **进入同步层时要回答的 5 个动作问题**（R-3.1 ~ R-3.5）见
 `docs/reply_review.md` §H（**不要在 `reply.md` 里找——那是逐轮覆盖的裁定书**）。
@@ -118,6 +120,7 @@ R-7（负数舍入 = 半数远离零，随实现确定）、
 - `docs/data_directory.md` —— 数据放哪、校验规则、标记文件、恢复与迁移
 - `docs/ui_principles.md` —— 面向中老年用户的界面原则（字号 / 对比度 / 缩放 / 向导 / 错误信息）
 - `docs/testing.md` —— 测试要求（DAO / 不变量 / 规则 / 同步 / 端到端）
+- `docs/windows_build.md` —— Windows 构建与运行（**应用「一直起不来」先看这里**：SQLite 源码的离线预置步骤）
 
 **过程文档**：
 

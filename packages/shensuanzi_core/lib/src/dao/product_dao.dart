@@ -94,16 +94,25 @@ class ProductDao {
     return rows.first['code']! as String;
   }
 
-  /// 按条码找商品（扫码开单要用）。条码**不唯一**，故取最早建档的那条。
-  Product? findByBarcode(String barcode) {
-    if (barcode.isEmpty) return null;
-    final ResultSet rows = _raw.select(
-      'SELECT * FROM ${Schema.products} WHERE barcode = ? '
-      'ORDER BY created_at, id LIMIT 1',
-      <Object?>[barcode],
-    );
-    if (rows.isEmpty) return null;
-    return Product.fromRow(rows.first);
+  /// 按条码找商品（建档查重 / 扫码开单要用）。返回**全部**匹配项，按建档顺序。
+  ///
+  /// ⚠️ **不要改回「取最早一条」**（`docs/reply.md` R-15 裁定）：
+  /// 条码允许重复（同箱拆卖、同款不同批次），静默挑一条会让用户
+  /// 「扫 A 得到 B」，直接判软件坏了。调用方按匹配数分流：
+  /// 0 条 → 提示没找到；1 条 → 直接用；**≥2 条 → 让用户自己选**。
+  ///
+  /// 不加 `LIMIT`，也不过滤 `is_active`：停用只是「不再卖」，
+  /// 条码该显示的归属还是它（不然用户会觉得条码凭空消失了）。
+  List<Product> findByBarcode(String barcode) {
+    if (barcode.isEmpty) return const <Product>[];
+    return _raw
+        .select(
+          'SELECT * FROM ${Schema.products} WHERE barcode = ? '
+          'ORDER BY created_at, id',
+          <Object?>[barcode],
+        )
+        .map(Product.fromRow)
+        .toList(growable: false);
   }
 
   /// 主数据允许 UPDATE。`sync_version` 由调用方（`SyncServer`）决定新值。

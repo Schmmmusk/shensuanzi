@@ -50,8 +50,32 @@ class ProductService {
 
   Product? byId(String id) => _products.findById(id);
 
-  /// 扫码开单要用；条码不唯一，取最早建档的那条
-  Product? byBarcode(String barcode) => _products.findByBarcode(barcode.trim());
+  /// 这个条码现在挂在**哪些**商品上（建档查重 / 将来的扫码开单）。
+  ///
+  /// 条码**允许重复**（R-15 裁定）：同箱拆卖、同款不同批次都会撞条码，
+  /// 拦下来会挡住合法操作。所以返回的是**列表**，本层**绝不静默挑一条** ——
+  /// 谁调用谁负责按匹配数分流：
+  ///
+  /// | 匹配数 | 调用方该做什么 |
+  /// |---|---|
+  /// | 0 条 | 提示「没找到这个条码」 |
+  /// | 1 条 | 直接用 |
+  /// | ≥ 2 条 | **让用户自己选**（列表里显示名称 + 售价 + 建档时间） |
+  ///
+  /// [excludeId] 供**编辑**用：商品当然会命中自己的条码，
+  /// 不排除的话编辑任何一条商品都会看到「这个条码已经给『它自己』用过了」。
+  ///
+  /// 不过滤 `is_active`：停用只是「不再卖」，条码的归属还是它 ——
+  /// 过滤掉会让用户以为条码凭空消失了。
+  List<Product> barcodeOwners(String barcode, {String? excludeId}) {
+    final String trimmed = barcode.trim();
+    if (trimmed.isEmpty) return const <Product>[];
+    final List<Product> owners = _products.findByBarcode(trimmed);
+    if (excludeId == null) return owners;
+    return owners
+        .where((Product product) => product.id != excludeId)
+        .toList(growable: false);
+  }
 
   /// 建档。**校验不通过直接抛 [ProductDraftInvalid]，库里不留半条记录。**
   ///

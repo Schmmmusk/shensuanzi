@@ -93,7 +93,6 @@ dart run tool/typecheck.dart
 | **host** | `selfcheck_host.dart` | `auth_test` + `pairing_test` + `http_server_test` |
 | **host** | `selfcheck_client_server.dart` | `client_server_test.dart` |
 | **app** | `selfcheck_app.dart` | `data_directory_test` + `data_directory_service_test` + `app_config_test` + `bootstrap_test` + `dialog_model_test` + `navigation_test` |
-| **host** | `selfcheck_client_server.dart` | `client_server_test.dart` |
 
 > ⚠️ **`typecheck.dart` 必须 import 全部入口，包括 `tool/` 下每个自检脚本本身。**
 > `dart test` 只跑 `test/`，脚本自身的编译错误不会被任何门禁发现 ——
@@ -144,8 +143,17 @@ dart run tool/typecheck.dart
 > 结果 `unsynced` 是 `0` 而不是 `-3`。**用助手之前先看它的隐含假设，
 > 语义不同就自己拼夹具。**
 >
+> ⚠️ **断言里引用常量必须写 `${...}`，不能写 `'$X.y'`。**
+> 第七次踩到（2026-09-26）：`product_service_test.dart` 里写的是
+> `contains('$ProductDraft.maxNameLength')` —— Dart 把 `$ProductDraft` 当成
+> **类型对象的 `toString()`**，后面的 `.maxNameLength` 退化成**字面量**，
+> 于是断言的是一个根本不存在的字符串 `ProductDraft.maxNameLength`；
+> 报错长得像「值不对」，很费眼神。旁边的 `selfcheck_products.dart` 写的是
+> `${ProductDraft.maxNameLength}`，所以**只有正式测试红**。
+> **凡是 `$名字.成员` 的写法，先怀疑它少了一对花括号。**
+
 > 📌 观察到的规律：**同一个场景里，后写的那个门禁往往是对的**。
-> 本仓已出现 6 次漂移，其中 3 次是「正式测试错、自检对」——
+> 本仓已出现 7 次漂移，其中 4 次是「正式测试错、自检对」——
 > 若两边不一致，别默认正式测试是对的，**先看哪个更符合规范条文**。
 
 ## A. DAO 层
@@ -453,7 +461,8 @@ dart run tool/typecheck.dart
 ## M. 商品建档（`packages/shensuanzi_core/`）
 
 对应 `test/product_service_test.dart` 与 `tool/selfcheck_products.dart`。
-字段范围见 `docs/reply.md`（6 个字段，`code` 由系统生成）。
+字段范围见 `docs/reply_review.md` §R（6 个字段，`code` 由系统生成）；
+**条码重复的口径见同文件附录 R-15**。
 
 **必测清单**：
 
@@ -473,6 +482,15 @@ dart run tool/typecheck.dart
   校验不过时**库里原值不变**（含版本号与 `updated_at`）
 - **停用 / 恢复**：软删（行还在）、版本 +1；列表默认只看启用中的
 - **列表**：排序 = 建档顺序（**不是编码字典序**）；`query` 命中名称 / 编码 / 条码
+- **条码重复（R-15）**：`barcodeOwners` 返回**全部**匹配项、按建档顺序 ——
+  「重复条码 → 两条都返回」这条**会失败在「静默取最早一条」的实现上**；
+  `excludeId` 排除自己（编辑时不该提示「自己和自己重复」）；
+  **停用的商品也算条码归属**（过滤掉会让条码看起来凭空消失）；
+  建档与编辑**都不因条码重复而失败**（允许重复）
+- **`barcodeNotice` 文案**：空列表 → `null`（界面什么都不显示）；
+  一条 → 用**商品名**（不是编码，用户认名字不认编号），且第二句必须说清
+  「保存后扫码会显示 N 条商品供选择」；两条 → 名字都列出来（`「甲」「乙」`）；
+  3 条以上 → 只说第一个 + 「等 N 种商品」；条数 > 9 退回阿拉伯数字
 - **事务硬约束**：`ProductCodeGenerator` 在事务外调用 → `StateError`
 
 ## L. 根 Flutter 应用（`lib/`）

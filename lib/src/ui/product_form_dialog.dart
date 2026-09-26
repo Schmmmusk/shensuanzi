@@ -16,6 +16,12 @@
 /// 金额输入框一律 `numberWithOptions(decimal: true)` —— 中老年用户做零售时
 /// 输入数量与金额是最高频动作，默认弹出字母键盘等于每次都要多切一次
 /// （`docs/ui_principles.md` §四）。
+///
+/// ## 条码重复为什么不弹窗（R-15 裁定）
+///
+/// 弹窗「条码已存在，继续吗？」会让用户每次都停下来读一遍 —— 读烦了就不读了，
+/// 还可能手滑点「否」。**内联提示**眼睛扫到就看到了，不打断输入、不增加点击，
+/// 而且**不拦人**（条码重复是真实常态：同箱拆卖、同款不同批次）。
 library;
 
 import 'package:flutter/material.dart';
@@ -23,6 +29,12 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 /// 常用单位。**不是白名单** —— 单位仍是自由文本，这只是「顺手就能点」的快捷方式。
 const List<String> _commonUnits = <String>['件', '个', '斤', '箱', '包', '瓶'];
+
+/// 提示色（条码重复这类「需要注意但不拦人」的话）。
+///
+/// 刻意**不用主题的 error 红**：红只留给真错误（`docs/ui_principles.md` §二）。
+/// 取深一档的橙是为了白底上对比度够 —— 浅橙在中老年用户的老花屏上会糊掉。
+const Color _noticeColor = Color(0xFFB45309);
 
 Future<Product?> showProductFormDialog(
   BuildContext context, {
@@ -62,6 +74,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
   bool _saving = false;
 
+  /// 条码重复的内联提示原文（`ProductDraft.barcodeNotice` 的返回值）
+  String? _barcodeNotice;
+
   @override
   void initState() {
     super.initState();
@@ -74,6 +89,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _costPrice = TextEditingController(text: draft.costPrice);
     _barcode = TextEditingController(text: draft.barcode);
     _safetyStock = TextEditingController(text: draft.safetyStock);
+    // 编辑一条条码本身就已重复的商品时，一打开就该看到提示（不用等用户改动）
+    _barcodeNotice = _computeBarcodeNotice();
   }
 
   @override
@@ -100,6 +117,27 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   void _clearError(ProductField field) {
     if (!_errors.containsKey(field)) return;
     setState(() => _errors = Map<ProductField, String>.from(_errors)..remove(field));
+  }
+
+  /// 查重全在 core 里（`barcodeOwners` + `barcodeNotice`），这里只负责摆出来。
+  ///
+  /// `excludeId` 是**必须**的：编辑时商品自己也在库里，
+  /// 不排除就会显示「这个条码已经给『它自己』用过了」。
+  String? _computeBarcodeNotice() {
+    final String text = _barcode.text.trim();
+    if (text.isEmpty) return null;
+    return ProductDraft.barcodeNotice(
+      widget.service.barcodeOwners(text, excludeId: widget.existing?.id),
+    );
+  }
+
+  /// 条码边打边查重 —— 输入框下方那行橙字实时更新，**不弹窗、不拦人**
+  void _onBarcodeChanged(String _) {
+    _clearError(ProductField.barcode);
+    final String? notice = _computeBarcodeNotice();
+    if (notice != _barcodeNotice) {
+      setState(() => _barcodeNotice = notice);
+    }
   }
 
   Future<void> _save() async {
@@ -248,12 +286,25 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                 // 扫码枪通常在末尾带回车 —— 回车即保存，一次扫码完成建档
                 textInputAction: TextInputAction.done,
                 onSubmitted: (_) => _save(),
-                onChanged: (_) => _clearError(ProductField.barcode),
+                onChanged: _onBarcodeChanged,
                 decoration: _decoration(
                   ProductField.barcode,
-                  helper: '没有条码可以先空着。有条码的话，扫一下会自动保存。',
+                  // 有查重提示时让位：两行辅助文字会挤在一起，反而没人看
+                  helper: _barcodeNotice == null
+                      ? '没有条码可以先空着。有条码的话，扫一下会自动保存。'
+                      : null,
                 ),
               ),
+
+              // 条码重复：**内联橙色提示**，不弹窗、不打断输入（R-15 裁定）。
+              // 文案（含第二句「保存后扫码会显示…」）来自 core，界面只上色。
+              if (_barcodeNotice != null) ...<Widget>[
+                const SizedBox(height: 6),
+                Text(
+                  _barcodeNotice!,
+                  style: const TextStyle(color: _noticeColor, height: 1.6),
+                ),
+              ],
 
               const SizedBox(height: 12),
               Text(

@@ -26,6 +26,7 @@
 | `docs/testing.md` | 实施者 | 测试要求（DAO / 不变量 / 规则 / 同步 / 端到端） |
 | `docs/data_directory.md` | 实施者 / 所有人 | 数据放哪、怎么校验、怎么找回 |
 | `docs/ui_principles.md` | UI 实现者 | 面向中老年用户的界面原则 |
+| `docs/windows_build.md` | 实施者 | Windows 构建与运行（**应用「一直起不来」先看这里**） |
 
 ## 目录结构
 
@@ -40,7 +41,10 @@ repo/
 │   ├── threat_model.md
 │   ├── data_directory.md
 │   ├── ui_principles.md
+│   ├── windows_build.md
 │   └── testing.md
+├── third_party/             # 构建期外部源码（不入库，见 docs/windows_build.md）
+│   └── sqlite3/             # 预置的 SQLite 源码，避免构建时联网下载
 ├── packages/
 │   ├── shensuanzi_core/     # 纯 Dart：模型 / DAO / 规则 / 同步协议（DTO + 白名单 + 客户端）
 │   ├── shensuanzi_host/     # 纯 Dart：shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据
@@ -54,7 +58,9 @@ repo/
             ├── app_shell.dart          # 220px 导航列 + 三重高亮 + 面包屑
             ├── nav_icons.dart          # iconKey → IconData（导航结构是纯 Dart）
             ├── overview_page.dart      # 「数据在哪」
-            └── data_directory_dialog.dart
+            ├── data_directory_dialog.dart
+            ├── products_page.dart      # 商品列表 / 搜索 / 停用恢复
+            └── product_form_dialog.dart # 商品建档表单（含条码重复内联提示）
 ```
 
 **包边界**（2026-09-25 / 09-26 裁定）：
@@ -134,9 +140,12 @@ v0.4 — 规范冻结，进入实施。
 | **数据目录对话框**（服务入口 + 状态机 + 三档反馈 + 二次确认） | app（逻辑）+ Flutter（摆放） | ✅ 逻辑 137 个用例 / 116 项自检 |
 | **左侧常驻导航**（结构 + 图标映射 + 三重高亮 + 面包屑 + 沉浸模式） | app（结构）+ Flutter（摆放） | ✅ 含「入口常驻可见」的可执行断言 |
 | 概览页 · 启动流程（解析位置 → 对话框 → 开库） | Flutter | ✅ 骨架（**需 `flutter analyze` / `flutter test` 验证**） |
-| **商品建档**（列表 + 搜索 + 新增/编辑 + 停用恢复 + 条码） | core（逻辑）+ Flutter（摆放） | ✅ 6 字段、`code` 系统生成；逻辑 206 用例 / 501 项自检 |
+| **商品建档**（列表 + 搜索 + 新增/编辑 + 停用恢复 + 条码） | core（逻辑）+ Flutter（摆放） | ✅ 6 字段、`code` 系统生成；逻辑 215 用例 / 513 项自检 |
+| **条码重复**（R-15：允许 + 建档内联提示 + 扫码多选） | core（逻辑）+ Flutter（摆放） | ✅ `findByBarcode` 返回列表，不再静默取最早一条 |
 | 采购入库 · 库存查询 · 销售开单 · 收款 | Flutter | 未开始（**核心闭环，下一步**） |
 | 首次启动的欢迎浮层 · 店名 · 账户预设 · 设置页（含缩放） | Flutter | 未开始（回补，见 `docs/ui_principles.md` §6.4） |
 | 备份打包 · 打包发布 | — | 未开始 |
+| Windows 构建前提（SQLite 源码离线预置） | 构建 | ✅ 不再依赖构建时下载 `sqlite.org`，见 `docs/windows_build.md` |
 
-运行与验证方式（含本机限制）见 [`docs/testing.md` §零](docs/testing.md)。
+运行与验证方式（含本机限制）见 [`docs/testing.md` §零](docs/testing.md)；
+**构建失败 / 应用起不来先看** [`docs/windows_build.md`](docs/windows_build.md)。

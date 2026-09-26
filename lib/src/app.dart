@@ -36,6 +36,18 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     environment: AppEnvironment.detect(),
   );
 
+  /// ⚠️ **弹对话框必须用这个 key 的 context，不能用本 State 的 `context`。**
+  ///
+  /// 本 State 的 `context` 在 `MaterialApp` **上面**（`MaterialApp` 是本 widget
+  /// 自己 build 出来的）。拿它去 `showDialog`，会沿祖先链找不到
+  /// `MaterialLocalizations`（它由 `MaterialApp` 提供），直接抛
+  /// `No MaterialLocalizations found.` —— 而且**对话框根本不出现**，
+  /// 界面停在兜底页，看起来像「按钮没反应」。
+  ///
+  /// `navigatorKey.currentContext` 是 `Navigator` 的 context，在 `MaterialApp`
+  /// **下面**，正是「从外面弹对话框」的标准做法。
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
   DataLocation? _location;
 
   /// 打开着的数据库；成功后一直持有，供后续功能页使用
@@ -68,8 +80,12 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     }
     if (!mounted) return;
 
+    // 用 Navigator 的 context（见 `_navigatorKey` 的注释）
+    final BuildContext? dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null) return;
+
     final DataLocation? chosen = await showDataDirectoryDialog(
-      context,
+      dialogContext,
       model: DataDirectoryDialogModel(_service),
       pickDirectory: pickDirectory,
     );
@@ -102,6 +118,8 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     return MaterialApp(
       title: '神算子',
       debugShowCheckedModeBanner: false,
+      // 启动流程要在首帧之后弹对话框，用它的 context（见 `_navigatorKey`）
+      navigatorKey: _navigatorKey,
       theme: ThemeData(
         // 低饱和蓝作主色：红色只留给错误与告警（`docs/ui_principles.md` §二）
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2F6FA8)),

@@ -5,6 +5,20 @@
 > 审查方式：逐条对照规范文本与参考代码，并对可判定项做了静态推演（未运行，本机 Dart VM 创建子进程受限）
 > 结论：**规范方向正确、信息密度高，采纳。但参考代码不能直接运行，且存在 9 项必须在实施前裁定的阻断问题。**
 
+> ## 编号索引（先看这里，别滚屏找）
+>
+> | 编号 | 位置 | 状态 |
+> |---|---|---|
+> | R-1 `allocations` 承载 / R-2 B5 排除收付款单 / R-3 `documentAction` 幂等 / R-4 `documents` pull 游标 / R-5 正式单号回填边界 / R-6 立即收付与 `settlement` / R-7 负数舍入 | §B | R-1 · R-2 · R-6 · R-7 **已落地**；R-4 由 §L（R-13 方案 A）确定；**R-3.1 ~ R-3.5 五问仍待答**（清单在 §H 末）；R-5 随实现处置 |
+> | R-8 / R-9 / R-10 / R-11 / R-12 实现期边界 | §D | 已按当前处置实现、**不阻断**；其中 **R-11 已落地**（§G） |
+> | R-13 主数据并入 `pull` | §L | **已落地**（方案 A） |
+> | R-14 客户端拉取游标存哪 | §M（候选）→ §N（落地） | **已落地**（方案 A） |
+> | **R-15 商品条码重复** | 附录 R-15（待裁定项）→ §S（落地） | **已落地**（2026-09-26：允许 + 建档内联提示 + 扫码多条时选择器） |
+>
+> **过程记录**：§F 方案 C │ §G R-11 │ §H R-3 │ §I RULE-006 + SyncServer │ §J 包拆分 + host 传输层 │
+> §K 首轮修复 │ §L R-13 │ §N R-14 │ §O 数据目录策略 │ §P 数据目录对话框 │ §Q lint 清零 + 左侧导航 │
+> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑
+
 ## 0. 结论速览
 
 | 分级 | 数量 | 含义 |
@@ -1233,3 +1247,117 @@ delta 夹具改用真实 `productId`），并在 `docs/testing.md` 补了纪律�
 **我的建议**：**B**。与数据目录警告同一原则 —— **中老年用户被拦住会认为「软件坏了」**，
 但让他知道「这个条码已经用过了」是有价值的。等 Android 端做扫码时再定也来得及
 （v1 还没有扫码功能，但条码**已经在录入了**，所以这个决定越早越好）。
+
+---
+
+## S. R-15 落地记录（2026-09-26）
+
+**裁定**：同意「警告但不拦」，但要改两处 ——（1）形态是**内联提示**不是弹窗；
+（2）**扫码行为必须配套改**：`findByBarcode` 返回列表，多条时让用户自己选。
+
+### 一、裁定书补上了我漏掉的一环
+
+我原来的建议只到「建档时警告」为止，那**和「允许重复」是自相矛盾的**：
+
+```text
+用户看到警告 → 继续保存 → 有两条同条码商品
+   ↓  以后扫码 → 系统静默选最早那条
+用户扫「A 商品」→ 系统弹出「B 商品」→ 用户：软件坏了
+```
+
+警告让他知道了重复，扫码时**静默挑一条**又把这个信息抹掉了。
+所以 R-15 不是「加一句提示」，而是**同一个口径要贯穿两条链路** ——
+建档时呈现、扫码时呈现，不静默、不猜测。
+
+### 二、落地内容
+
+| 层 | 改动 |
+|---|---|
+| `ProductDao.findByBarcode` | 返回类型 `Product?` → **`List<Product>`**，去掉 `LIMIT 1`；仍按 `(created_at, id)` 排序 |
+| `ProductService.barcodeOwners` | **替代**原 `byBarcode`（原签名「返回单条」与裁定冲突，留着就是个坑）。多一个可选 `excludeId` |
+| `ProductDraft.barcodeNotice` | 新增纯函数：`List<Product>` → `String?`（空 = 没人用过 = 界面什么都不显示） |
+| `product_form_dialog.dart` | 条码框下方一行**橙色内联提示**，边打边更新；有提示时**让出 `helperText`**，避免两行辅助文字挤在一起 |
+| `ProductsPage` | 无改动（v1 还没有扫码入口） |
+
+### 三、`excludeId`：裁定书没写、但必须有的一环
+
+**编辑**一条商品时，**它自己也在这个条码的占用者里**。不做排除，打开任何一条已有商品
+都会看到「这个条码已经给『它自己』用过了」。所以 `barcodeOwners` 加了一个
+可选具名参数 `excludeId`（不改变裁定书给的签名形状，纯增补）。
+
+### 四、文案里的两个决定
+
+1. **只列名字、不列编号**（裁定书已要求）：`「娃哈哈矿泉水 550ml」`，不是 `（P0007）`。
+   名字从调用方传进来的 `Product` 直接取，不额外查库。
+2. **条数用中文小数字**：`两条` / `三条` … `九条`，超过 9 退回阿拉伯数字 ——
+   「保存后扫码会显示十二条商品供选择」反而难读。**这一条裁定书没写，是我加的**，
+   测试已把两种形态都钉住（`两条` / `11条商品`）。
+
+### 五、一个顺手修掉的测试缺陷（第七次镜像漂移）
+
+正式测试里写的是 `contains('$ProductDraft.maxNameLength')` —— 少了花括号，
+Dart 把 `$ProductDraft` 当成**类型对象的 `toString()`**，`.maxNameLength` 退化成字面量，
+于是断言了一个不存在的字符串 `ProductDraft.maxNameLength`。自检那边写的是
+`${ProductDraft.maxNameLength}`，所以**只有正式测试红**。
+已修，并把这条写进 `docs/testing.md` §零。
+
+### 六、门禁
+
+- core：`typecheck` **18 入口**；`selfcheck_products` **38 → 50 项**；
+  `product_service_test` **39 → 48 个用例**（核心合计 206 → **215**）
+- 其余 7 个 core 自检复跑**无回归**
+- Flutter 侧：`dart format --output=none` 语法通过（`flutter analyze` 需在仓库根跑）
+
+---
+
+## T. 首次真机启动成功 + 三个坑（2026-09-26）
+
+**里程碑**：`flutter run -d windows` 第一次真正跑出 `shensuanzi.exe`（27.4 秒）。
+「应用一直起不来」这件事有三个**互不相干**的原因，值得记下来。
+
+### 一、坑 1：CMake 配置阶段下载 sqlite 源码失败（阻断）
+
+`build/windows/x64/_deps/sqlite3-subbuild/.../sqlite-autoconf-3520000.tar.gz` 是 **0 字节**，
+`_deps/sqlite3-src/` 是空目录 ⇒ 配置阶段直接失败。**与 Dart 代码无关**：
+`flutter analyze` / `flutter test` 全绿也照样起不来。
+根因是国内直连 `sqlite.org` 被掐断（镜像 `www2` / `www3` 通畅）。
+处置：`windows/CMakeLists.txt` 加离线守卫 + 源码预置到 `third_party/sqlite3/`。
+完整步骤见 **`docs/windows_build.md`**。
+
+### 二、坑 2：MSBuild 的 CL.exe 崩在「环境变量大小写重复」上
+
+```text
+error MSB6001: "CL.exe" 的命令行参数无效。
+System.ArgumentException: 已添加项。字典中的关键字:"HTTP_PROXY" 所添加的关键字:"http_proxy"
+  → ProcessStartInfo.get_EnvironmentVariables → Hashtable.Insert
+```
+
+Windows 环境块允许同名不同大小写，而 .NET 的 `ProcessStartInfo.EnvironmentVariables`
+是**大小写不敏感**的 Hashtable ⇒ 插入即抛异常 ⇒ **C/C++ 一个文件都编不了**。
+清掉小写那组后同一个目标立刻编译成功（`env -u http_proxy -u https_proxy …`）。
+**判据**：dump 环境筛 `proxy`，同时列出两种大小写 = 中招。
+
+### 三、坑 3：`No MaterialLocalizations found.` —— 弹对话框用了 `MaterialApp` 之上的 context
+
+真机启动后控制台抛 `Unhandled Exception: No MaterialLocalizations found.`，
+栈顶是 `showDataDirectoryDialog` ← `_ShensuanziAppState._prepare`。
+
+**根因**：`MaterialApp` 是 `ShensuanziApp` **自己 build 的**，所以
+`_ShensuanziAppState.context` 在它**上面**。拿这个 context 去 `showDialog`，
+沿祖先链找不到 `MaterialLocalizations`（由 `MaterialApp` 提供）⇒ 抛异常。
+更糟的是**对话框根本不出现**，界面停在兜底页「需要一个文件夹来存放数据」——
+用户看到的是「按钮没反应」，而不是「弹窗坏了」。
+
+**修法**：加 `navigatorKey`，用 `navigatorKey.currentContext` 弹对话框 ——
+Navigator 的 context 在 `MaterialApp` **下面**，这是「从树外面弹对话框」的标准做法
+（`Navigator.of` 内部专门处理了「传进来的就是 navigator 自己的 element」这种情况）。
+
+### 四、为什么现有的 widget 测试抓不到它
+
+`test/widget_test.dart` 挂的是 **`AppShell`**，不是 `ShensuanziApp` ——
+它压根不经过启动流程，所以这条路径从来没被任何门禁覆盖过
+（文件注释里也写了「启动流程会读配置、弹对话框，widget 测试里会炸」）。
+**可选的补救**：让 `ShensuanziApp` 接受注入的 `DataDirectoryService` / `pickDirectory`，
+就能加一条「启动后对话框出现且无异常」的 widget 测试。**待裁定**（要动构造函数）。
+
+

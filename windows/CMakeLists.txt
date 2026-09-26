@@ -53,6 +53,48 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 add_subdirectory("runner")
 
 
+# === SQLite 源码：优先用本地预置的副本，避免构建时联网 ======================
+#
+# `sqlite3_flutter_libs` 在**配置阶段**用 FetchContent 从 sqlite.org 下载
+# `sqlite-autoconf-<ver>.tar.gz`。国内直连 sqlite.org 会超时或被中途掐断，
+# 下载到 0 字节 → 解压失败 → `flutter build windows` 在配置阶段就失败。
+# 症状是「应用一直起不来」，且与 Dart 代码无关。详见 docs/windows_build.md。
+#
+# FetchContent 支持用 FETCHCONTENT_SOURCE_DIR_<NAME> 指定一个**现成的源码
+# 目录**，指定后它不再下载。这里**只在本地确实放了源码时才设置** ——
+# 没放就照旧联网下载，行为与改动前完全一致。
+#
+# 目录只要能让 `#include "sqlite3.c"` 找到文件即可（插件就是这么用的，
+# 压缩包里也没有 CMakeLists.txt）。两种形状都认：
+#   third_party/sqlite3/                     ← sqlite3.h / sqlite3.c 直接在这一层
+#   third_party/sqlite3/sqlite-autoconf-*/   ← 保留压缩包里的顶层目录
+# ===========================================================================
+if(NOT DEFINED FETCHCONTENT_SOURCE_DIR_SQLITE3)
+  set(_ssz_sqlite_root "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/sqlite3")
+  if(EXISTS "${_ssz_sqlite_root}/sqlite3.c" AND
+     EXISTS "${_ssz_sqlite_root}/sqlite3.h")
+    set(FETCHCONTENT_SOURCE_DIR_SQLITE3 "${_ssz_sqlite_root}" CACHE PATH
+      "本地预置的 SQLite 源码目录（设置后跳过 FetchContent 下载）")
+  else()
+    file(GLOB _ssz_sqlite_nested
+      "${_ssz_sqlite_root}/sqlite-autoconf-*/sqlite3.c")
+    if(_ssz_sqlite_nested)
+      list(GET _ssz_sqlite_nested 0 _ssz_sqlite_first)
+      get_filename_component(_ssz_sqlite_dir "${_ssz_sqlite_first}" DIRECTORY)
+      set(FETCHCONTENT_SOURCE_DIR_SQLITE3 "${_ssz_sqlite_dir}" CACHE PATH
+        "本地预置的 SQLite 源码目录（设置后跳过 FetchContent 下载）")
+    endif()
+  endif()
+
+  if(FETCHCONTENT_SOURCE_DIR_SQLITE3)
+    message(STATUS "[shensuanzi] 使用本地 SQLite 源码："
+      "${FETCHCONTENT_SOURCE_DIR_SQLITE3}")
+  else()
+    message(STATUS "[shensuanzi] 未发现本地 SQLite 源码，将联网下载"
+      "（见 docs/windows_build.md）")
+  endif()
+endif()
+
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
