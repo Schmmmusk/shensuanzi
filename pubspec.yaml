@@ -47,7 +47,8 @@ dependencies:
   sqlite3_flutter_libs: ^0.5.0
 
   # 系统「选择文件夹」对话框（数据目录对话框用）。
-  # 全项目只有 lib/src/folder_picker.dart 一处调用它。
+  # 全项目只有 lib/src/folder_picker.dart 一处调用它 —— 也是唯一被注入的依赖
+  # （ShensuanziApp(pickDirectory:)），测试传桩、生产用默认值。
   file_selector: ^1.1.0
 
 dev_dependencies:

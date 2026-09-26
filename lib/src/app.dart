@@ -24,7 +24,19 @@ import 'ui/app_shell.dart';
 import 'ui/data_directory_dialog.dart';
 
 class ShensuanziApp extends StatefulWidget {
-  const ShensuanziApp({super.key});
+  /// `pickDirectory` 的默认值**就在参数上就地给出**（真实实现）——
+  /// 不能留 `null` 再在 `build` 里兜底：那样「忘了传」会变成「运行时才炸」。
+  /// 就地给默认值，类型系统保证它非空，现有调用点
+  /// `runApp(const ShensuanziApp())` 一个字都不用改。
+  const ShensuanziApp({
+    super.key,
+    this.pickDirectory = pickFolderFromSystem,
+  });
+
+  /// 选文件夹。**全项目唯一被注入的依赖** —— 因为它是唯一会「卡住测试」的
+  /// （真弹系统框，widget 测试直接挂死）。数据目录服务与开库都走**真实路径**，
+  /// 测出来的才是真的（`docs/reply_review.md` §V）。
+  final Future<String?> Function() pickDirectory;
 
   @override
   State<ShensuanziApp> createState() => _ShensuanziAppState();
@@ -87,7 +99,8 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     final DataLocation? chosen = await showDataDirectoryDialog(
       dialogContext,
       model: DataDirectoryDialogModel(_service),
-      pickDirectory: pickDirectory,
+      // 注入点：生产环境是系统选择器，测试里是桩
+      pickDirectory: widget.pickDirectory,
     );
     if (chosen == null) return; // 用户退出了 —— 界面会停在「需要选择位置」
     _openDatabase(chosen);

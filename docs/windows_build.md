@@ -117,3 +117,44 @@ flutter run -d windows
 版本号钉在插件里（当前 `sqlite3_flutter_libs 0.5.42` → `sqlite-autoconf-3520000`）。
 插件升版后：按新版本号重新下载、重新解压到**同一个目录**即可，
 守卫只看「文件在不在」，不认版本号。
+
+## 七、中文注释与 C4819（改过 `windows/` 下的 C++ 才会遇到）
+
+**症状**：`flutter run` 报
+
+```text
+windows\runner\main.cpp(1,1): error C2220: 以下警告被视为错误
+windows\runner\main.cpp(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符
+```
+
+**根因**：本项目源码一律 UTF-8（无 BOM），而这个 `.cpp` 里有**中文注释**。
+MSVC 默认按**系统代码页**（简体中文机器 = 936 / GBK）解码源文件 ——
+UTF-8 的中文在 936 下是非法字节序列 ⇒ 报 C4819；
+而 `apply_standard_settings` 里带着 `/WX`（警告即错误）⇒ C4819 变成 C2220 ⇒ **直接编译失败**。
+
+> ⚠️ **只修一半的坑**：把窗口标题写成 `L"\u795e\u7b97\u5b50"` 只解决了
+> **字符串字面量**；**注释里的中文照样触发 C4819** —— 2026-09-26 就是这么翻的车。
+
+**处置**：`windows/runner/CMakeLists.txt` 给应用目标加 `/utf-8`：
+
+```cmake
+target_compile_options(${BINARY_NAME} PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>")
+```
+
+`/utf-8` = `/source-charset:utf-8` + `/execution-charset:utf-8`，明确告诉编译器
+「源文件是 UTF-8」。
+
+**`$<COMPILE_LANGUAGE:C,CXX>` 不能省** —— 否则这个选项会被一起传给资源编译器
+`rc.exe`，而它不认 `/utf-8`。
+
+| 做法 | 结论 |
+|---|---|
+| **给应用目标加 `/utf-8`** | ✅ 采纳：注释仍可写中文，与仓库其它文件一致 |
+| 只把字符串转义成 `\uXXXX` | ❌ 只解决字面量，注释照样报错 |
+| 源文件存成 UTF-8 **带 BOM** | 🔸 也能用（MSVC 认 BOM），但给文件加了隐形字节 |
+| 中文注释全改英文 | 🔸 可行，但把仓库唯一的语言规范破了 |
+
+**排查手法**：扫一遍 `windows/` 下有没有**非 ASCII** 的源文件 ——
+只有「既含非 ASCII、又会被 `cl.exe` 编译」的文件才会报。
+注意 `windows/CMakeLists.txt` 里的中文注释**没问题**（CMake 自己按 UTF-8 读脚本），
+别照着它一起改。

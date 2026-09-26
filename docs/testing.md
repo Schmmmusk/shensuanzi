@@ -528,6 +528,17 @@ dart run tool/typecheck.dart
 **已自动化的**（`test/widget_test.dart`）：主界面把「数据在哪」说清楚、
 闭环入口常驻可见、数据库没就绪时给出「怎么办」。
 
+**⏳ 待补：启动流程（`ShensuanziApp`）本身没有断言。**
+`test/widget_test.dart` 挂的是 **`AppShell`**，**不经过启动流程** ——
+「什么时候弹对话框、拿到结果之后干什么」这段接线无人看守，改坏只会**静默跳过对话框**。
+2026-09-26 真踩过一次：`No MaterialLocalizations found.`（在 `MaterialApp` 之上拿 context
+弹对话框），界面停在兜底页，看着像「按钮没反应」，而所有单元测试都是绿的。
+
+`ShensuanziApp(pickDirectory:)` 已经能注入，但五个场景**暂时还写不了**：
+配置文件的落点是真实 `%APPDATA%`（`AppEnvironment.detect()` 推出），
+不注入 `configStore` 的话测试**既不确定、又会写坏开发者自己的配置**
+（违反 §K 的沙箱纪律）。缺口与最小解法见 `docs/reply_review.md` §V 三。
+
 **不能自动化的**（必须手动跑一次真机）：
 
 - 启动流程：首次 → 弹数据目录对话框 → 建目录 + 写标记 → 开库 → 主界面

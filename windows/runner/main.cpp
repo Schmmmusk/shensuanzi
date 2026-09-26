@@ -27,7 +27,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"shensuanzi", origin, size)) {
+  // 窗口标题（标题栏与任务栏都显示它）。
+  //
+  // 用 \u 转义写「神算子」：转义形式是**纯 ASCII**，所以这一行不依赖编译器
+  // 的源文件字符集设置 —— 即使将来有人去掉了 /utf-8（见 runner/CMakeLists.txt），
+  // 标题也不会变成乱码。注释里的中文则**依赖**那个 /utf-8。
+  if (!window.Create(L"\u795e\u7b97\u5b50", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

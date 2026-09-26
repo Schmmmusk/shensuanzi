@@ -77,7 +77,7 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | **UI 基线** | 面向中老年用户：**所有功能有常驻可见入口 + 文字标签**（图标可以加，文字必须在）；尺寸用相对单位；错误信息**说「怎么办」不说「哪里错了」**，且由领域层给出、UI 不造句。见 `docs/ui_principles.md` |
 | **界面字体** | **中文字体必须显式指定** —— Flutter 自带的 Roboto 不含中文字形，Windows 上会兜到**宋体**（实机一看就是「外国软件没适配」）。Windows 栈 `Microsoft YaHei UI` → `Microsoft YaHei` → `SimHei` → `Segoe UI`（**族名必须写英文**，DirectWrite 只认不变族名）；**Android 不指定**（默认字体本来就是 Noto / 思源）。字体栈在纯 Dart 的 `AppTypography`，Flutter 只取值。⚠️ 族名写错**不报错、只静默降级**，所以有断言钉住（2026-09-26） |
 | **UI 提示形态** | **可以不拦人的提醒一律内联**（放相关输入框下方，与动作同屏），且必须说清「下一步会发生什么」；**弹窗只留给重大 / 危险 / 不可逆操作**（删除、覆盖、放弃未保存）—— 这类弹窗要的是**明确确认**，不是告知。内联用**橙色**（不用错误红）。见 `docs/ui_principles.md` §1.3（2026-09-26） |
-| **UI 分层** | **判断在纯 Dart，Flutter 只做摆放**。对话框状态机 `DataDirectoryDialogModel`、路径策略、配置都在 `shensuanzi_app`（`dart test` 可跑）；根 `lib/src/` 只放「摆放控件、调插件、pop 结果」。**全项目唯一调用 Flutter 插件的地方**是 `lib/src/folder_picker.dart`（2026-09-26） |
+| **UI 分层** | **判断在纯 Dart，Flutter 只做摆放**。对话框状态机 `DataDirectoryDialogModel`、路径策略、配置都在 `shensuanzi_app`（`dart test` 可跑）；根 `lib/src/` 只放「摆放控件、调插件、pop 结果」。**全项目唯一调用 Flutter 插件的地方 —— 也是唯一被注入的依赖 —— 是 `lib/src/folder_picker.dart`**：`ShensuanziApp(pickDirectory:)` 的默认值**就地**指向真实实现（`pickFolderFromSystem`），测试传桩，调用点一个字不改（2026-09-26） |
 | **首启只做一步** | 首启**不做 5 步模态向导**，只做「选择数据存放位置」对话框（唯一硬依赖）；欢迎 / 店名 / 账户 / 完成页**第 10 天回补**，且回补时也用**一屏浮层**而不是模态向导。见 `docs/reply_review.md` §P |
 | **主界面导航** | **左侧常驻导航**（220px + 缩放），不用顶部标签页 —— 表格要垂直空间，标签页超过 6 项会折叠成「更多」= 隐藏入口。分组：首页 / 高频动作 / 数据查询 / 系统；**高亮给三重信号**（背景 + 3px 竖条 + 加粗）；开单页是**沉浸模式**（不显示面包屑，但导航仍在）。结构在 `AppNavigation`（纯 Dart、可测），Flutter 只映射图标与摆放。见 `docs/ui_principles.md` §八 |
 | **lint 归零** | `flutter analyze`（**必须在仓库根跑**，它会连带分析 path 依赖的全部包）是本项目**唯一的全仓 lint 门禁**；`tool/typecheck.dart` 只编译不 lint，**不可替代**。目标维持 **0 issues**（2026-09-26 清掉 37 项累积债） |
@@ -86,6 +86,7 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | **建档只有一条路径** | 建档 / 编辑必须走 `ProductService`（生成编码 + 补时间戳与版本 + 服务层重新校验）。Windows 界面与将来的 `SyncServer.createMasterData` **共用同一条路径**，不各写一套 |
 | **条码重复** | **允许**（同箱拆卖、同款不同批次是常态，拦下来会挡住合法操作；中老年用户被拦会认为「软件坏了」）。建档时在**条码输入框下方内联提示**（橙色）—— **可以不拦人的提醒一律内联，弹窗只留给重大 / 危险 / 不可逆操作**（`docs/ui_principles.md` §1.3），文案同时说清「已经给谁用过」与「保存后扫码会显示 N 条供选择」。`ProductDao.findByBarcode` **返回 `List<Product>`**，`ProductService.barcodeOwners` **绝不静默挑一条**：0 条说没找到 / 1 条直接用 / **≥ 2 条弹选择器让用户点选**（R-15 / 2026-09-26） |
 | **Windows 构建前提** | `sqlite3_flutter_libs` 在**配置阶段**从 `sqlite.org` 下载 SQLite 源码再现场编译。国内直连会**下载到 0 字节** ⇒ 配置失败 ⇒ **应用一直起不来，且与 Dart 代码无关**（`flutter analyze` / `flutter test` 全绿照样起不来）。把源码放到 `third_party/sqlite3/`（`windows/CMakeLists.txt` 有守卫，有就不联网）。见 `docs/windows_build.md` |
+| **C++ 源文件按 UTF-8 读** | `windows/` 下的 C++ 源码是 UTF-8（无 BOM），而 MSVC 默认按**系统代码页**解码 ⇒ **中文注释**会触发 `C4819`，又因 `apply_standard_settings` 带 `/WX` 把它变成错误（`C2220`），**直接编不过**。已在 `windows/runner/CMakeLists.txt` 加 `$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>`（**不能省语言限定**，否则会传给 `rc.exe`）。⚠️ 把字符串写成 `\uXXXX` **只解决字面量，注释照样报错** —— 见 `docs/windows_build.md` §七 |
 
 ## 五、待裁定清单
 

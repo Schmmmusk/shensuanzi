@@ -53,7 +53,7 @@ repo/
     ├── main.dart            # runApp
     └── src/
         ├── app.dart         # 启动流程：解析位置 → 弹对话框 → 开库 → 主界面
-        ├── folder_picker.dart  # 全项目唯一的插件调用点（系统「选择文件夹」）
+        ├── folder_picker.dart  # 全项目唯一的插件注入点（系统「选择文件夹」）
         └── ui/              # 左侧常驻导航 / 概览 / 数据目录对话框
             ├── app_shell.dart          # 220px 导航列 + 三重高亮 + 面包屑
             ├── nav_icons.dart          # iconKey → IconData（导航结构是纯 Dart）

@@ -17,7 +17,7 @@
 >
 > **过程记录**：§F 方案 C │ §G R-11 │ §H R-3 │ §I RULE-006 + SyncServer │ §J 包拆分 + host 传输层 │
 > §K 首轮修复 │ §L R-13 │ §N R-14 │ §O 数据目录策略 │ §P 数据目录对话框 │ §Q lint 清零 + 左侧导航 │
-> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑 │ §U 界面字体
+> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑 │ §U 界面字体 │ §V 窗口标题 + 注入 pickDirectory
 
 ## 0. 结论速览
 
@@ -1389,6 +1389,127 @@ Flutter 只取值 —— 与「判断在纯 Dart，Flutter 只摆放」一致。
 
 **门禁**：app `typecheck` **8 入口**（新增 `typography_test.dart`）；
 `selfcheck_app` **116 → 126 项**；`flutter analyze` / `flutter test` 仍为 0 / 全过。
+
+---
+
+## V. 窗口标题 + 注入 `pickDirectory`（2026-09-26）
+
+### 一、窗口标题：`shensuanzi` → 神算子
+
+`windows/runner/main.cpp` 的 `window.Create(L"shensuanzi", …)` 改成
+`L"\u795e\u7b97\u5b50"` —— 标题栏与任务栏用的都是它。
+
+**为什么用 `\u` 转义而不是直接写汉字**：本文件是 UTF-8（无 BOM），
+而 MSVC 对没有 BOM 的源文件按**当前代码页**解码 —— 直接写汉字在不同语言的机器上
+会被解成乱码标题。转义形式是**纯 ASCII 源码**，任何代码页下都正确。
+
+**没做、留着的**：`windows/runner/Runner.rc` 里 `ProductName` / `FileDescription`
+还是 `shensuanzi`，`CompanyName` 还是 `com.example`（exe 属性页、将来的签名会用到）。
+RC **不支持 `\u` 转义**，要写中文得同时改 `Translation` 的代码页并另存文件编码 ——
+属打包 / 发布阶段（README 状态表第 8、9 步），不混进这次改动。
+
+### 二、注入 `pickDirectory`（按裁定：只注入这一个）
+
+```dart
+const ShensuanziApp({
+  super.key,
+  this.pickDirectory = pickFolderFromSystem,
+});
+```
+
+- 默认值写在**参数上**（不是 `??` 兜底、更不是留 `null` 运行时再判）⇒
+  类型系统保证非空，`runApp(const ShensuanziApp())` 一个字都没改
+- `folder_picker.dart` 的 `pickDirectory()` 顺势改名 **`pickFolderFromSystem()`**：
+  参数名 `pickDirectory` 到处都是，**真实实现只该有一个名字**。
+  这个文件因此从「唯一的插件**调用**点」升级为「唯一的插件**注入**点」
+
+### 三、⚠️ 但五个场景现在**写不了** —— 沙箱缺口（待裁定）
+
+裁定里说「`DataDirectoryService` 不用注入 —— **指到临时目录就行**」。
+核对源码后发现**做不到**：它指向哪个目录，不取决于 `pickDirectory`，
+而取决于**配置文件在哪**；配置文件的位置由 `AppEnvironment.detect()` 从 `%APPDATA%` 推出：
+
+```dart
+// bootstrap.dart
+configStore = configStore ?? AppConfigStore.forEnvironment(environment);
+// app_config.dart
+final String base = environment.appData ?? p.join(home, '.shensuanzi');
+```
+
+`ShensuanziApp` 内部是 `DataDirectoryService(environment: AppEnvironment.detect())`，
+**没有传 `configStore`** ⇒ 配置落在**真实的 `%APPDATA%\神算子\config.json`**。
+两个后果都不能接受：
+
+| 后果 | 具体 |
+|---|---|
+| **测试不确定** | 「没有配置过 → 弹对话框」这条在真机上**必然失败**：真实配置已指向 `D:\神算子数据`，`existing()` 返回非空，对话框不弹 |
+| **会写坏开发者配置** | 走「确认」路径时 `bootstrap.prepare()` 会 `configStore.save(...)`，把**真实配置改写成测试的临时目录** ⇒ 下次真机启动直接开到临时目录 |
+
+第二条尤其危险，且与**沙箱纪律**直接冲突（`docs/testing.md` §K：
+「绝不能碰真实的 `%APPDATA%`」）。
+
+**最小解法（建议）**：再加**一个**可选参数，形状与 `pickDirectory` 一模一样 ——
+默认值就地指向真实实现：
+
+```dart
+const ShensuanziApp({
+  super.key,
+  this.pickDirectory = pickFolderFromSystem,
+  this.configStore,     // null = 用真实 %APPDATA%
+});
+```
+
+测试传 `AppConfigStore(File(p.join(sandbox.path, 'config.json')))`。
+**只多一行，`DataDirectoryService` 照旧不注入**，其余全走真实路径 ——
+与裁定「一个注入点解锁全部场景」的目标一致；只是那个注入点还需要一个
+「配置放哪」的落点，否则临时目录**无处可指**。
+
+> 备选是注入 `AppEnvironment`（粒度更大，会把「机器事实」也一起变成假的）。
+> 不推荐：`configStore` 已经够用，而且它正是 `DataDirectoryService` /
+> `AppBootstrap` **已有的那个接缝**。
+
+**裁定前不动**：五个场景的 widget 测试**一行都没写** —— 写了就会碰真实配置。
+
+### 四、回头补的坑：C4819（我自己捅的）
+
+上面第一节把窗口标题写成 `L"\u795e\u7b97\u5b50"` 是对的，
+但我**顺手在那两行里写了中文注释** ⇒ 构建直接失败：
+
+```text
+main.cpp(1,1): error C2220: 以下警告被视为错误
+main.cpp(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符
+```
+
+**根因**：仓库源码是 UTF-8（无 BOM），而 `windows/` 下的 `.cpp` 原本**全是英文注释**，
+所以这个坑从没暴露过。MSVC 默认按**系统代码页**（简体中文机器 = 936/GBK）解码源文件，
+UTF-8 的中文在 936 下是非法字节序列 ⇒ C4819；而 `apply_standard_settings` 带 `/WX`
+（警告即错误）⇒ 变 C2220 ⇒ **编译失败**。
+**`\u` 转义只解决字符串字面量，注释照样报错** —— 我等于只修了半套。
+
+> 顺带修正第一节的说法：加了 `/utf-8` 之后，字面量直接写汉字也能编过。
+> 保留 `\u` 转义的理由变成「**不依赖编译选项**」：那一行是纯 ASCII，
+> 将来谁把 `/utf-8` 去掉都不会让标题变乱码。
+
+**修法（治根因，而不是把注释改成英文）**：`windows/runner/CMakeLists.txt`
+
+```cmake
+target_compile_options(${BINARY_NAME} PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>")
+```
+
+**验证**（本机可复现：用**真实 `main.cpp`** + 从生成的 `vcxproj` 里取出 include 目录与宏，
+直接调 `cl.exe`）：
+
+| 编译选项 | C4819 | C2220 |
+|---|---|---|
+| 不带 `/utf-8` | **1** | **1** |
+| 带 `/utf-8` | 0 | 0 |
+
+另外确认 `/utf-8` 只进 `ClCompile` 的 `AdditionalOptions`（4 个配置各一条），
+**没有**进 `ResourceCompile` —— `$<COMPILE_LANGUAGE:C,CXX>` 那个限定就是为这个。
+（`rc.exe` 不认 `/utf-8`，少了限定就会在资源编译上再炸一次。）
+
+完整论述与排查手法写进 `docs/windows_build.md` **§七**。
+
 
 
 

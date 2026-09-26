@@ -246,7 +246,7 @@ confirm(acceptForeign: true) → 「就用这个文件夹」，真正初始化
 | **服务入口**（UI 面向，§9.1 的四个意图名） | `packages/shensuanzi_app/lib/src/data_directory_service.dart` |
 | **对话框状态机**（纯 Dart，§9.2） | `packages/shensuanzi_app/lib/src/dialog_model.dart` |
 | 对话框 widget / 启动流程 / 空主界面 | 根 `lib/src/ui/`、`lib/src/app.dart`（Flutter，只做摆放） |
-| 系统「选择文件夹」 | 根 `lib/src/folder_picker.dart` —— **全项目唯一调用 Flutter 插件的地方** |
+| 系统「选择文件夹」 | 根 `lib/src/folder_picker.dart` —— **全项目唯一调用 Flutter 插件的地方，也是唯一被注入的依赖**（`ShensuanziApp(pickDirectory:)`） |
 
 **为什么单独一个包**：数据目录策略既不是业务规则（core）也不是主机服务（host），
 它是**运行环境**。放进去会污染那两个包的语义。
