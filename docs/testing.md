@@ -92,7 +92,7 @@ dart run tool/typecheck.dart
 | **host** | `selfcheck_sync.dart` | `sync_server_test.dart` |
 | **host** | `selfcheck_host.dart` | `auth_test` + `pairing_test` + `http_server_test` |
 | **host** | `selfcheck_client_server.dart` | `client_server_test.dart` |
-| **app** | `selfcheck_app.dart` | `data_directory_test` + `data_directory_service_test` + `app_config_test` + `bootstrap_test` + `dialog_model_test` + `navigation_test` |
+| **app** | `selfcheck_app.dart` | `data_directory_test` + `data_directory_service_test` + `app_config_test` + `bootstrap_test` + `dialog_model_test` + `navigation_test` + `typography_test` |
 
 > ⚠️ **`typecheck.dart` 必须 import 全部入口，包括 `tool/` 下每个自检脚本本身。**
 > `dart test` 只跑 `test/`，脚本自身的编译错误不会被任何门禁发现 ——
@@ -445,6 +445,13 @@ dart run tool/typecheck.dart
   目标非法 → 直接返回该结论
 - **打开数据库**：`user_version` = `Schema.version`；主机端**外键开着**
   （与客户端镜像相反）
+- **界面字体栈**（`AppTypography`）：Windows 首选 `Microsoft YaHei UI`；
+  含雅黑本体 `Microsoft YaHei`；含无衬线中文保底 `SimHei`；**不含 `SimSun`**
+  （宋体正是要修掉的观感）；含拉丁兜底 `Segoe UI`；无重复族名。
+  族名必须是**英文不变族名** —— 字体族写错了**不会报错**，只会静默退回兜底字体，
+  这种「无声降级」只能靠断言钉住。
+  **Android 返回空栈 = 不干预**（它的默认字体本来就是 Noto / 思源）；
+  `primaryFamilyFor` / `fallbackFor` 拆开与拼回必须等于完整栈（不漏层、不重复写首选）
 
 **两个真实踩到的 bug**（都已补回归断言）：
 

@@ -17,7 +17,7 @@
 >
 > **过程记录**：§F 方案 C │ §G R-11 │ §H R-3 │ §I RULE-006 + SyncServer │ §J 包拆分 + host 传输层 │
 > §K 首轮修复 │ §L R-13 │ §N R-14 │ §O 数据目录策略 │ §P 数据目录对话框 │ §Q lint 清零 + 左侧导航 │
-> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑
+> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑 │ §U 界面字体
 
 ## 0. 结论速览
 
@@ -1359,5 +1359,36 @@ Navigator 的 context 在 `MaterialApp` **下面**，这是「从树外面弹对
 （文件注释里也写了「启动流程会读配置、弹对话框，widget 测试里会炸」）。
 **可选的补救**：让 `ShensuanziApp` 接受注入的 `DataDirectoryService` / `pickDirectory`，
 就能加一条「启动后对话框出现且无异常」的 widget 测试。**待裁定**（要动构造函数）。
+
+---
+
+## U. 实机反馈：指定系统字体（2026-09-26）
+
+**反馈**：实机跑通后，界面中文是**宋体**，看着「像外国软件没适配」。
+
+**根因**：Flutter 自带的正文字体 **Roboto 不含中文字形**，Windows 上找不到字形
+就交给系统兜底 —— 实测落到**宋体**。所以这不是「样式没设」，而是
+**「什么都不设」＝把字体交给系统兜，而系统兜的是最旧的那一套**。
+
+**处置**：字体栈放在**纯 Dart** 的 `AppTypography`（平台差异也在这里判断），
+Flutter 只取值 —— 与「判断在纯 Dart，Flutter 只摆放」一致。
+
+| 平台 | 字体栈（顺序即优先级） | 理由 |
+|---|---|---|
+| **Windows** | `Microsoft YaHei UI` → `Microsoft YaHei` → `SimHei` → `Segoe UI` | 雅黑 **UI** 是 Windows 的**界面**字体（资源管理器 / 设置同款）；`SimHei` 保中文字形且**仍是无衬线**；`Segoe UI` 保拉丁字形 |
+| **Android** | **不指定**（空栈 = 不干预） | 默认字体本来就是 Noto / 思源，那正是它该有的样子；硬塞 Windows 字体名只会让它掉字形 |
+
+**两个必须点出来的点**：
+
+1. **族名必须写英文不变族名**（`Microsoft YaHei UI`，不是「微软雅黑」）：
+   Flutter 在 Windows 上走 DirectWrite，本地化名匹配不上 ——
+   而且**不报错、只静默退回兜底字体**。这种「无声降级」只能靠断言钉住，
+   所以字体栈进了 `test/typography_test.dart` 与 `selfcheck_app.dart`。
+2. **不把字体打进包里**：一套中文字体 10–20 MB，而用户系统里**已经有更好的那一套**；
+   用系统字体零体积、随系统更新、与其它窗口同款。
+
+**门禁**：app `typecheck` **8 入口**（新增 `typography_test.dart`）；
+`selfcheck_app` **116 → 126 项**；`flutter analyze` / `flutter test` 仍为 0 / 全过。
+
 
 

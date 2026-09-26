@@ -668,6 +668,45 @@ void main() {
         AppNavigation.itemHeight >= 44 && AppNavigation.indicatorWidth == 3);
   }
 
+  // ============================================================ 界面字体
+  section('界面字体栈（docs/ui_principles.md §二）');
+  {
+    final List<String> win = AppTypography.fontStackFor(isWindows: true);
+    check('非空，且首选 = Microsoft YaHei UI（Windows 界面字体）',
+        win.isNotEmpty && win.first == 'Microsoft YaHei UI');
+    check('无重复族名', win.toSet().length == win.length);
+    check('族名都是干净的英文名（DirectWrite 不变族名，本地化名匹配不上）',
+        win.every((String f) =>
+            f.trim() == f &&
+            f.isNotEmpty &&
+            !RegExp(r'[^\x20-\x7E]').hasMatch(f)));
+    check('含雅黑本体（精简版 / 老版本没有 UI 变体）',
+        win.contains('Microsoft YaHei'));
+    check('含无衬线中文保底 SimHei，且**不含宋体**（本次就是要修掉它）',
+        win.contains('SimHei') && !win.contains('SimSun'));
+    check('含拉丁兜底 Segoe UI', win.contains('Segoe UI'));
+
+    check('Android 不干预：空栈 + 两个取值都是 null',
+        AppTypography.fontStackFor(isWindows: false).isEmpty &&
+            AppTypography.primaryFamilyFor(isWindows: false) == null &&
+            AppTypography.fallbackFor(isWindows: false) == null);
+
+    check('primaryFamilyFor = 栈首',
+        AppTypography.primaryFamilyFor(isWindows: true) == win.first);
+    check('fallbackFor = 栈去掉首选，且不含首选',
+        AppTypography.fallbackFor(isWindows: true)?.join(',') ==
+                win.sublist(1).join(',') &&
+            !(AppTypography.fallbackFor(isWindows: true) ?? <String>[])
+                .contains(win.first));
+    check('首选 + 后备拼起来 = 完整栈（不漏层）', () {
+      final List<String> rebuilt = <String>[
+        AppTypography.primaryFamilyFor(isWindows: true)!,
+        ...?AppTypography.fallbackFor(isWindows: true),
+      ];
+      return rebuilt.join(',') == win.join(',');
+    }());
+  }
+
   // ============================================================ 收尾
   try {
     box.deleteSync(recursive: true);

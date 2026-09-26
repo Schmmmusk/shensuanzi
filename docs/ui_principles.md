@@ -61,6 +61,7 @@
 | 项 | 值 |
 |---|---|
 | 基础字号 | 16 px（默认 125% 缩放下的观感） |
+| **正文字体** | Windows：`Microsoft YaHei UI` → `Microsoft YaHei` → `SimHei` → `Segoe UI`（见下） |
 | 行高 | 1.6 |
 | 按钮最小点击区 | 44 × 44 px |
 | 表格行高 | 48 px |
@@ -73,6 +74,22 @@
 
 **配色**：避免纯白 + 纯黑的刺眼 —— 背景 `#FAFAFA`，正文 `#1A1A1A`。
 主色用**低饱和蓝或绿**，**不要红**（红色只留给错误与告警）。
+
+**字体**（2026-09-26 实机反馈后定）：**中文字体必须显式指定。**
+Flutter 自带的正文字体 Roboto **不含中文字形**，Windows 上会兜到**宋体** ——
+实机一看就是「外国软件没适配」的样子。
+字体栈与平台差异在 `AppTypography`（纯 Dart、`dart test` 覆盖），Flutter 只取值：
+
+| 平台 | 字体栈（顺序即优先级） | 理由 |
+|---|---|---|
+| **Windows** | `Microsoft YaHei UI` → `Microsoft YaHei` → `SimHei` → `Segoe UI` | 雅黑 **UI** 是 Windows 的**界面**字体（资源管理器、设置都用它），与其它窗口同款；`SimHei` 保中文字形且**仍是无衬线**（绝不能退到宋体）；`Segoe UI` 保拉丁字形 |
+| **Android** | **不指定**（空栈 = 不干预） | 它的默认字体本来就是 Noto / 思源，那正是它该有的样子；硬塞一个 Windows 字体名只会让它找不到字体 |
+
+- **族名必须写英文**（`Microsoft YaHei UI`，不是「微软雅黑」）：Flutter 在 Windows 上走
+  DirectWrite，要匹配字体的**不变族名**（invariant family name）
+- **不把字体打进包里**：一套中文字体 10–20 MB，而用户系统里**已经有更好的那一套**
+- ⚠️ 字体族写错了**不会报错**，只会**静默**退到兜底字体 —— 所以字体栈有断言钉住
+  （`docs/testing.md` §K）
 
 ## 三、缩放
 

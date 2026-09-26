@@ -113,6 +113,24 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     }
   }
 
+  /// 主题只建一次（字体栈依赖平台，平台不会中途变）
+  late final ThemeData _theme = _buildTheme();
+
+  ThemeData _buildTheme() {
+    final bool isWindows = _service.environment.isWindows;
+    return ThemeData(
+      // ⚠️ **中文字体必须显式指定**：Flutter 自带的 Roboto 没有中文字形，
+      // Windows 上会兜到**宋体**，看着像「外国软件没适配」（`docs/ui_principles.md` §二）。
+      // 字体栈由纯 Dart 的 `AppTypography` 决定（`dart test` 覆盖），这里只取值。
+      fontFamily: AppTypography.primaryFamilyFor(isWindows: isWindows),
+      fontFamilyFallback: AppTypography.fallbackFor(isWindows: isWindows),
+      // 低饱和蓝作主色：红色只留给错误与告警（`docs/ui_principles.md` §二）
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2F6FA8)),
+      scaffoldBackgroundColor: const Color(0xFFFAFAFA),
+      useMaterial3: true,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -120,12 +138,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       debugShowCheckedModeBanner: false,
       // 启动流程要在首帧之后弹对话框，用它的 context（见 `_navigatorKey`）
       navigatorKey: _navigatorKey,
-      theme: ThemeData(
-        // 低饱和蓝作主色：红色只留给错误与告警（`docs/ui_principles.md` §二）
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2F6FA8)),
-        scaffoldBackgroundColor: const Color(0xFFFAFAFA),
-        useMaterial3: true,
-      ),
+      theme: _theme,
       home: _buildHome(),
     );
   }

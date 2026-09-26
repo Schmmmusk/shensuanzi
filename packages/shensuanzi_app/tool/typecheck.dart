@@ -15,6 +15,7 @@ import '../test/data_directory_service_test.dart' as data_directory_service_test
 import '../test/data_directory_test.dart' as data_directory_test;
 import '../test/dialog_model_test.dart' as dialog_model_test;
 import '../test/navigation_test.dart' as navigation_test;
+import '../test/typography_test.dart' as typography_test;
 import 'selfcheck_app.dart' as selfcheck_app;
 
 void main() {
@@ -27,11 +28,12 @@ void main() {
     data_directory_test.main,
     dialog_model_test.main,
     navigation_test.main,
+    typography_test.main,
     // tool/
     selfcheck_app.main,
   ];
   print(
-    '编译通过：6 个测试文件 + 1 个自检脚本已通过类型检查（未执行）。'
+    '编译通过：7 个测试文件 + 1 个自检脚本已通过类型检查（未执行）。'
     '（共 ${entries.length} 个入口）',
   );
 }

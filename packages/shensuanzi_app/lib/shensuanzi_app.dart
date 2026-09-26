@@ -10,6 +10,7 @@
 /// | 上次选的位置 | `AppConfig` / `AppConfigStore` |
 /// | 「这个目录是我的数据目录」 | `DataMarker` |
 /// | 界面缩放等设备偏好 | `UiScale` |
+/// | 界面字体栈 | `AppTypography` |
 ///
 /// ## 为什么单独一个包
 ///
@@ -39,3 +40,4 @@ export 'src/dialog_model.dart'
 export 'src/environment.dart' show AppEnvironment, DriveInfo, DriveKind;
 export 'src/navigation.dart'
     show AppNavigation, NavDestination, NavSection;
+export 'src/typography.dart' show AppTypography;
