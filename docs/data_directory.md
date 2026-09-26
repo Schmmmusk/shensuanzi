@@ -159,7 +159,82 @@ D:\神算子备份\        ← 每日备份
 这个设计顺带让备份逻辑**只依赖数据目录的父目录**，
 与 `%LOCALAPPDATA%` 完全解耦。
 
-## 九、实现映射
+## 九、对话框与服务入口
+
+### 9.1 服务入口（UI 面对的唯一入口）
+
+`DataDirectoryService` 的四个方法名直接取自 `docs/reply.md` §四 的能力清单：
+
+| 意图名 | 转发到 | 说明 |
+|---|---|---|
+| `resolveDefault()` | `DataDirectoryPolicy.defaultDataDirectory` | 默认位置。首次启动**不弹框**，直接填进对话框让用户确认或更改 |
+| `validate(path)` | `DataDirectoryPolicy.inspect` | 三档校验（§三） |
+| `ensureInitialized(path)` | `AppBootstrap.prepare` | 建目录 + 写标记 + 记配置；`createdNow` 区分新建 / 复用 |
+| `isShensuanziDir(path)` | `DataMarker.existsIn` | 只看标记文件，回答「我以前的数据还在吗」 |
+
+另有 `existing()`（启动恢复，§六）、`spaceHint()`（容量提示）、`open()`（开库）。
+
+> ⚠️ **本类不含逻辑**，只做「改名 + 转发」。逻辑只有一份，在
+> `DataDirectoryPolicy`（纯判断）与 `AppBootstrap`（会落盘）里。
+> 在这里复制一份判断 = 两处并行 = 早晚漂移。
+
+### 9.2 对话框状态机
+
+`DataDirectoryDialogModel` 是**纯 Dart** 的状态机，Flutter 侧只负责画。
+
+```text
+open()                 → 用默认位置起步（路径 / 结论 / 容量提示）
+choosePath(p)          → 用户点了「更改」并选了文件夹 → 重新校验
+                          ├─ reject → 不能开始，提示含「怎么办」
+                          ├─ warn   → **仍能开始**（警告不拦人）
+                          └─ 目录非空且无标记 → 需要二次确认
+confirm()              → created / reused / needsForeignConfirm / blocked
+confirm(acceptForeign: true) → 「就用这个文件夹」，真正初始化
+```
+
+| 设计点 | 理由 |
+|---|---|
+| `confirm()` **不抛异常**，只返回结论 | 失败也要有结论，UI 才知道该显示什么 |
+| 改路径**作废上一次结果** | 否则会拿旧的成功结果去开库，而那个目录已经不是用户选的了 |
+| 二次确认**不是拒绝** | 用户可能就是要放在这个文件夹里。默认拒绝只是防误选 |
+| 提示同时给**图标 + 颜色 + 文字** | 色觉异常的比例不低，不能只靠红绿区分 |
+| 按「开始使用」期间禁用按钮 | 防重复点 |
+
+### 9.3 第 1 天只做这一个对话框
+
+`docs/reply.md` §一 把向导 5 步拆开看，**只有第 2 步（数据位置）是硬依赖** ——
+没有它，数据库不知道放哪，程序根本起不来。其余 4 步（欢迎 / 店名 / 账户 / 完成）
+全部**可后补**，而且它们的设计依赖核心功能的行为（开单页真做出来才知道
+店名与账户该怎么用），所以留到第 10 天回补。
+
+**首启流程**：
+
+```text
+启动 → service.existing()
+  ├─ 可用 → 直接开库 → 主界面
+  └─ 不可用 → 「选择数据存放位置」对话框 → 开库 → 主界面
+```
+
+主界面是**空骨架**：把「数据在哪」说清楚 + 列出核心闭环五个入口（标「待实现」）。
+按 `docs/ui_principles.md` §1.1，入口必须**常驻可见 + 带文字**。
+
+### 9.4 纯 Dart 那一半 vs Flutter 那一半
+
+| 层 | 位置 | 怎么验证 |
+|---|---|---|
+| 路径策略 / 校验 / 标记 / 恢复 / 对话框状态机 | `packages/shensuanzi_app`（纯 Dart） | **`dart test` + 自检**，全自动 |
+| 对话框 widget / 启动流程 / 主界面 | 根 `lib/src/`（Flutter） | 只能 `flutter analyze` + `flutter test` |
+
+这个切分的目的是**把出错面压到最小**：Flutter 那一层只做「摆放控件、
+调选择器、把 model 的结果 pop 回去」，没有判断逻辑。
+
+**尚缺（不阻断第 1 天）**：
+
+- **真实盘类型与剩余空间**：纯 Dart 拿不到（需 Win32 `GetDriveSpace`），
+  所以对话框的容量提示目前可能为空 —— 界面已对 `null` 处理（不显示那一行）
+- **界面缩放**：`UiScale` 档位已在配置里，但接入 `textScaler` 属第 11 天的设置页
+
+## 十、实现映射
 
 | 关注点 | 位置 |
 |---|---|
@@ -168,6 +243,10 @@ D:\神算子备份\        ← 每日备份
 | 配置读写 | `packages/shensuanzi_app/lib/src/app_config.dart` |
 | 标记文件 | `packages/shensuanzi_app/lib/src/data_marker.dart` |
 | 启动恢复 / 打开数据库 | `packages/shensuanzi_app/lib/src/bootstrap.dart` |
+| **服务入口**（UI 面向，§9.1 的四个意图名） | `packages/shensuanzi_app/lib/src/data_directory_service.dart` |
+| **对话框状态机**（纯 Dart，§9.2） | `packages/shensuanzi_app/lib/src/dialog_model.dart` |
+| 对话框 widget / 启动流程 / 空主界面 | 根 `lib/src/ui/`、`lib/src/app.dart`（Flutter，只做摆放） |
+| 系统「选择文件夹」 | 根 `lib/src/folder_picker.dart` —— **全项目唯一调用 Flutter 插件的地方** |
 
 **为什么单独一个包**：数据目录策略既不是业务规则（core）也不是主机服务（host），
 它是**运行环境**。放进去会污染那两个包的语义。
@@ -181,7 +260,7 @@ Flutter 侧需要额外注入的（纯 Dart 拿不到）：
 - 每块盘的**真实类型**（`GetDriveType`）与**剩余空间**（`GetDiskFreeSpaceEx`）
 - 目录选择对话框（`file_selector` / `FilePicker`）
 
-## 十、与威胁模型的衔接
+## 十一、与威胁模型的衔接
 
 本策略缓解的威胁（见 [`threat_model.md`](threat_model.md) §2.1）：
 

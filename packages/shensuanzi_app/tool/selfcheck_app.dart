@@ -437,6 +437,168 @@ void main() {
   check('主机端外键开着（与客户端镜像相反）', db.foreignKeysEnabled);
   db.close();
 
+  // ============================================================ 服务入口
+  section('DataDirectoryService（reply.md §四 的四个意图名）');
+  {
+    final Directory sbox = Directory(inBox('svc'))..createSync(recursive: true);
+    AppConfigStore cfgIn(String name) =>
+        AppConfigStore(File(p.join(sbox.path, name)));
+    final DataDirectoryService svc = DataDirectoryService(
+      environment: machine(),
+      configStore: cfgIn('config.json'),
+    );
+
+    check('策略层同源（不自己算一遍）',
+        identical(svc.policy, svc.bootstrap.policy));
+    check('① resolveDefault → D:\\神算子数据',
+        svc.resolveDefault() == r'D:\神算子数据',
+        svc.resolveDefault());
+    check('② validate 三档都能返回',
+        svc.validate(r'D:\神算子数据').verdict == DirectoryVerdict.ok &&
+            svc.validate(r'C:\Users\tester\AppData\Local\神算子').verdict ==
+                DirectoryVerdict.warn &&
+            svc.validate(r'C:\').verdict == DirectoryVerdict.reject);
+
+    final String dir = p.join(sbox.path, 'data');
+    final DataLocation loc = svc.ensureInitialized(dir, now: 111);
+    check('③ ensureInitialized → 建目录 + 写标记 + 记配置',
+        loc.createdNow &&
+            Directory(dir).existsSync() &&
+            svc.isShensuanziDir(dir) &&
+            svc.bootstrap.loadConfig().dataDirectory == loc.directory);
+    check('③ 目录不存在也会被创建',
+        Directory(
+          svc
+              .ensureInitialized(p.join(sbox.path, 'a', 'b', '神算子数据'))
+              .directory,
+        ).existsSync());
+    check('④ isShensuanziDir：普通目录 / 不存在的目录 → false',
+        !svc.isShensuanziDir(p.join(sbox.path, 'plain')) &&
+            !svc.isShensuanziDir(p.join(sbox.path, 'nope')));
+    check('再度初始化 → 复用且不重写标记',
+        !svc.ensureInitialized(dir, now: 999).createdNow &&
+            svc.ensureInitialized(dir).marker.createdAt == 111);
+    check('非空且无标记 → 抛 DataDirectoryRejected（带 howTo）', () {
+      final String other = p.join(sbox.path, 'other');
+      Directory(other).createSync(recursive: true);
+      File(p.join(other, '别人的东西.txt')).writeAsStringSync('x');
+      try {
+        svc.ensureInitialized(other);
+        return false;
+      } on DataDirectoryRejected catch (error) {
+        return error.howTo != null && error.reason.contains('已经有别的东西');
+      }
+    }());
+    check('确认过之后 → 放行，且不动已有文件', () {
+      final String other = p.join(sbox.path, 'other');
+      final DataLocation forced =
+          svc.ensureInitialized(other, acceptForeignDirectory: true);
+      return forced.createdNow &&
+          File(p.join(other, '别人的东西.txt')).existsSync();
+    }());
+    check('非法路径 → 抛，且不产生标记',
+        svc.validate(r'C:\').verdict == DirectoryVerdict.reject);
+    check('existing()：配过 → 非空；没配过 → null', () {
+      final bool configured = svc.existing() != null;
+      final bool blank = DataDirectoryService(
+            environment: machine(),
+            configStore: cfgIn('none.json'),
+          ).existing() ==
+          null;
+      return configured && blank;
+    }());
+    check('配置被清后靠标记找回（createdNow = false）', () {
+      svc.bootstrap.configStore.clear();
+      final bool lost = svc.existing() == null;
+      final bool recognized = svc.isShensuanziDir(dir);
+      final DataLocation back = svc.ensureInitialized(dir);
+      return lost &&
+          recognized &&
+          !back.createdNow &&
+          back.marker.createdAt == 111;
+    }());
+    final Db svcDb = svc.open(loc);
+    check('open 打的是数据目录里的库，且外键开着（主机端）',
+        File(loc.databasePath).existsSync() && svcDb.foreignKeysEnabled);
+    svcDb.close();
+  }
+
+  // ============================================================ 对话框状态机
+  section('数据目录对话框（状态机）');
+  {
+    final Directory dbox = Directory(inBox('dlg'))..createSync(recursive: true);
+    final DataDirectoryService svc = DataDirectoryService(
+      environment: machine(),
+      configStore: AppConfigStore(File(p.join(dbox.path, 'config.json'))),
+    );
+    final DataDirectoryDialogModel m = DataDirectoryDialogModel(svc);
+
+    m.open();
+    check('打开 → 默认路径 + 可开始 + 无提示',
+        m.path == r'D:\神算子数据' &&
+            m.canConfirm &&
+            m.notice == null &&
+            m.noticeKind == DialogNoticeKind.none,
+        m.path);
+    check('容量提示跟着路径', m.capacityHint == 'D 盘剩余 128.0 GB',
+        '${m.capacityHint}');
+
+    m.choosePath(r'C:\Windows\神算子');
+    check('reject → 不能开始 + error + 给出下一步建议',
+        !m.canConfirm &&
+            m.noticeKind == DialogNoticeKind.error &&
+            (m.notice ?? '').contains('建议'),
+        '${m.notice}');
+    check('reject 时 confirm → blocked，且不落盘',
+        m.confirm() == ConfirmOutcome.blocked && !m.isDone && m.location == null);
+
+    m.choosePath(r'C:\Users\tester\AppData\Local\神算子');
+    check('warn → **仍可开始**（警告不拦人）+ warning',
+        m.canConfirm && m.noticeKind == DialogNoticeKind.warning,
+        '${m.notice}');
+
+    final String d1 = p.join(dbox.path, 'data1');
+    m.choosePath(d1);
+    check('空目录 → created 并给出 location',
+        m.confirm() == ConfirmOutcome.created &&
+            m.isDone &&
+            m.location!.directory == d1 &&
+            m.failure == null);
+    m.choosePath(d1);
+    check('已有标记的老目录 → reused', m.confirm() == ConfirmOutcome.reused);
+
+    m.choosePath(p.join(dbox.path, 'data2'));
+    check('改路径会作废上一次结果', !m.isDone && m.location == null);
+    check('不存在的目录 → created（自动建）',
+        m.confirm() == ConfirmOutcome.created);
+
+    final String fdir = p.join(dbox.path, 'foreign');
+    Directory(fdir).createSync(recursive: true);
+    File(p.join(fdir, '别人的东西.txt')).writeAsStringSync('x');
+    m.choosePath(fdir);
+    check('非空无标记 → 标出「需要确认」，且不让直接开始',
+        m.needsForeignConfirm &&
+            !m.canConfirm &&
+            m.noticeKind == DialogNoticeKind.warning,
+        '${m.notice}');
+    check('没确认过就直接 confirm → needsForeignConfirm，且**什么都没写**',
+        m.confirm() == ConfirmOutcome.needsForeignConfirm &&
+            !DataMarker.existsIn(fdir));
+    check('确认过 → created，且不动用户已有的文件',
+        m.confirm(acceptForeign: true) == ConfirmOutcome.created &&
+            DataMarker.existsIn(fdir) &&
+            File(p.join(fdir, '别人的东西.txt')).existsSync());
+
+    final String asFile = p.join(dbox.path, 'not-a-dir');
+    File(asFile).writeAsStringSync('我是文件');
+    final DataDirectoryDialogModel m2 = DataDirectoryDialogModel(svc)..open();
+    m2.choosePath(asFile);
+    check('路径其实是个文件 → blocked，且给「换一个文件夹」',
+        m2.confirm() == ConfirmOutcome.blocked &&
+            (m2.notice ?? '').contains('换一个文件夹'),
+        '${m2.notice}');
+  }
+
   // ============================================================ 收尾
   try {
     box.deleteSync(recursive: true);

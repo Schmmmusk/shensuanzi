@@ -1023,3 +1023,74 @@ CREATE TABLE sync_cursor (
 三处已在上一轮修正（固定时钟替代会推进的时钟、错误文案与实现对齐、
 delta 夹具改用真实 `productId`），并在 `docs/testing.md` 补了纪律：
 **搬场景时把夹具调用一起搬；断言状态时必须把 `reason` 带出来。**
+
+## P. UI 阶段第 1 天：数据目录对话框（2026-09-26）
+
+**裁定**：**先做核心闭环，但先抽一个「数据目录对话框」**；
+向导其余 4 步第 10 天回补。完整论述见 `docs/reply.md`。
+
+### 裁定的核心：向导 5 步里只有第 2 步是硬依赖
+
+| 步骤 | 是不是硬依赖 | 能否后补 |
+|---|---|---|
+| 1. 欢迎 | 否 | 完全可后补 |
+| 2. **数据位置** | **是** | **必须先有**（没有它，数据库不知道放哪，程序起不来） |
+| 3. 商店信息 | 否 | 可后补 |
+| 4. 账户设置 | 否 | 可后补（有默认值） |
+| 5. 完成 | 否 | 完全可后补 |
+
+所以第 1 天只做两件事：**数据目录对话框** + **空主界面**。
+
+### 落地内容
+
+| 层 | 内容 |
+|---|---|
+| **服务入口** | `DataDirectoryService` —— 四个**意图命名**的方法（`resolveDefault` / `validate` / `ensureInitialized` / `isShensuanziDir`），名字取自 `docs/reply.md` §四 的能力清单。**本类不含逻辑**，只「改名 + 转发」给 `DataDirectoryPolicy`（纯判断）与 `AppBootstrap`（会落盘） |
+| **对话框状态机** | `DataDirectoryDialogModel`（纯 Dart，`dart test` 可跑）：`open` / `choosePath` / `confirm` → `created` \| `reused` \| `needsForeignConfirm` \| `blocked`；另有 `notice`（唯一一句话，含「怎么办」）与 `noticeKind`（给 widget 选颜色，不用文字串判断） |
+| **对话框 widget** | 根 `lib/src/ui/data_directory_dialog.dart` —— **只做摆放**：显示路径 / 容量提示 / 提示条，接选择器，把 `location` pop 回去 |
+| **系统选择器** | 根 `lib/src/folder_picker.dart` —— **全项目唯一调用 Flutter 插件的地方**（插件行为无法在本机验证，隔离成一个文件） |
+| **启动流程** | 根 `lib/src/app.dart`：`existing()` → 可用就直接开库，否则弹对话框 → 开库 → 主界面。**开库失败也有专门界面**（含「换到本机磁盘上的文件夹」） |
+| **空主界面** | 根 `lib/src/ui/home_page.dart`：说清「数据在哪 / 备份在哪 / 数据文件是否就绪」，并列出核心闭环五个入口（标「待实现」） |
+| **依赖** | 根 `pubspec.yaml` 加 `sqlite3_flutter_libs`（SQLite 原生库，**必须在根 Flutter 应用**）+ `file_selector`（选择文件夹）+ 两个 path 包 |
+
+### 设计要点（都写进了 `docs/data_directory.md` §九）
+
+1. **`confirm()` 不抛异常** —— 失败也要有结论，UI 才知道该显示什么
+2. **改路径作废上一次结果** —— 否则会拿旧的成功结果去开库，而那个目录已经不是用户选的了
+3. **二次确认不是拒绝** —— 用户可能就是要放在这个文件夹里；默认拒绝只是防误选
+4. **提示同时给图标 + 颜色 + 文字** —— 色觉异常的比例不低，不能只靠红绿区分
+5. **`existing()` 每次重跑校验** —— 配置里「有路径」不等于「能用」
+
+### 分层：判断在纯 Dart，Flutter 只做摆放
+
+**这是本轮的架构决定**，理由是验证能力不对称：
+
+| 层 | 位置 | 怎么验证 |
+|---|---|---|
+| 路径策略 / 校验 / 标记 / 恢复 / **对话框状态机** | `packages/shensuanzi_app` | **`dart test` + 自检**，全自动 |
+| 对话框 widget / 启动流程 / 主界面 | 根 `lib/src/` | 只能 `flutter analyze` / `flutter test` |
+
+把判断全挪到纯 Dart 之后，Flutter 那层只剩「摆放控件、调选择器、pop 结果」，
+**出错面被压到最小**。
+
+### ⚠️ 本机限制（必须说清）
+
+根 Flutter 应用**我编译不了**：`package:flutter` 依赖 `dart:ui`，
+在纯 Dart VM 里不存在，`dart run` 必然失败；`flutter *` 与 `dart analyze`
+在本机也起不来（子进程缺陷）。所以 Flutter 那一层的验证只能靠：
+
+- `dart format --output=none lib test` —— **语法**（解析但不解析导入），已通过 6/6 文件
+- 用户跑 `flutter analyze` + `flutter test` + 真机启动一次
+
+**意外收获**：新增依赖后，IDE 自动跑了 `pub get` —— 于是
+`sqlite3 2.9.4` / `sqlite3_flutter_libs 0.5.42` / `file_selector 1.1.0` 的解析、
+以及 `windows/generated_plugin_registrant.cc` 的插件注册，**都已确认可用**。
+
+### 门禁
+
+- app 包：`typecheck` 6 入口；`selfcheck_app` **101 项**（上一轮 75 → 本轮 +26）；
+  `test/` 五个文件 **117 个用例**
+- core 463 项 / host 288 项不变
+
+**尚缺（不阻断）**：真实盘类型与剩余空间（纯 Dart 拿不到，对话框对 `null` 已处理）；
+界面缩放接入 `textScaler`（第 11 天设置页）。

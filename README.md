@@ -44,8 +44,13 @@ repo/
 ├── packages/
 │   ├── shensuanzi_core/     # 纯 Dart：模型 / DAO / 规则 / 同步协议（DTO + 白名单 + 客户端）
 │   ├── shensuanzi_host/     # 纯 Dart：shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据
-│   └── shensuanzi_app/      # 纯 Dart：数据目录策略 / 配置 / 标记文件 / 启动恢复
-└── lib/ test/ windows/ android/    # Flutter 壳（Windows 主机 + Android 客户端）
+│   └── shensuanzi_app/      # 纯 Dart：数据目录策略 / 配置 / 标记 / 启动恢复 / 对话框状态机
+└── lib/                     # Flutter 壳（Windows 主机 + Android 客户端）
+    ├── main.dart            # runApp
+    └── src/
+        ├── app.dart         # 启动流程：解析位置 → 弹对话框 → 开库 → 主界面
+        ├── folder_picker.dart  # 全项目唯一的插件调用点（系统「选择文件夹」）
+        └── ui/              # 对话框 / 空主界面 —— 只做摆放，判断都在 shensuanzi_app
 ```
 
 **包边界**（2026-09-25 / 09-26 裁定）：
@@ -122,6 +127,10 @@ v0.4 — 规范冻结，进入实施。
 | 未同步影响（`sync_queue` 派生的 ± 数量 delta） | core | ✅ 只算数量，不算成本/往来/盘点 |
 | 端到端：一台主机 + 两台客户端（真实 HTTP） | host | ✅ `client_server_test` + 镜像自检 |
 | **数据目录策略**（默认 / 校验三档 / 标记文件 / 启动恢复 / 迁移） | app | ✅ 含配置文件与界面缩放档位 |
-| Windows UI · Android UI · 备份打包 | Flutter | 未开始（**下一步：Windows 最小闭环**） |
+| **数据目录对话框**（服务入口 + 状态机 + 三档反馈 + 二次确认） | app（逻辑）+ Flutter（摆放） | ✅ 逻辑 117 个用例 / 101 项自检 |
+| 空主界面 · 启动流程（解析位置 → 对话框 → 开库） | Flutter | ✅ 骨架（**需 `flutter analyze` / `flutter test` 验证**） |
+| 商品建档 · 采购入库 · 库存查询 · 销售开单 · 收款 | Flutter | 未开始（**核心闭环，下一步**） |
+| 首次启动的欢迎浮层 · 店名 · 账户预设 · 设置页（含缩放） | Flutter | 未开始（回补，见 `docs/ui_principles.md` §6.4） |
+| 备份打包 · 打包发布 | — | 未开始 |
 
 运行与验证方式（含本机限制）见 [`docs/testing.md` §零](docs/testing.md)。

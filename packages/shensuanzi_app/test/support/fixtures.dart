@@ -91,5 +91,12 @@ AppBootstrap bootstrapIn(Directory box, {AppEnvironment? environment}) =>
       configStore: AppConfigStore(File(p.join(box.path, 'config.json'))),
     );
 
+/// 数据目录服务（UI 入口），配置同样关进沙箱
+DataDirectoryService serviceIn(Directory box, {AppEnvironment? environment}) =>
+    DataDirectoryService(
+      environment: environment ?? machine(),
+      configStore: AppConfigStore(File(p.join(box.path, 'config.json'))),
+    );
+
 /// 指向沙箱里的数据目录
 String sandboxPath(Directory box, String name) => p.join(box.path, name);

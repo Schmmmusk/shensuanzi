@@ -31,6 +31,9 @@ export 'src/bootstrap.dart'
     show AppBootstrap, DataDirectoryRejected, DataLocation;
 export 'src/data_directory.dart'
     show DataDirectoryPolicy, DirectoryAdvice, DirectoryVerdict, formatBytes;
+export 'src/data_directory_service.dart' show DataDirectoryService;
 export 'src/data_marker.dart'
     show DataMarker, DirectoryContents, contentsOf;
+export 'src/dialog_model.dart'
+    show ConfirmOutcome, DataDirectoryDialogModel, DialogNoticeKind;
 export 'src/environment.dart' show AppEnvironment, DriveInfo, DriveKind;
