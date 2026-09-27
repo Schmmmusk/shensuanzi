@@ -17,7 +17,7 @@
 >
 > **过程记录**：§F 方案 C │ §G R-11 │ §H R-3 │ §I RULE-006 + SyncServer │ §J 包拆分 + host 传输层 │
 > §K 首轮修复 │ §L R-13 │ §N R-14 │ §O 数据目录策略 │ §P 数据目录对话框 │ §Q lint 清零 + 左侧导航 │
-> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑 │ §U 界面字体 │ §V 窗口标题 + 注入 pickDirectory │
+> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑 │ §U 界面字体 │ §V 窗口标题 + 注入 pickDirectory │ §X 采购入库设计提案（待裁定） │ §Y 采购入库 Flutter 层 │ §Z 账户建档 + 店内销售设计提案（待裁定） │
 > §W 启动流程可测化：注入 configStore
 
 ## 0. 结论速览
@@ -1653,7 +1653,325 @@ dart format --output=none f.dart 2>&1 | tail -2; echo "${PIPESTATUS[0]}"   # 取
 
 这条已写进 `docs/testing.md` §L 的门禁表。
 
+---
 
+## X. 设计提案：采购入库开单（2026-09-27，**待裁定**）
 
+> 裁定答复请写在 `docs/reply.md`。此处只存提案与结论锚点，落地后另开 §Y。
 
+### 一、事实核对（core 已具备，本阶段**不动 core 规则**）
 
+| 能力 | 现状 |
+|---|---|
+| `RuleEngine.dispatch(docType: purchase, lines, immediatePayments)` | ✅ 215 用例覆盖（RULE-001） |
+| 散采现结（**无供应商 + 全款**） | ✅ 合法且有正向用例（`immediate_payment_test.dart:331`，往来净额为 0） |
+| 赊购 / 部分付款 | ⚠️ **必须有供应商**（`_requirePayee`：存在未结清金额且无 party ⇒ 拒） |
+| 立即付款约束 | `amount > 0`；`SUM(payments) ≤ total`；可多账户混合 |
+
+### 二、分层
+
+| 层 | 内容 |
+|---|---|
+| **core**（纯 Dart，`dart test` 覆盖） | `PurchaseDraft`：供应商 + 明细行 + 立即付款的**原文草稿 + 纯函数校验**，与 `ProductDraft` 同构；产出 `Document` / `DocumentLine` / `PaymentEntry` 交给 `RuleEngine` |
+| **Flutter**（只摆放） | `purchase_page.dart`（沉浸模式已由导航定义）：供应商、明细行、合计、立即付款、保存 |
+
+### 三、草稿校验清单（拟）
+
+| 字段 | 规则 |
+|---|---|
+| 供应商 | 可空 = 散采；**散采必须当场结清**（留空且有欠款 ⇒ 报「散采要当场结清，或选一个供应商」） |
+| 明细 | ≥ 1 行；每行商品必选、数量**正整数**、单价 ≥ 0 且最多两位小数 |
+| 单价默认 | 选商品后**预填该商品的进价**（可改）——省一次输入，且进价本来就该填 |
+| 立即付款 | 账户必选、金额 > 0、`SUM ≤ 合计`；可多条（多账户混合） |
+| 文案 | 一律「怎么办」，字段级报错（同 `ProductDraft`） |
+
+### 四、待裁定项
+
+| # | 问题 | 我的建议 |
+|---|---|---|
+| P-1 | `PurchaseDraft` 放哪 | `core/src/documents/purchase_draft.dart`（与 `documents` 表语义对齐；`ProductDraft` 在 `master_data/` 是因为商品本身就是主数据，单据不是） |
+| P-2 | 立即付款区形态 | **常驻显示**（供应商下方），金额默认空 = 全赊；旁边给「全款」一键填入合计。理由：货到付款是高频路径，折叠会让用户找不到 |
+| P-3 | 保存后的去向 | **留在本页并清空表单** + SnackBar「已保存，单号 X，欠款 Y」。理由：开单是高频连续动作 |
+| P-4 | 商品选择器 | 点「选商品」弹出**搜索列表**（名称/编码/条码，复用 `ProductService.list(query:)`），点选即填。不做下拉 —— 商品会超过一屏 |
+| P-5 | 无往来方建档 UI | **本阶段不做**。散采现结不依赖往来方；等做「送货」前再补往来方建档（送货必须有客户） |
+
+### 五、门禁（拟）
+
+core：`purchase_draft_test` + `selfcheck` 镜像；Flutter：`purchase_page_test`（沿用两个注入点）；`flutter analyze` 0 issues。
+
+### 六、裁定结果与落地（2026-09-27）
+
+**裁定**（`docs/reply.md`）：P-1 / P-2 / P-4 同意；P-3 同意并补细节
+（保存后**保留供应商与日期**，只清明细与付款）；**P-5 改为「最小供应商新建入口」**
+（名称 + 电话可选两字段 —— 否则赊购用户在主路径上死锁，报错没法照做）；
+另补 7 项遗漏：日期（默认今天可改）/ 取消（有内容时二次确认）/ 键盘效率（Enter 下一格、
+Ctrl+S 保存、Esc 取消）/ 数字键盘 / 合计显示（大字 + 右对齐 + 千分位）/
+**预填依据 = `products.cost_price`**（用户主动填的价，不做历史推算）/
+数量精度限制（INTEGER，不支持按斤按米 —— v1 接受，记录在案）。
+新增 **P-6 键盘效率**、**P-7 供应商新建入口**。
+
+**第 1 步落地（core，2026-09-27）**：
+
+| 项 | 内容 |
+|---|---|
+| `purchase_draft.dart` | 三个字段枚举 + `PurchaseLineDraft` / `PurchasePaymentDraft` / `PurchaseDraft`（原文 + 纯函数校验 + 取值 + `fromProduct` 预填进价） |
+| `purchase_service.dart` | `PurchaseService.create`（三组校验 → 构造 Document / lines / `PaymentEntry` → `dispatch` → **读库**取最终状态）+ `createSupplier`（最小建档）+ `PurchaseSaved` |
+| 门禁 | `typecheck` **20 入口**；`selfcheck_purchase` **19 项**（core 合计 513 → **532**）；全套 9 个自检无回归 |
+
+**过程中的一个真发现**：`RuleOutcome.document` 带回的是主单**刷新前**的样子
+（`paid_amount = 0`）—— 立即付款对 `paid_amount` 的刷新发生在 outcome 构造**之后**。
+`PurchaseService` 因此**按 id 读库**取最终状态，不信任 outcome 的缓存值
+（真相在库，不在返回值；已写进 `docs/testing.md` §N）。
+
+**校验语义的两处修正**（首轮自检抓出）：
+1. **空行照常报行级错误**（「加了一行就得填或删」）—— 原提案「空行不报错」会让人
+   以为那行被忽略了；「至少要有一行」的判定随之改为 `lines.isEmpty`
+2. 补上「**付款合计 ≤ 本单合计**」的表单级校验（挂 `PurchaseField.payments`，
+   报错说清超了多少）—— 原提案漏了，只靠规则层兜底会让报错晚一步且文案不可执行
+
+**下一步**：Flutter 页面（`purchase_page.dart` + 商品选择器 + 供应商最小新建 +
+键盘/日期/合计），沿用两个注入点。
+
+---
+
+## Y. 采购入库 Flutter 层落地（2026-09-27）
+
+按 §X 六 的顺序完成第 2、3 步。**本阶段一处未改 `RuleEngine`**（215 用例不动）。
+
+### 一、core 补充（页面需要的查询）
+
+`PurchaseService` 新增三个只读查询（页面只依赖 `PurchaseService` + `ProductService` 两个对象，
+不再往外暴露 DAO）：
+
+| 方法 | 用途 |
+|---|---|
+| `activeSuppliers()` | 供应商选择器（`role: supplier, active: true`） |
+| `activeAccounts()` | 立即付款区（默认账户 = 第一个启用账户） |
+| `recentlyPurchased({limit: 20})` | 商品选择器**空查询时的「最近使用」**—— 采购大部分是重复的，打开就能点到常买的货；只含启用中的商品，按最近采购时间倒序 |
+
+`Money.formatGrouped(cents)`：合计大字的**千分位**展示（`12,345.67`）。
+
+### 二、页面（`lib/src/ui/purchase_page.dart`）
+
+- **状态以控制器为真相**：`_RowCtl` / `_PayCtl` 持有 `TextEditingController` 与
+  商品 / 账户选择结果，保存时**合成** `PurchaseDraft` —— 预填进价、清空表单都是
+  直接操作控制器，无需双向绑定
+- 行卡片 / 付款卡片是**无状态组件**，控制器由页面持有 ⇒ 删行、清空、预填都是改页面状态
+- 沉浸模式（无面包屑）；「取消」在有内容时弹确认，确认即**清空回初始**（本页是
+  导航内容区的一部分，不是独立路由）
+- ⚠️ **Enter 下一格在桌面端要显式切焦点**（`onSubmitted: (_) => FocusScope.nextFocus()`）
+  —— `textInputAction: next` 只影响虚拟键盘按钮，Windows 上没作用
+
+### 三、门禁
+
+- `flutter analyze` / `flutter test`（widget_test 6 + startup_test 5 + **purchase_page 5** = 16）
+  —— **待用户复跑**（本机 flutter_tools 缺陷跑不了）
+- core：`typecheck` 20 入口、`selfcheck_purchase` 19/19（上轮已完成）
+- 语法门禁：`dart format --output=none` 退出码 **0**（本轮起按 §W 八 的教训取对退出码）
+
+### 四、页面测试覆盖（`test/purchase_page_test.dart`）
+
+| # | 场景 |
+|---|---|
+| 1 | 空表单点保存 → 「至少要有一行商品」且无 SnackBar |
+| 2 | 散采全款 → SnackBar「已保存 ¥35.00…（已结清）」+ 库存 +10 |
+| 3 | 散采欠款 → 「散采要当场结清」 |
+| 4 | 供应商 + 部分付款 → SnackBar 带「王老板 累计欠款」 |
+| 5 | 取消：有内容 → 确认框 → 确认后清空 |
+
+测试交互的两个坑：商品选择器**空查询显示的是「最近采购」**（首次为空，要先在
+搜索框输入再点选）；`find.widgetWithText` **匹配不到 InputDecoration 的 label**
+（那是参数不是 Text widget）—— 输入框一律用 `Key` 定位。
+
+### 五、首轮复跑抓出的 14 个问题与修复（2026-09-27）
+
+用户复跑 `flutter analyze` 报 **14 issues**（6 error / 4 warning / 4 info），
+`flutter test` / `flutter run -d windows` 因此全部编译失败。**根因不在 Dart 语法**
+（`dart format` 门禁通过），而在**语义层** —— 逐条修复：
+
+| # | 问题 | 修法 |
+|---|---|---|
+| 1 | `AppShell` 有 `purchases` 字段但**构造函数漏了参数** | 补 `this.purchases` |
+| 2 | 页面 `await service.create(...)` —— `create` 是**同步**的 | 去 await；`_save` 改同步函数 |
+| 3 | 两处 `const InputDecoration(errorText: <非 const 表达式>)` | 去掉 `const` |
+| 4 | `DropdownButtonFormField.value:` 已废弃（v3.33 起） | 改**完全受控**的 `InputDecorator` + `DropdownButton` —— 顺带修掉一个潜在 bug：FormField 的 `initialValue` 只在首帧生效，而本页用 ValueKey 复用卡片（删行 / 清空后下标挪动），内部状态会跟控制器错位 |
+| 5 | `recentlyPurchased` 调在 `ProductService` 上（实际在 `PurchaseService`） | 「最近采购」查的是 `document_lines`（采购数据非主数据），由页面查好**当参数传入**弹层 |
+| 6 | 未用的 import / 字段（`_suppliers`）/ 参数（`_RowCtl.product`） | 清除 |
+| 7 | 测试里未用的局部变量 | 清除 |
+
+**测试又暴露两个交互坑（已写进测试注释）**：
+
+- `find.byType(TextField).first` 找弹层搜索框会**命中页面背后的输入框**
+  （弹层底下压着 4 个，树的先序遍历先碰到）→ 搜索框加 `Key('picker-search')`
+- 800×600 测试视口装不下整页，**底部按钮在渲染树之外**，直接 tap 会 miss
+  → `tapBottomButton()` 先 `scrollUntilVisible` 再点
+
+另外「空表单」的断言随校验语义更新：空行报**行级**错误（`请选一个商品`），
+没有整单级「至少要有一行」。
+
+### 六、门禁终值（本轮起**全部可自验**）
+
+| 门禁 | 结果 |
+|---|---|
+| `flutter analyze` | **0 issues**（沙箱内实测跑通 —— 环境限制解除） |
+| `flutter test` | **16/16**（widget 6 + startup 5 + purchase_page 5） |
+| core `dart test` | **234/234**（含 `purchase_draft_test` 19） |
+| `flutter build windows --debug` | ✅ 12.7s 出 `shensuanzi.exe`（`env -u http_proxy`） |
+
+**环境备忘（2026-09-27 实测）**：此前「本机 `dart test` / `flutter *` 不可用」的结论**已过时** ——
+补上 PortableGit PATH 后 `flutter analyze` / `flutter test` / `dart test` / `flutter build`
+都能在 AI 会话里跑（C/C++ 构建仍需先清小写代理变量）。交付前的门禁改为**自验后再交**。
+
+### 七、真机反馈两连修（2026-09-27 下午）
+
+真机截图确认页面可用，但控制台每敲一个字崩一次：
+
+| # | 问题 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `Unsupported operation: Cannot remove from a fixed-length list`（供应商搜索逐字崩） | `activeSuppliers()..removeWhere(...)` —— sqlite3 的结果行是**定长列表**，不能 removeWhere | 改 `.where(...).toList()` 生成新列表，不碰原对象；新增回归用例（打字不崩 + 过滤生效 + 过滤到空） |
+| 2 | **无资金账户时的死局**（截图：库里没账户，「请选一个资金账户」无法照做） | `initState` 只在**有**账户时才造付款行 —— 用户点「添加账户」后得到账户下拉为空的必错行 | 没有账户时付款区给**能照做**的内联提示（橙色 §1.3）：「先到「账户」页新建；在那之前只能全赊（需选供应商）」；「全款」按钮同步禁用 |
+
+门禁：`flutter analyze` / `flutter test`（17 用例）—— AI 会话管道耗尽无法复跑，**待用户复跑**
+（本轮改动语义简单：一处 where() 重构 + 一段条件摆放 + 一条新用例，语法门禁已过）。
+
+---
+
+## Z. 设计提案：账户建档 + 店内销售开单（2026-09-27，**待裁定**）
+
+> 裁定答复请写在 `docs/reply.md`。此处只存提案与结论锚点，落地后另开 §AA。
+
+### 一、事实核对（core 现状）
+
+| 能力 | 现状 |
+|---|---|
+| `RuleEngine` 的 `_sale`（RULE-002） | ✅ **已实现**：负库存（加权平均出库成本）、`PartyLedger +total`、立即收款自动生成 receipt + Settlement + MoneyLedger |
+| 销售测试覆盖 | ✅ `immediate_payment_test` 11 处 `DocType.sale` —— **core 规则层不需要动** |
+| 散客约束 | ✅ `_requirePayee` 与采购同源：**无客户 + 有未结清 ⇒ 拒**（散客必须当场结清） |
+| `Account` 模型 | ✅ 已有 `initialBalance`（期初余额，**修改会重算全部历史余额**，`data_model.md` §2.3）+ `AccountType` 五类（cash/wechat/alipay/bank/other） |
+| 账户建档服务层 | ⛔ 只有 `AccountDao`，**没有 `AccountDraft` / `AccountService`**（主数据三件套缺账户） |
+| 真机已撞到的阻塞 | 上轮测试：库里无账户 ⇒ 散采全款存不了 —— **账户建档是当前最短板** |
+
+### 二、范围建议
+
+**A. 账户建档（小，先行）+ B. 店内销售开单（大，随后）一个阶段做完**。
+理由：A 是 B 的收款前置，而且上轮真机已经撞到「没账户存不了全款」。
+
+### 三、A 账户建档
+
+| 层 | 内容 |
+|---|---|
+| core | `AccountDraft`（名称必填、类型五选一、期初余额可空默认 0）+ `AccountService`（create / update / setActive / list），与 `ProductService` 同构 |
+| Flutter | `account_page.dart`：列表（余额列用 `QueryDao.accountBalances`）+ 新建/编辑对话框 + 停用恢复，复用商品页骨架 |
+
+### 四、B 店内销售开单（与采购页同构，差异点如下）
+
+| 差异 | 内容 |
+|---|---|
+| 方向 | 库存 `-qty`；付款区 = **收款**（收入）；对象 = **客户** |
+| 单价预填 | **售价** `sellingPrice`（采购预填进价） |
+| 散客 | 客户可空 = 散客；**散客必须当场结清**（同散采，文案对齐） |
+| **负库存** | RULE-002 **允许**但「UI 红色告警」—— 行内显示当前库存，数量超库存时**红色内联提示（不拦人）**，说明「按最近入库价出库」 |
+| 最近使用 | 商品选择器空查询 = 最近**销售** |
+| 客户新建 | 最小入口（名称 + 电话可选，role=customer），同 P-7 供应商 |
+
+### 五、待裁定项
+
+| # | 问题 | 我的建议 |
+|---|---|---|
+| Z-1 | 范围 | A + B 一起做（账户先行）；若嫌大，A 单独成阶段 |
+| Z-2 | 负库存告警形态 | **行内红色提示，不拦人**（与「允许负库存」的规则一致；弹窗会被高频误触） |
+| Z-3 | 账户**编辑期初余额** | 建时可填；编辑时改它 ⇒ **二次确认**（会重算全部历史余额，属重大操作，§1.2） |
+| Z-4 | 客户建档 | 本阶段只做**最小新建入口**；完整往来方页（列表/编辑/对账）留后续 |
+| Z-5 | 「最近销售」查询 | 把 `recentlyPurchased` **泛化**为 `recentProducts({List<DocType>})`（一处 SQL，采购/销售共用），不新增平行方法 |
+
+### 六、门禁（拟）
+
+core：`account_draft_test` + `sale_draft_test` + selfcheck 镜像；Flutter：`account_page_test` + `sale_page_test`（复用两个注入点经验）；`flutter analyze` 0 issues。交付前 AI 侧先自验（能跑时）。
+
+### 七、裁定结果与落地（2026-09-27，core 第 1 步）
+
+**裁定**（`docs/reply.md`）：Z-1 ~ Z-5 全同意；**Z-3 改方案 A**（不允许编辑期初余额，
+比二次确认干净 —— 「我当时填错了」和「我改变主意了」是同一件事，都是修正；
+真改错就新建账户 + 停用老的）；**Z-4 补「同名 party 追加 role」**；补 7 项遗漏。
+
+**7 项遗漏的处置**：
+
+| # | 处置 |
+|---|---|
+| 退货入口 | **方案 A：v1 UI 不做，明说**。单据列表页尚不存在，B 方案（列表+退货按钮）依赖它 ⇒ 依赖倒挂。**在 §Z 明确声明是有意识的不做**：需要退货请等 v1.1（会带单据列表一起做）；在此期间开负数销售单会绕开 RULE-007 成本回退，**不建议** |
+| 折扣/抹零 | v1 不做；改最后一行单价即可；整单折扣记 v1.2 候选 |
+| 最近客户 | 客户选择器空查询显示「最近往来的客户」（Flutter 轮随页面一起做） |
+| 预填售价 | **默认值不是约束**：用户改过的单价是这一行的真相，**不回写** `sell_price`（已写进 `SaleLineDraft` 注释） |
+| 送货单 | v1 不做（`delivery` 规则 core 已有，UI 留 v1.1）；送货可在备注注明 |
+| 利润显示 | v1 开单页与 SnackBar **都不显示**（用户会问「这数怎么来的」）；v1.2 在单据详情页按需展示 |
+| 必填星号 | 已加进 `docs/ui_principles.md` §一（必填标红星、选填不标） |
+
+**两条实现建议的采纳**：
+
+1. **`DocumentDraft` 抽象：本轮留注释不抽**。`SaleDraft` 与 `PurchaseDraft` 约
+   80% 同构，但采购已被 200+ 用例钉住；现在抽要同时动两个稳定模块。
+   **等第三个（`DeliveryDraft`）出现时再抽** —— 三处重复才看得清抽象形状
+   （裁定书明确允许此选项）。过渡措施：两文件**逐字段对齐** + 文件头写明抽象时机。
+2. **库存快照语义**：`SaleService.stockSnapshot()` —— **打开本页时查一次**
+   （`QueryDao.stockByProduct` 批量），输入时只对照快照；**不重查**，因为它
+   只是提示不是校验（负库存本来就放行）。UI 文案将标明「（打开本页时）」。
+
+**落地内容（core）**：
+
+| 文件 | 内容 |
+|---|---|
+| `master_data/account_draft.dart` + `account_service.dart` | 账户三件套；**update 不改期初余额**（服务层兜底，绕过 UI 也改不了） |
+| `master_data/party_service.dart` | `ensureParty` 三分支（新建 / 追加 role / 原样返回）+ `PartyMutation`（UI 据此提示「已把老王加为你的客户」）；`PurchaseService.createSupplier` **改为委托它** |
+| `dao/query_dao.dart` | `recentProducts({List<DocType>})` —— 采购/销售共用一处 SQL（Z-5）；`recentlyPurchased` 变成命名转发 |
+| `documents/sale_draft.dart` + `sale_service.dart` | 销售草稿三件套 + `SaleService`（`stockSnapshot()` / `activeCustomers` / `recentlySold` / `createCustomer`） |
+| 门禁 | `typecheck` **26 入口**；三个新 selfcheck **11 + 19 + 6 = 36 项**；**12 个自检全绿合计 568 项**（采购 19 项无回归）；`dart test`（+30 用例）因会话管道耗尽**待用户复跑** |
+
+### 八、Flutter 层落地（2026-09-27，第 2/3 步）
+
+| 文件 | 内容 |
+|---|---|
+| `ui/account_page.dart` | 列表（余额 = 期初+流水）+ 新建/编辑对话框 + 停用/恢复；**编辑时期初余额只读**并给「怎么办」（新建账户+停用，Z-3 方案 A 的 UI 面） |
+| `ui/sale_page.dart` | 与采购页同构；售价预填（可议价、不回写）；**负库存行内红色提示，标明「（打开本页时）」快照**（Z-2）；散客文案；无账户死局预防（同采购页）；必填红星；v1 无折扣/无利润显示（§Z 遗漏 2/6） |
+| `ui/app_shell.dart` + `app.dart` | 接线 `sales` / `accounts` / `parties` 三个服务（`SalePage` 的客户「新建」直接用 `PartyService`） |
+| core 补充 | `QueryDao.recentParties`（遗漏 3：客户选择器空查询 = **最近往来**；散客 `party_id IS NULL` 天然排除）→ `SaleService.recentCustomers`；镜像 test + selfcheck 各一条 |
+
+**门禁**：语法全过；`typecheck` 26 入口；`selfcheck_party` **7/7**（含 recentCustomers）。
+⚠️ 会话管道持续耗尽 —— `flutter analyze` / `flutter test`（预期 0 issues / 28 用例 =
+widget 6 + startup 5 + purchase 6 + account 4 + sale 7）与 `dart test`（account 单文件）**待用户复跑**。
+
+### 九、复跑 6 issues 修复（2026-09-27）
+
+| # | 问题 | 修法 |
+|---|---|---|
+| 1 | `AccountType? _type = widget.existing?.type;` —— 初始化器里**不能读 `widget`** | 改 `late final`（与 `_name` 同款） |
+| 2 | sale_page 的 `_RowCtl` 漏了 `quantityValue` getter（镜像采购时漏搬） | 补上 |
+| 3 | 测试里 `const <PurchaseLineDraft>[... productId: productId ...]` —— **const 列表里掺运行时变量** | 去 `const` |
+| 4 | party_service_test 未用局部变量 | 删 |
+
+**共同点**：全是「搬运时漏了上下文」—— 镜像采购页时 `_RowCtl` 少搬一个 getter、
+测试里手写 `const` 却忘了字段值来自变量。语义门禁（analyze）仍是硬依赖。
+
+### 十、复跑 1 issue 修复（2026-09-27）
+
+`_type` 上一轮改成 `late final`（为了在初始化器里读 `widget`），但下拉的
+`onChanged` 还要**写**它 —— 两个约束打架。标准解法：字段改回**可变**，
+回填挪进 **`initState`**（State 的生命周期里读 `widget` 是合法的）。
+`_save` 读 / `onChanged` 写 / `initState` 回填三条路都通。
+
+**教训（`docs/testing.md` §L 补）**：State 字段要**读 `widget` 回填 + 后续可写**
+时，唯一正确形状是「可变字段 + initState 回填」—— `late final` 只适用于
+永不改写的派生值。
+
+好消息：上轮 `flutter test` 输出里 **purchase 6 + sale 7 共 13 条已实际通过**
+（红的是 account/startup/widget 被同一个编译错连累加载失败）——
+销售页的负库存快照提示、议价、客户同名追加 role 全部验证过。
+
+### 十一、复跑 1 红修复（2026-09-27）：账户行加 Key
+
+`analyze` 0 issues ✓。唯一 1 红：编辑用例 `tap('现金')` 找到 **2 个** ——
+列表行账户名 + 对话框下拉的**选中项**都叫「现金」（与采购页 finder 歧义同款）。
+修法：`_AccountRow` 加 `Key('account-row-<id>')`，测试点 Key 不点文字。
+
+**同一段文字会在屏幕上出现两次** —— 这条在采购页（兜底页按钮 vs 对话框标题）、
+销售页（无）之后第三次出现，值得作为默认反射：**凡是「点某行 / 某元素」的测试，
+能用 Key 就不用文字**。

@@ -64,6 +64,25 @@ class Money {
     return '$sign${abs ~/ 100}.${(abs % 100).toString().padLeft(2, '0')}';
   }
 
+  /// 分 → **带千分位**的元：`1234567` → `"12,345.67"`。
+  ///
+  /// 用于合计等**大字展示**（`docs/reply_review.md` §X 遗漏 5）——
+  /// 千元以上的单子，没有分隔符用户就得自己数位数。
+  static String formatGrouped(int cents) {
+    final String sign = cents < 0 ? '-' : '';
+    final int abs = cents.abs();
+    final String whole = (abs ~/ 100).toString();
+    final String fraction = (abs % 100).toString().padLeft(2, '0');
+
+    final StringBuffer grouped = StringBuffer();
+    for (int i = 0; i < whole.length; i++) {
+      grouped.write(whole[i]);
+      final int remain = whole.length - 1 - i;
+      if (remain > 0 && remain % 3 == 0) grouped.write(',');
+    }
+    return '$sign$grouped.$fraction';
+  }
+
   /// **round-half-up 整数除法**：半数**远离零**。
   ///
   /// 用于成本口径（`docs/data_model.md` §六：舍入策略 round-half-up）。

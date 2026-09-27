@@ -65,10 +65,37 @@ export 'src/rules/product_code_generator.dart' show ProductCodeGenerator;
 export 'src/rules/rule_engine.dart' show RuleEngine, RuleOutcome, RuleStatus;
 export 'src/rules/seq_counter.dart' show SeqCounter;
 
-// 主数据建档（商品；往来方 / 账户将来同放这里）
+// 主数据建档（商品 / 账户 / 往来方最小建档）
+export 'src/master_data/account_draft.dart' show AccountDraft, AccountField;
+export 'src/master_data/account_service.dart'
+    show AccountDraftInvalid, AccountService;
+export 'src/master_data/party_service.dart'
+    show PartyMutation, PartyMutationAction, PartyService;
 export 'src/master_data/product_draft.dart' show ProductDraft, ProductField;
 export 'src/master_data/product_service.dart'
     show ProductDraftInvalid, ProductService;
+
+// 单据建档（采购 / 店内销售；送货 / 退货的草稿将来同放 documents/）
+export 'src/documents/purchase_draft.dart'
+    show
+        PurchaseDraft,
+        PurchaseField,
+        PurchaseLineDraft,
+        PurchaseLineField,
+        PurchasePaymentDraft,
+        PurchasePaymentField;
+export 'src/documents/purchase_service.dart'
+    show PurchaseDraftInvalid, PurchaseSaved, PurchaseService;
+export 'src/documents/sale_draft.dart'
+    show
+        SaleDraft,
+        SaleField,
+        SaleLineDraft,
+        SaleLineField,
+        SalePaymentDraft,
+        SalePaymentField;
+export 'src/documents/sale_service.dart'
+    show SaleDraftInvalid, SaleSaved, SaleService;
 
 // 同步（协议层：DTO + 白名单。**服务端实现在 `shensuanzi_host`**）
 export 'src/sync/sync_operation.dart'

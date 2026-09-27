@@ -3,6 +3,10 @@ import 'package:sqlite3/sqlite3.dart';
 import '../db/database.dart';
 import '../db/schema.dart';
 import '../models/document.dart';
+import '../models/party.dart';
+import '../models/product.dart';
+import 'party_dao.dart';
+import 'product_dao.dart';
 
 /// **RULE-006 库存 / 余额查询**（`docs/rules.md`）。
 ///
@@ -75,4 +79,71 @@ class QueryDao {
   Map<String, int> _keyedSum(String sql) => <String, int>{
     for (final Row row in _raw.select(sql)) row['k']! as String: row['v']! as int,
   };
+
+  /// 最近**交易过**的商品（选择器空查询时显示的「最近使用」）。
+  ///
+  /// [docTypes] 决定哪些单据算「交易过」：采购页传 `[purchase]`、
+  /// 销售页传 `[sale]` —— **一处 SQL 两处共用**（`docs/reply_review.md` §Z 五），
+  /// 不为采购/销售各写一个平行方法。
+  ///
+  /// 只含**启用中**的商品，按最近一次交易时间倒序；没有任何历史时返回空列表
+  /// （界面退化为纯搜索）。个体工商户大部分单据是重复进货/出货 ——
+  /// 打开选择器就能点到常买的货，不用每次敲搜索词。
+  List<Product> recentProducts({
+    required List<DocType> docTypes,
+    int limit = 20,
+  }) {
+    if (docTypes.isEmpty) return const <Product>[];
+    final String placeholders = List<String>.filled(docTypes.length, '?').join(',');
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT dl.product_id AS pid '
+      'FROM ${Schema.documentLines} dl '
+      'JOIN ${Schema.documents} d ON d.id = dl.document_id '
+      'JOIN ${Schema.products} p ON p.id = dl.product_id '
+      'WHERE d.doc_type IN ($placeholders) AND p.is_active = 1 '
+      'GROUP BY dl.product_id '
+      'ORDER BY MAX(d.occurred_at) DESC '
+      'LIMIT ?',
+      <Object?>[...docTypes.map((DocType t) => t.wire), limit],
+    );
+    final ProductDao products = ProductDao(db);
+    final List<Product> result = <Product>[];
+    for (final Map<String, Object?> row in rows) {
+      final Product? product = products.findById(row['pid']! as String);
+      if (product != null) result.add(product);
+    }
+    return result;
+  }
+
+  /// 最近**交易过**的往来方（客户/供应商选择器空查询时显示的「最近往来」，
+  /// §Z 遗漏 3 —— 客户群稳定，一开店就能点到常客）。
+  ///
+  /// 语义与 [recentProducts] 完全对称：[docTypes] 决定哪些单据算「交易过」，
+  /// 只含**启用中**的往来方，按最近一次交易时间倒序；没有历史返回空列表。
+  /// 无往来的单据（散客/散采）`party_id` 为空，天然被排除。
+  List<Party> recentParties({
+    required List<DocType> docTypes,
+    int limit = 20,
+  }) {
+    if (docTypes.isEmpty) return const <Party>[];
+    final String placeholders = List<String>.filled(docTypes.length, '?').join(',');
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT d.party_id AS pid '
+      'FROM ${Schema.documents} d '
+      'JOIN ${Schema.parties} pa ON pa.id = d.party_id '
+      'WHERE d.doc_type IN ($placeholders) AND d.party_id IS NOT NULL '
+      '  AND pa.is_active = 1 '
+      'GROUP BY d.party_id '
+      'ORDER BY MAX(d.occurred_at) DESC '
+      'LIMIT ?',
+      <Object?>[...docTypes.map((DocType t) => t.wire), limit],
+    );
+    final PartyDao parties = PartyDao(db);
+    final List<Party> result = <Party>[];
+    for (final Map<String, Object?> row in rows) {
+      final Party? party = parties.findById(row['pid']! as String);
+      if (party != null) result.add(party);
+    }
+    return result;
+  }
 }

@@ -88,6 +88,10 @@ dart run tool/typecheck.dart
 | core | `selfcheck_returns.dart` | `return_test.dart` |
 | core | `selfcheck_query.dart` | `query_test.dart` |
 | core | `selfcheck_products.dart` | `product_service_test.dart` |
+| core | `selfcheck_purchase.dart` | `purchase_draft_test.dart` |
+| core | `selfcheck_account.dart` | `account_draft_test.dart` |
+| core | `selfcheck_party.dart` | `party_service_test.dart` |
+| core | `selfcheck_sale.dart` | `sale_draft_test.dart` |
 | **core** | `selfcheck_sync_client.dart` | `sync_client_test.dart` |
 | **host** | `selfcheck_sync.dart` | `sync_server_test.dart` |
 | **host** | `selfcheck_host.dart` | `auth_test` + `pairing_test` + `http_server_test` |
@@ -506,6 +510,59 @@ dart run tool/typecheck.dart
   3 条以上 → 只说第一个 + 「等 N 种商品」；条数 > 9 退回阿拉伯数字
 - **事务硬约束**：`ProductCodeGenerator` 在事务外调用 → `StateError`
 
+## N. 采购开单（`packages/shensuanzi_core/`）
+
+对应 `test/purchase_draft_test.dart` 与 `tool/selfcheck_purchase.dart`。
+规则本身在 RULE-001（C 组，`RuleEngine` 已覆盖），这里只测**表单草稿**与**提交服务**。
+
+**必测清单**：
+
+- **明细行**：`lines.isEmpty` 才报「至少要有一行」；**空行照常报行级错误**
+  （用户加了一行就得填或删，不能让人以为那行被忽略了）；每行商品必选、
+  数量**正整数**（`document_lines.quantity` 是 INTEGER —— 不支持按斤按米，
+  已知限制，见 `docs/reply_review.md` §X）、单价 ≥ 0 且最多两位小数
+- **预填**：`PurchaseLineDraft.fromProduct` 单价预填 `products.cost_price`
+  （用户**主动填的**参考价，不做历史推算 —— 推算会引入用户没预期过的值），数量留待填写
+- **立即付款**：金额留空 = 跳过该行（默认「全赊」靠这个表达）；金额填了 ⇒ 账户必选且 > 0；
+  **付款合计 ≤ 本单合计**（挂 `PurchaseField.payments`，报错要说清超了多少）
+- **散采**（未选供应商）必须当场结清 —— 挂 `PurchaseField.party`；
+  行/付款本身不合法时**不报**（一次一个重点）
+- **日期**：`YYYY-MM-DD` 原文；空 / 格式不对都报
+- **服务提交**：`PurchaseService.create` 三组校验任一非空 ⇒ 抛 `PurchaseDraftInvalid`
+  （三组原因齐全，库里不留半条）；散采全款 / 赊购 / 部分付款三条链路的库存、资金、
+  往来、`paid_amount`；正式单号（**非**「待同步-」前缀）；供应商累计欠款
+- ⚠️ **`outcome.document` 带回的是主单刷新前**（`paid_amount = 0`）——
+  立即付款对 `paid_amount` 的刷新发生在 outcome 构造**之后**。
+  服务层必须按 id **读库**取最终状态，不信任 outcome 的缓存值
+- ⚠️ **服务段每用例独立内存库** —— 同一供应商连续开单会让「累计欠款」跨用例累计，
+  `documents` 行数也会互相污染（§零 的跨段复用坑，本轮真踩）
+
+## O. 账户建档 + 店内销售开单（`packages/shensuanzi_core/`）
+
+对应 `test/account_draft_test.dart` / `test/party_service_test.dart` /
+`test/sale_draft_test.dart` 与三个同名 selfcheck。规则本体在 RULE-002
+（`RuleEngine._sale` 已有 11 处覆盖），这里测**表单草稿**与**提交服务**。
+
+**必测清单**：
+
+- **账户**：名称必填 ≤ 60；类型必选；期初余额可空（= 0）、只收 ≥ 0
+  的两位小数金额；**`update` 不改期初余额**（Z-3 方案 A —— 草稿里的值被忽略，
+  以库里原值写回，历史不可篡改）；停用是软删
+- **ensureParty**（Z-4，采购/销售共用）：无同名 → 新建；同名无该 role →
+  **追加 role**（phone 不动）；同名 role 齐全 → 原样返回。**绝不允许出现
+  两条同名 party**（往来账分流是对账灾难）
+- **销售草稿**（与采购逐条镜像）：明细 ≥ 1 且空行照常报行级错误；数量正整数；
+  `fromProduct` 预填**售价** `sell_price`（**默认值不是约束**，改后不回写商品档）；
+  收款合计 ≤ 合计；**散客必须当场结清**（散采同款文案）；散客检查在行不合法时不报
+- **销售服务**：散客全款 / 赊销（客户欠款为**正** = 客户欠我）/ 部分收款；
+  **负库存放行**（RULE-002 允许，告警在界面层）；`stockSnapshot()` 是**打开
+  本页时**的快照（Z-2：只用于提示，不重查不校验）
+- ⚠️ **服务段每用例独立内存库** —— 同一客户连续开单会让「累计欠款」跨用例
+  累计（§零 跨段复用坑，本轮在 selfcheck 里又踩一次）
+- ⚠️ **`now()` 这类递增时钟助手，先落变量再用** —— 在参数里调一次、
+  在 `expect` 里又调一次，时钟被自己推走（2026-09-27 首跑翻车：
+  期望 ...003 实际 ...002）。要么存变量，要么断言用关系（`greaterThan`）
+
 ## L. 根 Flutter 应用（`lib/`）
 
 **能自动化的部分很少，而这是刻意的**：根应用只放「摆放控件、调插件、pop 结果」，
@@ -516,7 +573,9 @@ dart run tool/typecheck.dart
 |---|---|
 | `flutter analyze`（**在仓库根跑**） | 类型错误、未使用导入、lint（**首选**） |
 | `flutter test` | widget 测试（`test/widget_test.dart` + `test/startup_test.dart`）。启动流程靠**两个注入点**变得可测：`pickDirectory`（会真弹系统框）+ `configStore`（**不注入就会读写开发者真实的 `%APPDATA%`**）。⚠️ 还要 `useLocalSqlite()` —— `sqlite3_flutter_libs` 只把 DLL 放进**应用目录**，`flutter test` 不打包它 |
-| `dart format --output=none lib test` | **语法**（解析文件但不解析导入）。当 `flutter analyze` 跑不了时，这是唯一还能用的门禁 —— 它能抓住括号不配对、字符串未闭合这类错误。⚠️ **别用管道接它再取 `$?`** —— 管道后取到的是 `tail` 的退出码，**语法错误会被静默放行**（2026-09-26 真实漏过一次）。要么直跑，要么取 `${PIPESTATUS[0]}` |
+| `dart format --output=none lib test` | **语法**（解析文件但不解析导入）。⚠️ **它抓不住语义错**（构造函数少参数、方法不存在、await 非 Future、const 里掺表达式……
+  以及「State 字段初始化器读 widget」—— 2026-09-27 账户页连踩两轮）——
+  2026-09-27 采购页首轮 14 个 analyze issue 全部漏过它。**`flutter analyze` 在 AI 会话里能跑但间歇失败**（子进程管道耗尽，会话后期可能持续失败）—— 能跑时一律以它为准；跑不了时降级为`dart format`（仅语法）+ 语义自查 + 用户复跑。仍要跑 format 时：**别用管道接它再取 `$?`** —— 管道后取到的是 `tail` 的退出码，**语法错误会被静默放行**（2026-09-26 真实漏过一次）。要么直跑，要么取 `${PIPESTATUS[0]}` |
 
 > ⚠️ **`flutter analyze` 是本项目唯一的全仓 lint 门禁。**
 >
@@ -537,6 +596,9 @@ dart run tool/typecheck.dart
 |---|---|
 | `test/widget_test.dart` | 主界面把「数据在哪」说清楚、闭环入口常驻可见、数据库没就绪时给出「怎么办」 |
 | **`test/startup_test.dart`** | **启动流程五条**：① 没配置过 → 弹对话框 ② 配置过且可用 → 不弹、直接进主界面 ③ 选了目录 → 对话框消失、进主界面、配置落到**沙箱** ④ 选择器取消（`null`）→ 对话框仍在、不崩 ⑤ 目录能用但**库打不开** → 错误页 |
+| **`test/purchase_page_test.dart`** | **采购开单五条**：① 空表单保存 → 报缺明细 ② 散采全款 → SnackBar 已保存 + 库存 ③ 散采欠款 → 「散采要当场结清」 ④ 供应商 + 部分付款 → SnackBar 带累计欠款 ⑤ 取消有内容 → 确认后清空 ⑥ 供应商搜索打字不崩（⚠️ DAO 返回**定长列表**，`removeWhere` 会逐字崩 —— 过滤一律 `where().toList()`）。⚠️ 商品选择器**空查询显示「最近采购」**（首次为空，先搜索再点选）；**搜索框必须用 `Key('picker-search')` 定位** —— `byType(TextField).first` 会命中弹层底下页面的输入框（树的先序遍历）；**底部按钮先 `scrollUntilVisible` 再点**（800×600 测试视口装不下整页）；`widgetWithText` 匹配不到 `InputDecoration.label` |
+| **`test/account_page_test.dart`** | **账户页四条**：① 空列表给「怎么办」 ② 新建 → 列表出现、余额含期初 ③ **编辑时期初余额只读**（Z-3 方案 A：保存后期初不变） ④ 空名保存 → 字段级报错。⚠️ 下拉选项要先点开下拉框才在树上（直接 `find.text('微信')` 会扑空） |
+| **`test/sale_page_test.dart`** | **销售页七条**：① 空表单行级报错 ② 散客全款（库存归零） ③ 散客欠款 →「散客要当场结清」 ④ **负库存：红色提示标明「打开本页时」且保存放行**（Z-2） ⑤ 选客户+议价+部分收款 → SnackBar 带累计欠款 ⑥ 客户选择器：空查询=最近往来、新建同名=追加 role（Z-4） ⑦ 取消确认。⚠️ 售价预填是**默认值**（议价可改，不回写商品档） |
 
 启动流程这五条以前**一条都没有**，根因是缺接缝：只有 `pickDirectory` 不够，
 还得有 `configStore` —— 否则测试既**不确定**（真机上配置已存在，对话框永远不弹），

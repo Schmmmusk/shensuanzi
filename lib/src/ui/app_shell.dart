@@ -20,6 +20,9 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'nav_icons.dart';
 import 'overview_page.dart';
 import 'products_page.dart';
+import 'account_page.dart';
+import 'purchase_page.dart';
+import 'sale_page.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -29,6 +32,10 @@ class AppShell extends StatefulWidget {
     required this.schemaVersion,
     required this.databaseReady,
     this.products,
+    this.purchases,
+    this.sales,
+    this.accounts,
+    this.parties,
     this.initialDestinationId,
   });
 
@@ -39,6 +46,18 @@ class AppShell extends StatefulWidget {
 
   /// 商品建档服务（数据库打开成功才有；为 `null` 时商品页显示「数据文件还没就绪」）
   final ProductService? products;
+
+  /// 采购开单服务（同一数据库；为 `null` 时采购页显示占位）
+  final PurchaseService? purchases;
+
+  /// 店内销售开单服务（同一数据库；为 `null` 时销售页显示占位）
+  final SaleService? sales;
+
+  /// 账户建档服务（同一数据库；为 `null` 时账户页显示「数据文件还没就绪」）
+  final AccountService? accounts;
+
+  /// 往来方最小建档服务（销售页客户「新建」用）
+  final PartyService? parties;
 
   /// 从哪个入口开始（不传 = 概览）
   final String? initialDestinationId;
@@ -91,6 +110,27 @@ class _AppShellState extends State<AppShell> {
     } else if (current.id == 'products') {
       // 商品是核心闭环的第一块 —— 已实现，不再是占位页
       page = ProductsPage(service: widget.products);
+    } else if (current.id == 'sale') {
+      // 店内销售是核心闭环的第三块（RULE-002）；客户「新建」共用 PartyService
+      page = widget.sales == null || widget.products == null || widget.parties == null
+          ? _PendingPage(destination: current)
+          : SalePage(
+              service: widget.sales!,
+              productService: widget.products!,
+              partyService: widget.parties!,
+            );
+    } else if (current.id == 'accounts') {
+      page = widget.accounts == null
+          ? _PendingPage(destination: current)
+          : AccountsPage(service: widget.accounts!);
+    } else if (current.id == 'purchase') {
+      // 采购入库是核心闭环的第二块 —— 库存与规则早就在 core 里（RULE-001）
+      page = widget.purchases == null || widget.products == null
+          ? _PendingPage(destination: current)
+          : PurchasePage(
+              service: widget.purchases!,
+              productService: widget.products!,
+            );
     } else {
       page = _PendingPage(destination: current);
     }

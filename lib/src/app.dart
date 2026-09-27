@@ -92,6 +92,18 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 商品建档服务（数据库打开成功才有）
   ProductService? _products;
 
+  /// 采购开单服务（同一数据库）
+  PurchaseService? _purchases;
+
+  /// 店内销售开单服务（同一数据库）
+  SaleService? _sales;
+
+  /// 账户建档服务（同一数据库）
+  AccountService? _accounts;
+
+  /// 往来方最小建档服务（供应商 / 客户选择器的「新建」共用）
+  PartyService? _parties;
+
   /// 开库失败的原因（含「怎么办」）
   String? _dbFailure;
 
@@ -137,6 +149,16 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         _location = location;
         _db = db;
         _products = ProductService(db);
+        _purchases = PurchaseService(
+          engine: RuleEngine(db),
+          queries: QueryDao(db),
+        );
+        _sales = SaleService(
+          engine: RuleEngine(db),
+          queries: QueryDao(db),
+        );
+        _accounts = AccountService(AccountDao(db));
+        _parties = PartyService(PartyDao(db));
         _dbFailure = null;
       });
     } catch (error) {
@@ -144,6 +166,10 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         _location = location;
         _db = null;
         _products = null;
+        _purchases = null;
+        _sales = null;
+        _accounts = null;
+        _parties = null;
         _dbFailure = '数据文件打不开（$error）。'
             '如果这个文件夹在 U 盘或网盘里，请换到本机磁盘上的文件夹。';
       });
@@ -209,6 +235,10 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       schemaVersion: location.marker.schemaVersion,
       databaseReady: _db != null,
       products: _products,
+      purchases: _purchases,
+      sales: _sales,
+      accounts: _accounts,
+      parties: _parties,
     );
   }
 }

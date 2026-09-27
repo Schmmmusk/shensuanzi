@@ -16,13 +16,21 @@ import '../test/delivery_test.dart' as delivery_test;
 // ignore: unused_import
 import '../test/immediate_payment_test.dart' as immediate_payment_test;
 // ignore: unused_import
+import '../test/account_draft_test.dart' as account_draft_test;
+// ignore: unused_import
+import '../test/party_service_test.dart' as party_service_test;
+// ignore: unused_import
 import '../test/product_service_test.dart' as product_service_test;
+// ignore: unused_import
+import '../test/purchase_draft_test.dart' as purchase_draft_test;
 // ignore: unused_import
 import '../test/query_test.dart' as query_test;
 // ignore: unused_import
 import '../test/return_test.dart' as return_test;
 // ignore: unused_import
 import '../test/rule_engine_test.dart' as rule_engine_test;
+// ignore: unused_import
+import '../test/sale_draft_test.dart' as sale_draft_test;
 // ignore: unused_import
 import '../test/schema_test.dart' as schema_test;
 // ignore: unused_import
@@ -36,11 +44,17 @@ import '../test/util_test.dart' as util_test;
 // ignore: unused_import
 import 'selfcheck.dart' as selfcheck;
 // ignore: unused_import
+import 'selfcheck_account.dart' as selfcheck_account;
+// ignore: unused_import
 import 'selfcheck_delivery.dart' as selfcheck_delivery;
+// ignore: unused_import
+import 'selfcheck_party.dart' as selfcheck_party;
 // ignore: unused_import
 import 'selfcheck_payments.dart' as selfcheck_payments;
 // ignore: unused_import
 import 'selfcheck_products.dart' as selfcheck_products;
+// ignore: unused_import
+import 'selfcheck_purchase.dart' as selfcheck_purchase;
 // ignore: unused_import
 import 'selfcheck_query.dart' as selfcheck_query;
 // ignore: unused_import
@@ -48,34 +62,44 @@ import 'selfcheck_returns.dart' as selfcheck_returns;
 // ignore: unused_import
 import 'selfcheck_rules.dart' as selfcheck_rules;
 // ignore: unused_import
+import 'selfcheck_sale.dart' as selfcheck_sale;
+// ignore: unused_import
 import 'selfcheck_sync_client.dart' as selfcheck_sync_client;
 
 void main() {
   // 只引用函数值，确保编译器保留（不调用）。
   final List<void Function()> entries = <void Function()>[
     // test/
+    account_draft_test.main,
     database_test.main,
     delivery_test.main,
     immediate_payment_test.main,
+    party_service_test.main,
     product_service_test.main,
+    purchase_draft_test.main,
     query_test.main,
     return_test.main,
     rule_engine_test.main,
+    sale_draft_test.main,
     schema_test.main,
     sync_client_test.main,
     util_test.main,
     // tool/
     selfcheck.main,
+    selfcheck_account.main,
     selfcheck_delivery.main,
+    selfcheck_party.main,
     selfcheck_payments.main,
     selfcheck_products.main,
+    selfcheck_purchase.main,
     selfcheck_query.main,
     selfcheck_returns.main,
     selfcheck_rules.main,
+    selfcheck_sale.main,
     selfcheck_sync_client.main,
   ];
   print(
-    '编译通过：10 个测试文件 + 8 个自检脚本已通过类型检查（未执行）。'
+    '编译通过：14 个测试文件 + 12 个自检脚本已通过类型检查（未执行）。'
     '（共 ${entries.length} 个入口）',
   );
 }
