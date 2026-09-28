@@ -174,13 +174,62 @@ class PartyLedgerDao {
     return row['s']! as int;
   }
 
-  List<PartyLedger> ofParty(String partyId) => _raw
-      .select(
-        'SELECT * FROM ${Schema.partyLedger} WHERE party_id = ? ORDER BY seq_no',
-        <Object?>[partyId],
-      )
-      .map(PartyLedger.fromRow)
-      .toList(growable: false);
+  /// 某往来方的**流水视图**（人可读版，§AA 六 / AA-6）。
+  ///
+  /// ⚠️ JOIN `documents` 带回 `doc_no`（单号，用户认的是它不是 UUID）与
+  /// `doc_type`（区分「采购单还是收款单」）。**正数 = 对方欠我增加**。
+  /// 不设平行方法 —— 裸流水若有别的需求在此方法上扩展。
+  List<PartyFlowEntry> ofParty(String partyId) {
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT pl.seq_no AS seq_no, pl.document_id AS document_id, '
+      '       d.doc_no AS doc_no, d.doc_type AS doc_type, '
+      '       pl.amount AS amount, pl.occurred_at AS occurred_at, '
+      '       pl.time_estimated AS time_estimated '
+      'FROM ${Schema.partyLedger} pl '
+      'JOIN ${Schema.documents} d ON d.id = pl.document_id '
+      'WHERE pl.party_id = ? '
+      'ORDER BY pl.seq_no',
+      <Object?>[partyId],
+    );
+    return <PartyFlowEntry>[
+      for (final Map<String, Object?> row in rows)
+        PartyFlowEntry(
+          seqNo: row['seq_no']! as int,
+          documentId: row['document_id']! as String,
+          docNo: row['doc_no']! as String,
+          docType: DocType.fromWire(row['doc_type']! as String),
+          amount: row['amount']! as int,
+          occurredAt: row['occurred_at']! as int,
+          timeEstimated: (row['time_estimated']! as int) == 1,
+        ),
+    ];
+  }
+}
+
+/// [PartyLedgerDao.ofParty] 的一行：**人可读**的往来流水
+/// （单号 / 单据类型 / 金额 / 日期 —— 裸流水只有 UUID，用户认不出）。
+class PartyFlowEntry {
+  const PartyFlowEntry({
+    required this.seqNo,
+    required this.documentId,
+    required this.docNo,
+    required this.docType,
+    required this.amount,
+    required this.occurredAt,
+    required this.timeEstimated,
+  });
+
+  final int seqNo;
+  final String documentId;
+
+  /// 正式单号（主机生成；用户在界面上认的是它）
+  final String docNo;
+  final DocType docType;
+
+  /// 正 = 对方欠我增加，负 = 减少（`party_ledger.amount` 原口径）
+  final int amount;
+  final int occurredAt;
+  final bool timeEstimated;
 }
 
 /// 资金流水 DAO。**不开事务**（`Agents.md` 纪律 1）。

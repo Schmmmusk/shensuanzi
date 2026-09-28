@@ -302,6 +302,64 @@ void main() {
     db.close();
   }
 
+  // ============================================================ 成本余值
+  section('RULE-006 costByProduct（加权成本余值，R-9）');
+  {
+    freshDb();
+    final String p = createProduct();
+    final String party = createParty();
+    seedPurchase(p, party, 10, 100);
+
+    check('入库后成本余值 = 1000', query.costByProduct()[p] == 1000,
+        '${query.costByProduct()[p]}');
+
+    // ⚠️ totalAmount 必须等于明细和（12 × 100）：B5 不变量，不符会被拒
+    final Document sale = mkDoc(
+      type: DocType.sale,
+      partyId: party,
+      totalAmount: 1200,
+    );
+    engine.dispatch(document: sale, lines: oneLine(sale.id, p, 12, 100), now: now());
+
+    check('超卖 12 件 → 余值 -200（UI 必须红色，§AA AA-4）',
+        query.costByProduct()[p] == -200, '${query.costByProduct()[p]}');
+    db.close();
+  }
+
+  // ============================================================ 往来流水视图
+  section('往来流水视图（§AA 六 / AA-6：JOIN documents 人可读版）');
+  {
+    freshDb();
+    final String p = createProduct();
+    final String customer = createParty();
+    final Document sale = mkDoc(
+      type: DocType.sale,
+      partyId: customer,
+      totalAmount: 2000,
+    );
+    engine.dispatch(document: sale, lines: oneLine(sale.id, p, 2, 1000), now: now());
+
+    final List<PartyFlowEntry> flow = PartyLedgerDao(db).ofParty(customer);
+    // ⚠️ dispatch 会把占位单号换成正式单号 —— 断言「非待同步前缀」才有意义
+    check('带回 doc_no（用户认单号不认 UUID）',
+        flow.length == 1 &&
+            !flow.single.docNo.startsWith(Document.pendingDocNoPrefix));
+    check('带回 doc_type（区分采购/收款）',
+        flow.single.docType == DocType.sale);
+    check('金额口径不变：正 = 对方欠我增加', flow.single.amount == 2000);
+    check('seqNo 保留（裸流水时代调用兼容）', flow.single.seqNo > 0);
+
+    // 散客单（party_id null）不进流水
+    final Document cashSale = mkDoc(type: DocType.sale, totalAmount: 300);
+    engine.dispatch(
+      document: cashSale,
+      lines: oneLine(cashSale.id, p, 1, 300),
+      now: now(),
+    );
+    check('散客单不产生往来流水', PartyLedgerDao(db).ofParty(customer).length == 1);
+    db.close();
+  }
+
   stdout.writeln('\n${'=' * 46}');
   if (_failures.isEmpty) {
     stdout.writeln('全部通过：$_passed 项');

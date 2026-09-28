@@ -37,6 +37,17 @@ class QueryDao {
     'FROM ${Schema.stockLedger} GROUP BY product_id',
   );
 
+  /// 每个商品的**库存成本余值**（历史加权平均口径，R-9）。
+  ///
+  /// ⚠️ 语义：这是「按历史加权平均成本算的剩余存货价值」，
+  /// **不是「最近一次进价 × 数量」** —— 进价变过时两者不同，
+  /// UI 必须标明口径（§AA 四 / AA-4）。超卖时余值为**负**（R-9）。
+  /// 与 [stockByProduct] 同形状：只含有流水的商品，消费端 `?? 0`。
+  Map<String, int> costByProduct() => _keyedSum(
+    'SELECT product_id AS k, COALESCE(SUM(total_cost), 0) AS v '
+    'FROM ${Schema.stockLedger} GROUP BY product_id',
+  );
+
   /// **在途数量**：送货单里 `status = in_transit` 的未签收数量
   /// （`docs/rules.md` RULE-003 的在途视图）。
   Map<String, int> inTransitByProduct() => _keyedSum(
@@ -75,6 +86,31 @@ class QueryDao {
     'SELECT party_id AS k, COALESCE(SUM(amount), 0) AS v '
     'FROM ${Schema.partyLedger} GROUP BY party_id',
   );
+
+  /// 是否存在**任何**库存流水（§AD 遗漏 2）。
+  ///
+  /// 库存页据此区分入口文案：`false` = 首次 →「录入现有货物」；
+  /// `true` = 再次 →「重新清点」。一次 EXISTS 查询，O(1) 级别。
+  bool hasAnyStockLedger() => _raw
+      .select('SELECT 1 FROM ${Schema.stockLedger} LIMIT 1')
+      .isNotEmpty;
+
+  /// 发生过**正数量入库**（数量 > 0 的流水）的商品集合（§AD 遗漏 1）。
+  ///
+  /// 库存页成本列的三态判断：
+  /// - 商品不在集合里 → **从未入库** →「未进货」
+  /// - 在集合里且 [costByProduct] 余值为 0 → 期初录入过、成本未校准 →「待校准」
+  /// - 在集合里且余值 ≠ 0 → 正常显示金额
+  ///
+  /// 「数量 > 0」涵盖采购入库与盘盈（RULE-009 的 diff > 0）——
+  /// 两者都意味着「这个商品真实进过货」，成本口径有意义。
+  Set<String> inboundProductIds() => <String>{
+    for (final Row row in _raw.select(
+      'SELECT DISTINCT product_id AS k '
+      'FROM ${Schema.stockLedger} WHERE quantity > 0',
+    ))
+      row['k']! as String,
+  };
 
   Map<String, int> _keyedSum(String sql) => <String, int>{
     for (final Row row in _raw.select(sql)) row['k']! as String: row['v']! as int,

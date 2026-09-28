@@ -34,6 +34,8 @@ import '../test/sale_draft_test.dart' as sale_draft_test;
 // ignore: unused_import
 import '../test/schema_test.dart' as schema_test;
 // ignore: unused_import
+import '../test/stocktake_service_test.dart' as stocktake_service_test;
+// ignore: unused_import
 import '../test/sync_client_test.dart' as sync_client_test;
 // ignore: unused_import
 import '../test/util_test.dart' as util_test;
@@ -64,6 +66,8 @@ import 'selfcheck_rules.dart' as selfcheck_rules;
 // ignore: unused_import
 import 'selfcheck_sale.dart' as selfcheck_sale;
 // ignore: unused_import
+import 'selfcheck_stocktake.dart' as selfcheck_stocktake;
+// ignore: unused_import
 import 'selfcheck_sync_client.dart' as selfcheck_sync_client;
 
 void main() {
@@ -82,6 +86,7 @@ void main() {
     rule_engine_test.main,
     sale_draft_test.main,
     schema_test.main,
+    stocktake_service_test.main,
     sync_client_test.main,
     util_test.main,
     // tool/
@@ -96,10 +101,11 @@ void main() {
     selfcheck_returns.main,
     selfcheck_rules.main,
     selfcheck_sale.main,
+    selfcheck_stocktake.main,
     selfcheck_sync_client.main,
   ];
   print(
-    '编译通过：14 个测试文件 + 12 个自检脚本已通过类型检查（未执行）。'
+    '编译通过：15 个测试文件 + 13 个自检脚本已通过类型检查（未执行）。'
     '（共 ${entries.length} 个入口）',
   );
 }

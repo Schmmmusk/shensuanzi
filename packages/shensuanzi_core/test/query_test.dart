@@ -161,6 +161,25 @@ void main() {
 
       expect(query.stockByProduct()[p], -3);
     });
+
+    test('costByProduct = SUM(total_cost)：正常为正、超卖转负（R-9）', () {
+      final String p = createProduct();
+      final String party = createParty();
+      seedPurchase(p, party, 10, 100); // 成本余值 1000
+
+      expect(query.costByProduct()[p], 1000);
+
+      // ⚠️ totalAmount 必须等于明细和（12 × 100）：B5 不变量，不符会被拒
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 1200,
+      );
+      run(sale, oneLine(sale.id, p, 12, 100)); // 卖 12 件 > 库存 10 → 超卖
+
+      // 12 × 100 出库成本 > 1000 入库 → 余值 -200（UI 必须红色，§AA AA-4）
+      expect(query.costByProduct()[p], -200);
+    });
   });
 
   // ============================================================ 余额
@@ -224,6 +243,58 @@ void main() {
       final Map<String, int> balances = query.partyBalances();
       expect(balances[supplier], -1000, reason: '应付为负');
       expect(balances[customer], 2000, reason: '应收为正');
+    });
+  });
+
+  group('往来流水视图（§AA 六 / AA-6：JOIN documents 人可读版）', () {
+    test('带回 doc_no / doc_type；金额口径不变；按 seq_no 排序', () {
+      final String p = createProduct();
+      final String customer = createParty();
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: customer,
+        totalAmount: 2000,
+      );
+      run(sale, oneLine(sale.id, p, 2, 1000)); // 客户欠我 2000
+
+      final List<PartyFlowEntry> flow = PartyLedgerDao(db).ofParty(customer);
+
+      expect(flow, hasLength(1));
+      final PartyFlowEntry entry = flow.single;
+      // ⚠️ dispatch 会把占位单号换成正式单号 —— 断言「非待同步前缀」
+      expect(entry.docNo.startsWith(Document.pendingDocNoPrefix), isFalse,
+          reason: '用户认的是正式单号不是 UUID');
+      expect(entry.docType, DocType.sale, reason: '要能区分采购/收款');
+      expect(entry.amount, 2000, reason: '正 = 对方欠我增加（口径不变）');
+      expect(entry.documentId, sale.id);
+      // 裸流水时代的 .length / .single.seqNo 调用保持兼容
+      expect(entry.seqNo, greaterThan(0));
+    });
+
+    test('多笔按 seq_no 排序；散客单（party_id null）不出现', () {
+      final String p = createProduct();
+      final String supplier = createParty();
+      seedPurchase(p, supplier, 5, 100); // 第一笔
+
+      final Document purchase2 = doc(
+        type: DocType.purchase,
+        partyId: supplier,
+        totalAmount: 500,
+      );
+      run(purchase2, oneLine(purchase2.id, p, 5, 100)); // 第二笔
+
+      final List<PartyFlowEntry> flow = PartyLedgerDao(db).ofParty(supplier);
+      expect(flow, hasLength(2));
+      expect(flow[0].seqNo, lessThan(flow[1].seqNo));
+      for (final PartyFlowEntry entry in flow) {
+        expect(entry.docType, DocType.purchase);
+      }
+
+      // 散客销售（无 party）不产生流水，也不影响本列表
+      final int before = flow.length;
+      final Document sale = doc(type: DocType.sale, totalAmount: 300);
+      run(sale, oneLine(sale.id, p, 1, 300));
+      expect(PartyLedgerDao(db).ofParty(supplier), hasLength(before));
     });
   });
 

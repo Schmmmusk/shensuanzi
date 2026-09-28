@@ -13,6 +13,7 @@ class OverviewPage extends StatelessWidget {
     required this.backupDirectory,
     required this.schemaVersion,
     required this.databaseReady,
+    this.shopName,
   });
 
   /// 数据目录（用户选的，数据库就放在这里）
@@ -26,6 +27,9 @@ class OverviewPage extends StatelessWidget {
   /// 数据库是否已成功打开
   final bool databaseReady;
 
+  /// 店名（设置页采集；空则显示「概览」，SC-2）
+  final String? shopName;
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -33,6 +37,16 @@ class OverviewPage extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: <Widget>[
+          if (shopName != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                shopName!,
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
         Card(
           margin: EdgeInsets.zero,
           child: Padding(

@@ -48,9 +48,14 @@ export 'src/models/sync_queue_entry.dart' show SyncQueueEntry, SyncQueueStatus;
 
 // DAO
 export 'src/dao/account_dao.dart' show AccountDao;
-export 'src/dao/document_dao.dart' show DocumentDao;
+export 'src/dao/document_dao.dart' show DocumentDao, DocumentSummary;
 export 'src/dao/ledger_dao.dart'
-    show MoneyLedgerDao, PartyLedgerDao, StockCostSnapshot, StockLedgerDao;
+    show
+        MoneyLedgerDao,
+        PartyFlowEntry,
+        PartyLedgerDao,
+        StockCostSnapshot,
+        StockLedgerDao;
 export 'src/dao/party_dao.dart' show PartyDao;
 export 'src/dao/product_dao.dart' show ProductDao;
 export 'src/dao/query_dao.dart' show QueryDao;
@@ -96,6 +101,10 @@ export 'src/documents/sale_draft.dart'
         SalePaymentField;
 export 'src/documents/sale_service.dart'
     show SaleDraftInvalid, SaleSaved, SaleService;
+export 'src/documents/stocktake_draft.dart'
+    show StocktakeDraft, StocktakeLineDraft, StocktakeValidation;
+export 'src/documents/stocktake_service.dart'
+    show StocktakeDraftInvalid, StocktakeResult, StocktakeService;
 
 // 同步（协议层：DTO + 白名单。**服务端实现在 `shensuanzi_host`**）
 export 'src/sync/sync_operation.dart'

@@ -17,7 +17,7 @@
 >
 > **过程记录**：§F 方案 C │ §G R-11 │ §H R-3 │ §I RULE-006 + SyncServer │ §J 包拆分 + host 传输层 │
 > §K 首轮修复 │ §L R-13 │ §N R-14 │ §O 数据目录策略 │ §P 数据目录对话框 │ §Q lint 清零 + 左侧导航 │
-> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑 │ §U 界面字体 │ §V 窗口标题 + 注入 pickDirectory │ §X 采购入库设计提案（待裁定） │ §Y 采购入库 Flutter 层 │ §Z 账户建档 + 店内销售设计提案（待裁定） │
+> §R 商品建档 │ §S R-15 │ §T 首次真机启动 + 三个坑 │ §U 界面字体 │ §V 窗口标题 + 注入 pickDirectory │ §X 采购入库设计提案（待裁定） │ §Y 采购入库 Flutter 层 │ §Z 账户建档 + 店内销售设计提案（待裁定） │ §AA 库存查询 + 往来方页设计提案（待裁定） │ §AB 录入现有货物（期初建账）设计提案（待裁定） │ §AC v1 界面收尾：帮助/设置/期初录入/单据列表（待裁定） │
 > §W 启动流程可测化：注入 configStore
 
 ## 0. 结论速览
@@ -1975,3 +1975,375 @@ widget 6 + startup 5 + purchase 6 + account 4 + sale 7）与 `dart test`（accou
 **同一段文字会在屏幕上出现两次** —— 这条在采购页（兜底页按钮 vs 对话框标题）、
 销售页（无）之后第三次出现，值得作为默认反射：**凡是「点某行 / 某元素」的测试，
 能用 Key 就不用文字**。
+
+### 十二、全过收官（2026-09-27 晚）
+
+`flutter analyze` **0 issues**；`flutter test` **28/28**（widget 6 + startup 5 +
+purchase 6 + account 4 + sale 7）；core `dart test` **270 用例**、
+12 个自检 **568 项**、`typecheck` **26 入口**。
+
+**核心闭环现状**：商品建档 → 采购入库（立付/赊购/散采）→ **账户建档 → 店内销售
+（立收/赊销/散客/负库存告警）** 全部可走真机。单据/库存/往来方查询、送货、
+退货、付款核销仍待后续阶段（v1 范围声明见 §Z 七）。
+
+**本轮 finder 歧义第三次出现**（兜底按钮/对话框标题 → 账户名/下拉选中项），
+已固化为反射：点某行的测试一律用 Key。
+
+---
+
+## AA. 设计提案：库存查询页 + 往来方页（2026-09-28，**待裁定**）
+
+> 裁定答复请写在 `docs/reply.md`。落地后另开 §AB。
+
+### 一、事实核对与范围建议
+
+| 候选 | core 现状 | 建议 |
+|---|---|---|
+| **库存查询**（RULE-006） | ✅ `stockByProduct` / `inTransitByProduct` / `availableInStore` / `costSnapshotOf` 全就绪 | **本阶段做** |
+| **往来方页** | ✅ `partyBalances` / `PartyDao.findAll(role:, active:)` / **`PartyLedgerDao.ofParty`（流水）** 全就绪 | **本阶段做** |
+| 单据列表页 | ⛔ `DocumentDao` **没有任何列表查询方法**（只有 insert/findById），要新设计分页/过滤 | **随付款核销阶段** —— 它是退货/核销的操作前置，值得独立成阶段 |
+
+理由：采购/销售跑通后用户最想问的是「还剩多少货、谁欠我多少」—— 两个查询页
+**零新规则**（RULE-006 纯聚合读），半天量级；单据列表是新查询设计 + 操作枢纽，
+混进来会把查询页拖成大阶段。
+
+### 二、库存查询页（RULE-006）
+
+| 列 | 口径 |
+|---|---|
+| 商品 | 名称 + 编码（启用中的） |
+| **在店可售**（主列） | 账面 − 在途（`availableInStore`，低库存告警按它算） |
+| 账面库存 | `stockByProduct` |
+| 在途 | `inTransitByProduct`（送货单未签收） |
+| 库存成本（待裁定 AA-4） | `SUM(total_cost)` 加权余值 —— 「压了多少钱的货」 |
+
+搜索：名称 / 编码 / 条码（复用 `ProductService.list(query:)`）。无流水的商品
+按 0 显示（没进过货 ≠ 不存在）。
+
+### 三、往来方页
+
+| 列 | 内容 |
+|---|---|
+| 名称 + 角色 | 供应商 / 客户（可双角色，两个标签） |
+| 余额 | **正 = 应收（对方欠我）**，负 = 应付；0 沉底 |
+
+点击某往来方 → **流水页**（`PartyLedgerDao.ofParty` 已有，每笔：单号 / 方向 /
+金额 / 日期）—— 对账的最基本形态，零新查询。
+
+### 四、待裁定项
+
+| # | 问题 | 我的建议 |
+|---|---|---|
+| AA-1 | 范围 | 库存 + 往来两页本阶段做；单据列表随付款核销阶段 |
+| AA-2 | 库存主列 | **在店可售**为主列（低库存告警按它）—— 用户关心「现在还能卖多少」 |
+| AA-3 | 低库存告警 | `safety_stock > 0` 且在店可售 ≤ 安全库存 ⇒ 行内**橙色**提示「低于安全库存 N」，不拦人（与 Z-2 同哲学） |
+| AA-4 | 库存成本列 | **显示**（core 需补一个批量 `costByProduct()`，避免 N+1）—— 用户关心压货金额；若嫌列多可 v1.1 |
+| AA-5 | 往来排序 | 按 \|余额\| 降序，0 沉底 —— 最该看的在前 |
+| AA-6 | 往来流水 | **v1 做**（`ofParty` 现成，页面成本低；没有流水的往来列表 = 只能看总数，对不了账） |
+
+### 五、门禁（拟）
+
+core：若 AA-4 采纳，`costByProduct()` + `query_test` / `selfcheck_query` 镜像各一条；
+Flutter：`stock_page_test` + `parties_page_test`（沿用 Key 定位 / 沙箱库经验）；
+`flutter analyze` 0 issues。
+
+### 二、落地记录（2026-09-28）
+
+**裁定**（`docs/reply.md`）：AA-1/2/5 采纳；**AA-3 改三档颜色**（负库存红 / 低库存橙 /
+正常无色 —— 负库存是「账对不上」比「该补货」严重；`safety_stock = 0` 不告警）；
+**AA-4 列名改「成本（均价）」+ tooltip 口径说明 + 负值红色**（R-9 超卖会让余值转负）；
+**AA-6 `ofParty` JOIN documents**（返回 `PartyFlowEntry`：docNo/docType/amount/occurredAt/
+seqNo —— 裸流水时代的 `.length` / `.single.seqNo` 调用**全部兼容**，无需改旧测试）；
+7 项遗漏全部处置（🔴 新建/编辑/停用入口、应收应付三态表达；🟡 汇总行、库存排序、
+零流水隐藏+开关、流水行不可点+底部说明；🟢 盘点入口 v1 不放记录在案）。
+
+**core 落地**：
+
+| 项 | 内容 |
+|---|---|
+| `QueryDao.costByProduct()` | `SUM(total_cost)` 批量（`_keyedSum` 同形状）；加权均价口径注释 |
+| `PartyLedgerDao.ofParty` 改造 | JOIN documents → `List<PartyFlowEntry>`；不设平行方法 |
+| `PartyService.createFull` | 往来方页完整新建（双角色）—— 内部逐 role 走 `ensureParty`，**Z-4 同名保证自动继承**；`ensureParty` 增加 `address`（只在新建写） |
+| `PartyService.updateProfile / setActive / flowsOf` | 页面侧编辑资料（不改角色）/ 停用恢复 / 流水查询 |
+
+**Flutter 落地**：`stock_page.dart`（三档 + 主列层级 + 成本 tooltip + 按在店可售
+降序 + 零流水隐藏开关 + 搜索）+ `parties_page.dart`（三态余额表达 + 汇总行 +
+新建/编辑/停用 + 排序 0 沉底）+ `party_flow_page.dart`（单号/类型/方向字/日期 +
+行不可点 + 底部「功能开发中」说明）+ 接线（`AppShell.queries`）。
+
+**门禁**：`typecheck` 26 入口；`selfcheck_query` **26 项**（+6）、`selfcheck_party`
+**9 项**（+2）全绿；语法门禁全过。⚠️ 会话管道耗尽 —— `flutter analyze` /
+`flutter test`（预期 0 / **35 用例** = 28 + stock 4 + parties 4 + flow 并入）
+**待用户复跑**。
+
+**自检期抓出并修正的两处测试错误**：① 超卖测试的 `totalAmount` 与明细和不符
+被 B5 拒绝回滚（成本余值纹丝不动）；② 流水单号断言拿内存对象的占位前缀比
+—— dispatch 会换成正式单号，应断言「非待同步前缀」。另外 **selfcheck_party
+第三次踩跨用例污染**（前面用例建过「王老板」，createFull 复用它 → phone/address
+断言失败）—— 独立内存库纪律再次生效。
+
+### 三、复跑 7 issues 修复（2026-09-28）
+
+| # | 问题 | 修法 |
+|---|---|---|
+| 1 | `app.dart` `QueryDao(db)` —— State 字段是 `_db` | 改 `QueryDao(_db!)`（`AppShell` 分支保证非 null） |
+| 2 | `PartyService` **没有 `list()` / `partyBalances()`** —— 页面要用的查询我假定了存在 | core 补两个委托方法（findAll / QueryDao.partyBalances） |
+| 3 | `parties_page` 用了 `PartyFlowPage` 却没 import | 补 |
+| 4 | `app_shell` 的 `party_flow_page` import 未用（流水页由 parties_page 自己 push） | 删 |
+| 5/6 | 两个测试文件残留（未用变量 / 已删声明的赋值） | 清理 |
+
+**共同点**：写页面时**假定了 core 的查询形状**（`service.list()` / `partyBalances()`）
+却没先 grep 确认 —— 与采购页 14 issues 的「构造少参数」同类。自查清单再加一条：
+**页面用到 `service.xxx()` 的每个方法，先在 core 里确认存在**。
+
+### 四、复跑 2 红修复（2026-09-28）：stock_page_test 两处测试错误
+
+| # | 问题 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 三档颜色用例：`sell(6)` 后找不到「低于安全库存 5」 | **页面只在 build 时读库** —— 测试里改了数据却只 `pump()`，页面还是旧数据 | sell 后重新 `pumpWidget(page())` 重挂载（查询页进页面刷新即重读，语义正确） |
+| 2 | 零流水用例：`buy(3)` 抛「散采要当场结清」 | 付款金额 `qty * 350 ~/ 100` —— **整数除法截断**：1050 ~/ 100 = 10 元 ≠ 10.50 元，差 5 角被拒（qty=10 时恰好整除没暴露） | 金额用 `Money.format(qty * 350)` 生成精确值 |
+
+**教训（testing.md §O 补）**：测试夹具里的金额一律用 `Money.format(分)`
+生成，**不要手写整数除法** —— 截断会在非整除值上静默差钱。
+
+### 五、复跑 1 红修复（2026-09-28）：开关用 CheckboxListTile
+
+「显示全部」开关原来是 `Row(Checkbox + Text)` —— **点文字不会切换 Checkbox**
+（两者无关联），测试和真实用户都会点文字。修法：换 **`CheckboxListTile`**
+（整行可点），隐藏计数放 `trailing`。
+
+这条同时是**可用性修正**：中老年用户看到「显示全部（…）」的文字，自然反应是
+点文字 —— 点不动会当成 bug。规则：**凡是「勾选框 + 说明文字」，一律
+CheckboxListTile，不摆裸 Checkbox**。
+
+### 六、复跑编译错修复（2026-09-28）：CheckboxListTile 没有 trailing
+
+`CheckboxListTile` **没有 `trailing` 参数**（那是 `ListTile` 的；它的尾部被
+checkbox 本身占用，由 `controlAffinity` 控制位置）—— 张冠李戴。修法：计数放
+**`subtitle`**。
+
+**与「service.xxx() 先 grep」同类**：widget 的参数也别凭记忆写 —— Flutter
+组件多、同名组件参数集不同（`ListTile` vs `CheckboxListTile` vs
+`SwitchListTile`），**用之前查一眼 API**。
+
+---
+
+## AB. 设计提案：录入现有货物（期初建账）（2026-09-28，**待裁定**）
+
+> 用户反馈：开店的用户最需要把**店里已有的货**高效记进来（§AA 真机反馈）。
+> 裁定答复请写在 `docs/reply.md`。落地后另开 §AC。
+
+### 一、事实核对：语义上是**一次期初盘点**，RULE-009 已实现
+
+| 能力 | 现状 |
+|---|---|
+| `_stocktake`（RULE-009） | ✅ `lines.quantity` = **实际数量**；diff 生成流水；盘盈成本走 `surplusCost` |
+| 成本口径（`surplusCost`） | 有历史 → 加权均价；**无历史（新店首录）→ 成本 0** |
+| 与采购的区别 | 期初录入没有真实交易：没有供应商、没有付款 —— **走采购单语义不对**（凭空造一笔「欠供应商」或「付款」） |
+| `dispatch` 签名 | `stocktakeActual: Map<String, int>`（实际数量表），直接可用 |
+
+**结论**：期初录入 = 「把实际有多少告诉系统」= 一次盘点单。**零新规则**。
+
+### 二、UI 设计（入口在库存页）
+
+库存页右上角（或列表空态）加 **「录入现有货物」** 按钮 → 期初录入页：
+
+| 元素 | 内容 |
+|---|---|
+| 说明文案 | 「开店时店里已经有的货，在这里一次记入。以后按采购/销售正常记，不用再管这一页。」 |
+| 行结构 | 与采购开单同构：**选商品（搜索/新建）+ 数量**；可加多行 |
+| 提交 | 一张盘点单（多行合一）；提交后跳回库存页，数字立刻可见 |
+| 撤销 | RULE-009 约束「盘点提交后不可撤销」—— **UI 上要明说**：提交前确认弹窗（重大操作，§1.2），说清「数量记入后不可撤销，发现错了再盘一次」 |
+
+### 三、待裁定项
+
+| # | 问题 | 我的建议 |
+|---|---|---|
+| AB-1 | 走盘点单（复用 RULE-009 零新规则）还是新规则「期初单」 | **盘点单**。语义完全匹配；新规则要动引擎 + 同步白名单，成本高收益低 |
+| AB-2 | 成本 | **v1 按 0 记**（无历史时 `surplusCost` 就是 0），录入页**明说**「期初成本按 0 记，库存金额会偏低；下次采购时进价会校准成本」。用户真在意期初成本 ⇒ 待裁定扩 RULE-009（改 core 规则，不建议 v1 做） |
+| AB-3 | 重复录入 | 用户忘了已经录过又录一遍 ⇒ 数量是**实际数量语义**（不是累加），第二遍会把库存改回去 —— 录入页顶部提示「这里填的是**实际有多少**，不是新进了多少」，并在已有库存的商品行内显示当前账面数 |
+| AB-4 | 多行数量上限 | 不设（一页滚动到底）；商品多的店分几次录也行（盘点本来就可以多次） |
+
+### 四、门禁（拟）
+
+core 零改动（纯 UI + `stocktakeActual` 组装）；Flutter `opening_stock_page_test`
+（沿用沙箱库 + Key 定位经验：录入两件 → 库存页数字正确 / 已有库存商品显示账面数 /
+提交确认弹窗）；`flutter analyze` 0 issues。
+
+---
+
+## AC. 设计提案：v1 界面收尾 —— 帮助 / 设置 / 期初录入 / 单据列表（2026-09-28，**待裁定**）
+
+> 用户：「单据、设置和帮助界面没做了，继续前进」。本提案把剩余三页 + §AB 期初录入
+> 合并为**v1 界面收尾阶段**。裁定答复请写在 `docs/reply.md`。落地后另开 §AD。
+
+### 一、事实核对
+
+| 页 | core/包现状 |
+|---|---|
+| 帮助 | 纯静态，零依赖 |
+| 设置 | ✅ `AppConfig{dataDirectory, uiScale, shopName}` + `UiScale` 五档 + `AppConfigStore` 全就绪；⚠️ **`uiScale` / `shopName` 目前零消费**（存了没用）；导航宽度 API `AppNavigation.widthFor(scale:)` 已有 |
+| 期初录入 | §AB 已提案（RULE-009 盘点复用，零新规则），**尚未裁定** |
+| 单据列表 | ⛔ `DocumentDao` 无列表查询（§AA 已核对）；对方名需要 join parties；**付款核销/退货入口不在本阶段**（§Z 七声明随核销阶段） |
+
+### 二、建议落地顺序（按大小递增）
+
+| # | 内容 | 量级 |
+|---|---|---|
+| 1 | **帮助页**：四步上手（建商品 → 采购 → 销售 → 看库存/往来）+ 常见问题（数据在哪 / 忘了密码不存在 / 换电脑）+ 「找谁反馈」占位。纯静态 | 小 |
+| 2 | **设置页**：界面缩放五档（`UiScale`）+ 店名（可选）+ 数据位置只读展示 | 中 |
+| 3 | **期初录入页**（§AB，按裁定） | 中 |
+| 4 | **单据列表页**（只读）：类型筛选 + 日期倒序 + 单号/类型/对方/金额/状态 | 大 |
+
+### 三、待裁定项
+
+| # | 问题 | 我的建议 |
+|---|---|---|
+| SC-1 | **缩放作用范围** | **全局文字缩放**（`TextScaler`，中老年用户的本命功能）+ 导航宽度联动（`widthFor(scale:)` 现成）。只缩导航没有意义 |
+| SC-2 | 店名用途 | **概览页顶部显示**（「王记小卖部」替代「概览」标题）；不填则维持现状。字段已有，采集零成本 |
+| SC-3 | 单据列表排序/筛选/分页 | 日期降序；类型 chips（全部/采购/销售/收款/付款）；`limit 200` **不做分页**（个体户单据量级，v1 够用） |
+| SC-4 | 单据行点击 | **不可点** + 底部灰字「单据详情开发中」（同流水页模式）；详情/退货/核销随下一阶段 |
+| SC-5 | 期初录入（§AB）是否并入本阶段 | **并入**（用户点名），顺序在单据列表之前 |
+| SC-6 | 对方名列 | 单据列表显示对方名需要 join parties —— **显示**（`ofParty` 经验：JOIN 一次拿全，不逐条查） |
+
+### 四、门禁（拟）
+
+core：`DocumentDao.listDocuments({DocType? type, int limit})`（JOIN parties 取对方名）
++ `document/query` 测试与 selfcheck 镜像；设置页的缩放/店名接线用 `configStore`
+沙箱测试。Flutter：各页 widget 测试 + `flutter analyze` 0 issues。交付前我侧自验
+（管道恢复时）。
+
+### 三、落地记录（2026-09-28）：帮助 / 设置 / 单据列表三页
+
+§AB + §AC 裁定全部采纳（AB-2 三层处理、AB-3 实时差额、AB-4 分批说明、5 项
+§AB 遗漏、SC-1~6 含修正、6 项 §AC 遗漏）。**本批落地三页**（期初录入随下一批，
+§AB 已裁定齐）：
+
+| 页 | 裁定落点 |
+|---|---|
+| `help_page.dart` | 四步上手（**期初录入选第一步** + emoji 锚点，遗漏 4）；FAQ 含「期初成本为什么 0」（AB-2 第三层）；反馈入口给**真实地址**（GitHub issues + 邮箱，遗漏 3）；版本号底部（遗漏 6） |
+| `settings_page.dart` | 缩放五档改档**立即生效**（全局 `TextScaler` + 导航宽度联动，SC-1）+ **「恢复默认大小」一键重置**（遗漏 2）；店名 ≤ 20 字（SC-2）；**数据安全区**（遗漏 1）：位置/备份目录 + 「打开文件夹」—— ⚠️「立即备份」按钮 v1 不放（备份执行机制未实现，空按钮比不做糟） |
+| `documents_page.dart` | 时间 chips（默认**最近 30 天**，SC-3 修正）+ 类型 chips + 对方名（JOIN，散客/散采显示文字，SC-6）+ **行点击复制单号**（SC-4 修正）+ 「全部」档 200 条提示 |
+| `app.dart` / `app_shell.dart` | `uiScale` → 全局 `TextScaler` + 导航 `widthFor(scale:)`；`shopName` → 概览页顶部大字；`configStore` / `onConfigChanged` 接线（改配置热应用）；`DocumentDao(_db!)` |
+
+**core**：`DocumentDao.listDocuments({type, sinceMillis, limit})` JOIN parties
+（`DocumentSummary{document, partyName}`，散客 null → UI 文字）。
+
+**门禁**：语法全过；`typecheck` 26 入口。⚠️ 管道耗尽 —— **analyze / test 待用户
+复跑**（新增 help 4 + settings 4 + documents 5 = 13 条用例）。
+
+**自查期修掉的一个隐患**：SettingsPage 连续修改互相覆盖（每次基于打开时快照）
+→ 内部持 `_current` 副本，改哪项都基于最新值。
+
+### 五、复跑返工记录（2026-09-28）：§AC 三页测试收尾
+
+三轮返工，49/49 全过（analyze 0 issues）。根因分三类，均有沉淀：
+
+**编译层（第一轮）**：
+- core 桶文件 `show DocumentDao` 漏了新类型 `DocumentSummary` —— **新增 DAO
+  返回类型必须同步加进桶文件清单**
+- `documents:` 参数被误插进 Purchase/SaleService 构造内部（缩进错位暴露）
+- OverviewPage 加了 `shopName` 字段但构造函数漏参数
+
+**测试与页面语义错位（第二、三轮）**：
+- 行内对方名是插值串（`王老板 · 日期`）→ `find.text` 精确匹配必 0 命中，
+  一律 `textContaining`
+- chip 文案写错：`DocType.sale.label` = 「店内销售」不是「销售开单」——
+  **枚举 label 必须从模型定义抄**；且行内也渲染同文案 → tap 一律
+  `find.ancestor(of: text, matching: ChoiceChip)` 定位
+- `await Clipboard.setData` 在 widget 测试里 Future 永不完成 → SnackBar 永远
+  出不来 → 改 `unawaited`（平台通道 await 挂死类，第 3 次踩）
+- `maxLength: 20` 让店名超长提示成死代码（输入阶段就截断）→ 删，放手输 +
+  提示不落盘（SC-2 原意）
+- 数据安全区按裁定补全为「位置 / 备份目录」两行（`SettingsPage` 加
+  `backupDirectory`，AppShell 从 `DataLocation` 传入）
+- 帮助页测试断言旧邮箱 —— 用户已改联系方式（163 邮箱 + xgopilot 仓库）未同步
+  → 测试断言跟进
+- 「王老板 found 2」**不是 bug**：立即付款自动生成独立收/付款单（继承主单
+  对方与日期，创建即 settled），单据页如实列出 → 断言 `findsWidgets`；
+  夹具日期错开消除排序赌局
+
+---
+
+## AD. 设计提案：期初录入页落地（2026-09-28，**待裁定**）
+
+> §AB 已裁定齐（走盘点单 / 成本按 0 / 实际数量语义 / 不设行数上限）。
+> 本提案只做**落地形态**的事实核对与拆解。裁定答复请写在 `docs/reply.md`。
+
+### 一、事实核对（本轮补充）
+
+| 事项 | 现状 |
+|---|---|
+| RULE-009 引擎入口 | `dispatch(document, lines, stocktakeActual?, now)`；`totalAmount` 必须 0；`quantity` = 实际数量；diff=0 不产生流水；**不写** PartyLedger / MoneyLedger |
+| 单号 | 页面传占位号，引擎 `_prepare` 换正式单号（`PD` 前缀）——与采购/销售同构 |
+| 错误形态 | 规则拒绝走 `RuleOutcome.rejected`（整单回滚），UI 走「意外失败」兜底——采购页同款 |
+| 商品选择器 | 采购页、销售页**各有一份私有** `_ProductPickerSheet`（未抽共享）——期初页要么复制第三份，要么先抽共享 |
+| 库存页空态 | 现文案「先到采购入库进一批货」与帮助页「期初录入选第一步」**矛盾**，本批顺手改 |
+| 当前账面数 | `QueryDao.stockByProduct()` 现成（库存页在用），AB-3 行内显示账面数零成本 |
+
+### 二、落地拆解
+
+| 部分 | 内容 |
+|---|---|
+| core（视 AD-1） | `StocktakeDraft`（行 = 商品 + 数量原文；`validate()`：至少一行 / 数量正整数 / 同商品不重复）+ `StocktakeService.create()`（组装盘点单 → dispatch → 按 id 读回，镜像 PurchaseService 形态）——**规则零改动**，只是把「组装 + 校验」从 Flutter 挪进纯 Dart |
+| `opening_stock_page.dart` | 顶部说明文案（AB-2：「期初成本按 0 记……下次采购时进价会校准」+ AB-3：「这里填的是**实际有多少**，不是新进了多少」）；行 = 选商品 + 数量 + **当前账面数灰字**；提交前确认弹窗（不可撤销，§1.2 重大操作）；成功后 SnackBar（单号）+ 返回库存页 |
+| 库存页接线 | 标题行加「录入现有货物」按钮（`stockPage` 需要拿到 engine——经 `AppShell`/`app.dart` 传入）；空态文案改为引导期初录入 |
+| 测试 | core：`stocktake_service_test` + selfcheck 镜像（两套并行纪律）；Flutter：`opening_stock_page_test`（录两件 → 库存页数字正确 / 账面数显示 / 确认弹窗 / 空行报错） |
+
+### 三、待裁定项
+
+| # | 问题 | 我的建议 |
+|---|---|---|
+| AD-1 | 组装+校验放哪 | **core 薄服务**（`StocktakeDraft` + `StocktakeService`）。§AB 说「core 零改动」指**规则**零改动；校验判断按铁律应放纯 Dart 可 `dart test`。代价：core 加两个文件（纯增量） |
+| AD-2 | 商品选择器第三份复制 vs 先抽共享 | **v1 复制一份**（与采购/销售现状一致，不碰已验证页面）；抽共享列后续重构阶段单独裁定。三份重复的账记在 reply_review，重构时不至于漏 |
+| AD-3 | 同商品选两行 | **校验拒绝**（「该商品已在列表」）。盘点语义下行内两笔「实际数」无法合并出正确答案，采购页允许多行是成本累加语义，这里不同 |
+| AD-4 | 单据日期 | **固定今天，不可改**。期初录入就是「现在建账」，给日期字段只会多一个能填错的地方（与设置页「改完立即生效」同款判断） |
+| AD-5 | 提交后去向 | SnackBar 报单号 → `Navigator.pop` 回库存页（数字立刻可见）；弹窗文案：**「数量记入后不可撤销。发现录错了，再来这一页重新盘一次就行。」** |
+| AD-6 | 库存页空态文案 | 改为「店里有现成的货？先点右上角『录入现有货物』；进货走『采购入库』。」——与帮助页四步对齐 |
+
+### 四、门禁（拟）
+
+core：`dart test`（`stocktake_service_test` 新增 + selfcheck 镜像同步，`typecheck` 入口表更新）；
+Flutter：`flutter analyze` 0 issues + `opening_stock_page_test`（5 条：空行报错 /
+录两件后库存页数字正确 / 已有库存商品显示账面数 / 确认弹窗取消不动账 / 确认后
+SnackBar + 返回）。交付前我侧自验，其余按老规矩用户复跑。
+
+### 六、落地记录（2026-09-28）：§AD 期初录入（core + Flutter 一批交付）
+
+裁定全采纳（AD-1~6 + 6 项遗漏 + 3 条实现建议）。**core 第一批已由用户复跑 dart test 全过**，
+本批把 Flutter 层一并落地：
+
+| 文件 | 落点 |
+|---|---|
+| `stocktake_draft.dart` / `stocktake_service.dart`（core，已过） | AD-1 薄服务 / AD-3 重复行拒绝 / AD-4 主机时钟 / `changedCount·unchangedCount` |
+| `QueryDao.hasAnyStockLedger()` / `inboundProductIds()`（core，已过） | 遗漏 1「待校准」/ 遗漏 2「首次/再次」的数据口径 |
+| `opening_stock_page.dart` **新** | 标题首次/再次（遗漏 2）；AB-2/AB-3 说明文案；行内账面数 + 实时差额（建议 1）；确认弹窗 AD-5 裁定文案（摘要 + 「记下之后不能取消」）；**遗漏 4：失败一律不清输入**；SnackBar 建议 2 两态（全无变化给诚实反馈）；取消 §X-3 同构；选择器复制第三份：**空查询 = 全部商品**（AD-2 点名的真实差异）+ 新建入口共用 `showProductFormDialog`（遗漏 3） |
+| `stock_page.dart` | 标题行入口按钮（首次「录入现有货物」/ 再次「重新清点」）；成本三态「未进货 / 待校准（灰 + tooltip）/ 金额」；空态两段式（AD-6）；就地切换到期初录入页（完成后 setState 刷新数字，左侧导航不消失） |
+| `app.dart` / `app_shell.dart` | `engine` 挂到 AppShell（null → 库存页占位，与 services 同款判定） |
+| 测试 | `opening_stock_page_test` 7 条（空表单拦截 / 差额三态 / 弹窗摘要 + 成功链路 / 诚实反馈 / 重复行 + 状态保留 / 取消确认 / 选择器全部商品）；`stock_page_test` +2 条（待校准含校准后恢复 / 入口文案切换）+ 空态新文案 |
+
+**门禁**：`dart format --output=none` 无语法错。⚠️ analyze / test 待用户复跑
+（预期 analyze 0 issues；test 49 + 7 + 2 = 58 用例）。
+
+**AD-2 重构期限（裁定原文存档）**：`_ProductPickerSheet` 已出现**第三份**
+（采购 / 销售 / 期初录入）。**第四处出现时强制抽共享；在此之前，任何一份的
+bug 修复必须同步三处。**
+
+**遗漏 6（记录在案）**：期初录入页每行一个 `TextEditingController`，500 商品
+级别会慢 —— v1 接受此限制，重构阶段换懒加载行。
+
+**帮助页四步**：核对过 —— 第一步已是「录入现有货物」，与新空态文案一致，
+无需改动（遗漏 5 关闭）。
+
+### 七、复跑返工与收官（2026-09-28）：§AD 期初录入
+
+**analyze 0 issues + test 58/58 全过**（用户复跑确认）。三轮小返工，均为测试/一行级：
+1. `isDense` 写在 `InputDecorator` 层（应为 `decoration.isDense`）—— widget 参数查 API 家族
+2. 测试夹具没点「加一行」就填第二行（页面初始行数 = 1）—— 夹具步骤与初始状态对齐
+3. **产品级**：确认弹窗前置了校验 —— `_save` 先跑 `draft.validate()`，不过就地报错，
+   弹窗只在草稿整体合法时出现（「不可能通过的内容不该先问确认」）；
+   `service.create` 内的二次校验保留（防御纵深）
+
+**v1 界面收尾全部完成**：概览 / 商品 / 采购 / 账户 / 销售 / 库存 / 往来方 / 帮助 /
+设置 / 单据 / **期初录入** —— 十一个入口全部实装，无「正在开发」占位残留
+（`_PendingPage` 仅剩「数据库未就绪」兜底用途）。

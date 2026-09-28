@@ -21,8 +21,13 @@ import 'nav_icons.dart';
 import 'overview_page.dart';
 import 'products_page.dart';
 import 'account_page.dart';
+import 'documents_page.dart';
+import 'help_page.dart';
+import 'settings_page.dart';
+import 'parties_page.dart';
 import 'purchase_page.dart';
 import 'sale_page.dart';
+import 'stock_page.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -36,6 +41,13 @@ class AppShell extends StatefulWidget {
     this.sales,
     this.accounts,
     this.parties,
+    this.queries,
+    this.documents,
+    this.engine,
+    this.uiScale = UiScale.standard,
+    this.shopName,
+    this.configStore,
+    this.onConfigChanged,
     this.initialDestinationId,
   });
 
@@ -58,6 +70,28 @@ class AppShell extends StatefulWidget {
 
   /// 往来方最小建档服务（销售页客户「新建」用）
   final PartyService? parties;
+
+  /// 聚合查询（RULE-006；库存页用）
+  final QueryDao? queries;
+
+  /// 单据 DAO（单据列表页用）
+  final DocumentDao? documents;
+
+  /// 规则引擎（库存页的期初录入「重新清点」入口用；`null` = 入口不可用，
+  /// 库存页显示占位）
+  final RuleEngine? engine;
+
+  /// 界面缩放（设置页可改；导航宽度随它缩放）
+  final UiScale uiScale;
+
+  /// 店名（概览页顶部显示；可空）
+  final String? shopName;
+
+  /// 配置读写入口（设置页用；`null` = 配置不可用，设置页显示占位）
+  final AppConfigStore? configStore;
+
+  /// 设置页修改配置后的回调（宿主热应用缩放/店名）
+  final void Function(AppConfig config)? onConfigChanged;
 
   /// 从哪个入口开始（不传 = 概览）
   final String? initialDestinationId;
@@ -88,7 +122,11 @@ class _AppShellState extends State<AppShell> {
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          _NavColumn(current: _current, onSelect: _select),
+          _NavColumn(
+            current: _current,
+            onSelect: _select,
+            scaleFactor: widget.uiScale.factor,
+          ),
           const VerticalDivider(width: 1, thickness: 1),
           Expanded(child: _content()),
         ],
@@ -102,6 +140,7 @@ class _AppShellState extends State<AppShell> {
     final Widget page;
     if (current.id == 'overview') {
       page = OverviewPage(
+        shopName: widget.shopName,
         dataDirectory: widget.dataDirectory,
         backupDirectory: widget.backupDirectory,
         schemaVersion: widget.schemaVersion,
@@ -119,6 +158,34 @@ class _AppShellState extends State<AppShell> {
               productService: widget.products!,
               partyService: widget.parties!,
             );
+    } else if (current.id == 'stock') {
+      // 库存查询是 RULE-006 的纯聚合读；期初录入入口（§AD）还要引擎
+      page = widget.engine == null || widget.products == null || widget.queries == null
+          ? _PendingPage(destination: current)
+          : StockPage(
+              engine: widget.engine!,
+              products: widget.products!,
+              queries: widget.queries!,
+            );
+    } else if (current.id == 'parties') {
+      page = widget.parties == null
+          ? _PendingPage(destination: current)
+          : PartiesPage(service: widget.parties!);
+    } else if (current.id == 'documents') {
+      page = widget.documents == null
+          ? _PendingPage(destination: current)
+          : DocumentsPage(dao: widget.documents!);
+    } else if (current.id == 'settings') {
+      page = widget.configStore == null || widget.onConfigChanged == null
+          ? _PendingPage(destination: current)
+          : SettingsPage(
+              config: widget.configStore!.load(),
+              configStore: widget.configStore!,
+              backupDirectory: widget.backupDirectory,
+              onChanged: widget.onConfigChanged!,
+            );
+    } else if (current.id == 'help') {
+      page = const HelpPage();
     } else if (current.id == 'accounts') {
       page = widget.accounts == null
           ? _PendingPage(destination: current)
@@ -152,10 +219,17 @@ class _AppShellState extends State<AppShell> {
 
 /// 左侧导航列
 class _NavColumn extends StatelessWidget {
-  const _NavColumn({required this.current, required this.onSelect});
+  const _NavColumn({
+    required this.current,
+    required this.onSelect,
+    required this.scaleFactor,
+  });
 
   final NavDestination current;
   final ValueChanged<NavDestination> onSelect;
+
+  /// 界面缩放系数（设置页的档位；导航宽度随它缩放）
+  final double scaleFactor;
 
   @override
   Widget build(BuildContext context) {
@@ -182,7 +256,7 @@ class _NavColumn extends StatelessWidget {
 
     // 滚动兜底：窗口很矮时也能看到全部入口（入口**不能藏**）
     return SizedBox(
-      width: AppNavigation.expandedWidth,
+      width: AppNavigation.widthFor(scale: scaleFactor),
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

@@ -104,12 +104,20 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 往来方最小建档服务（供应商 / 客户选择器的「新建」共用）
   PartyService? _parties;
 
+  /// 规则引擎（库存页期初录入入口用；与各服务同库）
+  RuleEngine? _engine;
+
+  /// 当前配置（设置页修改后经 [onConfigChanged] 热应用）
+  AppConfig _config = const AppConfig();
+
   /// 开库失败的原因（含「怎么办」）
   String? _dbFailure;
 
   @override
   void initState() {
     super.initState();
+    // 配置读一次（设置页修改会走 onConfigChanged 更新本状态）
+    _config = widget.configStore?.load() ?? const AppConfig();
     // 首帧之后再弹对话框：此时才有可用的 Navigator
     WidgetsBinding.instance.addPostFrameCallback((_) => _prepare());
   }
@@ -151,14 +159,15 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         _products = ProductService(db);
         _purchases = PurchaseService(
           engine: RuleEngine(db),
-          queries: QueryDao(db),
+          queries: QueryDao(_db!),
         );
         _sales = SaleService(
           engine: RuleEngine(db),
-          queries: QueryDao(db),
+          queries: QueryDao(_db!),
         );
         _accounts = AccountService(AccountDao(db));
         _parties = PartyService(PartyDao(db));
+        _engine = RuleEngine(db);
         _dbFailure = null;
       });
     } catch (error) {
@@ -170,6 +179,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         _sales = null;
         _accounts = null;
         _parties = null;
+        _engine = null;
         _dbFailure = '数据文件打不开（$error）。'
             '如果这个文件夹在 U 盘或网盘里，请换到本机磁盘上的文件夹。';
       });
@@ -202,6 +212,13 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       // 启动流程要在首帧之后弹对话框，用它的 context（见 `_navigatorKey`）
       navigatorKey: _navigatorKey,
       theme: _theme,
+      // SC-1：全局文字缩放（覆盖系统缩放；设置页五档 + 一键恢复默认）
+      builder: (BuildContext context, Widget? child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(_config.uiScale.factor)),
+        child: child!,
+      ),
       home: _buildHome(),
     );
   }
@@ -239,6 +256,16 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       sales: _sales,
       accounts: _accounts,
       parties: _parties,
+      queries: QueryDao(_db!),
+      documents: DocumentDao(_db!),
+      engine: _engine,
+      uiScale: _config.uiScale,
+      shopName: _config.shopName,
+      configStore: widget.configStore,
+      onConfigChanged: (AppConfig config) {
+        widget.configStore?.save(config);
+        setState(() => _config = config);
+      },
     );
   }
 }

@@ -58,6 +58,51 @@ class DocumentDao {
       ])
       .isNotEmpty;
 
+  /// 单据列表查询（§AC：单据页，只读）。
+  ///
+  /// - [type] 筛选单据类型；`null` = 全部
+  /// - [sinceMillis] 只返回 `occurred_at >=` 该时间的（时间范围筛选）
+  /// - JOIN parties 带回**对方名**（散客/散采的 `party_id` 为空 ⇒ `partyName` 为
+  ///   `null`，UI 显示「散客」/「散采」而不是空白，§AA 六同款处理）
+  /// - 按 `occurred_at` 降序、`created_at` 降序兜底
+  List<DocumentSummary> listDocuments({
+    DocType? type,
+    int? sinceMillis,
+    int limit = 200,
+  }) {
+    final List<Object?> args = <Object?>[];
+    final List<String> conditions = <String>[];
+    if (type != null) {
+      conditions.add('d.doc_type = ?');
+      args.add(type.wire);
+    }
+    if (sinceMillis != null) {
+      conditions.add('d.occurred_at >= ?');
+      args.add(sinceMillis);
+    }
+    final String where = conditions.isEmpty
+        ? ''
+        : 'WHERE ${conditions.join(' AND ')} ';
+    args.add(limit);
+
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT d.*, pa.name AS party_name '
+      'FROM ${Schema.documents} d '
+      'LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id '
+      '$where'
+      'ORDER BY d.occurred_at DESC, d.created_at DESC '
+      'LIMIT ?',
+      args,
+    );
+    return <DocumentSummary>[
+      for (final Map<String, Object?> row in rows)
+        DocumentSummary(
+          document: Document.fromRow(row),
+          partyName: row['party_name'] as String?,
+        ),
+    ];
+  }
+
   Document? findById(String id) {
     final ResultSet rows = _raw.select(
       'SELECT * FROM ${Schema.documents} WHERE id = ?',
@@ -128,4 +173,14 @@ class DocumentDao {
         .first;
     return row['s']! as int;
   }
+}
+
+/// [DocumentDao.listDocuments] 的一行：单据 + 对方名（LEFT JOIN，散客为 null）。
+class DocumentSummary {
+  const DocumentSummary({required this.document, required this.partyName});
+
+  final Document document;
+
+  /// 对方名；散客 / 散采（无对方）为 `null` —— UI 显示「散客」/「散采」
+  final String? partyName;
 }

@@ -201,6 +201,64 @@ void main() {
       return empty && ordered && stillSame;
     }());
 
+
+    check('createFull：新建带双角色 + trim；空 roles 拦', () {
+      // ⚠️ 独立内存库：前面用例建过的「王老板」会让 ensureParty 复用它，
+      // phone/address 就不会写入（只新建时写）
+      final Db db2 = Db.openInMemory();
+      final PartyService fresh = PartyService(PartyDao(db2));
+      final Party party = fresh.createFull(
+        name: ' 王老板 ',
+        roles: <PartyRole>[PartyRole.supplier, PartyRole.customer],
+        phone: ' 138 ',
+        address: ' 东门 3 号 ',
+        now: now(),
+      );
+      bool ok = party.name == '王老板' &&
+          party.phone == '138' &&
+          party.address == '东门 3 号' &&
+          party.roles.toSet().containsAll(<PartyRole>[
+            PartyRole.supplier,
+            PartyRole.customer,
+          ]);
+      bool emptyThrows = false;
+      try {
+        fresh.createFull(name: 'x', roles: <PartyRole>[], now: now());
+      } on StateError {
+        emptyThrows = true;
+      }
+      db2.close();
+      return ok && emptyThrows;
+    }());
+
+    check('createFull 同名复用：phone/address 不覆盖，角色追加', () {
+      final Db db2 = Db.openInMemory();
+      final PartyService fresh = PartyService(PartyDao(db2));
+      final Party first = fresh.createFull(
+        name: '老陈',
+        roles: <PartyRole>[PartyRole.supplier],
+        phone: '138',
+        address: '东门',
+        now: now(),
+      );
+      final Party second = fresh.createFull(
+        name: '老陈',
+        roles: <PartyRole>[PartyRole.customer],
+        phone: '999',
+        address: '西门',
+        now: now() + 1,
+      );
+      final bool ok = second.id == first.id &&
+          second.roles.toSet().containsAll(<PartyRole>[
+            PartyRole.supplier,
+            PartyRole.customer,
+          ]) &&
+          second.phone == '138' &&
+          second.address == '东门';
+      db2.close();
+      return ok;
+    }());
+
     db.close();
   }
 

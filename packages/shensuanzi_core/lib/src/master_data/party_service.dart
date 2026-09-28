@@ -16,7 +16,9 @@
 /// | 同名但没有该 role | **追加 role**（不新建，其余字段不动） |
 library;
 
+import '../dao/ledger_dao.dart' show PartyFlowEntry, PartyLedgerDao;
 import '../dao/party_dao.dart';
+import '../dao/query_dao.dart';
 import '../models/party.dart';
 import '../util/ids.dart';
 
@@ -64,12 +66,13 @@ class PartyService {
   /// 「没有就建；有就加 role；role 也齐了就原样返回」。
   ///
   /// - [name] 必填（空或全空格抛 [StateError]，调用方的 UI 先拦）
-  /// - [phone] **只在新建时写入**；对已有往来方不做修改（本次没给的
-  ///   信息不该抹掉或猜测）
+  /// - [phone] / [address] **只在新建时写入**；对已有往来方不做修改
+  ///   （本次没给的信息不该抹掉或猜测）
   PartyMutation ensureParty({
     required String name,
     required PartyRole role,
     String? phone,
+    String? address,
     int? now,
   }) {
     final String trimmed = name.trim();
@@ -84,6 +87,8 @@ class PartyService {
         id: newId(),
         name: trimmed,
         phone: (phone == null || phone.trim().isEmpty) ? null : phone.trim(),
+        address:
+            (address == null || address.trim().isEmpty) ? null : address.trim(),
         roles: <PartyRole>[role],
         createdAt: stamp,
         updatedAt: stamp,
@@ -116,4 +121,104 @@ class PartyService {
       action: PartyMutationAction.roleAppended,
     );
   }
+
+  /// 往来方页的**完整新建**入口（§AA 遗漏 1：与开单页的应急入口互补）。
+  ///
+  /// - [roles] 至少一个（新建时定角色；**编辑不改角色**属 v1.1 ——
+  ///   改角色会影响余额语义）
+  /// - 内部按角色逐个走 [ensureParty]：**同名往来方自动复用并追加角色**，
+  ///   与 Z-4「绝不出现两条同名 party」同一保证；[phone]/[address]
+  ///   仍只在真正新建时写入
+  Party createFull({
+    required String name,
+    required List<PartyRole> roles,
+    String? phone,
+    String? address,
+    int? now,
+  }) {
+    if (roles.isEmpty) {
+      throw StateError('至少要选一个角色（供应商 / 客户）');
+    }
+    for (final PartyRole role in roles) {
+      ensureParty(
+        name: name,
+        role: role,
+        phone: phone,
+        address: address,
+        now: now,
+      );
+    }
+    return findByName(name)!;
+  }
+
+  /// 编辑**资料**（名称 / 电话 / 地址）。⚠️ 不改角色（会影响余额语义，
+  /// §AA 遗漏 1：改角色属 v1.1）；`id` 不存在抛 [StateError]。
+  Party updateProfile(
+    String id, {
+    required String name,
+    String? phone,
+    String? address,
+    int? now,
+  }) {
+    final Party? existing = _dao.findById(id);
+    if (existing == null) {
+      throw StateError('往来方不存在或已删除，请刷新后重试');
+    }
+    final String trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      throw StateError('往来方名称不能为空');
+    }
+    final int stamp = now ?? DateTime.now().millisecondsSinceEpoch;
+    final Party updated = Party(
+      id: existing.id,
+      name: trimmed,
+      phone: (phone == null || phone.trim().isEmpty) ? null : phone.trim(),
+      address:
+          (address == null || address.trim().isEmpty) ? null : address.trim(),
+      roles: existing.roles,
+      creditLimit: existing.creditLimit,
+      isActive: existing.isActive,
+      remark: existing.remark,
+      createdAt: existing.createdAt,
+      updatedAt: stamp,
+      syncVersion: existing.syncVersion + 1,
+    );
+    _dao.update(updated);
+    return updated;
+  }
+
+  /// 停用 / 恢复（软删；不影响历史流水）。
+  Party setActive(String id, {required bool active, int? now}) {
+    final Party? existing = _dao.findById(id);
+    if (existing == null) {
+      throw StateError('往来方不存在或已删除，请刷新后重试');
+    }
+    final int stamp = now ?? DateTime.now().millisecondsSinceEpoch;
+    final Party updated = Party(
+      id: existing.id,
+      name: existing.name,
+      phone: existing.phone,
+      address: existing.address,
+      roles: existing.roles,
+      creditLimit: existing.creditLimit,
+      isActive: active,
+      remark: existing.remark,
+      createdAt: existing.createdAt,
+      updatedAt: stamp,
+      syncVersion: existing.syncVersion + 1,
+    );
+    _dao.update(updated);
+    return updated;
+  }
+
+  /// 某往来方的**人可读流水**（流水页用，§AA 遗漏 6）。
+  List<PartyFlowEntry> flowsOf(String partyId) =>
+      PartyLedgerDao(_dao.db).ofParty(partyId);
+
+  /// 列表。默认只看启用中的（[active] 传 `null` 看全部）。
+  List<Party> list({bool? active = true}) => _dao.findAll(active: active);
+
+  /// 全部往来方的余额（正 = 对方欠我，负 = 我欠对方）。
+  /// 实现委托 `QueryDao.partyBalances`（从流水算，无余额表）。
+  Map<String, int> partyBalances() => QueryDao(_dao.db).partyBalances();
 }

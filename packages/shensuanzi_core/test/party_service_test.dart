@@ -190,4 +190,56 @@ void main() {
       <String>['晚客', '早客'],
     );
   });
+
+  group('createFull（往来方页完整新建，§AA 遗漏 1）', () {
+    test('新建带双角色 + 电话地址 trim；空 roles 拦', () {
+      final Party party = service.createFull(
+        name: ' 王老板 ',
+        roles: <PartyRole>[PartyRole.supplier, PartyRole.customer],
+        phone: ' 138 ',
+        address: ' 东门 3 号 ',
+        now: now(),
+      );
+
+      expect(party.name, '王老板');
+      expect(party.phone, '138');
+      expect(party.address, '东门 3 号');
+      expect(party.roles.toSet(), <PartyRole>{
+        PartyRole.supplier,
+        PartyRole.customer,
+      });
+
+      expect(
+        () => service.createFull(name: 'x', roles: <PartyRole>[], now: now()),
+        throwsStateError,
+        reason: '至少一个角色',
+      );
+    });
+
+    test('同名复用：phone/address 不被覆盖，角色追加（Z-4 同一保证）', () {
+      final Party first = service.createFull(
+        name: '老王',
+        roles: <PartyRole>[PartyRole.supplier],
+        phone: '138',
+        address: '东门',
+        now: now(),
+      );
+
+      final Party second = service.createFull(
+        name: '老王',
+        roles: <PartyRole>[PartyRole.customer],
+        phone: '999',
+        address: '西门',
+        now: now() + 1,
+      );
+
+      expect(second.id, first.id, reason: '同一条 party');
+      expect(second.roles.toSet(), <PartyRole>{
+        PartyRole.supplier,
+        PartyRole.customer,
+      });
+      expect(second.phone, '138', reason: '只新建时写');
+      expect(second.address, '东门', reason: '只新建时写');
+    });
+  });
 }
