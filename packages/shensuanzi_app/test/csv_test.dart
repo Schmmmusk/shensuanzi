@@ -48,9 +48,41 @@ void main() {
       expect(csvEscape('0.00'), '0.00');
       expect(csvEscape('-1234'), '-1234');
       expect(
+        csvEscape('+12.34'),
+        '+12.34',
+        reason: '+ 也是合法数字起始（2026-09-28 裁定补进正则）',
+      );
+      expect(
         csvEscape('-2+3'),
         "'-2+3",
         reason: '不是数字字面量 → 仍然防护（Excel 真会算它）',
+      );
+      expect(
+        csvEscape('+86 138'),
+        "'+86 138",
+        reason: '「+ 开头」但整个不是数字 → 照旧防护',
+      );
+    });
+
+    test('**千分位会被转义成文本** —— 所以导出的金额绝不能带逗号（2026-09-28 裁定）', () {
+      // 这一条不是为了「让 csvEscape 处理千分位」，而是把**代价钉在测试里**：
+      // 谁把导出金额从 `Money.format` 换成 `Money.formatGrouped`，结果就是下面这个
+      expect(
+        csvEscape('1,234.56'),
+        '"1,234.56"',
+        reason: '含逗号 ⇒ 整段加引号 ⇒ Excel 当文本，求和跳过且用户看不出来',
+      );
+      // 正确形态（Money.format）才是数字
+      expect(csvEscape('1234.56'), '1234.56');
+      expect(
+        Money.format(123456),
+        '1234.56',
+        reason: '导出用的就是它 —— 不带千分位',
+      );
+      expect(
+        Money.formatGrouped(123456),
+        '1,234.56',
+        reason: '界面用的千分位版本：两个用途，别混用',
       );
     });
   });

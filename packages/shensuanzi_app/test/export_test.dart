@@ -14,6 +14,37 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:test/test.dart';
 
+/// `1234.56` / `-200.00` —— 不带千分位、不带货币符号的金额（`Money.format` 的产出）
+final RegExp _plainAmount = RegExp(r'^[+-]?\d+\.\d{2}$');
+
+/// `1,234.56` —— 千分位形态。**出现即说明有人用了 `Money.formatGrouped`。**
+final RegExp _groupedAmount = RegExp(r'^[+-]?\d{1,3}(,\d{3})+(\.\d{2})?$');
+
+/// 金额**必须不带千分位**（2026-09-28 裁定）。
+///
+/// 带逗号 ⇒ `csvEscape` 会整段加引号 ⇒ Excel 当**文本** ⇒ 求和跳过，且用户
+/// 看不出来（这不是「格式不好看」，是**账算错**）。千分位是**界面**用的。
+///
+/// 顺带自证不空转：表里一个金额都没有也会红（否则夹具换了就悄悄失效）。
+void expectNoGroupedAmounts(ExportTable table) {
+  final List<String> cells = table.rows
+      .expand((List<String> row) => row)
+      .toList(growable: false);
+  for (final String cell in cells) {
+    expect(
+      cell,
+      isNot(matches(_groupedAmount)),
+      reason: '${table.label} 里的「$cell」像千分位金额 —— '
+          '导出只能用 Money.format，Money.formatGrouped 是界面用的',
+    );
+  }
+  expect(
+    cells.where(_plainAmount.hasMatch),
+    isNotEmpty,
+    reason: '${table.label} 里一个金额都没有 ⇒ 上面那条断言是空转（夹具问题）',
+  );
+}
+
 void main() {
   final DateTime base = DateTime(2026, 9, 28, 15, 30);
   final int t = DateTime(2026, 9, 28, 10).millisecondsSinceEpoch;
@@ -257,6 +288,8 @@ void main() {
         product(id: 'p2', code: 'P0002', name: '停用货', barcode: null, isActive: false),
       ]);
 
+      // 金额不带千分位（2026-09-28 裁定）—— 见文件头 expectNoGroupedAmounts
+      expectNoGroupedAmounts(export);
       expect(export.label, '商品');
       expect(export.header, <String>[
         '编码',
@@ -296,6 +329,8 @@ void main() {
         cost: <String, int>{'p1': 800, 'p3': 400},
       );
 
+      // 金额不带千分位（2026-09-28 裁定）—— 见文件头 expectNoGroupedAmounts
+      expectNoGroupedAmounts(export);
       expect(export.header[7], '库存成本', reason: 'AF-9：说清是总值');
       expect(
         export.rows.map((List<String> r) => r[1]).toList(),
@@ -319,6 +354,8 @@ void main() {
         balances: <String, int>{'y1': 12345, 'y2': -6789, 'y3': 0},
       );
 
+      // 金额不带千分位（2026-09-28 裁定）—— 见文件头 expectNoGroupedAmounts
+      expectNoGroupedAmounts(export);
       expect(export.header, <String>['往来方', '角色', '电话', '地址', '应收', '应付', '状态']);
       expect(export.rows[0].sublist(4), <String>['123.45', '0.00', '启用']);
       expect(export.rows[1].sublist(4), <String>['0.00', '67.89', '启用']);
@@ -341,8 +378,23 @@ void main() {
           ),
           partyName: null,
         ),
+        // ⚠️ 大额行**必须有**：千分位只有 ≥ 1000 元才出现（`1,234.56`）——
+        // 全是 `12.50` 这种小额的夹具**抓不到**「有人换成 formatGrouped」
+        // （本批首轮就在这里空转过一次）
+        DocumentSummary(
+          document: document(
+            id: 'd3',
+            docNo: 'XS20260928-003',
+            type: DocType.sale,
+            totalAmount: 123456,
+            paidAmount: 0,
+          ),
+          partyName: '王老板',
+        ),
       ]);
 
+      // 金额不带千分位（2026-09-28 裁定）—— 见文件头 expectNoGroupedAmounts
+      expectNoGroupedAmounts(export);
       expect(export.header, <String>[
         '单号',
         '单据类型',
@@ -363,6 +415,29 @@ void main() {
       ]);
       expect(export.rows[1][2], '散客', reason: '不留空白（AF-9）');
       expect(export.rows[1][1], '店内销售');
+      expect(
+        export.rows[2][3],
+        '1234.56',
+        reason: '大额**不带千分位**（不是 1,234.56）—— 否则 Excel 当文本、求和漏数',
+      );
+    });
+
+    test('千分位检测器本身有效（哨兵：真出现分组时必须红）', () {
+      // ⚠️ 没有这一条，上面五个 `expectNoGroupedAmounts` 全绿也可能是**瞎的** ——
+      // 首轮就是这么栽的：夹具最大只有 12.50 元，把 `Money.formatGrouped`
+      // 换进 `export_tables.dart` 照样全绿（分组要 ≥ 1000 元才出现）
+      const ExportTable trap = ExportTable(
+        label: '哨兵',
+        header: <String>['金额'],
+        rows: <List<String>>[
+          <String>['1,234.56'],
+        ],
+      );
+      expect(
+        () => expectNoGroupedAmounts(trap),
+        throwsA(isA<TestFailure>()),
+        reason: '检测器抓不到千分位 ⇒ 五张表那五条断言是空转',
+      );
     });
 
     test('往来流水：保留金额符号（正 = 对方欠我增加）', () {
@@ -389,6 +464,8 @@ void main() {
         ],
       );
 
+      // 金额不带千分位（2026-09-28 裁定）—— 见文件头 expectNoGroupedAmounts
+      expectNoGroupedAmounts(export);
       expect(export.header, <String>['单号', '单据类型', '金额', '日期']);
       expect(export.rows[0].sublist(1), <String>['店内销售', '200.00', formatDateTime(t)]);
       expect(

@@ -33,6 +33,31 @@ void check(String name, bool ok, [String? detail]) {
 
 void section(String title) => stdout.writeln('\n── $title ──');
 
+/// `1234.56` / `-200.00` —— 不带千分位、不带货币符号的金额（`Money.format` 的产出）
+final RegExp _plainAmount = RegExp(r'^[+-]?\d+\.\d{2}$');
+
+/// `1,234.56` —— 千分位形态。**出现即说明有人用了 `Money.formatGrouped`。**
+final RegExp _groupedAmount = RegExp(r'^[+-]?\d{1,3}(,\d{3})+(\.\d{2})?$');
+
+/// 五张表里**所有**像千分位金额的单元格（`test/export_test.dart` 有同款镜像断言）。
+///
+/// 金额带逗号 ⇒ `csvEscape` 整段加引号 ⇒ Excel 当**文本**、求和跳过，用户看不出来。
+/// 千分位（`Money.formatGrouped`）是**界面**用的，导出一律 `Money.format`。
+/// 返回空 `grouped` 才正常；同时返一个 `plainCount`，用来证明断言没空转。
+({List<String> grouped, int plainCount}) auditAmounts(List<ExportTable> tables) {
+  final List<String> grouped = <String>[];
+  int plain = 0;
+  for (final ExportTable table in tables) {
+    for (final List<String> row in table.rows) {
+      for (final String cell in row) {
+        if (_groupedAmount.hasMatch(cell)) grouped.add('${table.label}：$cell');
+        if (_plainAmount.hasMatch(cell)) plain++;
+      }
+    }
+  }
+  return (grouped: grouped, plainCount: plain);
+}
+
 Future<void> main() async {
   final DateTime base = DateTime(2026, 9, 28, 15, 30);
   final int t = DateTime(2026, 9, 28, 10).millisecondsSinceEpoch;
@@ -56,7 +81,14 @@ Future<void> main() async {
         csvEscape('-12.34') == '-12.34' &&
             csvEscape('0.00') == '0.00' &&
             csvEscape('-1234') == '-1234' &&
-            csvEscape('-2+3') == "'-2+3");
+            csvEscape('+12.34') == '+12.34' &&
+            csvEscape('-2+3') == "'-2+3" &&
+            csvEscape('+86 138') == "'+86 138");
+    check('千分位会被转义成文本（所以导出金额不带千分位）',
+        csvEscape('1,234.56') == '"1,234.56"' &&
+            csvEscape('1234.56') == '1234.56' &&
+            Money.format(123456) == '1234.56' &&
+            Money.formatGrouped(123456) == '1,234.56');
     check('注入 + 需要引号：两层都生效', csvEscape('=a,b') == '"\'=a,b"');
     check('csvLine 逗号连接（各字段独立转义）',
         csvLine(<String>['a', 'b,c', 'd']) == 'a,"b,c",d');
@@ -304,6 +336,22 @@ Future<void> main() async {
         ),
         partyName: null,
       ),
+      // ⚠️ 大额行**必须有**：千分位只有 ≥ 1000 元才出现（`1,234.56`），
+      // 全是 `12.50` 这种小额的夹具**抓不到**「有人换成了 formatGrouped」
+      DocumentSummary(
+        document: Document(
+          id: 'd2',
+          docNo: 'XS20260928-003',
+          docType: DocType.sale,
+          status: DocStatus.confirmed,
+          totalAmount: 123456,
+          paidAmount: 0,
+          occurredAt: t,
+          createdAt: t,
+          updatedAt: t,
+        ),
+        partyName: '王老板',
+      ),
     ]);
     check('单据：类型 / 状态中文 + 对方散客 + 日期带时分',
         docs.header.join(',') == '单号,单据类型,对方,金额,已收付,状态,日期' &&
@@ -326,6 +374,36 @@ Future<void> main() async {
     check('往来流水：保留金额符号（收款单是负数）',
         flow.header.join(',') == '单号,单据类型,金额,日期' &&
             flow.rows[0][2] == '-200.00');
+
+    // ⚠️ 金额不带千分位（2026-09-28 裁定）：谁把导出换成 `Money.formatGrouped`，
+    // 这一条立刻红 —— 否则用户拿到的是「看着是钱、Excel 不认」的文本
+    final List<ExportTable> all = <ExportTable>[
+      products,
+      stock,
+      parties,
+      docs,
+      flow,
+    ];
+    final ({List<String> grouped, int plainCount}) audit = auditAmounts(all);
+    check('五张表的金额都不带千分位（否则 Excel 当文本、求和漏数）',
+        audit.grouped.isEmpty && audit.plainCount >= 5,
+        audit.grouped.isEmpty
+            ? '金额单元格只有 ${audit.plainCount} 个 → 断言可能空转'
+            : audit.grouped.join('、'));
+    check('大额行确实存在（1234.56 而非 1,234.56）—— 否则上面那条抓不到分组',
+        docs.rows.any((List<String> r) => r.contains('1234.56')));
+
+    // 哨兵：证明「检测器本身有效」。**没有这一条，上面两个 ✓ 可能是瞎的**
+    // （首轮就栽在这里：夹具全是 12.50，把 formatGrouped 换进去照样全绿）
+    const ExportTable trap = ExportTable(
+      label: '哨兵',
+      header: <String>['金额'],
+      rows: <List<String>>[
+        <String>['1,234.56'],
+      ],
+    );
+    check('千分位检测器本身有效（哨兵能被抓到）',
+        auditAmounts(<ExportTable>[trap]).grouped.isNotEmpty);
   }
 
   // ============================================================ 汇总
