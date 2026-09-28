@@ -69,6 +69,26 @@ class DocumentDao {
     DocType? type,
     int? sinceMillis,
     int limit = 200,
+  }) => _summaries(type: type, sinceMillis: sinceMillis, limit: limit);
+
+  /// **导出用**：不分页（§AF-5）。
+  ///
+  /// 为什么另开一个入口而不是让调用方传 `limit: null`：导出跟列表的
+  /// **失败代价完全不同** —— 列表少一行用户会翻页找，导出少一行
+  /// **谁都不知道**（他拿去给会计了）。让「不分页」这件事在调用点
+  /// 显式可读，比省一个方法重要。
+  ///
+  /// 过滤条件与 [listDocuments] **完全一致**（同一个 `_summaries`），
+  /// 只是不设 `LIMIT`。个体户一年的单据几千条，一次读进内存无压力。
+  List<DocumentSummary> listDocumentsForExport({
+    DocType? type,
+    int? sinceMillis,
+  }) => _summaries(type: type, sinceMillis: sinceMillis, limit: null);
+
+  List<DocumentSummary> _summaries({
+    DocType? type,
+    int? sinceMillis,
+    required int? limit,
   }) {
     final List<Object?> args = <Object?>[];
     final List<String> conditions = <String>[];
@@ -83,7 +103,8 @@ class DocumentDao {
     final String where = conditions.isEmpty
         ? ''
         : 'WHERE ${conditions.join(' AND ')} ';
-    args.add(limit);
+    final String tail = limit == null ? '' : 'LIMIT ?';
+    if (limit != null) args.add(limit);
 
     final List<Map<String, Object?>> rows = _raw.select(
       'SELECT d.*, pa.name AS party_name '
@@ -91,7 +112,7 @@ class DocumentDao {
       'LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id '
       '$where'
       'ORDER BY d.occurred_at DESC, d.created_at DESC '
-      'LIMIT ?',
+      '$tail',
       args,
     );
     return <DocumentSummary>[

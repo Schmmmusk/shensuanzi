@@ -87,6 +87,13 @@ class QueryDao {
     'FROM ${Schema.partyLedger} GROUP BY party_id',
   );
 
+  /// 是否存在任何单据（§AE 遗漏 1：空库跳过**自动**备份的判定 ——
+  /// 刚建好数据目录还没录东西时，不该生成一份份相同的空库备份；
+  /// 「手动立即备份」不受此限制，那是用户的主动意图）。
+  bool hasAnyDocument() => _raw
+      .select('SELECT 1 FROM ${Schema.documents} LIMIT 1')
+      .isNotEmpty;
+
   /// 是否存在**任何**库存流水（§AD 遗漏 2）。
   ///
   /// 库存页据此区分入口文案：`false` = 首次 →「录入现有货物」；

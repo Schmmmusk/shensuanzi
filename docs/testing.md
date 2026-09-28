@@ -71,7 +71,19 @@ dart run tool/typecheck.dart
 cd packages/shensuanzi_app
 dart run tool/selfcheck_app.dart       # 数据目录策略 / 校验三档 / 配置 / 标记 / 启动恢复
 dart run tool/typecheck.dart
+
+# 仓库根（Flutter 层）
+dart run tool/import_guard.dart        # §AF 复跑返工新增：只查「用了桶导出名却没导入桶」
 ```
+
+> ⚠️ **根 `lib/` 与 `test/` 没有编译门禁**（这是本项目的结构性缺口，不是疏漏）：
+> 那些文件都 import `package:flutter` ⇒ `dart run` 编译不了（`dart:ui is not available
+> on this platform`）；`dart analyze` 要起 analysis server 子进程，沙箱会话里起不来。
+> 于是根层的编译错误**只有用户终端的 `flutter analyze` 能发现**。
+> `tool/import_guard.dart` 是这里唯一能自查的一小块 —— 它**只**覆盖「缺桶导入」
+> 这一类（§AF 复跑时 4 个 widget 测试文件全部栽在这上面），
+> 规则从两个桶文件的 `show` 子句**推导**（无手写清单 ⇒ 不会漂移）。
+> **它不是编译门禁的替代品**：类型不匹配、参数写错、方法不存在它一律看不见。
 
 > ⚠️ **应用层的测试必须用临时目录**，绝不能碰真实的 `%APPDATA%` ——
 > 那会把开发者自己的配置写坏。夹具 `sandbox()` 提供用完即弃的临时目录，
@@ -600,10 +612,13 @@ dart run tool/typecheck.dart
 | 文件 | 覆盖 |
 |---|---|
 | `test/widget_test.dart` | 主界面把「数据在哪」说清楚、闭环入口常驻可见、数据库没就绪时给出「怎么办」 |
-| **`test/startup_test.dart`** | **启动流程五条**：① 没配置过 → 弹对话框 ② 配置过且可用 → 不弹、直接进主界面 ③ 选了目录 → 对话框消失、进主界面、配置落到**沙箱** ④ 选择器取消（`null`）→ 对话框仍在、不崩 ⑤ 目录能用但**库打不开** → 错误页 |
+| **`test/startup_test.dart`** | **启动流程八条**：① 没配置过 → 弹对话框 ② 配置过且可用 → 不弹、直接进主界面 ③ 选了目录 → 对话框消失、进主界面、配置落到**沙箱** ④ 选择器取消（`null`）→ 对话框仍在、不崩 ⑤ 目录能用但**库打不开** → 错误页 ⑥ **空库启动不自动备份**（§AE 遗漏 1，备份目录连建都不建） ⑦ **备份目录不可用 → 自动备份静默失败**（`tester.takeException()` 必须为 `null`）+ **概览页橙卡出现**（§AE-3 两层机制） ⑧ **正常链路启动即出一份备份**（schema 版本进文件名）且橙卡不出现 |
+| **`test/overview_page_test.dart`** | **概览页六条**（§AE）：无提醒不摆卡 / 有提醒摆卡 + `Key('overview-backup-now')` / 备份不可用只说不给空按钮 / 点击 → 回调一次 + SnackBar 带**完整路径** / 失败 SnackBar 说「怎么办」 / `Completer` 卡住 Future 验证**进行中再点不触发回调**。⚠️ 提醒文案里含「立即备份」四字，断言一律用**精确文本或 Key**，不要 `textContaining` |
 | **`test/purchase_page_test.dart`** | **采购开单五条**：① 空表单保存 → 报缺明细 ② 散采全款 → SnackBar 已保存 + 库存 ③ 散采欠款 → 「散采要当场结清」 ④ 供应商 + 部分付款 → SnackBar 带累计欠款 ⑤ 取消有内容 → 确认后清空 ⑥ 供应商搜索打字不崩（⚠️ DAO 返回**定长列表**，`removeWhere` 会逐字崩 —— 过滤一律 `where().toList()`）。⚠️ 商品选择器**空查询显示「最近采购」**（首次为空，先搜索再点选）；**搜索框必须用 `Key('picker-search')` 定位** —— `byType(TextField).first` 会命中弹层底下页面的输入框（树的先序遍历）；**底部按钮先 `scrollUntilVisible` 再点**（800×600 测试视口装不下整页）；`widgetWithText` 匹配不到 `InputDecoration.label` |
 | **`test/account_page_test.dart`** | **账户页四条**：① 空列表给「怎么办」 ② 新建 → 列表出现、余额含期初 ③ **编辑时期初余额只读**（Z-3 方案 A：保存后期初不变） ④ 空名保存 → 字段级报错。⚠️ 下拉选项要先点开下拉框才在树上（直接 `find.text('微信')` 会扑空） |
 | **`test/sale_page_test.dart`** | **销售页七条**：① 空表单行级报错 ② 散客全款（库存归零） ③ 散客欠款 →「散客要当场结清」 ④ **负库存：红色提示标明「打开本页时」且保存放行**（Z-2） ⑤ 选客户+议价+部分收款 → SnackBar 带累计欠款 ⑥ 客户选择器：空查询=最近往来、新建同名=追加 role（Z-4） ⑦ 取消确认。⚠️ 售价预填是**默认值**（议价可改，不回写商品档） |
+| **`test/products_page_test.dart`** | **商品页两条**（§AF）：① 导出全部商品 → 表 8 列、**含停用**、**不受搜索框影响** ② 没接导出服务 → 不显示按钮。⚠️ 导出走 `test/support/fake_export.dart` 的 `FakeExport`（**注桩，不写盘**）—— 有了它还能顺带断言「页面拼出来的表几行几列」，比只看 SnackBar 有价值 |
+| **导出（§AF，三层）** | ① `packages/shensuanzi_app/test/csv_test.dart`：转义 / **公式注入**（含纯数字放行）/ BOM / CRLF / 日期与措辞；② `…/export_test.dart`：文件名（含非法字符清洗）/ 空结果不生成 / 目录不可写 / 同名并发单飞 / 五张表列与值；③ `packages/shensuanzi_core/test/export_reads_test.dart`：三个导出读取入口**不分页**（>200 行）、默认**含停用**。⚠️ widget 侧另有五页各一条（单据/商品/库存/往来方/流水），全部注入 `ExportSink` 桩 |
 
 启动流程这五条以前**一条都没有**，根因是缺接缝：只有 `pickDirectory` 不够，
 还得有 `configStore` —— 否则测试既**不确定**（真机上配置已存在，对话框永远不弹），

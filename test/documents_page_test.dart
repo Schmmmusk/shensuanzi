@@ -1,7 +1,8 @@
 // 单据列表页（`DocumentsPage`）的 widget 测试。
 //
 // 覆盖：时间范围默认最近 30 天（SC-3）/ 类型 chips 筛选 / 对方名与散客显示（SC-6）/
-// 点击复制单号（SC-4）/ 「全部」档的 200 条提示。
+// 点击复制单号（SC-4）/ 「全部」档的 200 条提示 /
+// 导出按钮（§AF-2 文案、AF-5 走独立查询、筛选条件与列表一致）。
 // ⚠️ 必须 `useLocalSqlite()`（§N）。
 import 'dart:io';
 
@@ -9,8 +10,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/documents_page.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
+
+import 'support/fake_export.dart';
 
 void main() {
   useLocalSqlite();
@@ -103,8 +107,8 @@ void main() {
     );
   }
 
-  Widget page() => MaterialApp(
-    home: Scaffold(body: DocumentsPage(dao: dao)),
+  Widget page({ExportSink? exports}) => MaterialApp(
+    home: Scaffold(body: DocumentsPage(dao: dao, exports: exports)),
   );
 
   testWidgets('空范围给空态提示', (WidgetTester tester) async {
@@ -192,5 +196,66 @@ void main() {
     await tester.tap(find.text('全部'));
     await tester.pumpAndSettle();
     expect(find.textContaining('只显示最近 200 条'), findsOneWidget);
+  });
+
+  // ---------------------------------------------------------------- 导出（§AF）
+
+  testWidgets('导出按钮：导**当前筛选**、不写磁盘、列是中文（§AF-2 / AF-5）', (
+    WidgetTester tester,
+  ) async {
+    buy(date: '2026-09-27', qty: 10, partyId: 'pt1'); // 采购入库（王老板）
+    sell(date: '2026-09-28', qty: 2); // 散客销售
+    final FakeExport fake = FakeExport();
+    await tester.pumpWidget(page(exports: fake));
+    await tester.pumpAndSettle();
+
+    // AF-2：文案说清导的是「当前筛选」，不是「这一屏」
+    expect(find.byKey(const Key('export-documents')), findsOneWidget);
+    expect(find.text('导出当前筛选的单据'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('export-documents')));
+    await tester.pumpAndSettle();
+
+    expect(fake.calls, 1, reason: '点一次只导一次');
+    final ExportTable table = fake.last;
+    expect(table.label, '单据');
+    expect(table.header, <String>[
+      '单号',
+      '单据类型',
+      '对方',
+      '金额',
+      '已收付',
+      '状态',
+      '日期',
+    ]);
+    expect(table.rows, isNotEmpty);
+    expect(
+      table.rows.every((List<String> row) => row.length == 7),
+      isTrue,
+      reason: '每行字段数与表头一致',
+    );
+    expect(
+      table.rows.any((List<String> row) => row[1] == '采购入库'),
+      isTrue,
+      reason: '单据类型输出中文',
+    );
+    expect(
+      table.rows.any((List<String> row) => row[2] == '散客'),
+      isTrue,
+      reason: '散客不留空白（AF-9）',
+    );
+    expect(
+      table.rows.every((List<String> row) => row[6].contains(' ')),
+      isTrue,
+      reason: '日期带时分（遗漏 6：同日多单排序才稳）',
+    );
+    // AF-5：导出走独立查询，**不是**列表用的 limit 200。
+    // 这里是「同一批筛选」的间接证据：行数 = 库里的全部（示例里 4 张单）
+    expect(
+      table.rows.length,
+      dao.listDocumentsForExport().length,
+      reason: '导出的行数与「不分页读出来的行数」一致',
+    );
+    expect(fake.froms.single, isNotNull, reason: '默认最近 30 天 → 文件名带范围');
   });
 }

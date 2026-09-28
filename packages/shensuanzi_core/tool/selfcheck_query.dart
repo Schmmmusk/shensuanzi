@@ -360,6 +360,39 @@ void main() {
     db.close();
   }
 
+  // ============================================================ 存在性判定
+  section('存在性判定（§AE 遗漏 1 / §AD 遗漏 1、2）');
+  {
+    freshDb();
+    check('空库：hasAnyDocument / hasAnyStockLedger 都是 false',
+        !query.hasAnyDocument() &&
+            !query.hasAnyStockLedger() &&
+            query.inboundProductIds().isEmpty);
+
+    final String stocked = createProduct();
+    final String neverBought = createProduct(code: 'P002');
+    final String party = createParty();
+    seedPurchase(stocked, party, 5, 100);
+    check('落过单 → hasAnyDocument true', query.hasAnyDocument());
+    check('有过流水 → hasAnyStockLedger true', query.hasAnyStockLedger());
+
+    // 超卖一个从没进过货的商品：它只有**负数量**流水
+    final Document sale = mkDoc(
+      type: DocType.sale,
+      partyId: createParty(),
+      totalAmount: 300,
+    );
+    engine.dispatch(
+      document: sale,
+      lines: oneLine(sale.id, neverBought, 1, 300),
+      now: now(),
+    );
+    final Set<String> inbound = query.inboundProductIds();
+    check('inboundProductIds：只认正数量（出库不算「进过货」）',
+        inbound.contains(stocked) && !inbound.contains(neverBought));
+    db.close();
+  }
+
   stdout.writeln('\n${'=' * 46}');
   if (_failures.isEmpty) {
     stdout.writeln('全部通过：$_passed 项');

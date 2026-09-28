@@ -45,6 +45,7 @@ class DataLocation {
     required this.marker,
     required this.createdNow,
     required this.backupDirectory,
+    required this.exportDirectory,
   });
 
   final String directory;
@@ -59,6 +60,10 @@ class DataLocation {
   /// 那里有一条「数据目录自己就叫『神算子备份』时避让」的边界处理，
   /// 在本类里再写一遍就等于两处逻辑并行，早晚漂移。
   final String backupDirectory;
+
+  /// 导出目录（数据目录的**另一个**兄弟目录，§AF-3）。
+  /// 同一个出处：[DataDirectoryPolicy.exportDirectoryFor]。
+  final String exportDirectory;
 
   /// 数据库文件路径
   String get databasePath => p.join(directory, AppBootstrap.databaseFileName);
@@ -110,6 +115,7 @@ class AppBootstrap {
       marker: marker,
       createdNow: false,
       backupDirectory: policy.backupDirectoryFor(configured),
+      exportDirectory: policy.exportDirectoryFor(configured),
     );
   }
 
@@ -164,6 +170,7 @@ class AppBootstrap {
       marker: marker,
       createdNow: createdNow,
       backupDirectory: policy.backupDirectoryFor(directory),
+      exportDirectory: policy.exportDirectoryFor(directory),
     );
   }
 

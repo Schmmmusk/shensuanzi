@@ -15,15 +15,20 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'export_button.dart';
 import 'product_form_dialog.dart';
 
 class ProductsPage extends StatefulWidget {
-  const ProductsPage({super.key, required this.service});
+  const ProductsPage({super.key, required this.service, this.exports});
 
   /// `null` = 数据库没打开成功（启动时选的位置有问题）
   final ProductService? service;
+
+  /// 导出服务（`null` = 不显示导出按钮）
+  final ExportSink? exports;
 
   @override
   State<ProductsPage> createState() => _ProductsPageState();
@@ -129,6 +134,16 @@ class _ProductsPageState extends State<ProductsPage> {
                 ),
               ),
               const SizedBox(width: 16),
+              if (widget.exports != null)
+                ExportButton(
+                  key: const Key('export-products'),
+                  // AF-2：按钮文案说清导的是**全部商品（含停用）** ——
+                  // 刻意**不看搜索框**，否则用户以为导的是搜出来的那几条
+                  label: '导出全部商品',
+                  export: () => widget.exports!.write(
+                    productExportTable(widget.service!.listForExport()),
+                  ),
+                ),
               // 常驻可见的文字按钮（不是图标按钮）
               FilledButton.icon(
                 onPressed: _create,
@@ -198,7 +213,9 @@ class _ProductRow extends StatelessWidget {
     final String subtitle = <String>[
       product.code,
       if (product.barcode != null) '条码 ${product.barcode}',
-      product.unit,
+      // 「单位：个」而不是裸「个」—— 裸单位容易让人以为是别的字段
+      // （用户真机反馈 2026-09-28）；unit 理论上可空，判空兜底
+      if (product.unit.trim().isNotEmpty) '单位：${product.unit.trim()}',
     ].join('  ·  ');
 
     return Padding(

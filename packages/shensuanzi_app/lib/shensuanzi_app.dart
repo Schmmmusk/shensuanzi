@@ -40,4 +40,50 @@ export 'src/dialog_model.dart'
 export 'src/environment.dart' show AppEnvironment, DriveInfo, DriveKind;
 export 'src/navigation.dart'
     show AppNavigation, NavDestination, NavSection;
+export 'src/backup.dart'
+    show
+        BackupFileName,
+        BackupOutcome,
+        BackupService,
+        backupOutcomeMessage,
+        backupReminderText,
+        backupStatusLine,
+        daysSince,
+        expiredAutoBackups,
+        formatBackupTime,
+        needsBackupAttention,
+        shouldAutoBackup,
+        weekKeyOf;
 export 'src/typography.dart' show AppTypography;
+
+// ---- §AF 数据导出 ----
+export 'src/csv.dart' show csvBom, csvBytes, csvEscape, csvLine;
+export 'src/export.dart'
+    show
+        ExportEmpty,
+        ExportFailed,
+        ExportFileName,
+        ExportOutcome,
+        ExportService,
+        ExportSink,
+        ExportSuccess,
+        ExportTable,
+        exportOutcomeMessage;
+export 'src/export_tables.dart'
+    show
+        documentExportTable,
+        partyExportTable,
+        partyFlowExportTable,
+        productExportTable,
+        stockExportTable;
+export 'src/format.dart'
+    show
+        activeLabel,
+        docStatusLabel,
+        documentPartyLabel,
+        formatDate,
+        formatDateTime,
+        formatFileDate,
+        partyRoleLabel,
+        partyRolesLabel;
+export 'src/fs.dart' show ensureWritableDirectory;

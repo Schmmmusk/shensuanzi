@@ -48,6 +48,13 @@ class ProductService {
   List<Product> list({String? query, bool? active = true, int limit = 200}) =>
       _products.findAll(query: query, active: active, limit: limit);
 
+  /// **导出用**：不分页、**默认含停用**（§AF-5 / AF-12）。
+  ///
+  /// 页面拿不到「全部商品」是故意的（列表有 200 上限、默认只看启用），
+  /// 但导出必须拿得到 —— 「带走数据」偷偷少东西是不可接受的。
+  List<Product> listForExport({String? query, bool? active}) =>
+      _products.findAllForExport(query: query, active: active);
+
   Product? byId(String id) => _products.findById(id);
 
   /// 这个条码现在挂在**哪些**商品上（建档查重 / 将来的扫码开单）。

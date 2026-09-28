@@ -1,13 +1,18 @@
-/// 设置页：界面缩放（五档 + 重置）+ 店名 + 数据安全区。
+/// 设置页：界面缩放（五档 + 重置）+ 店名 + 数据安全区（含备份）。
 ///
-/// ## 裁定落点（`docs/reply_review.md` §AC）
+/// ## 裁定落点（`docs/reply_review.md` §AC + §AE）
 ///
 /// - **SC-1**：缩放是**全局文字缩放**（`TextScaler`，中老年用户的本命功能）+
 ///   导航宽度联动；**必须有「重置」按钮**（调到 200% 发现乱了一键恢复，遗漏 2）
 /// - **SC-2**：店名 ≤ 20 字符，显示在概览页顶部（本页只采集）
 /// - **遗漏 1（数据安全区）**：位置 / 备份目录 + 「打开文件夹」按钮 ——
-///   用户想看那里有什么，让看不让点是纯粹的挫败。**「立即备份」按钮 v1 不放**
-///   （备份执行机制尚未实现，空按钮比不做糟，§AA 同款判断；记录在案）
+///   用户想看那里有什么，让看不让点是纯粹的挫败。
+/// - **§AE-5**：「上次备份：时间（来源）」+ 需要提醒时**红字**
+///   （超 3 天没备份，**或最近一次备份没成功** —— 遗漏 2）；状态行可点开目录
+/// - **§AE 遗漏 5**：手动备份的结果用 SnackBar 说（成功带完整路径）
+/// - **§AE 遗漏 6**：第一次进设置页的人不知道「上次备份：从未」是什么意思
+///   —— 补两行说明，并把 §AE-1 的技术承诺（**普通数据库文件**）写进界面
+/// - **§AE 遗漏 11**：点了「立即备份」立刻禁用 +「备份中…」
 /// - 修改**立即生效**：`onChanged` 回调把新 `AppConfig` 交给宿主
 ///   （`ShensuanziApp` setState + `configStore.save`），不等「保存」按钮
 ///   —— 这类偏好不需要确认动作
@@ -25,6 +30,9 @@ class SettingsPage extends StatefulWidget {
     required this.config,
     required this.configStore,
     this.backupDirectory,
+    this.backupStatusLine,
+    this.backupNeedsAttention = false,
+    this.onBackupNow,
     required this.onChanged,
   });
 
@@ -36,6 +44,16 @@ class SettingsPage extends StatefulWidget {
 
   /// 备份目录（宿主从 `DataLocation` 带来；`null` = 不显示该行）
   final String? backupDirectory;
+
+  /// 「上次备份：…」整行文案（纯 Dart 的 `backupStatusLine` 给；
+  /// `null` = 备份不可用 → 整块不显示）
+  final String? backupStatusLine;
+
+  /// 超 3 天没备份 → 状态行标红（AE-5）
+  final bool backupNeedsAttention;
+
+  /// 「立即备份」；`null` = 不可用 → 不显示按钮（空按钮比不做糟）
+  final Future<BackupOutcome> Function()? onBackupNow;
 
   /// 任何修改都会回调（宿主据此热应用缩放 / 店名）
   final void Function(AppConfig config) onChanged;
@@ -55,10 +73,30 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 店名超长的即时提示（SC-2：≤ 20 字符）
   String? _shopNameError;
 
+  /// 「立即备份」进行中（遗漏 11：禁用 + 文案，先给反馈再谈并发）
+  bool _backupBusy = false;
+
   @override
   void dispose() {
     _shopName.dispose();
     super.dispose();
+  }
+
+  /// 手动「立即备份」。文案（含完整路径）来自领域层，本页不造句。
+  Future<void> _backupNow() async {
+    final Future<BackupOutcome> Function()? run = widget.onBackupNow;
+    if (run == null || _backupBusy) return;
+    setState(() => _backupBusy = true);
+    final BackupOutcome outcome = await run();
+    if (!mounted) return;
+    setState(() => _backupBusy = false);
+    // 遗漏 5：SnackBar 带完整路径（用户可立刻复制到文件管理器）
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(backupOutcomeMessage(outcome)),
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   void _apply(AppConfig newConfig) {
@@ -184,7 +222,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
               ),
 
-              // ---- 数据安全区（遗漏 1：位置 / 备份目录 + 「打开文件夹」）----
+              // ---- 数据安全区（遗漏 1 + §AE-5 / 遗漏 5、6、11）----
               _Section(
                 title: '数据',
                 children: <Widget>[
@@ -204,8 +242,42 @@ class _SettingsPageState extends State<SettingsPage> {
                     ],
                     const SizedBox(height: 8),
                   ],
+                  if (widget.backupStatusLine != null) ...<Widget>[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            widget.backupStatusLine!,
+                            style: TextStyle(
+                              height: 1.6,
+                              // AE-5：超 3 天没备份 → 红字（数据安全要看得见）
+                              color: widget.backupNeedsAttention
+                                  ? theme.colorScheme.error
+                                  : null,
+                              fontWeight: widget.backupNeedsAttention
+                                  ? FontWeight.w700
+                                  : null,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        if (widget.onBackupNow != null)
+                          FilledButton.icon(
+                            key: const Key('setting-backup-now'),
+                            onPressed: _backupBusy ? null : _backupNow,
+                            icon: const Icon(Icons.save_alt, size: 18),
+                            label: Text(_backupBusy ? '备份中…' : '立即备份'),
+                          ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 8),
                   Text(
-                    '每天关店前软件会提醒备份；备份文件夹在数据文件夹旁边。',
+                    // 遗漏 6：第一次看到「上次备份：从未」的人要知道这是什么，
+                    // 以及「数据永远属于他」（§AE-1 的技术承诺写进界面）
+                    '每天首次打开软件会自动备份一次。\n'
+                    '备份文件是普通的数据库文件，可以用任何 SQLite 工具打开。',
                     style: TextStyle(
                       height: 1.6,
                       color: theme.textTheme.bodySmall?.color,

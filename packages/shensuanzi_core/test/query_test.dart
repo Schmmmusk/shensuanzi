@@ -1,6 +1,6 @@
 // RULE-006 查询（`docs/rules.md`），对应 `docs/testing.md` §C。
 //
-// 覆盖：库存 / 账户余额 / 往来余额 / 在途 / 在店可售。
+// 覆盖：库存 / 账户余额 / 往来余额 / 在途 / 在店可售 / 存在性判定。
 // 核心主张：**没有余额表，每次都从流水算**（`docs/data_model.md` §五）。
 //
 // ⚠️ 纯 Dart 测试：先 `dart pub get`（`test` 是 dev_dependency），
@@ -350,6 +350,49 @@ void main() {
 
       expect(query.inTransitByProduct(), isEmpty);
       expect(query.availableInStore()[p], 8);
+    });
+  });
+
+  // ============================================================ 存在性判定
+
+  group('存在性判定（§AE 遗漏 1 / §AD 遗漏 1、2）', () {
+    test('空库：hasAnyDocument / hasAnyStockLedger 都是 false', () {
+      expect(query.hasAnyDocument(), isFalse);
+      expect(query.hasAnyStockLedger(), isFalse);
+      expect(query.inboundProductIds(), isEmpty);
+    });
+
+    test('落过单 → hasAnyDocument true；有过流水 → hasAnyStockLedger true', () {
+      final String p = createProduct();
+      final String party = createParty();
+      seedPurchase(p, party, 5, 100);
+
+      expect(query.hasAnyDocument(), isTrue);
+      expect(query.hasAnyStockLedger(), isTrue);
+    });
+
+    test('inboundProductIds：只认正数量流水（出库不算「进过货」）', () {
+      final String stocked = createProduct();
+      final String neverBought = createProduct(code: 'P002');
+      final String party = createParty();
+
+      seedPurchase(stocked, party, 5, 100);
+
+      // 超卖一个从没进过货的商品 —— 它只有**负数量**流水
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: createParty(),
+        totalAmount: 300,
+      );
+      run(sale, oneLine(sale.id, neverBought, 1, 300));
+
+      final Set<String> inbound = query.inboundProductIds();
+      expect(inbound, contains(stocked));
+      expect(
+        inbound,
+        isNot(contains(neverBought)),
+        reason: '只有出库流水 → 成本口径没有意义（§AD 遗漏 1）',
+      );
     });
   });
 }

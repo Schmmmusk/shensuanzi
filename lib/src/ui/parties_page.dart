@@ -12,15 +12,20 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'export_button.dart';
 import 'party_flow_page.dart';
 
 /// 往来方页。
 class PartiesPage extends StatefulWidget {
-  const PartiesPage({super.key, required this.service});
+  const PartiesPage({super.key, required this.service, this.exports});
 
   final PartyService service;
+
+  /// 导出服务（`null` = 不显示导出按钮；同时透传给流水页）
+  final ExportSink? exports;
 
   @override
   State<PartiesPage> createState() => _PartiesPageState();
@@ -65,6 +70,18 @@ class _PartiesPageState extends State<PartiesPage> {
                   Expanded(
                     child: Text('往来方', style: theme.textTheme.titleLarge),
                   ),
+                  if (widget.exports != null)
+                    ExportButton(
+                      key: const Key('export-parties'),
+                      // AF-2：全量（**含停用** —— 停用但还欠钱的客户不能少）
+                      label: '导出往来方',
+                      export: () => widget.exports!.write(
+                        partyExportTable(
+                          parties: widget.service.listForExport(),
+                          balances: balances,
+                        ),
+                      ),
+                    ),
                   FilledButton.icon(
                     onPressed: () => _editParty(context),
                     icon: const Icon(Icons.add),
@@ -161,8 +178,11 @@ class _PartiesPageState extends State<PartiesPage> {
   Future<void> _openFlow(BuildContext context, Party party) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (BuildContext context) =>
-            PartyFlowPage(party: party, service: widget.service),
+        builder: (BuildContext context) => PartyFlowPage(
+          party: party,
+          service: widget.service,
+          exports: widget.exports,
+        ),
       ),
     );
     if (mounted) setState(() {}); // 返回后余额可能已变，防御性刷新

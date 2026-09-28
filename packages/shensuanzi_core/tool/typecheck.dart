@@ -14,6 +14,8 @@ import '../test/database_test.dart' as database_test;
 // ignore: unused_import
 import '../test/delivery_test.dart' as delivery_test;
 // ignore: unused_import
+import '../test/export_reads_test.dart' as export_reads_test;
+// ignore: unused_import
 import '../test/immediate_payment_test.dart' as immediate_payment_test;
 // ignore: unused_import
 import '../test/account_draft_test.dart' as account_draft_test;
@@ -50,6 +52,8 @@ import 'selfcheck_account.dart' as selfcheck_account;
 // ignore: unused_import
 import 'selfcheck_delivery.dart' as selfcheck_delivery;
 // ignore: unused_import
+import 'selfcheck_export_reads.dart' as selfcheck_export_reads;
+// ignore: unused_import
 import 'selfcheck_party.dart' as selfcheck_party;
 // ignore: unused_import
 import 'selfcheck_payments.dart' as selfcheck_payments;
@@ -77,6 +81,7 @@ void main() {
     account_draft_test.main,
     database_test.main,
     delivery_test.main,
+    export_reads_test.main,
     immediate_payment_test.main,
     party_service_test.main,
     product_service_test.main,
@@ -93,6 +98,7 @@ void main() {
     selfcheck.main,
     selfcheck_account.main,
     selfcheck_delivery.main,
+    selfcheck_export_reads.main,
     selfcheck_party.main,
     selfcheck_payments.main,
     selfcheck_products.main,
@@ -105,7 +111,7 @@ void main() {
     selfcheck_sync_client.main,
   ];
   print(
-    '编译通过：15 个测试文件 + 13 个自检脚本已通过类型检查（未执行）。'
+    '编译通过：16 个测试文件 + 14 个自检脚本已通过类型检查（未执行）。'
     '（共 ${entries.length} 个入口）',
   );
 }

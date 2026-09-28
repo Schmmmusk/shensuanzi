@@ -218,6 +218,12 @@ class PartyService {
   /// 列表。默认只看启用中的（[active] 传 `null` 看全部）。
   List<Party> list({bool? active = true}) => _dao.findAll(active: active);
 
+  /// **导出用**：不分页、**默认含停用**（§AF-5）。
+  ///
+  /// 停用但还欠钱的客户必须在导出里 —— 否则会计对不上这笔应收。
+  List<Party> listForExport({PartyRole? role, bool? active}) =>
+      _dao.findAllForExport(role: role, active: active);
+
   /// 全部往来方的余额（正 = 对方欠我，负 = 我欠对方）。
   /// 实现委托 `QueryDao.partyBalances`（从流水算，无余额表）。
   Map<String, int> partyBalances() => QueryDao(_dao.db).partyBalances();

@@ -21,8 +21,10 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'export_button.dart';
 import 'opening_stock_page.dart';
 
 /// 库存查询页。
@@ -32,6 +34,7 @@ class StockPage extends StatefulWidget {
     required this.engine,
     required this.products,
     required this.queries,
+    this.exports,
   });
 
   /// 规则引擎（期初录入「重新清点」入口用 —— RULE-009 经 `StocktakeService`）
@@ -39,6 +42,9 @@ class StockPage extends StatefulWidget {
 
   final ProductService products;
   final QueryDao queries;
+
+  /// 导出服务（`null` = 不显示导出按钮）
+  final ExportSink? exports;
 
   @override
   State<StockPage> createState() => _StockPageState();
@@ -119,6 +125,22 @@ class _StockPageState extends State<StockPage> {
           Row(
             children: <Widget>[
               Expanded(child: Text('库存', style: theme.textTheme.titleLarge)),
+              if (widget.exports != null)
+                ExportButton(
+                  key: const Key('export-stock'),
+                  // AF-2：说清导的是「有流水或有库存」的那批
+                  label: '导出库存',
+                  export: () => widget.exports!.write(
+                    stockExportTable(
+                      // AF-12：**含停用** —— 停用但有库存的商品也要能对账
+                      //（页面上看不到它们，但导出的账里不能少）
+                      products: widget.products.listForExport(),
+                      book: book,
+                      inTransit: inTransit,
+                      cost: cost,
+                    ),
+                  ),
+                ),
               TextButton.icon(
                 key: const Key('stock-open-entry'),
                 onPressed: () => setState(() => _showOpening = true),

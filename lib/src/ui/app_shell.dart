@@ -46,6 +46,11 @@ class AppShell extends StatefulWidget {
     this.engine,
     this.uiScale = UiScale.standard,
     this.shopName,
+    this.backupStatusLine,
+    this.backupNeedsAttention = false,
+    this.backupReminder,
+    this.onBackupNow,
+    this.exports,
     this.configStore,
     this.onConfigChanged,
     this.initialDestinationId,
@@ -86,6 +91,24 @@ class AppShell extends StatefulWidget {
 
   /// 店名（概览页顶部显示；可空）
   final String? shopName;
+
+  /// 「上次备份：时间（来源）」文案（§AE-5）。
+  ///
+  /// ⚠️ **文案在 `shensuanzi_app` 里造句**（`backupStatusLine`），
+  /// 这里只是搬运 —— 概览橙卡与设置页红字必须**同一个判定**，不许各算一遍。
+  final String? backupStatusLine;
+
+  /// 超 3 天没备份（AE-5：设置页红字）
+  final bool backupNeedsAttention;
+
+  /// 概览页橙卡文案（AE-3；`null` = 不用提醒）
+  final String? backupReminder;
+
+  /// 「立即备份」（设置页按钮 / 概览橙卡**共用同一条路径**）
+  final Future<BackupOutcome> Function()? onBackupNow;
+
+  /// 导出服务（§AF）。`null` = 不显示导出按钮（库没打开时）
+  final ExportSink? exports;
 
   /// 配置读写入口（设置页用；`null` = 配置不可用，设置页显示占位）
   final AppConfigStore? configStore;
@@ -145,10 +168,12 @@ class _AppShellState extends State<AppShell> {
         backupDirectory: widget.backupDirectory,
         schemaVersion: widget.schemaVersion,
         databaseReady: widget.databaseReady,
+        backupReminder: widget.backupReminder,
+        onBackupNow: widget.onBackupNow,
       );
     } else if (current.id == 'products') {
       // 商品是核心闭环的第一块 —— 已实现，不再是占位页
-      page = ProductsPage(service: widget.products);
+      page = ProductsPage(service: widget.products, exports: widget.exports);
     } else if (current.id == 'sale') {
       // 店内销售是核心闭环的第三块（RULE-002）；客户「新建」共用 PartyService
       page = widget.sales == null || widget.products == null || widget.parties == null
@@ -166,15 +191,16 @@ class _AppShellState extends State<AppShell> {
               engine: widget.engine!,
               products: widget.products!,
               queries: widget.queries!,
+              exports: widget.exports,
             );
     } else if (current.id == 'parties') {
       page = widget.parties == null
           ? _PendingPage(destination: current)
-          : PartiesPage(service: widget.parties!);
+          : PartiesPage(service: widget.parties!, exports: widget.exports);
     } else if (current.id == 'documents') {
       page = widget.documents == null
           ? _PendingPage(destination: current)
-          : DocumentsPage(dao: widget.documents!);
+          : DocumentsPage(dao: widget.documents!, exports: widget.exports);
     } else if (current.id == 'settings') {
       page = widget.configStore == null || widget.onConfigChanged == null
           ? _PendingPage(destination: current)
@@ -182,10 +208,17 @@ class _AppShellState extends State<AppShell> {
               config: widget.configStore!.load(),
               configStore: widget.configStore!,
               backupDirectory: widget.backupDirectory,
+              backupStatusLine: widget.backupStatusLine,
+              backupNeedsAttention: widget.backupNeedsAttention,
+              onBackupNow: widget.onBackupNow,
               onChanged: widget.onConfigChanged!,
             );
     } else if (current.id == 'help') {
-      page = const HelpPage();
+      // AE-6：恢复步骤要带**用户真实的两个文件夹**，否则他照做不下去
+      page = HelpPage(
+        dataDirectory: widget.dataDirectory,
+        backupDirectory: widget.backupDirectory,
+      );
     } else if (current.id == 'accounts') {
       page = widget.accounts == null
           ? _PendingPage(destination: current)

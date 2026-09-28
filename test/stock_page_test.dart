@@ -2,7 +2,7 @@
 //
 // 覆盖：三档颜色语义（负红 / 低橙 / 正常无色，§AA AA-3）/ 在店可售主列 /
 // 排序（在店可售降序，遗漏 4）/ 零流水隐藏与「显示全部」开关（遗漏 5）/
-// 成本（均价）列的 tooltip（AA-4）。
+// 成本（均价）列的 tooltip（AA-4）/ 导出按钮（§AF：含停用、在途、单位）。
 //
 // ⚠️ 必须 `useLocalSqlite()`（§N）。
 import 'dart:io';
@@ -11,8 +11,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/stock_page.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
+
+import 'support/fake_export.dart';
 
 void main() {
   useLocalSqlite();
@@ -127,12 +130,13 @@ void main() {
     );
   }
 
-  Widget page() => MaterialApp(
+  Widget page({ExportSink? exports}) => MaterialApp(
     home: Scaffold(
       body: StockPage(
         engine: RuleEngine(db),
         products: products,
         queries: queries,
+        exports: exports,
       ),
     ),
   );
@@ -242,5 +246,79 @@ void main() {
     await tester.tap(find.text('显示全部（含没进过货的商品）'));
     await tester.pumpAndSettle();
     expect(find.text('没进过货的商品'), findsOneWidget);
+  });
+
+  // ---------------------------------------------------------------- 导出（§AF）
+
+  testWidgets('导出按钮：列含单位与在途、**含停用**、行口径与页面一致（AF-9 / AF-12）', (
+    WidgetTester tester,
+  ) async {
+    buy(10);
+    // 再造一件**停用但有库存**的商品：页面上看不到，但导出的账里不能少。
+    // ⚠️ 走真实路径（建档 → 采购入库 → 停用），不手插流水 ——
+    // 手插会绕开外键与不变量，测出来的东西不算数
+    final int t = 1700000000000;
+    ProductDao(db).insert(Product(
+      id: 'p-stopped',
+      code: 'P0002',
+      name: '停用但有货',
+      unit: '箱',
+      createdAt: t,
+      updatedAt: t,
+    ));
+    purchases.create(
+      PurchaseDraft(
+        date: '2026-09-28',
+        lines: <PurchaseLineDraft>[
+          PurchaseLineDraft(
+            productId: 'p-stopped',
+            productName: '停用但有货',
+            quantity: '4',
+            unitPrice: '1.00',
+          ),
+        ],
+        payments: <PurchasePaymentDraft>[
+          PurchasePaymentDraft(accountId: accountId, amount: '4.00'),
+        ],
+      ),
+      now: 1700000000000,
+    );
+    products.setActive('p-stopped', false, now: 1700000000000);
+
+    final FakeExport fake = FakeExport();
+    await tester.pumpWidget(page(exports: fake));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('export-stock')), findsOneWidget);
+    expect(find.text('导出库存'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('export-stock')));
+    await tester.pumpAndSettle();
+
+    expect(fake.calls, 1);
+    final ExportTable table = fake.last;
+    expect(table.label, '库存');
+    expect(table.header, <String>[
+      '编码',
+      '商品',
+      '条码',
+      '单位',
+      '库存数量',
+      '在途',
+      '在店可售',
+      '库存成本',
+      '状态',
+    ]);
+    expect(
+      table.rows.map((List<String> row) => row[1]).toList(),
+      containsAll(<String>['红富士苹果', '停用但有货']),
+      reason: 'AF-12：停用但有库存的行也要在导出里（会计对得上账）',
+    );
+    expect(table.rows.every((List<String> row) => row.length == 9), isTrue);
+    expect(
+      table.rows.any((List<String> row) => row.contains('停用')),
+      isTrue,
+      reason: '含停用的行要能一眼看出来',
+    );
   });
 }

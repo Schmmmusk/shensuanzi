@@ -2347,3 +2347,513 @@ bug 修复必须同步三处。**
 **v1 界面收尾全部完成**：概览 / 商品 / 采购 / 账户 / 销售 / 库存 / 往来方 / 帮助 /
 设置 / 单据 / **期初录入** —— 十一个入口全部实装，无「正在开发」占位残留
 （`_PendingPage` 仅剩「数据库未就绪」兜底用途）。
+
+---
+
+## AE. 设计提案：备份执行机制（2026-09-28，**待裁定**）
+
+> reply.md 裁定：备份优先于核销 —— 「用户不会在一个数据看起来随时会丢的软件里
+> 认真录入一个月的账」。裁定已给的框架：每天首次启动检查、ZIP、保留 30 天、
+> 加密不做、恢复 v1 无 UI。本提案做事实核对 + 落地形态，含糊处列待裁定。
+
+### 一、事实核对
+
+| 事项 | 现状 | 影响 |
+|---|---|---|
+| 备份执行代码 | **零**——现有只有「算出备份目录路径」（`DataDirectoryPolicy.backupDirectoryFor`，数据目录的兄弟目录「神算子备份」）和设置页/概览页的文案 | 全新模块，落 `shensuanzi_app`（纯 Dart 可测，铁律） |
+| **数据库是 WAL 模式** | `PRAGMA journal_mode = WAL`（database.dart:32，断电安全性基础） | **直接拷 .db 文件会丢未 checkpoint 的事务**！备份前必须 `PRAGMA wal_checkpoint(TRUNCATE)` 再拷，这是本模块最重要的技术点 |
+| 数据目录内容 | `shensuanzi.db` + 标记文件（DataMarker） | 备份内容二选一：仅 db / db + 标记 |
+| 依赖 | `archive` 包（纯 Dart）未引入 | ZIP 需要新增依赖（shensuanzi_app pubspec） |
+| UI 挂点 | 设置页数据安全区已有「位置/备份目录」两行（§AC 遗漏 1 落地时预留）——**「立即备份」按钮 v1 有意没放**（当时机制未实现，空按钮比不做糟） | 本批补按钮 + 上次备份时间显示 |
+| 启动挂点 | `app.dart._openDatabase` 成功后 | 自动备份检查在此触发；**失败不阻塞启动** |
+
+### 二、落地形态
+
+| 部分 | 内容 |
+|---|---|
+| core... 不，`shensuanzi_app/lib/src/backup.dart`（新，纯 Dart） | `BackupService`：① `shouldAutoBackup(now, lastBackup)` 纯函数（>24h）；② `run()`：checkpoint → 打包 ZIP（按 AE-4 裁定内容）→ 落备份目录 → 按保留策略清理旧包；③ `lastBackupTime()` 读目录里最新包的时间戳 |
+| 保留策略（AE-2 裁定） | 删 30 天前的每日包；**每周一份长期保留**（「最坏情况的最低保障」）——具体规则见待裁定 |
+| 启动接线（`app.dart`） | 开库成功后异步触发：`shouldAutoBackup` → `run()`；**任何失败只记状态，不弹窗不阻塞**（用户马上要用软件） |
+| 设置页 | 数据安全区加「立即备份」按钮（点击执行 + SnackBar 结果）+「上次备份：xx（自动/手动）」一行；备份中禁用按钮 |
+| 帮助页 | FAQ 补「数据备份与恢复」：备份在哪、怎么恢复（解压把 `shensuanzi.db` 拷回数据目录）——**逃生门不是日常功能** |
+| 测试 | `backup_test.dart`（`shensuanzi_app` 的 dart test）：checkpoint 后拷贝完整 / 命名与时间戳 / 保留策略边界（30 天、周保留）/ `shouldAutoBackup` 边界 / 失败不抛穿；selfcheck 镜像；设置页 widget 测试（按钮 + 状态显示，备份动作注入桩） |
+
+### 三、待裁定项
+
+| # | 问题 | 我的建议 |
+|---|---|---|
+| AE-1 | ZIP（新依赖 `archive`）vs 直接拷 `.db` 文件 | **直接拷 db 文件**（命名 `shensuanzi-20260928-1530.db`）。理由：单个 SQLite 文件**本身就是开放格式**，用户拖进任何 SQLite 工具都能看；ZIP 反而多一步解压，且引入依赖。reply.md 提 ZIP 的理由是「用户能自己打开看」——裸 db 文件同样满足且更彻底 |
+| AE-2 | 保留策略细则 | **30 天内的每日包 + 每个自然周最早的一份长期保留**（不删）。判断纯函数可测。备选：滑动窗口「最近 30 份每日 + 最近 12 份每周」，不按自然周锚定——个体户不关心周一还是周四，窗口制实现更简单也更直观 |
+| AE-3 | 自动备份时机 | 每天首次启动（距上次备份 >24h 触发），**失败完全静默**（设置页能看到「上次备份：从未/时间」，红色提示超过 3 天未备份）。备选：失败弹一次非阻塞提示 |
+| AE-4 | 备份内容 | **仅 `shensuanzi.db`**（checkpoint 后单文件完整）。标记文件恢复时自动重建，不备；config 在 %APPDATA%，本就是设备偏好不在备份范围 |
+| AE-5 | 「上次备份」状态显示 | 设置页显示时间 + 来源（自动/手动）；**超 3 天未备份红色提醒**（数据安全的可视化，呼应「可信赖」定位） |
+| AE-6 | 恢复路径 | v1 无恢复 UI；帮助页 FAQ 写清三步（关软件 → 解压/拷贝备份的 db 到数据目录覆盖 → 重开）。**要不要在设置页加「从备份恢复」按钮**：v1 不做（覆盖现有数据是高危操作，做错就是灾难；逃生门用文件操作已够） |
+
+### 四、门禁（拟）
+
+`shensuanzi_app`：`dart test`（backup_test 新增 + 既有 26 用例不回归）；selfcheck 镜像
+（typecheck 入口表更新）；根应用 `flutter analyze` 0 + 设置页 widget 测试（按钮/状态/
+注入桩不真拷贝）。交付前我侧自验，用户复跑。
+
+### 八、§AE 落地记录（2026-09-28）—— ⚠️ 本批中止，待通道恢复
+
+**状态**：纯 Dart 第一批写到一半，AI 侧工具通道开始返回不可信内容（文件读取
+返回编造内容、一次 Write 内容发岔），已停止编辑避免污染仓库。
+
+**已发生的改动（以 git status/diff 为准，未提交）**：
+1. `shensuanzi_core/lib/src/dao/query_dao.dart` —— 追加 `hasAnyDocument()`
+   （遗漏 1 空库判定，内容正确，纯增量）
+2. `shensuanzi_app/lib/src/backup.dart` —— 新文件；第一版残缺后已用完整实现
+   **覆盖**，但未经 typecheck 验证，**需人工核对或直接丢弃重写**
+3. 桶文件导出编辑（shensuanzi_app.dart）—— **最可疑，建议直接 checkout 丢弃**
+
+**处置**：`git checkout -- <可疑文件>` 丢弃即可，裁定与设计全在本台账，不丢失。
+通道恢复后按本节重写。
+
+**裁定整合清单（reply.md §AE 审查，落地时逐条对照）**：
+- AE-1 ✅ + 加固：副本 `PRAGMA integrity_check`，失败删残件（必做）
+- AE-2 ✅ 主方案自然周锚定 + 手动包不参与清理（`m-` 前缀，同分钟防连点）
+  + 周代表边界三例（仅周三/仅周日/零备份）
+- AE-3 ✅ 改两层：单次失败静默 + **超 3 天概览页橙卡**（用户不会主动开设置页）
+- AE-4 ✅ 文件名带 schema 版本：`shensuanzi-schema1-YYYYMMDD-HHMM.db`
+- AE-5 ✅ 状态行可点开备份目录（_FolderRow 已有「打开」位）
+- AE-6 ✅ FAQ 六步恢复（含「改名 .bak 再粘贴」心理安全带）
+- 🔴 遗漏 1 空库不自动备份（`QueryDao.hasAnyDocument()`，手动不受限）
+- 🔴 遗漏 2 目录可写探测（建目录+探针文件）；磁盘余量检查纯 Dart 不可得 →
+  拷贝失败路径兜底（降级记录在案）
+- 🔴 遗漏 3 并发串行化（`_running` Future 复用）
+- 🔴 遗漏 4 tmp + rename 原子化 + 清 .tmp 残留
+- 🟡 遗漏 5 SnackBar 带完整路径 / 遗漏 6 备份区说明文案 / 遗漏 7 文件名本地时间 /
+  遗漏 8 同盘风险 FAQ 明说 / 遗漏 9 时钟回跳容错
+- 🟢 遗漏 10 README.txt 记录不做 / 遗漏 11 按钮防抖（busy 禁用 +「备份中…」）
+
+**数据导出建议（用户新提，§AF 候选待提案）**：Excel/CSV/PDF 导出，
+「导出后的数据不再受神算子控制」。排序待裁定：备份之后、核销之前/之后。
+
+**下一步（通道恢复后）**：重写 backup.dart（按本节清单）→ backup_test +
+selfcheck 镜像 → 桶文件导出 → 用户复跑 dart test → Flutter 批（启动接线 /
+设置页按钮 / 概览橙卡 / 帮助 FAQ）。
+
+### 九、§AE 落地记录（2026-09-28）：第一批（纯 Dart 层）✅
+
+通道恢复，backup.dart 按裁定清单重写完成。**门禁（我侧）**：
+- core typecheck 28 入口 ✅（`QueryDao.hasAnyDocument()` 已在库）
+- app typecheck 10 入口 ✅（backup.dart / backup_test.dart / selfcheck_backup.dart 全编译）
+- **selfcheck_backup 25 过 0 挂**（真实文件库）：WAL checkpoint 回归探针（副本里查得到
+  checkpoint 前的单据）/ integrity_check / 同分钟防连点 / 单飞 Future（identical）/
+  保留策略（周代表豁免、手动包保留、恰好 30 天严格 <）/ 残留 .tmp 清理 / 时钟回跳
+  重触发 / 目录不可写 failure
+- `dart test`：被会话管道耗尽拦（CreateFile 231，加载器无法 spawn 编译器；typecheck
+  已证实测试文件编译通过）→ **用户复跑**
+
+**交付物**：
+| 文件 | 内容 |
+|---|---|
+| `shensuanzi_app/lib/src/backup.dart` | `BackupFileName`（解析/生成，`m-` 前缀）· `shouldAutoBackup`（>24h/首次/时钟回跳）· `expiredAutoBackups`（30 天严格 < + 周代表豁免 + 手动包永不清理）· `BackupService`（checkpoint → 拷 tmp → integrity_check → rename；可写探测；单飞；保留清理）|
+| `shensuanzi_app/test/backup_test.dart` | 21 用例（文件名 4 + 判定 5 + 保留 6 + 集成 8，含并发 identical 与时钟回拨重触发）|
+| `shensuanzi_app/tool/selfcheck_backup.dart` | 降级门禁镜像（25 检查）|
+| `shensuanzi_app/lib/shensuanzi_app.dart` | 桶导出（BackupFileName/Outcome/Service + 3 个纯函数）|
+| `shensuanzi_core/lib/src/dao/query_dao.dart` | `hasAnyDocument()`（用户保留的那份，已在库）|
+
+**落地中抓到并修掉的真 bug（selfcheck 门禁的价值）**：
+1. 单飞缺陷：`_run` 原本存原始 Future、返回 whenComplete 包装 → 并发方拿到不同
+   Future。改为**存包装后**的（identical 可测）
+2. **dedupe 跳过路径没跑保留策略** —— 手动备份先建了同名包后，后续备份命中
+   「同名跳过」提前返回，`.tmp` 残留与过期包清理全被跳过。修为：跳过重拷
+   **不跳过清理**
+3. selfcheck 空库断言直接 listSync 不存在的目录（skipped 路径不建目录是正确
+   行为）→ 断言改防御式
+
+**§AF 导出（用户裁定）**：备份之后、核销之前；现阶段 CSV；Excel 视观感后续定；
+PDF 仅打印。详细提案待备份真机验证后出。
+
+**下一步（第二批，Flutter 层）**：app.dart 启动接线（autoBackup，失败静默）/
+设置页「立即备份」+ 状态行 / 概览页橙卡（超 3 天）/ 帮助页六步恢复 FAQ。
+用户复跑：`cd packages/shensuanzi_app && dart test && dart run tool/selfcheck_backup.dart`
+
+### 十、§AE 第一批复跑返工（2026-09-28）：4 处夹具目录缺失
+
+用户复跑 169 过 4 挂，失败全部是**测试夹具**的同类疏漏（与 selfcheck 里修过的
+目录问题同根因，测试文件漏了对应四处）：
+1. 手动备份空库 / 同分钟防连点：`Db.open('empty/shensuanzi.db')` 前没建
+   `empty` 目录（code 14）
+2. 残留 .tmp / 保留策略集成：写哑文件前没建 `backupDir`（PathNotFound）
+
+修法：四处补 `createSync(recursive: true)`。已修，待用户复跑
+（我侧 dart test 被管道耗尽拦；typecheck 已证实编译通过）。
+
+**教训沉淀**：`Db.open` 在目录不存在时报 code 14 而不是自动建目录；
+写文件前置目录创建。§AE 第二批（Flutter 接线）的启动接线里同样适用
+——**数据目录由启动流程保证存在，备份/导出目录在服务内建**（backup.dart
+的可写探测已含 createSync，无需调用方预建）。
+
+### 十一、会话收尾状态（2026-09-28 晚）
+
+- 用户已核查并 `git checkout -- lib/src/app.dart`：本批计划外的混入编辑已还原，app.dart 干净。
+- **§AF 导出裁定（权威）**：备份之后、核销之前；现阶段 CSV；Excel 视使用观感后续定；
+  PDF 属不可二次修改文件、仅用于打印（用于打印另立功能，不进导出）。
+- **§AE 第二批（Flutter 接线）未开始**，实施方案：backup.dart 补 `latestBackupFile()` +
+  `needsBackupAttention()`（⚠️ 本会话末尾已写入但**未经编译验证**，新会话先跑
+  typecheck+test 确认）；app.dart 启动接线（autoBackup 静默 + _manualBackup 回调）；
+  app_shell 透传；overview 橙卡（StatefulWidget 化）；settings 备份区；help FAQ 两条；
+  测试补齐。详见会话总结。
+- **新会话第一步**：`cd packages/shensuanzi_app && dart run tool/typecheck.dart && dart test`
+  验证现状，再动第二批。
+
+### 十二、§AE 第二批落地（2026-09-28）：Flutter 接线 + 镜像回填
+
+**承接 §十一的「新会话第一步」**：先验现状 —— `app typecheck 10 入口 ✅`（上一会话末尾
+写入的 `latestBackupFile()` / `needsBackupAttention()` 编译无误，**不用重写**）。
+
+**⚠️ 本会话的验证通道收窄**：`dart test` / `flutter analyze` / `flutter test` **全部**
+被 `CreateFile failed 231（所有的管道范例都在使用中）` 拦住。本会话实测
+`Process.runSync('where', …)` 最小用例同样失败 ⇒ **创建不了任何子进程**
+（不是 flutter 的问题；上会话的「已解除」结论只在正常会话里成立）。
+⇒ 我侧门禁 = `dart run tool/typecheck.dart` + `tool/selfcheck_*.dart` + `dart format
+--output=none`（只验语法）；**analyze / test 一律由用户复跑**。
+⚠️ 另：`dart run` **编译不了 import `package:flutter` 的文件**（`dart:ui is not
+available on this platform`）⇒ **根 `lib/` 没有任何我侧可达的编译门禁**，
+Flutter 层只能语法检查 + 人工核对 + 用户 `flutter analyze`。
+
+#### 一、纯 Dart 层（判断与文案，`dart test` 可覆盖）
+
+| 落点 | 内容 |
+|---|---|
+| `needsBackupAttention` **加 `lastFailure`** | **唯一**的判定入口。原为「空库 → 不提醒；从未 / 超 3 天 → 提醒」，本批补上 **§AE 遗漏 2 的失败分支**：最近一次尝试就失败 → **立刻提醒**（优先级在「几天没备份」之上）。空库仍然压倒一切（没数据可丢） |
+| +`daysSince` / `formatBackupTime` / `backupStatusLine` | 人话：从未 / 今天 09:05 / 昨天 21:30 / 9月25日 08:12。**按自然日**算（昨晚 23:00 备份 → 今天显示「昨天」），本地时间（遗漏 7） |
+| +`backupReminderText` | 橙卡文案；**非空 ⟺ `needsBackupAttention`** —— 与设置页红字同源。失败时直接说「上次备份没成功：<领域层写好的怎么办>」 |
+| +`backupOutcomeMessage` | 手动备份结果文案（遗漏 5）：成功带**完整路径**，失败直接用领域层的「怎么办」 |
+| `BackupService._execute` 加固 | **备份目录「建不出来」也走「说怎么办」那一族**（原来只兜住「探针写不进」）：目录被删、被设只读、**或路径上蹲着一个同名文件**（U 盘拔了/被人改名）都会落到 `File.copySync` 前的通用 catch，文案不指向备份目录。selfcheck 逮到的真问题 |
+
+> ⚠️ **中途砍掉的一版设计（记录在案）**：本批先写了 `BackupStatus` 值对象 +
+> `BackupService.status({hasDocuments})`，让服务把「最新一份 + 要不要提醒」一起算出来。
+> 自查时发现它会变成**第二处判定**（服务在「读状态时」算一次，应用在「重绘时」也要算
+> 一次才能跨天自洽），而且 UI 实际用的是应用层那次 ⇒ `BackupStatus.needsAttention`
+> 是死代码。**已整体删除**，改为：应用只存 `BackupFileName? _lastBackup` +
+> `String? _backupError`，**判定只在 build 里问 `needsBackupAttention` 一次**。
+> 教训：值对象里塞「判定结果」时，先问「这个结果谁来消费」——没人消费就是两处口径。
+
+#### 二、Flutter 层（只摆放）
+
+| 文件 | 落点 |
+|---|---|
+| `app.dart` | 开库成功后建 `BackupService`；`_refreshBackupStatus()`（**只在启动与每次备份后**读 `latestBackupFile()` + 空库判定，不放 build —— 目录列举是 IO）；`unawaited(_autoBackup())`（**先让出一次事件循环**：拷贝是同步的，别卡启动那一下）；`_backupNow()` 手动路径（auto/manual **共用同一 service ⇒ 共用单飞锁**，遗漏 3）。**`_noteBackupOutcome`：`ok` 与 `skipped` 都算没事**（「库还是空的」「不足 24h」是设计内跳过，记成失败会让橙卡天天喊）。UI 只拿到**算好的字符串** |
+| `app_shell.dart` | 透传 `backupStatusLine` / `backupNeedsAttention` / `backupReminder` / `onBackupNow`；帮助页带上两个**真实**目录 |
+| `overview_page.dart` | **StatefulWidget 化**（§十一 拟定）：橙卡（AE-3 两层机制上层）+「立即备份」；文案来自纯 Dart，本页不造句 |
+| `settings_page.dart` | 备份区：「上次备份：时间（来源）」+ 需要提醒时**红字**（AE-5；失败时这一行改说「上次备份没成功：…」）+「立即备份」按钮（遗漏 11：点了立刻禁用 +「备份中…」）+ 两行说明（遗漏 6，含 §AE-1 的「普通数据库文件」承诺）。**删掉原「每天关店前软件会提醒备份」—— 与实际行为不符** |
+| `help_page.dart` | FAQ 两条：§AE-6 **六步恢复**（带真实路径 + 「先改名成 .bak 再粘贴」）+ 遗漏 8 **同盘风险坦白**。没传路径就退回「到设置页看」，**不编造路径** |
+
+**一个设计取舍（请复看）**：`backupReminder` / `backupStatusLine` 由 `app.dart` 在
+`build` 里调纯函数算出后**以字符串下传**，页面完全不碰时钟。好处是 widget 测试只断言
+「摆得对不对」，文案边界（4 天 / 恰好 3 天 / 空库）只在 `dart test` 里钉一次 ——
+两处各算一遍正是 §AE 明令避免的漂移源。
+
+**按钮防抖放在页面自持 `_busy`**（遗漏 11）：服务侧单飞是**兜底**，不是替代 ——
+用户点下去必须立刻看到「我的操作被接受了」。测试里用 `Completer` 卡住 Future，
+断言「第二次点击不触发回调」。
+
+#### 三、镜像回填（两套并行断言的欠账）
+
+本批新增断言时**顺带清掉两处既有漂移**（`test/**` ↔ `tool/selfcheck*.dart`）：
+
+1. `backup_test` 有、`selfcheck_backup` **没有**：残留 `.tmp` 清理、备份目录不可写 —— 已补（25 → 42 项）
+2. core 侧 `QueryDao` 的三个存在性判定 `hasAnyDocument`（§AE 遗漏 1）/
+   `hasAnyStockLedger` / `inboundProductIds`（§AD 遗漏 1、2）**从未有镜像断言**
+   —— `query_test.dart` + `selfcheck_query.dart` 一并补上（26 → 30 项）
+
+#### 四、测试（新增 16 条）
+
+| 文件 | 条数 | 内容 |
+|---|---|---|
+| `test/overview_page_test.dart` | **新 6** | 无提醒不摆卡 / 有提醒摆卡 / 备份不可用不摆空按钮 / 点击→回调+SnackBar 带路径 / 失败说「怎么办」 / busy 防连点 |
+| `test/settings_page_test.dart` | +4 | 状态行 + 说明文案 + SnackBar 路径 / 需要提醒时红字（且正常不刷红）/ 备份不可用整块不显示 / busy 防连点 |
+| `test/help_page_test.dart` | +3 | 六步恢复（含 `.bak` 与真实路径）/ 没传路径的兜底措辞 / 同盘风险 |
+| `test/startup_test.dart` | +3 | **场景 6** 空库不备份（备份目录连建都不建）/ **场景 7** 备份目录不可用 → 自动备份静默失败 + 概览橙卡出现（AE-3 两层机制）/ **场景 8** 正常链路启动即出一份、橙卡不出现 |
+| `packages/shensuanzi_app/test/backup_test.dart` | +6 | 文案与判定 5 条（含**「上次尝试失败」压过「几天没备份」**）+ 集成 1 条（`latestBackupFile` / 备份后提醒消失） |
+
+**我侧门禁（实测）**：core typecheck 28 入口 ✅ ｜ app typecheck 10 入口 ✅ ｜
+`selfcheck_backup` **42 过 0 挂** ✅ ｜ `selfcheck_query` 30 项 ✅ ｜
+`selfcheck_app` **126 过 0 挂** ✅ ｜ 15 个改动文件 `dart format --output=none` 无语法错 ✅
+
+**用户复跑（预期）** —— 在仓库根 `D:\shensuanzi\shensuanzi` 下，逐段执行：
+
+```powershell
+# ① 纯 Dart 包（我侧已自验，这里确认用例数）
+cd packages\shensuanzi_app ; dart test ; dart run tool\selfcheck_backup.dart
+cd ..\shensuanzi_core        ; dart test ; dart run tool\selfcheck_query.dart
+
+# ② 回到仓库根：全仓 lint + 根 widget 测试
+cd ..\..
+flutter analyze
+flutter test
+```
+
+预期：analyze **0 issues**；app `dart test` 169 + 6 = **175**；根 `flutter test`
+58 + 16 = **74**；core `dart test` +3。（数字是推导值，**以你回传的为准**。）
+
+#### 五、记录在案 / 待真机确认
+
+- **本批之外**：`lib/src/ui/products_page.dart` 有一处**未提交**改动（真机反馈 2026-09-28：
+  副标题改成「单位：个」）。已核对 `Product.unit` 非空 ⇒ 编译无碍，且无测试断言该副标题；
+  **归用户决定去留**。
+- **橙卡什么时候留在屏幕上**：① 有单据 + 从未备份 / 超 3 天没备份，且**自动备份没成功**
+  （成功就立刻消失，正确）；② **最近一次尝试失败**（遗漏 2）—— 这一条即使「昨天刚备份过」
+  也会显示，因为它说的是「这次没成」，不是「多久没成」。真机走查请专门造一次
+  「备份目录不可写」看这两条。
+  ⚠️ **本批把遗漏 2 的「不静默」补全了**（第一批只做了探测 + 降级记录）；请裁定这个口径
+  是否合意 —— 备选是「失败只在设置页显示」（更安静，但用户不主动看就永远不知道）。
+- 遗漏 10（备份目录放 README.txt）仍**不做**（记录在案）；遗漏 8 已在帮助页明说同盘风险。
+- `docs/testing.md` §L 的「已自动化」表格**已同步本批**（`startup_test` 五条 → 八条，
+  新增 `overview_page_test` 一行）；该表还缺 `settings` / `help` / `documents` / `stock` /
+  `parties` / `opening_stock` 六个文件的行 —— 列为**待办**，本批没有擅自补全。
+- 真机走查清单（§AE 末）：首启空库不备份 → 录商品 → 重启触发备份 → 立即备份看 SnackBar
+  路径 → 手动删一个备份文件确认保留策略不误删其他。
+
+#### 六、复跑返工（2026-09-28 晚）：两处**断言**写错，产品代码零改动
+
+用户复跑：core **全部通过** ✅ ｜ 根 `flutter analyze` **无问题** ✅ ｜ 两处红，都是测试自己错：
+
+| # | 失败 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `backup_test` 301：期望「今天 09:05」实得「今天 09:00」 | 我把夹具写成 `DateTime(2026, 9, 28, 9)` 却断言 09:05 —— **同一个笔误我在 `selfcheck_backup` 里已修过，却漏了 `dart test` 那一侧**（镜像纪律的教科书反面案例：修一边必须修另一边） | 夹具改 `9, 5` |
+| 2 | `startup_test` 247（场景 7）：`还没有备份过` 找到 0 个 | **不是 bug，是新行为**：这一轮确实试过且确实没成 ⇒ 文案走的是「上次备份没成功：…」（遗漏 2 分支）。断言还停在第一批的口径 | 断言改成 `上次备份没成功` + `备份文件夹用不了`（**同时钉住「原因与怎么办来自领域层」**） |
+
+**这条返工的真正价值**：失败 #2 说明「文案分支」确实按三种处境分开走了 —— 从没试过 /
+长期没搬动 / 试过但没成 是三句不同的话。测试必须**分别**断言，不能只断言「卡片在」。
+
+**沉淀**：夹具时间与断言时间**手写两遍**就会漂 —— 时间类断言优先写成
+`final DateTime t = …; expect(format(t), '…')` 里**只有一处**字面量，
+或者干脆断言 `formatBackupTime` 的分支（`contains('今天')`）而不锚具体分钟。
+
+**收官（2026-09-28 晚）**：用户复跑 **app `dart test` 全绿**、**根 `flutter test` 全绿**、
+**`flutter analyze` 0 issues**、core 全绿。§AE（备份执行机制）两块全部闭环。
+
+---
+
+## AF. 设计提案：CSV 数据导出（2026-09-28，**待裁定**）
+
+> 用户已给的框架（§十一 权威，`docs/reply.md` §AF 建议审查之外的裁定）：
+> **备份之后、核销之前**；**现阶段只做 CSV**；Excel 视使用观感后续定；
+> **PDF 属不可二次修改文件、仅用于打印**（打印另立功能，不进导出）。
+> 本提案只做**事实核对 + 落地形态**，含糊处列待裁定。裁定答复请写在 `docs/reply.md`。
+
+### 一、事实核对（本轮）
+
+| 事项 | 现状 | 影响 |
+|---|---|---|
+| **三处 200 行上限** | `DocumentDao.listDocuments({…, limit = 200})`、`ProductDao.findAll({…, limit = 200})`、`PartyDao.findAll({…, limit = 200})`；`PartyLedgerDao.ofParty` **无上限** | 🔴 **「导出 = 当前视图」直接撞上硬上限**：一年几千张单，导出只会拿到最近 200 条，而且**用户看不出来被截断了**。这是本提案最重要的一条，必须先裁定 |
+| 各页「当前视图」定义不同 | 商品页 = `ProductService.list(query:)`（LIKE，仍 200 上限）· 库存页 = `_query` 页内搜索 + 成本三态 · 单据页 = 时间 chips（**默认最近 30 天**，SC-3）+ 类型 chips · 往来方页 = 无筛选，按 \|余额\| 降序 · 往来流水页 = 单一往来方的全部 | 「导出当前视图」这句话在五个页面上**不是同一件事**，按钮文案要说清导的是什么 |
+| 库存页拿不到名字 | `stockByProduct()` / `costByProduct()` / `availableInStore()` 都是 `Map<String,int>`（**无名称 / 条码 / 单位**），商品档案另走 `ProductService.list()` | 库存导出要「商品 × 数量 × 成本」三处拼装；另需定义「有库存但商品已停用」的行要不要出 |
+| 导出目录 | `DataDirectoryPolicy` 只有 `backupDirectoryFor`（兄弟目录 + 「自己就叫神算子备份」时避让）；**没有导出目录** | 新增 `exportFolderName` + `exportDirectoryFor`（**复制**那段避让逻辑，不复用备份目录 —— 用户要能分清「哪个是给会计的」） |
+| CSV 依赖 | pubspec 里**没有** CSV 包，也没有 `archive` | 手写（§AF 坑 2）—— 与项目「零新依赖」倾向一致，且只有 20 行 |
+| 值的形态 | 模型自带编解码：时间**毫秒**、金额**整数分**、布尔 `1/0` | 导出是给人看的 ⇒ 必须有「分 → 元」「毫秒 → 本地日期」的**展示层**转换（纯 Dart、可测；与备份的「本地时间」同款判断） |
+| 已有落点 | 设置页「数据」区已有位置 / 备份目录两行；帮助页 FAQ 已含备份六步 | 导出**不需要**设置页入口（AF-2），但帮助页要补「怎么把数据给会计」 |
+
+### 二、落地形态（拟）
+
+| 部分 | 内容 |
+|---|---|
+| `shensuanzi_app/lib/src/csv.dart`（新，纯 Dart） | `csvEscape`（RFC 4180：含 `,` / `"` / 换行才加引号，内部 `"` 双写）· `csvBytes(header, rows)`（**UTF-8 with BOM**：`utf8.encode('\uFEFF' + text)`，三字节换 Excel 不乱码）· 展示层格式化 `formatAmount(分)` / `formatDate(毫秒)` / `formatBool` · 空值输出**空串**（不是 `null` 字面量） |
+| `shensuanzi_app/lib/src/export.dart`（新，纯 Dart） | `ExportFileName`（`神算子-商品-20260928.csv`，单据带范围 `…-20260601至20260928.csv`；**中文 + 无空格**、本地日期）· `ExportService`（目录可写探测 → 边生成边写 → 失败「说怎么办」→ 单飞，与 `BackupService` 同构）· `ExportOutcome` + `exportOutcomeMessage`（SnackBar 文案，成功带**完整路径**） |
+| core：三个「导出用」读取入口 | `DocumentDao` / `ProductDao` / `PartyDao` 各加一个**不设上限**的读取（`limit: null` 或 `listAll*`）。⚠️ **只加读方法：不动表结构、不动现有默认值**（页面列表仍 200） |
+| 五页右上角「导出」 | 商品 / 库存 / 往来方 / 单据 / 往来流水；按钮**带行数口径**（如「导出 137 条」），让用户知道导的是筛选后的那批 |
+| 中文列名（给人看，不是字段名） | 商品：`商品名称 / 条码 / 单位 / 售价 / 进价 / 安全库存`；库存：`商品 / 条码 / 库存数量 / 在店可售 / 成本金额`；往来方：`往来方 / 角色 / 余额`；单据：`单号 / 单据类型 / 对方 / 金额 / 已收付 / 日期` |
+| 导出后 | SnackBar 带完整路径 + **「打开文件夹」**动作（`explorer /select, <path>`）—— 中老年用户自己找文件管理器会迷路（§AF 坑 3） |
+| 帮助页 | FAQ 两条：「怎么把数据给会计」（打开单据页 → 选时间 → 导出 → 微信/U 盘）+「**导出的文件完全属于你**」承诺（§AF 六） |
+
+### 三、待裁定项
+
+| # | 问题 | 我的建议 |
+|---|---|---|
+| AF-1 | v1 格式 | **已裁定**：只做 CSV（UTF-8 with BOM）；XLSX 视观感后续定；PDF 仅用于打印、另立功能 |
+| AF-2 | 出口位置 | **每页右上角**，不做设置页统一入口（导出是当前视图的延伸）；但**按钮要写明导的是筛选后的行** |
+| AF-3 | 导出目录 | `D:\神算子导出\`（数据目录的兄弟，与备份平级）；新增 `exportDirectoryFor`，避让逻辑照抄备份那份 |
+| AF-4 | 导出后动作 | SnackBar 带完整路径 +「打开文件夹」（`explorer /select,`） |
+| **AF-5** | **「当前视图」撞 200 上限** | **导出走独立查询（无上限）**，行数显示在按钮上；页面列表保持 200。备选是「导出跟随 200 + 文件头标注『仅前 200 条』」——**不建议**，用户拿这个给会计会漏账 |
+| AF-6 | 时间范围 | 单据 / 往来流水**跟随页面现有 chips**（默认最近 30 天，SC-3 已有），**不另设「默认最近 3 个月」**（两处默认值不同会让人困惑）；商品 / 库存 / 往来方全量 |
+| AF-7 | 文件名 | 中文 + 日期 + 无空格（见上）；单据带范围段 |
+| AF-8 | 「导出全部数据」一键包 | **不做**（那是迁移场景，不是日常场景） |
+| AF-9 | 列名清单 | 见上表；**请直接在裁定里改** —— 列名是给人看的，现在改比以后改代码便宜 |
+| AF-10 | 导出目录参与清理吗 | **不参与**：导出文件归用户自己管，与备份的 30 天保留策略完全隔离 |
+| AF-11 | 进度指示 | **先不做**：手写 CSV 几千行是毫秒级。⚠️ 与 §AE 备份一样**跑在 UI 线程**；真机若见卡顿，再谈 isolate |
+| AF-12 | 停用商品 / 无库存商品 | 库存导出**只出有流水或有库存的行**（与库存页一致）；商品导出**含停用**（列里给「状态」列），因为「带走数据」不该偷偷少东西 |
+
+### 四、门禁（拟）
+
+- `shensuanzi_app`：`dart test`（新增 `csv_test` + `export_test`；既有 175 条不回归）；
+  selfcheck 镜像（`typecheck` 入口表同步更新）。
+- core：三个「导出用」读取入口 + 镜像断言（`test/**` ↔ `tool/selfcheck*.dart` 两套）。
+- 根：`flutter analyze` 0 issues + 五页导出按钮的 widget 测试（**注入桩，不真写文件**）。
+- 交付前我侧自验（typecheck + selfcheck + 语法），analyze / test 由用户复跑。
+
+### 五、与 §AE 的关系（为什么紧接着做）
+
+§AE 解决「**数据不丢**」，§AF 解决「**数据能带走**」—— 同一个立场的两面：
+**开放格式优先，用户的文件永远能在神算子之外被打开**（§AE-1 从 ZIP 退回裸 `.db` 就是这个原则）。
+
+§AF 建议把这条写进 `Agents.md` 的裁定表：
+
+> **数据可携带性原则**：所有面向用户的输出（备份、导出）优先选择开放格式，
+> 不引入专有封装。用户的文件永远能在神算子之外被打开。
+
+⚠️ **我未擅自改 `Agents.md`**（规范文件）—— 连同 §AE 的备份裁定行，请一并裁定是否落表。
+
+### 十三、§AF 落地记录（2026-09-28）：CSV 导出（core + 纯 Dart + 五页接线）
+
+**裁定合入**（`docs/reply.md` §AF 审查：4 处修正 + 10 项遗漏 + 4 条实现建议）。
+
+#### 一、逐条对照
+
+| 裁定 | 落地 |
+|---|---|
+| **AF-5** 导出走独立查询 ✅ 但**按钮不带行数** | `ExportButton` 只摆文案；行数由 SnackBar 报告（`exportOutcomeMessage` 用 `ExportSuccess.rowCount`）。✅ 少一次 `COUNT(*)`，也少一个「显示不同步」 |
+| **AF-9 补 4 类字段** | 商品 +`编码`/`状态`；库存 +`单位`/`在途`，`成本金额`→**`库存成本`**；往来方 +`电话`/`地址`，`余额`→拆 **`应收`/`应付`**（不用负数）；单据 +`状态`；`对方` 为空写「散客/散采」；`单据类型`/`状态` 走中文 |
+| **AF-2 每页文案不同** | 商品「导出全部商品」· 库存「导出库存」· 往来方「导出往来方」· 单据「导出当前筛选的单据」· 流水「导出该往来方的全部流水」 |
+| **AF-7 流水文件名带往来方名** | `ExportFileName(extra: party.name)`；顺带做**非法字符清洗**（`王老板/李老板`→`王老板_李老板`，含结尾点/超长截断/空名兜底） |
+| **AF-3 目录主动创建** | 抽 `fs.dart` 的 `ensureWritableDirectory`（§AF 建议 1），**备份与导出共用**；备份的 `_execute` 已改调它（措辞随之统一） |
+| **AF-4 `/select,` 的逗号** | `revealInExplorer` 显式注释「少写逗号只会打开目录不选中文件」 |
+| **AF-11 + 遗漏 3** | 点下即禁用 +「导出中…」；**先弹「正在导出…」**（裁定给的「更简单」版），出结果再替换 |
+| **遗漏 1 CSV 注入** | `csvEscape` 加前导 `'`。⚠️ **但做了一处反向修正**（见下） |
+| **遗漏 2 并发** | `ExportService` 单飞 —— **按目标文件名做 key**（见下「与备份不同的一处」） |
+| **遗漏 4 空结果** | 0 行 → `ExportEmpty`，**不生成文件**（连目录都不建） |
+| **遗漏 5 结果反馈** | 成功带**完整路径** + 「打开文件夹」按钮（`ExportOutcome` 用 **sealed**，UI 侧 `switch` 必须穷尽 —— 建议 3） |
+| **遗漏 6 日期带时分** | `formatDateTime` → `2026-09-28 15:30`（只到日的话同日多单排序会乱） |
+| **遗漏 7 StringBuffer** | 已用；`csvBytes` 注释里写明「字符串 `+=` 是 O(n²)」 |
+| **遗漏 8 Excel 乱码逃生门** | 帮助页 FAQ：「不要双击，用 数据→从文本/CSV→65001」 |
+| **遗漏 9 目录不可写** | 失败文案指向「导出文件夹」+ 路径 + 怎么办 |
+| **遗漏 10 列宽** | **记录在案**（CSV 固有缺点，v1 接受；XLSX 的真正理由是列宽与格式） |
+| **建议 2 `csvBytes → Uint8List`** | 按裁定签名实现（BOM 在函数内部写完，调用方不管编码） |
+| **建议 4 数据可携带性原则** | 见本提案末 —— **等裁定**是否落 `Agents.md` |
+
+#### 二、落地物
+
+| 文件 | 内容 |
+|---|---|
+| `packages/shensuanzi_app/lib/src/fs.dart` **新** | `ensureWritableDirectory`（建目录 + 探针真写；三种坏情况一句话说清） |
+| `packages/shensuanzi_app/lib/src/csv.dart` **新** | `csvEscape` / `csvLine` / `csvBytes`（BOM + CRLF + UTF-8）/ `csvBom` |
+| `packages/shensuanzi_app/lib/src/format.dart` **新** | `formatDate` / `formatDateTime` / `formatFileDate` / `docStatusLabel` / `partyRoleLabel(s)` / `activeLabel` / `documentPartyLabel` —— **词汇表**（UI 不造句） |
+| `packages/shensuanzi_app/lib/src/export.dart` **新** | `ExportTable` / `ExportFileName`（含 `sanitize`）/ **sealed** `ExportOutcome`（Success/Empty/Failed）/ `exportOutcomeMessage` / `ExportSink`（能力面）/ `ExportService`（单飞 + 可写探测 + 同步写盘） |
+| `packages/shensuanzi_app/lib/src/export_tables.dart` **新** | 五张表的列定义与行映射（纯 Dart、`dart test` 覆盖） |
+| core：三个导出读取 + 两个服务入口 | `DocumentDao.listDocumentsForExport`、`ProductDao.findAllForExport`、`PartyDao.findAllForExport`、`ProductService.listForExport`、`PartyService.listForExport`（**只加读方法**：不动表结构、不动现有默认值，页面列表仍 200） |
+| `lib/src/ui/export_button.dart` **新** | 五页共用的导出按钮（busy 态 + SnackBar + `revealInExplorer`） |
+| 五页接线 | 商品 / 库存 / 往来方 / 单据 / 往来流水（流水页在 `AppBar.actions`） |
+| `data_directory.dart` + `bootstrap.dart` | `exportFolderName` / `exportDirectoryFor`（**复用**备份那段避让逻辑：抽了 `_siblingFor`）+ `DataLocation.exportDirectory` |
+| `help_page.dart` | FAQ 三条：**导出 ≠ 备份**（遗漏 5）、怎么把数据给会计 + 「**导出的文件完全属于你**」、Excel 乱码逃生门（遗漏 8） |
+| 测试 | `test/export_reads_test.dart` + `tool/selfcheck_export_reads.dart`（core，8 项）；`test/csv_test.dart` + `test/export_test.dart` + `tool/selfcheck_export.dart`（app，26 项）；`test/support/fake_export.dart` + 四个页面的导出用例（含新文件 `products_page_test.dart`） |
+
+#### 三、selfcheck 抓到的**真 bug**：`whenComplete` 自等待死锁 🔴
+
+写 `ExportService` 的单飞时照抄了 `BackupService` 的写法，但备份是**单字段**、导出是**按文件名做 key 的 Map**：
+
+```dart
+// ❌ 永不完成：回调返回的正是刚从 Map 里取出的那个 Future（= wrapped 自己）
+final wrapped = _execute(...).whenComplete(() => _running.remove(target));
+// ✅ 块体 → 返回 void，whenComplete 不会再等
+final wrapped = _execute(...).whenComplete(() { _running.remove(target); });
+```
+
+`whenComplete` 的入参是 `FutureOr<void> Function()` —— **回调一旦返回 Future，它会先等那个 Future**。
+实测症状：`selfcheck_export` 在第一个 `await` 处**静默退出（exit 0）**，没有任何报错 ——
+`dart test` 里则表现为「测试永不结束」。
+
+**最小复现**（已定位到形态差异，非环境问题）：
+
+```dart
+class A { Future<T>? _running; }   // 单字段：() => _running = null  → 完好（备份）
+class B { Map<String, Future<T>> _running; } // Map：() => _running.remove(k) → 死锁（导出）
+```
+
+**沉淀**：`whenComplete` 的回调**永远写块体**；判「Future 有没有完成」别只看有没有异常，
+**「进程静默退出」也是一次失败**（本次就是靠自检的输出缺口发现的）。
+
+#### 四、一处**反向修正**（请复看）：CSV 注入里的纯数字放行
+
+裁定的 `csvEscape` 对 `= + - @` **一律**加前导 `'`。照抄的话：
+
+> 流水/往来方里的**负金额**（收款单是负数）会变成**文本**，Excel 求和时被跳过 ——
+> 会计一求和就漏数，而且**看不出来**。
+
+所以加了一层：**纯数字字面量放行**（`^-?\d+(\.\d+)?$`）。
+`-12.34` 保持数字（可求和），`-5 折` / `=SUM(...)` / `+86 138` / `-2+3` 照样加引号。
+**数字字面量本身不是注入向量**，所以这层收窄不削弱防护。
+
+（往来方的余额也顺势拆成 `应收`/`应付` 两列，与 AF-9 的建议一致。）
+
+#### 五、几处**类推**（裁定没写，我按同一逻辑推的，请追认或置回）
+
+| # | 类推 | 理由 |
+|---|---|---|
+| 1 | 库存导出**含停用**，并加 `状态` 列 | AF-12 说「只出有流水或有库存的行」——「停用但有库存」必然落进这个集合，不标状态这行就无法解释；且会计对账少了它就对不上 |
+| 2 | 往来方导出**含停用**，并加 `状态` 列 | **停用但还欠钱的客户**必须在账里（否则这笔应收凭空消失） |
+| 3 | 商品/库存导出都带 `编码` | 「同款不同批次」是常态（R-15 条码可重复），光靠名字分不开；两份文件也能按编码对上 |
+| 4 | 单飞**按文件名做 key**（不是单个 `_running`） | 备份永远写同一件事，复用 Future 是对的；导出**每张表内容不同**，复用会把 A 表的结果当成 B 表返回 —— 比不做去重更糟。同键（同页同一天）仍完全等同备份的行为 |
+| 5 | 页面注入的是 **`ExportSink` 接口**而非具体 `ExportService` | 裁定要求「widget 测试注入桩、不真写文件」；接口还让测试能断言「页面拼出来的表几行几列」 |
+| 6 | 同日同页重复导出**覆盖**同名文件 | 与备份的「同分钟防连点」不同：导出是用户主动动作，覆盖是最符合直觉的结果（备选：文件名加时分） |
+| 7 | 库存 `库存成本` 期初商品写 `0.00` | 保持「数字列可求和」，不写「待校准」文字（帮助页已有「期初成本为什么是 0」的解释）。备选：加一列成本口径说明 —— 请裁定 |
+
+#### 六、我侧门禁（实测）
+
+core typecheck **30 入口** ✅ ｜ `selfcheck_export_reads` **8 项** ✅ ｜ `selfcheck_query` 30 ✅
+app typecheck **13 入口** ✅ ｜ `selfcheck_export` **26 过 0 挂** ✅ ｜ `selfcheck_backup` 42 ✅ ｜
+`selfcheck_app` 126 ✅ ｜ 15 个 Flutter 文件语法检查无错 ✅ ｜
+**根 `tool/import_guard.dart`：34 文件 0 处缺导入** ✅（§九 新增）
+
+⚠️ 本会话仍**创建不了子进程**（`CreateFile failed 231`），所以 `flutter analyze` / `flutter test` /
+`dart test` 依旧跑不了 —— 且 `dart run` 编译不了 import `package:flutter` 的文件，
+**根 `lib/` 没有我侧可达的编译门禁**。五页接线与新增 widget 测试**只能靠语法检查 + 人工核对**。
+
+#### 七、用户复跑（预期）
+
+```powershell
+# ① 纯 Dart 包
+cd packages\shensuanzi_app ; dart test ; dart run tool\selfcheck_export.dart
+cd ..\shensuanzi_core        ; dart test ; dart run tool\selfcheck_export_reads.dart
+
+# ② 仓库根
+cd ..\..
+flutter analyze
+flutter test
+```
+
+预期：analyze **0 issues**；app `dart test` 175 + 新增（csv 12 + export 11 ≈ **23**）≈ **198**；
+根 `flutter test` 74 + 新增（单据 1 + 商品 2 + 库存 1 + 往来方 2 + 帮助 1 = **7**）= **81**；
+core `dart test` + 8。（数字是推导值，**以你回传为准**。）
+
+#### 八、待裁定 / 记录在案
+
+- **`Agents.md` 是否落两条**：「数据可携带性原则」（§AF 建议 4，一条管多代功能）+ §AE 备份裁定行。
+- `docs/testing.md` §L 已同步本批（新增 `products_page_test` 行 + 导出覆盖说明）；该表仍缺
+  `settings`/`help`/`documents`/`stock`/`parties`/`opening_stock` 六行 —— 待办。
+- `lib/src/ui/products_page.dart` 那处**未提交**改动（真机反馈「单位：个」）仍在，归你处置。
+
+#### 九、复跑返工（首轮，三处失败 —— 全是测试侧写错，产品代码零改动）
+
+| # | 位置 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `packages/shensuanzi_app/test/export_test.dart`：写成功用例 | 用 `String.fromCharCodes(bytes.sublist(3))` 当解码器 —— 它按 Latin-1 逐字节取值，中文解成 `ç¼ç ` 乱码，断言必然失败（且失败信息里看不出是**解码**错了） | 改 `utf8.decode`。**自检侧一直是对的 ⇒ 镜像漂移第 8 次**（这次是测试错、自检对） |
+| 2 | 同上：0 行用例 | 对**不存在的目录**调 `listSync()` 证明「目录是空的」⇒ 抛 `PathNotFoundException`。空结果在可写探测**之前**就返回，目录根本不会被建 | 改成 `!Directory(exportDir).existsSync()`，断言更强（连目录都不建）；`selfcheck_export` 同步收紧，两侧一致 |
+| 3 | 根 `test/`：单据/商品/库存/往来方 4 个 widget 测试 | 用了 `ExportSink` / `ExportTable`，但**没 import `package:shensuanzi_app/shensuanzi_app.dart`** —— `test/support/fake_export.dart` 里有那行导入，可 **Dart 的 import 不传递**，别的文件看不见 | 四个文件各补一行桶导入。analyze 报的 2 条 `unnecessary_nullable_for_final_variable_declarations`（`info`）是「类型解析失败」的连带效应，导入补齐后应消失 |
+
+**沉淀**：
+- 字节 → 文本**只有一个正确解码器**（`utf8.decode`）。`String.fromCharCodes` 名字像解码、实际是 Latin-1 取值 —— 凡是断言里出现它，先怀疑。
+- 「证明目录为空」必须**先判存在**：`listSync()` 对不存在路径抛异常，报错信息（`列表失败`）离真正的问题（空结果不建目录）很远。
+- **镜像纪律**：本轮 3 处里有 1 处仍是对称漂移。两个文件写同一件事时，断言用的**API 名**也必须一致（`utf8.decode` ↔ `utf8.decode`），不能只看结论相同。
+
+#### 十、新增 `tool/import_guard.dart`（补根层缺口）
+
+失败 #3 暴露的不是笔误，是**结构性缺口**：根 `lib/`+`test/` 没有我侧可达的编译门禁
+（`dart run` 编译不了 import flutter 的文件、`dart analyze` 起不了 analysis server），
+所以这类错误只能等用户跑 `flutter analyze` 才发现。新增一个**纯 Dart 静态守卫**把发现时刻提前：
+
+- **只查一类错**：用了桶导出名、却没 import 对应桶文件。
+- **规则从桶文件推导**（读 `show` 子句），无手写清单 ⇒ 不会漂移。
+- 实现要点：Dart 源码级状态机去注释（块注释**可嵌套**）与去字符串 —— 否则文档/注释里
+  出现的 `ExportSink` 会满屏假报警。
+- **灵敏度已反向验证**：临时摘掉 `stock_page_test.dart` 的桶导入 → 精确报出那 2 个名字；
+  还原 → 0 处。且脚本以自身路径定位仓库根，从任意目录运行都对。
+- ⚠️ **它不替代 `flutter analyze`**：类型不匹配、参数写错、方法不存在一律看不见。
+
+已写入 `docs/testing.md` 的「降级门禁」段，并注明根层为何没有编译门禁。
+
+
+

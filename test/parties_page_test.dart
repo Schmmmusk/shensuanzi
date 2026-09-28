@@ -2,7 +2,7 @@
 //
 // 覆盖：应收/应付/已结清三态表达（遗漏 2）/ 总应收总应付汇总（遗漏 3）/
 // 排序（|余额| 降序、0 沉底，AA-5）/ 完整新建（双角色，遗漏 1）/
-// 流水页（单号 + 类型 + 方向字，AA-6）。
+// 流水页（单号 + 类型 + 方向字，AA-6）/ 导出按钮（§AF-2 文案、AF-7 文件名）。
 //
 // ⚠️ 必须 `useLocalSqlite()`（§N）。
 import 'dart:io';
@@ -12,8 +12,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/party_flow_page.dart';
 import 'package:shensuanzi/src/ui/parties_page.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
+
+import 'support/fake_export.dart';
 
 void main() {
   useLocalSqlite();
@@ -78,8 +81,8 @@ void main() {
     );
   }
 
-  Widget page() => MaterialApp(
-    home: Scaffold(body: PartiesPage(service: service)),
+  Widget page({ExportSink? exports}) => MaterialApp(
+    home: Scaffold(body: PartiesPage(service: service, exports: exports)),
   );
 
   testWidgets('空列表给「怎么办」；新建双角色往来方 → 列表出现「已结清」', (
@@ -185,5 +188,85 @@ void main() {
     expect(find.text('应收 ¥100.00'), findsOneWidget);
     final Party? stored = service.findByName('甲客户（新）');
     expect(stored?.roles, contains(PartyRole.customer));
+  });
+
+  // ---------------------------------------------------------------- 导出（§AF）
+
+  testWidgets('导出往来方：全量、列含电话地址与应收/应付（AF-9 / AF-12 类推）', (
+    WidgetTester tester,
+  ) async {
+    final Party customer = createCustomer('王老板');
+    creditSale(customer, 100);
+
+    final FakeExport fake = FakeExport();
+    await tester.pumpWidget(page(exports: fake));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('export-parties')), findsOneWidget);
+    expect(find.text('导出往来方'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('export-parties')));
+    await tester.pumpAndSettle();
+
+    expect(fake.calls, 1);
+    final ExportTable table = fake.last;
+    expect(table.label, '往来方');
+    expect(table.header, <String>[
+      '往来方',
+      '角色',
+      '电话',
+      '地址',
+      '应收',
+      '应付',
+      '状态',
+    ]);
+    final List<String> row = table.rows.single;
+    expect(row[0], '王老板');
+    expect(row[1], '客户');
+    expect(row[4], '100.00', reason: '应收一列给正数（不用负号）');
+    expect(row[5], '0.00');
+    expect(row[6], '启用');
+  });
+
+  testWidgets('导出流水：文件名带往来方名（AF-7），行数 = 该方全部流水', (
+    WidgetTester tester,
+  ) async {
+    final Party customer = createCustomer('王老板');
+    creditSale(customer, 100);
+
+    final FakeExport fake = FakeExport();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PartyFlowPage(
+            party: customer,
+            service: service,
+            exports: fake,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // AF-2：说清导的是「该往来方的全部流水」
+    expect(find.byKey(const Key('export-party-flow')), findsOneWidget);
+    expect(find.text('导出该往来方的全部流水'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('export-party-flow')));
+    await tester.pumpAndSettle();
+
+    expect(fake.calls, 1);
+    expect(fake.last.label, '往来流水');
+    expect(fake.last.header, <String>['单号', '单据类型', '金额', '日期']);
+    expect(
+      fake.last.rows.length,
+      service.flowsOf(customer.id).length,
+      reason: '该往来方的全部流水（不是前 200 条）',
+    );
+    expect(
+      fake.extras.single,
+      '王老板',
+      reason: 'AF-7：文件名要带往来方名，否则多个客户的文件名全一样',
+    );
   });
 }

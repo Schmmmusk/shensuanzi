@@ -51,7 +51,17 @@ class ProductDao {
   /// 但**定宽总会在某个位数上断掉**（`P10000` 的字典序小于 `P9999`），
   /// 一旦断掉列表顺序就会诡异地跳动。`(created_at, id)` 是真正的建档顺序，
   /// 也与 `sync_protocol.md` §七 的排序约定一致。
-  List<Product> findAll({String? query, bool? active, int limit = 200}) {
+  List<Product> findAll({String? query, bool? active, int limit = 200}) =>
+      _select(query: query, active: active, limit: limit);
+
+  /// **导出用**：不分页（§AF-5）。
+  ///
+  /// ⚠️ `active` 默认 `null` = **含停用** —— 与页面列表（默认只看启用）**不同**：
+  /// 导出是「把数据带走」，**偷偷少东西是不可接受的**（AF-12）。
+  List<Product> findAllForExport({String? query, bool? active}) =>
+      _select(query: query, active: active, limit: null);
+
+  List<Product> _select({String? query, bool? active, required int? limit}) {
     final List<String> conditions = <String>[];
     final List<Object?> args = <Object?>[];
     if (active != null) {
@@ -66,11 +76,12 @@ class ProductDao {
     final String where = conditions.isEmpty
         ? ''
         : ' WHERE ${conditions.join(' AND ')}';
-    args.add(limit);
+    final String tail = limit == null ? '' : ' LIMIT ?';
+    if (limit != null) args.add(limit);
     return _raw
         .select(
           'SELECT * FROM ${Schema.products}$where '
-          'ORDER BY created_at, id LIMIT ?',
+          'ORDER BY created_at, id$tail',
           args,
         )
         .map(Product.fromRow)

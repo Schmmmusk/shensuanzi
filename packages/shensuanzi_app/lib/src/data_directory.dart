@@ -61,6 +61,13 @@ class DataDirectoryPolicy {
   /// 备份目录的默认名（数据目录的**兄弟目录**）
   static const String backupFolderName = '神算子备份';
 
+  /// 导出目录的默认名（数据目录的**兄弟目录**，与备份平级）。
+  ///
+  /// 为什么与备份分开（§AF-3）：备份是「系统管理」（自动、后台、有保留策略），
+  /// 导出是「用户主动」（手动、前台、文件归用户）。混在一个目录里，
+  /// 用户分不清「哪个是拿去给会计的」，而备份的 30 天清理会**动到用户的文件**。
+  static const String exportFolderName = '神算子导出';
+
   // ⚠️ 标记文件名**只有一个出处**：`DataMarker.fileName`（`data_marker.dart`）。
   // 这里曾经也有一份 `markerFileName`，两个常量指向同一个字符串 ——
   // 必然漂移的重复，已删（谁拥有这个文件，谁定义它的名字）。
@@ -108,12 +115,23 @@ class DataDirectoryPolicy {
   /// **为什么不放子目录**：用户「把数据拷到 U 盘」时会形成「备份里包含备份」的递归。
   /// 分开之后两个目录都很直观，而且备份逻辑只依赖**数据目录的父目录**，
   /// 与 `%LOCALAPPDATA%` 完全解耦。
-  String backupDirectoryFor(String dataDirectory) {
+  String backupDirectoryFor(String dataDirectory) =>
+      _siblingFor(dataDirectory, backupFolderName);
+
+  /// 导出目录 = 数据目录的**另一个**兄弟目录（§AF-3）。
+  ///
+  /// 与 [backupDirectoryFor] 同一套规则、同一段避让逻辑：
+  /// 用户把数据目录就叫「神算子导出」时，挪到「神算子导出-1」。
+  String exportDirectoryFor(String dataDirectory) =>
+      _siblingFor(dataDirectory, exportFolderName);
+
+  /// 兄弟目录的通用算法（两个目录名共用，避免两处各自漏掉避让）
+  String _siblingFor(String dataDirectory, String folderName) {
     final String parent = p.dirname(p.normalize(dataDirectory));
-    // 万一用户把数据目录就叫「神算子备份」，别让备份路径等于数据路径
-    final String name = _samePath(dataDirectory, p.join(parent, backupFolderName))
-        ? '$backupFolderName-1'
-        : backupFolderName;
+    // 万一用户把数据目录就叫「神算子备份 / 神算子导出」，别让两个路径相等
+    final String name = _samePath(dataDirectory, p.join(parent, folderName))
+        ? '$folderName-1'
+        : folderName;
     return p.join(parent, name);
   }
 

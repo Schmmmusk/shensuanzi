@@ -42,7 +42,17 @@ class PartyDao {
 
   /// [role] 过滤在 Dart 侧做 —— `roles` 是 JSON 文本，SQL 里精确匹配会误伤
   /// （如 `"supplier"` 会命中 `"supplier_x"`）。
-  List<Party> findAll({PartyRole? role, bool? active, int limit = 200}) {
+  List<Party> findAll({PartyRole? role, bool? active, int limit = 200}) =>
+      _select(role: role, active: active, limit: limit);
+
+  /// **导出用**：不分页（§AF-5）。
+  ///
+  /// ⚠️ `active` 默认 `null` = **含停用** —— 一个**已停用但还欠着钱**的客户
+  /// 必须在导出里（否则会计对不上这笔应收）。同 AF-12 的道理。
+  List<Party> findAllForExport({PartyRole? role, bool? active}) =>
+      _select(role: role, active: active, limit: null);
+
+  List<Party> _select({PartyRole? role, bool? active, required int? limit}) {
     final List<String> conditions = <String>[];
     final List<Object?> args = <Object?>[];
     if (active != null) {
@@ -52,9 +62,13 @@ class PartyDao {
     final String where = conditions.isEmpty
         ? ''
         : ' WHERE ${conditions.join(' AND ')}';
-    args.add(limit);
+    final String tail = limit == null ? '' : ' LIMIT ?';
+    if (limit != null) args.add(limit);
     Iterable<Party> parties = _raw
-        .select('SELECT * FROM ${Schema.parties}$where ORDER BY name LIMIT ?', args)
+        .select(
+          'SELECT * FROM ${Schema.parties}$where ORDER BY name$tail',
+          args,
+        )
         .map(Party.fromRow);
     if (role != null) {
       parties = parties.where((Party p) => p.roles.contains(role));

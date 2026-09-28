@@ -13,7 +13,19 @@
 ///
 /// ⚠️ **打开数据库在这里发生**（而不是在对话框里）：对话框只管「路径可用」，
 /// 库能不能建起来是下一步的事，两件事分开才能把失败原因说清楚。
+///
+/// ## 备份接线（`docs/reply_review.md` §AE）
+///
+/// - 库打开成功后**异步**触发一次自动备份检查（§AE-3 每天首次启动）；
+///   **失败完全静默** —— 用户开软件是要开单的，不是来读报错。
+///   「一直没备份成功」由概览页橙卡 + 设置页红字呈现（两层机制）。
+/// - 自动与手动**共用同一个 `BackupService`**（同一个单飞锁）——
+///   启动 5 秒后用户就点「立即备份」也不会跑两遍（§AE 遗漏 3）。
+/// - UI 只拿到**算好的文案**（`backupStatusLine` / `backupReminder`）：
+///   「要不要提醒」的判定只在 `needsBackupAttention` 一处。
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
@@ -107,6 +119,29 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 规则引擎（库存页期初录入入口用；与各服务同库）
   RuleEngine? _engine;
 
+  /// 聚合查询（库存页 + 备份的空库判定共用同一个 DAO）
+  QueryDao? _queries;
+
+  /// 备份服务（库打开成功才有；自动与手动共用它，于是共用单飞锁）
+  BackupService? _backup;
+
+  /// 导出服务（§AF；只依赖导出目录，不碰数据库）
+  ExportService? _exports;
+
+  /// 备份目录里最新的一份（`null` = 从未备份）。
+  /// **启动与每次备份后重读**，不在 build 里列目录（那是 IO）
+  BackupFileName? _lastBackup;
+
+  /// 最近一次备份尝试的失败原因（`null` = 没失败）。
+  ///
+  /// §AE 遗漏 2：**失败不能静默** —— 只看「上次成功是什么时候」的话，
+  /// 目录半年不可写、用户却一直看到「昨天备份过」的红字以外一切正常。
+  /// 不持久化：每次启动重试，成功了就自动清零。
+  String? _backupError;
+
+  /// 库里有没有单据（§AE 遗漏 1：空库不自动备份、也不提醒）
+  bool _hasDocuments = false;
+
   /// 当前配置（设置页修改后经 [onConfigChanged] 热应用）
   AppConfig _config = const AppConfig();
 
@@ -153,9 +188,20 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   void _openDatabase(DataLocation location) {
     try {
       final Db db = _service.open(location);
+      final BackupService backup = BackupService(
+        dataDirectory: location.directory,
+        backupDirectory: location.backupDirectory,
+        schemaVersion: location.marker.schemaVersion,
+      );
+      final ExportService exports = ExportService(
+        exportDirectory: location.exportDirectory,
+      );
       setState(() {
         _location = location;
         _db = db;
+        _queries = QueryDao(db);
+        _backup = backup;
+        _exports = exports;
         _products = ProductService(db);
         _purchases = PurchaseService(
           engine: RuleEngine(db),
@@ -170,10 +216,20 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         _engine = RuleEngine(db);
         _dbFailure = null;
       });
+      // 先把状态读出来（设置页/概览页首帧就得有「上次备份」），
+      // 再异步跑自动备份 —— **不 await**：用户马上要用软件
+      _refreshBackupStatus();
+      unawaited(_autoBackup());
     } catch (error) {
       setState(() {
         _location = location;
         _db = null;
+        _queries = null;
+        _backup = null;
+        _exports = null;
+        _lastBackup = null;
+        _backupError = null;
+        _hasDocuments = false;
         _products = null;
         _purchases = null;
         _sales = null;
@@ -184,6 +240,67 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
             '如果这个文件夹在 U 盘或网盘里，请换到本机磁盘上的文件夹。';
       });
     }
+  }
+
+  /// 重读「最新一份备份」+「库里有没有单据」。
+  ///
+  /// ⚠️ **只在启动与每次备份后调用，不放 `build` 里** —— 目录列举是 IO，
+  /// 放 build 会变成「每点一下导航就读一次盘」。
+  void _refreshBackupStatus() {
+    final BackupService? backup = _backup;
+    if (backup == null) return;
+    final BackupFileName? last = backup.latestBackupFile();
+    final bool hasDocuments = _queries?.hasAnyDocument() ?? false;
+    if (!mounted) return;
+    setState(() {
+      _lastBackup = last;
+      _hasDocuments = hasDocuments;
+    });
+  }
+
+  /// §AE-3：每天首次启动自动备份一次。
+  ///
+  /// ⚠️ 先让出一次事件循环再动库：备份是**同步**文件拷贝
+  /// （`File.copySync`，几 MB 级别），别卡在「启动那一下」里 ——
+  /// 用户先看到界面，备份在后面很快跑完。
+  ///
+  /// **失败完全静默**（不弹窗、不阻塞）；失败原因留给 [_backupError]，
+  /// 由概览橙卡与设置页呈现（§AE 遗漏 2：静默不等于永远看不见）。
+  Future<void> _autoBackup() async {
+    await Future<void>.delayed(Duration.zero);
+    // 让出之后重新取值：期间可能失败重选位置 / 窗口被关掉
+    final BackupService? backup = _backup;
+    final Db? db = _db;
+    if (!mounted || backup == null || db == null) return;
+    final BackupOutcome outcome = await backup.autoBackup(
+      db: db,
+      hasContent: _hasDocuments,
+    );
+    _noteBackupOutcome(outcome);
+    _refreshBackupStatus();
+  }
+
+  /// 「立即备份」（设置页按钮 / 概览橙卡共用）。返回结果供页面弹 SnackBar。
+  Future<BackupOutcome> _backupNow() async {
+    final BackupService? backup = _backup;
+    final Db? db = _db;
+    if (backup == null || db == null) {
+      return const BackupOutcome.failure('数据文件还没打开，暂时不能备份');
+    }
+    final BackupOutcome outcome = await backup.backupNow(db: db);
+    _noteBackupOutcome(outcome);
+    // 成功/失败都要重读：失败可能是目录不可写，橙卡得如实反映
+    _refreshBackupStatus();
+    return outcome;
+  }
+
+  /// 记下这次尝试的结果。
+  ///
+  /// ⚠️ **`ok` 与 `skipped` 都算「没出事」**：`skipped` 覆盖「库还是空的」
+  /// 「距上次不足 24 小时」「这一分钟里已经备过」—— 那是**设计内的跳过**，
+  /// 记成失败会让橙卡天天喊「上次备份没成功：距上次备份不足 24 小时」。
+  void _noteBackupOutcome(BackupOutcome outcome) {
+    _backupError = (outcome.ok || outcome.skipped) ? null : outcome.message;
   }
 
   /// 主题只建一次（字体栈依赖平台，平台不会中途变）
@@ -224,6 +341,10 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   }
 
   Widget _buildHome() {
+    // 备份文案跟当前时间有关（「今天 09:05」/「已经 4 天」）——
+    // 每次 build 取一次当前时刻，跨天后下一次重绘就对了
+    final DateTime now = DateTime.now();
+
     if (_dbFailure != null) {
       return _StartupPage(
         message: _dbFailure!,
@@ -232,6 +353,13 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
           setState(() => _dbFailure = null);
           _location = null;
           _db = null;
+          // 与失败分支保持同一份清单：库没了，依赖它的东西一起清掉
+          _queries = null;
+          _backup = null;
+          _exports = null;
+          _lastBackup = null;
+          _backupError = null;
+          _hasDocuments = false;
           await _prepare();
         },
       );
@@ -256,11 +384,41 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       sales: _sales,
       accounts: _accounts,
       parties: _parties,
-      queries: QueryDao(_db!),
-      documents: DocumentDao(_db!),
+      queries: _queries,
+      documents: _db == null ? null : DocumentDao(_db!),
       engine: _engine,
       uiScale: _config.uiScale,
       shopName: _config.shopName,
+      // ---- 备份文案（§AE-3 / AE-5 / 遗漏 2）----
+      // ⚠️ 判定在这里算、UI 只摆字符串：概览橙卡与设置页红字**必须是同一个
+      //    结论**（`needsBackupAttention` 只有一处）。时钟取每次 build 的
+      //    当前值，于是跨天后下一次重绘就自洽。
+      backupStatusLine: _backup == null
+          ? null
+          : backupStatusLine(
+              lastBackup: _lastBackup?.time,
+              manual: _lastBackup?.manual ?? false,
+              now: now,
+              lastFailure: _backupError,
+            ),
+      backupNeedsAttention:
+          _backup != null &&
+          needsBackupAttention(
+            lastBackup: _lastBackup?.time,
+            now: now,
+            hasDocuments: _hasDocuments,
+            lastFailure: _backupError,
+          ),
+      backupReminder: _backup == null
+          ? null
+          : backupReminderText(
+              lastBackup: _lastBackup?.time,
+              now: now,
+              hasDocuments: _hasDocuments,
+              lastFailure: _backupError,
+            ),
+      onBackupNow: _backup == null ? null : _backupNow,
+      exports: _exports,
       configStore: widget.configStore,
       onConfigChanged: (AppConfig config) {
         widget.configStore?.save(config);

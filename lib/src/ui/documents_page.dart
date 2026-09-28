@@ -15,7 +15,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+
+import 'export_button.dart';
 
 /// 时间范围档位
 enum _TimeRange {
@@ -31,9 +34,12 @@ enum _TimeRange {
 
 /// 单据列表页。
 class DocumentsPage extends StatefulWidget {
-  const DocumentsPage({super.key, required this.dao});
+  const DocumentsPage({super.key, required this.dao, this.exports});
 
   final DocumentDao dao;
+
+  /// 导出服务（`null` = 不显示导出按钮，与其他可选服务同款判定）
+  final ExportSink? exports;
 
   @override
   State<DocumentsPage> createState() => _DocumentsPageState();
@@ -63,9 +69,12 @@ class _DocumentsPageState extends State<DocumentsPage> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    // ⚠️ 时间起点**只算一次**：列表与导出必须用同一个值，
+    // 否则「列表显示 30 天、导出却从 30 天前那一秒算起」这类缝隙就出来了
+    final int? since = _sinceMillis(_range);
     final List<DocumentSummary> rows = widget.dao.listDocuments(
       type: _typeFilter,
-      sinceMillis: _sinceMillis(_range),
+      sinceMillis: since,
       limit: 200,
     );
 
@@ -76,7 +85,32 @@ class _DocumentsPageState extends State<DocumentsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              Text('单据', style: theme.textTheme.titleLarge),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text('单据', style: theme.textTheme.titleLarge),
+                  ),
+                  if (widget.exports != null)
+                    ExportButton(
+                      key: const Key('export-documents'),
+                      // AF-2：说清导的是**当前筛选**，不是「这一屏 200 条」
+                      label: '导出当前筛选的单据',
+                      export: () => widget.exports!.write(
+                        documentExportTable(
+                          // AF-5：导出走**独立查询**（无 200 上限），
+                          // 筛选条件与列表同一份（`since` 是同一个局部变量）
+                          widget.dao.listDocumentsForExport(
+                            type: _typeFilter,
+                            sinceMillis: since,
+                          ),
+                        ),
+                        from: since == null
+                            ? null
+                            : DateTime.fromMillisecondsSinceEpoch(since),
+                      ),
+                    ),
+                ],
+              ),
               const SizedBox(height: 4),
               Text(
                 '点一行可以复制单号。单据详情、退货、核销在后面的版本里做。',
@@ -179,8 +213,9 @@ class _DocumentRow extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     final Document doc = entry.document;
     // SC-6：散客 / 散采显示文字，不是空白
-    final String party = entry.partyName ??
-        (doc.docType == DocType.sale ? '散客' : '散采');
+    // ⚠️ 措辞走**共用函数**（`documentPartyLabel`）—— 导出的「对方」列用的是
+    //    同一句，两处各写一遍就会漂（§AF AF-9）
+    final String party = documentPartyLabel(entry.partyName, doc.docType);
 
     return InkWell(
       onTap: () {

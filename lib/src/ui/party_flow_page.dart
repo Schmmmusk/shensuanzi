@@ -7,14 +7,25 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+
+import 'export_button.dart';
 
 /// 某往来方的流水页。
 class PartyFlowPage extends StatelessWidget {
-  const PartyFlowPage({super.key, required this.party, required this.service});
+  const PartyFlowPage({
+    super.key,
+    required this.party,
+    required this.service,
+    this.exports,
+  });
 
   final Party party;
   final PartyService service;
+
+  /// 导出服务（`null` = 不显示导出按钮）
+  final ExportSink? exports;
 
   @override
   Widget build(BuildContext context) {
@@ -22,7 +33,22 @@ class PartyFlowPage extends StatelessWidget {
     final List<PartyFlowEntry> flow = service.flowsOf(party.id);
 
     return Scaffold(
-      appBar: AppBar(title: Text('${party.name} 的流水')),
+      appBar: AppBar(
+        title: Text('${party.name} 的流水'),
+        actions: <Widget>[
+          if (exports != null)
+            ExportButton(
+              key: const Key('export-party-flow'),
+              // AF-2：说清导的是**该往来方的全部流水**（页面上只有这一方的）
+              label: '导出该往来方的全部流水',
+              export: () => exports!.write(
+                partyFlowExportTable(flow: flow),
+                // AF-7：文件名带往来方名 —— 否则导三个客户的文件名一模一样
+                extra: party.name,
+              ),
+            ),
+        ],
+      ),
       body: SafeArea(
         child: flow.isEmpty
             ? Center(
