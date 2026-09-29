@@ -69,7 +69,7 @@ void main() {
     );
   });
 
-  test('Runner.rc 保持纯 ASCII（rc.exe 没有 /utf-8 等价手段）', () {
+  test('Runner.rc 保持纯 ASCII（裁定：编码一致性 > 没人看的属性页）', () {
     final List<int> nonAscii = File(
       'windows/runner/Runner.rc',
     ).readAsBytesSync().where((int b) => b > 127).toList();
@@ -78,8 +78,24 @@ void main() {
       nonAscii,
       isEmpty,
       reason: 'rc.exe 按**系统代码页**解码源文件（简体中文机器 = GBK），'
-          'UTF-8 中文注释会变乱码；C/C++ 的 `/utf-8` 管不到资源编译器 '
-          '（`docs/windows_build.md` §七）。要写说明就写英文，或写进 docs/。',
+          '而 Flutter 生成的 CMake 的 `/utf-8` 是语言限定的（只给 C/C++），'
+          '管不到资源编译器（`docs/windows_build.md` §7.1）。'
+          '⚠️ 注意：rc.exe 本身**支持** `/utf-8`（MSVC 2019 16.x 起）——'
+          '保持 ASCII 是**代价收益的裁定**，不是技术上做不到。',
+    );
+  });
+
+  test('Runner.rc 的 FileDescription 是裁定固定的英文字符串（§AG-7）', () {
+    final String rc = File('windows/runner/Runner.rc').readAsStringSync();
+    final RegExpMatch? m = RegExp(
+      r'VALUE\s+"FileDescription"\s*,\s*"([^"]+)"',
+    ).firstMatch(rc);
+    expect(m, isNotNull, reason: '找不到 FileDescription');
+    expect(
+      m!.group(1),
+      'Shensuanzi - Inventory & Bookkeeping',
+      reason: '2026-09-29 裁定：属性页保持英文；`&` 代替 `and` + '
+          '首字母大写是属性页观感（40 字符栏宽里更紧凑）',
     );
   });
 }

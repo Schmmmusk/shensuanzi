@@ -90,7 +90,7 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "Shensuanzi Project" "\0"
-            VALUE "FileDescription", "Shensuanzi - inventory and bookkeeping" "\0"
+            VALUE "FileDescription", "Shensuanzi - Inventory & Bookkeeping" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "shensuanzi" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 Shensuanzi contributors" "\0"
