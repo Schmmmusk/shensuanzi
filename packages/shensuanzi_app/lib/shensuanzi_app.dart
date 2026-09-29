@@ -55,6 +55,8 @@ export 'src/backup.dart'
         shouldAutoBackup,
         weekKeyOf;
 export 'src/typography.dart' show AppTypography;
+export 'src/version.dart' show AppVersion;
+export 'src/log.dart' show AppLog, formatLogLine, logFileName, logFolderName;
 
 // ---- §AF 数据导出 ----
 export 'src/csv.dart' show csvBom, csvBytes, csvEscape, csvLine;

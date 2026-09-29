@@ -282,4 +282,32 @@ void main() {
     );
     expect(backupCard, findsNothing, reason: '刚备份成功 → 不该再提醒');
   });
+
+  // ---------------------------------------------------------------- 回归
+  //
+  // §AG 遗漏 1 落地后的**真实回归**：给数据目录对话框加了首启欢迎语之后，
+  // 场景 3/5 报 `A RenderFlex overflowed by 36 pixels on the bottom`。
+  //
+  // ⚠️ **那不是测试挑剔，是真缺陷**：缩放最高档是 **200%**（本软件已发布的功能，
+  // 中老年用户的本命功能），内容顶出屏幕后**「开始使用」按钮会看不见** ——
+  // 首启就卡住。修法是给内容加可滚动容器，这条测试就是它的守卫。
+  testWidgets('场景 9：数据目录对话框在 200% 文字缩放下不溢出（§AG 回归）', (
+    WidgetTester tester,
+  ) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+
+    expect(dialog, findsOneWidget);
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '内容必须可滚动 —— 200% 字号下顶出屏幕 = 用户看不到「开始使用」',
+    );
+
+    // 主按钮仍然存在且可点（内容再长也不能把它挤出屏幕）
+    expect(find.text('开始使用'), findsOneWidget);
+  });
 }

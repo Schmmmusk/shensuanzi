@@ -84,6 +84,13 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     configStore: _configStore,
   );
 
+  /// 最小日志（§AG-5 裁定）。
+  ///
+  /// **跟随 [configStore] 的位置**（`%APPDATA%\神算子\日志\`）——
+  /// 于是测试把 `configStore` 指向沙箱时，日志也自动进沙箱，
+  /// **不会往开发者真实的 `%APPDATA%` 里写文件**（`docs/testing.md` §K 的红线）。
+  late final AppLog _log = AppLog.besideConfig(_configStore);
+
   /// ⚠️ **弹对话框必须用这个 key 的 context，不能用本 State 的 `context`。**
   ///
   /// 本 State 的 `context` 在 `MaterialApp` **上面**（`MaterialApp` 是本 widget
@@ -180,6 +187,9 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       model: DataDirectoryDialogModel(_service),
       // 注入点：生产环境是系统选择器，测试里是桩
       pickDirectory: widget.pickDirectory,
+      // §AG 遗漏 1：只有「配置里根本没有位置」才是真首次启动 ——
+      // 位置失效（盘符变了 / 被搬走）时不能再对用户说「这是第一次启动」
+      firstRun: _config.dataDirectory == null,
     );
     if (chosen == null) return; // 用户退出了 —— 界面会停在「需要选择位置」
     _openDatabase(chosen);
@@ -220,7 +230,11 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       // 再异步跑自动备份 —— **不 await**：用户马上要用软件
       _refreshBackupStatus();
       unawaited(_autoBackup());
-    } catch (error) {
+    } catch (error, stack) {
+      // §AG-5：**启动失败要留现场** —— 用户只会说「打不开了」，
+      // 而这里恰好知道「是哪个位置、哪条异常」。路径不是经营数据，可以记。
+      _log.crash(error, stack, label: '打开数据库失败');
+      _log.write('数据位置：${location.directory}');
       setState(() {
         _location = location;
         _db = null;

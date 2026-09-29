@@ -16,6 +16,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 
 /// 帮助页（内容静态，只把两个真实路径插进恢复步骤）。
 class HelpPage extends StatelessWidget {
@@ -154,6 +155,18 @@ class HelpPage extends StatelessWidget {
                         '「65001: Unicode (UTF-8)」 → 加载。\n'
                         '（少数很旧的 Excel 版本才会乱码；WPS 一般直接双击就正常。）',
                   ),
+                  // §AG-3：不购买证书就会弹 SmartScreen —— 与其让用户自己猜
+                  // （或吓得不敢用），不如把已知摩擦写清楚。**「只需要做一次」是关键**：
+                  // 它回答的是「我每次打开都要这么麻烦吗」。
+                  _Faq(
+                    '为什么打开时弹出蓝色警告？',
+                    '这是 Windows 对「没有购买数字证书的软件」的默认提示，'
+                        '不是病毒警告。\n\n'
+                        '解决办法：\n'
+                        '1. 点「更多信息」\n'
+                        '2. 点「仍要运行」\n\n'
+                        '只需要做一次，以后打开不会再提示。',
+                  ),
                 ],
               ),
 
@@ -172,8 +185,11 @@ class HelpPage extends StatelessWidget {
 
               const SizedBox(height: 24),
               // 遗漏 6：版本号 —— debug 时的必要信息
+              // §AG-1：版本号**从 AppVersion 取**（唯一来源），并带上
+              // 「（第一个可部署版本）」限定词 —— `v0.1.0` 对用户读起来像
+              // 「试用版 / 会不会过期」，限定词是**消除疑虑**，不是美化
               Text(
-                '神算子 v0.1.0 · 数据格式版本 schema v1',
+                '神算子 ${AppVersion.display} · 数据格式版本 schema v1',
                 textAlign: TextAlign.center,
                 style: TextStyle(height: 1.6, color: theme.hintColor),
               ),

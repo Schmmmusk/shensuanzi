@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shensuanzi/src/ui/help_page.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 
 void main() {
   Widget page({String? dataDirectory, String? backupDirectory}) => MaterialApp(
@@ -38,7 +39,21 @@ void main() {
 
     expect(find.textContaining('github.com'), findsOneWidget);
     expect(find.textContaining('@163.com'), findsOneWidget);
-    expect(find.textContaining('v0.1.0'), findsOneWidget);
+    // §AG-1：版本号**从 AppVersion 取**，且带「（第一个可部署版本）」限定词 ——
+    // 断言直接用那唯一来源，避免测试再手写一遍版本号
+    expect(find.textContaining(AppVersion.display), findsOneWidget);
+  });
+
+  testWidgets('FAQ 覆盖「打开时的蓝色警告」（§AG-3）', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+
+    expect(find.textContaining('蓝色警告'), findsOneWidget);
+    expect(find.textContaining('仍要运行'), findsOneWidget);
+    expect(
+      find.textContaining('只需要做一次'),
+      findsOneWidget,
+      reason: '这句回答的是「我每次打开都要这么麻烦吗」—— 不写用户会以为每次都弹',
+    );
   });
 
   testWidgets('FAQ 覆盖数据位置与换电脑（个体户最关心的两类问题）', (

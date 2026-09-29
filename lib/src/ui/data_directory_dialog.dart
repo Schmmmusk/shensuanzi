@@ -25,6 +25,7 @@ Future<DataLocation?> showDataDirectoryDialog(
   BuildContext context, {
   required DataDirectoryDialogModel model,
   required Future<String?> Function() pickDirectory,
+  bool firstRun = false,
 }) => showDialog<DataLocation>(
   context: context,
   // 数据位置是启动前提：点外面关掉会让程序卡在「没有库」的状态
@@ -32,6 +33,7 @@ Future<DataLocation?> showDataDirectoryDialog(
   builder: (BuildContext dialogContext) => _DataDirectoryDialog(
     model: model,
     pickDirectory: pickDirectory,
+    firstRun: firstRun,
   ),
 );
 
@@ -39,10 +41,18 @@ class _DataDirectoryDialog extends StatefulWidget {
   const _DataDirectoryDialog({
     required this.model,
     required this.pickDirectory,
+    required this.firstRun,
   });
 
   final DataDirectoryDialogModel model;
   final Future<String?> Function() pickDirectory;
+
+  /// **是不是真的第一次启动**（还没有任何配置）。
+  ///
+  /// 为什么不能「对话框一出现就当首次」：这个对话框**两种情况都会出现** ——
+  /// 真正的首次启动，以及「配置里的位置失效了」（盘符变了 / 数据被搬走 / 设置被清）。
+  /// 后者再显示「这是第一次启动」就是**假话**（§AG 遗漏 1）。
+  final bool firstRun;
 
   @override
   State<_DataDirectoryDialog> createState() => _DataDirectoryDialogState();
@@ -104,43 +114,77 @@ class _DataDirectoryDialogState extends State<_DataDirectoryDialog> {
       title: const Text('选择数据存放位置'),
       content: SizedBox(
         width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              _model.needsForeignConfirm ? '这个文件夹里已经有别的东西：' : '建议放在非系统盘：',
-              style: const TextStyle(height: 1.6),
-            ),
-            const SizedBox(height: 8),
-            // 路径可能很长（`C:\Users\xxx\...`），给用户能选中复制的机会
-            SelectableText(
-              _model.path,
-              style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
-            ),
-            if (_model.capacityHint != null) ...<Widget>[
-              const SizedBox(height: 4),
+        // ⚠️ **内容必须可滚动**（2026-09-29 回归修复）。
+        //
+        // 起因：加了首启欢迎语之后，`flutter test` 的两个启动场景报
+        // 「A RenderFlex overflowed by 36 pixels on the bottom」。
+        // **这不是测试挑剔 —— 是真缺陷**：内容高度 = 欢迎语 + 路径 + 容量提示 +
+        // 提醒 + 按钮，在**缩放调到 200%**（本软件已发布的最高档，中老年用户的本命功能）
+        // 或窗口很小时会顶出屏幕，用户**看不到「开始使用」按钮** ——
+        // 首启就卡住，是最糟的一种失败。
+        //
+        // 用 `SingleChildScrollView` 而不是「把字改小」：字号是给用户放大的，
+        // 不该为了塞进 380px 而牺牲可读性。
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              // §AG 遗漏 1：首启的第一句话要回答「这是什么、会不会上传」——
+              // 用户刚解压完就被问「放哪」，不解释一句他会以为程序有问题。
+              // ⚠️ 只在**真正的首次启动**显示（见 [firstRun]）。
+              if (widget.firstRun) ...<Widget>[
+                Text(
+                  '欢迎使用神算子',
+                  style: const TextStyle(
+                    height: 1.6,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '这是第一次启动。请告诉神算子把你的数据放在哪 —— '
+                  '数据存在你自己电脑里，不会上传。',
+                  style: const TextStyle(height: 1.6),
+                ),
+                const SizedBox(height: 16),
+              ],
               Text(
-                _model.capacityHint!,
+                _model.needsForeignConfirm
+                    ? '这个文件夹里已经有别的东西：'
+                    : '建议放在非系统盘：',
+                style: const TextStyle(height: 1.6),
+              ),
+              const SizedBox(height: 8),
+              // 路径可能很长（`C:\Users\xxx\...`），给用户能选中复制的机会
+              SelectableText(
+                _model.path,
+                style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+              ),
+              if (_model.capacityHint != null) ...<Widget>[
+                const SizedBox(height: 4),
+                Text(
+                  _model.capacityHint!,
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
+                ),
+              ],
+              if (_model.notice != null) ...<Widget>[
+                const SizedBox(height: 12),
+                _noticeBox(context),
+              ],
+              const SizedBox(height: 12),
+              Text(
+                '不要放在 U 盘或网盘同步文件夹里。',
                 style: TextStyle(
                   height: 1.6,
                   color: theme.textTheme.bodySmall?.color,
                 ),
               ),
             ],
-            if (_model.notice != null) ...<Widget>[
-              const SizedBox(height: 12),
-              _noticeBox(context),
-            ],
-            const SizedBox(height: 12),
-            Text(
-              '不要放在 U 盘或网盘同步文件夹里。',
-              style: TextStyle(
-                height: 1.6,
-                color: theme.textTheme.bodySmall?.color,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
       actions: <Widget>[

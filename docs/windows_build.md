@@ -158,3 +158,131 @@ target_compile_options(${BINARY_NAME} PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:/utf-
 只有「既含非 ASCII、又会被 `cl.exe` 编译」的文件才会报。
 注意 `windows/CMakeLists.txt` 里的中文注释**没问题**（CMake 自己按 UTF-8 读脚本），
 别照着它一起改。
+
+### 7.1 `Runner.rc` 必须保持**纯 ASCII**（rc.exe 没有 `/utf-8`）
+
+`/utf-8` 是给 `cl.exe` 的，**语言限定不能省**（否则会传给 `rc.exe`，它不认）。
+于是 `runner/Runner.rc` 由 `rc.exe` **按系统代码页解码**（简体中文机器 = GBK）——
+在那个文件里写 UTF-8 中文注释**会变乱码**。
+
+**结论：`Runner.rc` 保持纯 ASCII**（要写说明就写英文，或写进本文件）。
+这条由 `test/version_test.dart` 的一条断言守着（直接扫该文件的非 ASCII 字节，红了就说明有人加了中文）。
+
+> ⚠️ **一个躲不掉的后果**：文件属性里的中文字符串（例如把「神算子」写进 `ProductName`）
+> 在这个文件里**做不到**，除非把文件整体改成 UTF-16（会变成整文件的二进制 diff）。
+> 2026-09-29 因此**采用了英文字符串**（`Shensuanzi` / `Shensuanzi - inventory and bookkeeping`）——
+> 这与 §AG-7 裁定原文（「`ProductName` = 神算子」）**有差异**，原因与取舍记在
+> `docs/reply_review.md` §AG·七「落地后的两处修正」。
+
+## 八、发布与打包
+
+> 目标：把 `flutter build windows --release` 的产物变成**用户能双击运行**的一包东西。
+> 当前分发形式是**便携 zip**（解压即用、不需要管理员权限、不写 `Program Files`）。
+
+### 8.1 产物长什么样（实测，2026-09-29）
+
+`build/windows/x64/runner/Release/` 共 **16 个文件 / 30.4 MB**：
+
+| 文件 | 大小 | 说明 |
+|---|---|---|
+| `shensuanzi.exe` | **409 KB** | 启动器。**其中 361 KB 是应用图标**（内嵌 ICO，见 `packaging/make_icon.py`） |
+| `flutter_windows.dll` | 20.8 MB | Flutter 引擎（**体积主要在这里**） |
+| `data/app.so` | 6.2 MB | 应用的 AOT 快照（Dart 代码编译结果） |
+| `data/icudtl.dat` | 842 KB | 国际化数据 |
+| `data/flutter_assets/` | ~2.1 MB | 字体（Material / Cupertino 图标）、着色器、`NOTICES.Z` |
+| `sqlite3.dll` | 1.4 MB | SQLite 引擎 |
+| `sqlite3_flutter_libs_plugin.dll` | 9.7 KB | 插件外壳 |
+| `file_selector_windows_plugin.dll` | 108 KB | 「选择文件夹」对话框 |
+| `native_assets.json` | 45 B | 原生资源清单 |
+
+打包后共 **19 个条目**（上面的 16 个 + `使用说明.txt` / `LICENSE` / `THIRD_PARTY.md`），
+未压缩 **30.8 MB** → 压缩后 **12.8 MB**（deflate）—— 这就是用户下载的大小。
+
+### 8.2 打包步骤
+
+**两条命令**（在仓库根）：
+
+```bat
+cd /d D:\shensuanzi\shensuanzi
+flutter build windows --release
+python packaging\make_release.py
+```
+
+`packaging/make_release.py` 做四件事（**每一条都对应一次真实踩坑**）：
+
+1. **拦「拿旧产物打包」** —— 比对 `Release/shensuanzi.exe` 与全部构建输入
+   （`lib/` `packages/` `windows/runner/` `pubspec.yaml` `pubspec.lock`）的时间戳，
+   有比 exe 新的就**直接停**并列出是哪几个文件。
+   > 这是发布流程里最贵的错误：发了旧代码，从外表完全看不出来，用户报问题也查不出原因。
+   > 确认那些改动不影响产物时才用 `--force` 跳过。
+2. **拦「随包文件漏了」** —— `EXTRA` 清单里任一文件缺失即中止（`LICENSE` 漏了就是违反自己的许可）。
+3. **拦「版本号有两处」** —— 从 `pubspec.yaml` 取版本（`0.1.0+1` → `0.1.0`），
+   与 `packaging/使用说明.txt` 里印的版本比对。`test/version_test.dart` 钉的是 Dart 侧那一半，
+   这里钉文档侧那一半。
+4. 压成 zip + 写 `.sha256`。
+
+产物：
+
+```
+build/dist/神算子-v0.1.0-win64.zip
+build/dist/神算子-v0.1.0-win64.zip.sha256
+```
+
+> ⚠️ **这个脚本不删除任何文件**。重跑会直接覆盖同名 zip（`zipfile` 的 `'w'` 模式），
+> 不需要先清理什么 —— 以前那版先 `rmtree` 再 `copytree` 的写法是没必要的危险动作。
+> 中文目录名在 zip 里带 **UTF-8 标志位**（打包时已断言），Windows 资源管理器解压不会乱码。
+
+### 8.3 随包必须带的文件（少了要回来补）
+
+| 文件 | 为什么必须带 |
+|---|---|
+| `LICENSE` | **AGPL-3.0 的分发要求** —— 不给许可文本属于违反自己的许可 |
+| `THIRD_PARTY.md` | 第三方组件与字体的声明（含「**未内嵌中文字体**」这一条，见文件内说明） |
+| `使用说明.txt` | 目标用户不会打开 `.md` 文件 —— 必须是 `.txt`，且**UTF-8 带 BOM** |
+
+> **`README.md` 刻意不进包**（与本节早先版本不同）：它是**面向仓库**的 ——
+> 顶部就有「怎么构建 / 换台机器克隆下来构建不了」，用户解压后读到会以为要装开发环境。
+> 用户那份文档是 `使用说明.txt`，一页讲完「怎么开始 / 蓝屏提示 / 怎么删」。
+
+> ⚠️ `packaging\使用说明.txt` 是**版本化文件**（在仓库里），不是每次现写的 ——
+> 改文案要改仓库里那份，否则发的包和仓库对不上。
+> 它存成 **UTF-8 with BOM + CRLF**：老版本记事本与第三方编辑器都能正确识别。
+> 上面三项由 `make_release.py` 的 `EXTRA` 清单强制校验，漏一个就打不出包。
+
+### 8.4 首发验证清单（**必须在干净环境走一遍**）
+
+用一台**没装过 Flutter 的电脑**（或新建一个 Windows 虚拟机 / 沙箱账户）：
+
+| # | 步骤 | 预期 |
+|---|---|---|
+| 1 | 解压 zip 到 `D:\神算子\` | 目录里有 `shensuanzi.exe` 与 `data\` |
+| 2 | 双击 `shensuanzi.exe` | 出现蓝色 SmartScreen 提示（**未签名，预期行为**） |
+| 3 | 「更多信息」→「仍要运行」 | 数据目录对话框**出现在最前面**（⚠️ 见下） |
+| 4 | 对话框顶部 | 有「欢迎使用神算子 / 这是第一次启动 …… 不会上传」 |
+| 5 | 选 `D:\神算子数据\` → 「开始使用」 | 进入主界面；`D:\神算子数据\` 里出现数据库与标记文件 |
+| 6 | 文件属性 | **文件版本 `0.1.0.1`**、**产品版本 `0.1.0`**、产品名 `Shensuanzi`、版权 `Shensuanzi contributors` |
+| 7 | 任务栏 / Alt+Tab 图标 | **是神算子自己的图标**，不是 Flutter 默认蓝标 |
+| 8 | 建商品 → 采购 → 销售 → 看库存 | 数字正确（采购 10 件、卖 2 件 → 剩 8 件） |
+| 9 | 单据页 → 导出 | 弹出「已导出 N 条到 …」；CSV 用 Excel 打开中文正常 |
+| 10 | 设置页 → 立即备份 | 提示带完整路径；`D:\神算子备份\` 里出现一个 `.db` |
+| 11 | 关掉软件，重新打开 | **不再弹数据目录对话框**，直接进主界面，数据还在 |
+| 12 | 看 `%APPDATA%\神算子\日志\神算子-日志.txt` | 有启动行（版本 / schema / 系统） |
+| 13 | 文件菜单「删除」流程 | 按 README「怎么删除」能干净删掉（程序 + 数据） |
+
+> ⚠️ **第 3 步是唯一有风险的项**：SmartScreen 关掉后主窗口是否在前台、
+> 对话框是否被挡住，**只有真机能回答**。如果被挡住，下一步是引入窗口置前能力
+> （`window_manager`，会成为本项目第一个「为了体验」而加的依赖）。
+> 这条已记录在 `docs/reply_review.md` §AG 遗漏 2。
+
+### 8.5 每次发布前的一次性检查
+
+```bat
+cd /d D:\shensuanzi\shensuanzi
+flutter analyze
+flutter test
+dart run tool\import_guard.dart
+cd packages\shensuanzi_app && dart test && cd ..\..
+```
+
+四项全绿再打包（`make_release.py` 还会额外拦一次「产物比源码旧」）。
+`flutter analyze` 必须是 **0 issues**（`Agents.md` 的门禁）。

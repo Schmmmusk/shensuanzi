@@ -285,6 +285,39 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ],
               ),
+
+              // ---- 多设备同步（§AG-6 裁定：显示但禁用，不是隐藏）----
+              //
+              // 为什么「显示一行灰字」比「藏起来」好：藏起来用户不知道将来会有
+              // 这个功能，等它出现时会想「之前怎么没有？」；显示成「开发中」
+              // 既告诉用户**软件在往哪走**，也免得他现在去找。
+              // 一个灰色标签比「没有这一行」信息量大。
+              _Section(
+                title: '多设备同步',
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      const Expanded(child: Text('手机 / 平板开单')),
+                      Text(
+                        '开发中',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '将来可以用手机扫码配对、在店里走动时开单，数据自动回到这台电脑。'
+                    '现在还没有开放。',
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),

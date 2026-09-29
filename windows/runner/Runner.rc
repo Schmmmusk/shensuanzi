@@ -89,14 +89,23 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "shensuanzi" "\0"
+            VALUE "CompanyName", "Shensuanzi Project" "\0"
+            VALUE "FileDescription", "Shensuanzi - inventory and bookkeeping" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "shensuanzi" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Shensuanzi contributors" "\0"
             VALUE "OriginalFilename", "shensuanzi.exe" "\0"
-            VALUE "ProductName", "shensuanzi" "\0"
-            VALUE "ProductVersion", VERSION_AS_STRING "\0"
+            VALUE "ProductName", "Shensuanzi" "\0"
+            // ProductVersion is deliberately the PLAIN version (no build suffix):
+            // pubspec says `0.1.0+1`, and `+1` is the Flutter/pub build-number
+            // convention -- showing "0.1.0+1" in the properties page is noise.
+            // NOTE: hardcoding adds a second place to keep in sync, so
+            //       test/version_test.dart reads THIS FILE and compares it with
+            //       AppVersion.value -- drift turns a test red immediately.
+            // NOTE: keep this file ASCII-only. rc.exe decodes sources with the
+            //       system code page (see docs/windows_build.md section 7); the
+            //       C/C++ `/utf-8` fix does not apply to the resource compiler.
+            VALUE "ProductVersion", "0.1.0" "\0"
         END
     END
     BLOCK "VarFileInfo"
