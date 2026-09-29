@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>神算子用户手册</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 64px;
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    font-size: 16px; line-height: 1.85; color: #24292f; background: #ffffff;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  header { border-bottom: 3px solid #3f51b5; padding-bottom: 12px; margin-bottom: 20px; }
+  header h1 { margin: 0 0 4px; font-size: 26px; color: #2c3a92; }
+  header .ver { color: #57606a; font-size: 14px; }
+  nav { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 8px;
+        padding: 12px 16px; margin-bottom: 28px; }
+  nav ol { margin: 0; padding-left: 22px; columns: 2; column-gap: 32px; }
+  nav li { break-inside: avoid; }
+  nav a { color: #2c3a92; text-decoration: none; }
+  nav a:hover { text-decoration: underline; }
+  section { margin-bottom: 34px; }
+  h2 { font-size: 20px; color: #2c3a92; border-left: 4px solid #3f51b5;
+       padding-left: 10px; margin: 0 0 10px; }
+  p { margin: 8px 0; white-space: pre-line; }
+  ol { margin: 8px 0 8px 4px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  .tip { background: #f0f7f0; border: 1px solid #b7dfb7; border-radius: 8px;
+         padding: 10px 14px; margin: 10px 0; }
+  .warn { background: #fdf6e3; border: 1px solid #e8c268; border-radius: 8px;
+          padding: 10px 14px; margin: 10px 0; }
+  .q { font-weight: 600; margin-top: 14px; }
+  .a { margin-left: 14px; }
+  footer { border-top: 1px solid #d0d7de; color: #57606a; font-size: 13px;
+           margin-top: 40px; padding-top: 12px; }
+  a { color: #2c3a92; }
+  @media print {
+    body { font-size: 12pt; padding: 0; }
+    nav { display: none; }
+    section { break-inside: avoid-page; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>神算子 · 用户手册</h1>
+    <div class="ver">Closure: (String) => String from Function '_esc@21159416': static.(versionLine)　·　这份手册在软件的「帮助」页也能打开</div>
+  </header>
+  <nav>
+    <ol>
+      <li><a href="#s-welcome">1. 欢迎使用神算子</a></li>
+      <li><a href="#s-first-run">2. 第一次启动</a></li>
+      <li><a href="#s-tour">3. 认识主界面</a></li>
+      <li><a href="#s-prepare">4. 开始记账前的准备</a></li>
+      <li><a href="#s-purchase">5. 采购入库</a></li>
+      <li><a href="#s-sale">6. 销售开单</a></li>
+      <li><a href="#s-stock">7. 看库存</a></li>
+      <li><a href="#s-parties">8. 往来方与欠款</a></li>
+      <li><a href="#s-accounts">9. 账户</a></li>
+      <li><a href="#s-documents">10. 单据</a></li>
+      <li><a href="#s-export">11. 导出数据</a></li>
+      <li><a href="#s-backup">12. 备份与恢复</a></li>
+      <li><a href="#s-settings">13. 设置</a></li>
+      <li><a href="#s-faq">14. 常见问题</a></li>
+      <li><a href="#s-feedback">15. 反馈与版本</a></li>
+    </ol>
+  </nav>
+  <section id="s-welcome">
+    <h2>1. 欢迎使用神算子</h2>
+    <p>神算子是一家小店的记账帮手：进货、卖货、谁欠你钱、你欠谁钱，记下来，随时能看，也能导出成表格文件给会计。</p>
+    <p>三件你最关心的事，先说清楚：<br>
+      一、数据存在你自己选的电脑文件夹里，不会上传到任何服务器。<br>
+      二、软件是免费的，没有试用期，不会过期。<br>
+      三、软件会每天自动备份你的数据（见「备份与恢复」一章）。</p>
+    <div class="tip">第一次用？照着「第一次启动」和「开始记账前的准备」两章做一遍，大概十分钟就能开始记第一笔账。</div>
+  </section>
+  <section id="s-first-run">
+    <h2>2. 第一次启动</h2>
+    <ol>
+      <li>双击软件文件夹里的 shensuanzi.exe。</li>
+      <li>如果 Windows 弹出蓝色提示「Windows 已保护你的电脑」，点「更多信息」，再点「仍要运行」。这是没买数字证书的软件都会遇到的提示，不是病毒警告，只需要做一次。</li>
+      <li>软件会问「数据放在哪」。建议选 D 盘这样的非系统盘 —— 以后重装系统，数据也不会丢。</li>
+      <li>点「开始使用」。</li>
+    </ol>
+    <div class="warn">不要把数据放在 U 盘或网盘的同步文件夹里（微信传输、坚果云这类）—— 这类位置容易拔掉或同步出错，会弄坏正在写入的数据。</div>
+    <p>选好之后，软件会在那个文件夹里建立你的数据。以后每次打开软件，都会直接进入主界面，不再询问。</p>
+  </section>
+  <section id="s-tour">
+    <h2>3. 认识主界面</h2>
+    <p>左边一列是所有功能的入口，从上到下分成四组：</p>
+    <p>「概览」—— 开门第一眼：今天要不要备份、数据在哪，都在这一页。<br>
+      「销售开单」「采购入库」—— 每天用得最多的两个动作，做成大按钮。<br>
+      「商品」「库存」「单据」「往来方」「账户」—— 查东西的地方。<br>
+      「设置」「帮助」—— 调整字号、看手册、找反馈方式。</p>
+    <div class="tip">「销售开单」和「采购入库」是整屏的单子页面，方便专注录入；左边的导航仍然在，随时能跳去别的地方。</div>
+    <p>字太小？去「设置」页把字号调大（五档），一键「恢复默认大小」随时调回来。</p>
+  </section>
+  <section id="s-prepare">
+    <h2>4. 开始记账前的准备</h2>
+    <p>第一次记账前，先做三件事（每件一两分钟）：</p>
+    <ol>
+      <li>建收付款的账户：进「账户」页，新建一个，比如「现金」「微信收款」。有了账户，开单时才能记「当场收了钱 / 付了钱」。</li>
+      <li>建商品：进「商品」页，点「新增商品」。编码不用想 —— 软件自动按顺序生成；条码有就填（可以重复，扫码遇到多个时软件会让你挑一个）；进价售价填现在的行情。</li>
+      <li>店里已经有存货？进「库存」页，点「录入现有货物」，把眼下的库存数量录进去。这叫期初建账。</li>
+    </ol>
+    <div class="tip">期初录入的成本按 0 记，所以库存金额会偏低 —— 这是正常的。下次采购入库时，软件会用真实进价自动校准成本。帮助页的常见问题里也有解释。</div>
+  </section>
+  <section id="s-purchase">
+    <h2>5. 采购入库</h2>
+    <p>进「采购入库」，一行填一个商品：选商品、填数量和进价。单价会按商品档案里存的进价预填，直接改就行。</p>
+    <p>当场给钱：在「立即付款」里选账户、填金额，可以填多条（一部分现金、一部分微信）。<br>
+      先赊着：选一个供应商，付款那部分少填或不填 —— 差额就记成你欠他的。</p>
+    <div class="warn">供应商一栏留空叫「散采」—— 散采必须当场结清，留下未付的金额软件会拦下来提醒你。</div>
+    <p>保存之后，库存立刻增加，单据页里多一张采购单。</p>
+  </section>
+  <section id="s-sale">
+    <h2>6. 销售开单</h2>
+    <p>进「销售开单」，一行填一个商品：选商品、填数量和售价。售价按商品档案预填，可以改（改的是这一单的价格，不会动商品档案）。</p>
+    <p>散客：客户一栏留空 —— 散客必须当场结清。<br>
+      熟客赊账：选一个客户（第一次可以先去「往来方」页新建），收款少填一点，差额就记成他欠你的，往来方页里看得到。</p>
+    <div class="warn">库存不够时，页面会出现红色提示，告诉你按「打开这一页时」的库存还差多少。提示不会拦你保存 —— 先货后款、来不及点货是常见的事，但数字对不上时要心里有数。</div>
+    <p>保存之后，库存立刻减少，单据页里多一张销售单。</p>
+  </section>
+  <section id="s-stock">
+    <h2>7. 看库存</h2>
+    <p>「库存」页每个商品一行，四列数字各有含义：<br>
+      「账面库存」—— 按单据算出来应该有多少。<br>
+      「在途」—— 已经开了送货单、还在路上的数量。<br>
+      「在店可售」—— 账面减在途，真正能卖的数。低库存提醒按这一列判断。<br>
+      「库存成本」—— 现在压在货上大概多少钱。</p>
+    <p>实物和账面对不上（丢了、送了、记错了）？点「录入现有货物」（已录过的话叫「重新清点」），把实际数量填进去，软件会算出差额记一笔盘盈盘亏，账马上对齐。</p>
+  </section>
+  <section id="s-parties">
+    <h2>8. 往来方与欠款</h2>
+    <p>「往来方」页管两件事：客户欠你的（应收），你欠供应商的（应付）。点「新建往来方」，至少给他一个角色 —— 客户、供应商，或两者都是。</p>
+    <p>列表直接按欠款排好序，谁欠得多一眼看到。点一个人进去是他的全部流水，每一笔对应一张单子。</p>
+    <div class="tip">把不合作的往来方「停用」而不是删除 —— 他名下的欠款还在账上，停用后只是不再出现在开单的选择器里。</div>
+  </section>
+  <section id="s-accounts">
+    <h2>9. 账户</h2>
+    <p>「账户」页管你的钱袋子：现金、微信收款、银行卡……每个账户一个余额。开单时的「立即付款 / 当场收款」都从这些账户里选。</p>
+    <p>期初余额在新建时填一次（现在一共有多少钱）。之后余额只随单据变动 —— 编辑账户时这一项是只读的，防止手改把账改乱。</p>
+  </section>
+  <section id="s-documents">
+    <h2>10. 单据</h2>
+    <p>「单据」页是所有记账凭证的流水账。可以按「今天 / 本周 / 本月 / 最近 30 天 / 全部」筛时间，也可以按类型筛（采购、销售、收款、付款）。点任意一行可以复制单号。</p>
+    <div class="warn">单子提交后**不能修改** —— 账要留痕，这是故意设计的。录错了怎么办：库存记错了用「录入现有货物 / 重新清点」纠正；金额方向错了开一张相反方向的单子冲抵。</div>
+  </section>
+  <section id="s-export">
+    <h2>11. 导出数据</h2>
+    <p>五个地方各有一个导出按钮，导出内容不一样：<br>
+      「商品」页 —— 全部商品（含停用的）；<br>
+      「库存」页 —— 现在的库存账；<br>
+      「往来方」页 —— 全部往来方和欠款；<br>
+      「单据」页 —— 按当前筛选导出单据（先筛好再点）；<br>
+      往来方流水页 —— 这个人的全部流水。</p>
+    <ol>
+      <li>点导出按钮。</li>
+      <li>弹出的提示里带着文件保存的完整路径，点「打开文件夹」直接看到文件。</li>
+      <li>文件是 CSV 格式，双击就能用 Excel 或 WPS 打开，直接打印或发给会计。</li>
+    </ol>
+    <div class="tip">Excel 打开是乱码？不要双击文件 —— 打开 Excel，点「数据」→「从文本 / CSV」→选这个文件，编码选「65001: Unicode (UTF-8)」→ 加载。只有少数很旧版本的 Excel 才需要这样。</div>
+    <div class="tip">导出的文件完全属于你：想给谁看、存哪里、存多少份，都由你决定。</div>
+  </section>
+  <section id="s-backup">
+    <h2>12. 备份与恢复</h2>
+    <p>每天第一次打开软件，神算子会自动把数据备份一份（还没有任何单据时不备份）。想马上备一份：概览页或设置页点「立即备份」。</p>
+    <p>备份放在数据文件夹旁边的「神算子备份」文件夹里，文件名带日期。最近的 30 天每天留一份；更早的每周留一份；你自己手动备的永不删除。</p>
+    <ol>
+      <li>恢复备份只有三步：先完全关闭神算子。</li>
+      <li>打开「神算子备份」文件夹，挑一个日期合适的备份文件，复制到数据文件夹里，替换掉里面那个同名的数据文件。</li>
+      <li>重新打开神算子 —— 数据回到备份那个时刻。</li>
+    </ol>
+    <div class="warn">诚实地说：备份和数据在同一块硬盘上，它防的是「删错了、操作错了」，防不了整块硬盘坏掉。真正重要的数据，请偶尔把备份文件夹整个拷一份到 U 盘。</div>
+  </section>
+  <section id="s-settings">
+    <h2>13. 设置</h2>
+    <p>「设置」页只有几样东西，都改完立即生效，不需要保存按钮：<br>
+      「界面文字大小」—— 五档，旁边有「恢复默认大小」。<br>
+      「店名」—— 最多 20 个字，显示在概览页顶部。<br>
+      「数据位置」「备份位置」—— 各带一个打开文件夹的按钮，随时去看那里有什么。<br>
+      「多设备同步」—— 还在开发中，做好了这里会有开关。</p>
+  </section>
+  <section id="s-faq">
+    <h2>14. 常见问题</h2>
+    <p class="q">问：数据到底存在哪里？</p>
+    <p class="a">答：在你第一次启动时自己选的那个文件夹里；备份在它旁边的「神算子备份」文件夹。设置页里能看到两个位置的确切路径，点按钮可以直接打开。</p>
+    <p class="q">问：换电脑怎么办？</p>
+    <p class="a">答：把数据文件夹和「神算子备份」文件夹一起拷到新电脑，装好神算子后第一次启动时选拷过来的那个文件夹。数据原样都在。</p>
+    <p class="q">问：期初录入后库存金额怎么是 0？</p>
+    <p class="a">答：期初成本按 0 记是有意的 —— 眼下说不清这批货的进价，就不猜。下次采购同样的商品时，软件会用真实进价把成本校准过来。</p>
+    <p class="q">问：数量或金额填错了能改吗？</p>
+    <p class="a">答：单子不能改（账要留痕）。库存错了用「录入现有货物 / 重新清点」对齐；方向反了开一张相反方向的单子冲抵。</p>
+    <p class="q">问：「散客」「散采」是什么意思？</p>
+    <p class="a">答：没有留名字的一次性买卖：散客是来买东西的陌生人（必须当场结清），散采是没留名的进货（同样必须当场结清）。要赊账，就得先在往来方里建档。</p>
+    <p class="q">问：每次打开都有蓝色提示框？</p>
+    <p class="a">答：只会第一次。点「更多信息」→「仍要运行」后，Windows 就记住了。如果每次都弹，说明你每次都在换文件夹运行软件。</p>
+    <p class="q">问：想删掉这个软件？</p>
+    <p class="a">答：直接删掉软件文件夹就是删掉程序 —— 不写注册表、不留垃圾。数据在你自己选的文件夹里，删不删由你；删之前建议把备份拷到 U 盘。</p>
+  </section>
+  <section id="s-feedback">
+    <h2>15. 反馈与版本</h2>
+    <p>遇到问题、有想不通的地方，两条路都能找到我们：<br>
+      GitHub（推荐，能贴截图）：https://github.com/xgopilot/shensuanzi/issues<br>
+      邮箱：cedarandjoy@163.com<br>
+      反馈时请附上版本号（本页最下方，「帮助」页最下方也有），能帮我们更快定位。</p>
+    <p>你正在使用的版本：v0.1.0（第一个可部署版本）。</p>
+    <p>本手册也可以在软件外查看：软件文件夹里有一份「用户手册.html」，双击用浏览器打开，可打印。软件内则从「帮助」页最上方进入。</p>
+  </section>
+  <footer>
+    神算子 Closure: (String) => String from Function '_esc@21159416': static.(versionLine) · 许可 AGPL-3.0（见随包 LICENSE 文件） ·
+    第三方组件见 THIRD_PARTY.md · 本手册内容与软件内「完整手册」同源
+  </footer>
+</main>
+</body>
+</html>

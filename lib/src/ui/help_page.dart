@@ -18,6 +18,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
+import 'manual_page.dart';
+
 /// 帮助页（内容静态，只把两个真实路径插进恢复步骤）。
 class HelpPage extends StatelessWidget {
   const HelpPage({super.key, this.dataDirectory, this.backupDirectory});
@@ -58,6 +60,20 @@ class HelpPage extends StatelessWidget {
               Text(
                 '四步用起来。每一步在左侧导航都有常驻入口，随时可以点。',
                 style: TextStyle(height: 1.6, color: secondary),
+              ),
+              const SizedBox(height: 16),
+
+              // ---- 完整手册入口（§AG·八：软件内看全文，软件外看网页版）----
+              FilledButton.tonalIcon(
+                key: const Key('help-open-manual'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (BuildContext context) =>
+                        ManualPage(versionLine: AppVersion.display),
+                  ),
+                ),
+                icon: const Icon(Icons.menu_book_outlined),
+                label: const Text('查看完整手册（每一步的详细说明）'),
               ),
               const SizedBox(height: 16),
 

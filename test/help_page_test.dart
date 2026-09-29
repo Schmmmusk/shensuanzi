@@ -120,4 +120,15 @@ void main() {
     );
     expect(find.textContaining('65001'), findsOneWidget);
   });
+
+  testWidgets('「查看完整手册」入口 → 手册页出现（§AG·八）', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.tap(find.byKey(const Key('help-open-manual')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('用户手册'), findsOneWidget);
+    expect(find.text('欢迎使用神算子'), findsOneWidget);
+    expect(find.textContaining('你正在使用的版本'), findsOneWidget,
+        reason: '版本戳来自 AppVersion.display，必须真的渲染出来');
+  });
 }

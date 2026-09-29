@@ -2823,6 +2823,27 @@ build/dist/神算子-v0.1.0-win64.zip.sha256     f569edb8…d58c71
 
 ---
 
+### 八、用户手册（2026-09-29 追加任务）：软件内 + 软件外一份同源
+
+> 用户任务原话：「编写一份现版本用户手册，不仅可以在软件内查看，同时还可以在别处打开。
+> 注意：开发相关事项不用写，那是给开发者看的。」
+
+| 落点 | 内容 |
+|---|---|
+| **`packages/shensuanzi_app/lib/src/manual_content.dart`（新）** | **内容单一来源**：15 章（欢迎 / 第一次启动 / 认识主界面 / 准备 / 采购 / 销售 / 库存 / 往来方 / 账户 / 单据 / 导出 / 备份与恢复 / 设置 / 常见问题 / 反馈与版本），块模型 = 段落 / 步骤 / 提示（贴士·注意）/ 问答。**「不给开发者看」是可执行门禁**：`manualForbiddenDevTerms`（Flutter/Dart/schema/数据库/编译/…）+ `assertManualIsUserFacing` 逐字扫 —— 测试、自检、生成脚本三方都调 |
+| **`packages/shensuanzi_app/tool/make_manual_html.dart`（新）** | 从同一份数据生成 `packaging/用户手册.html`：自包含（无外部引用、无脚本）、目录锚点、打印友好（`@media print`）、版本戳取 `AppVersion.display`。**黑名单命中就拒绝产出**（exit 1） |
+| **`lib/src/ui/manual_page.dart`（新）** | 软件内渲染同一份数据：行高 1.7、`maxWidth 640`、整页可滚动（200% 缩放纪律）、提示框带「注意 / 小贴士」**文字前缀**（色弱也能分清，不只靠颜色）。本文件**不出现任何新文案** —— 只摆放 |
+| `lib/src/ui/help_page.dart` | 顶部加「查看完整手册」按钮（`help-open-manual`）→ push 手册页 |
+| `packaging/make_release.py` | `EXTRA` +`用户手册.html`；**版本戳校验**扩到 HTML（改版本忘重新生成手册 → 打不出包） |
+| `packaging/使用说明.txt` / `README.md` / `windows_build.md` §8.3/§8.4 | 指引 + 随包清单行 + 验证清单第 14 步（双击手册 → 15 章、版本一致） |
+| 测试 | `manual_test.dart`（章节完整 / 版本戳在正文 / 黑名单为空 / **HTML 与当前版本同源**）/ `selfcheck_manual.dart`（镜像 8 项）/ `help_page_test` +1（入口按钮 → 手册页出现）/ typecheck **18 入口** |
+
+**设计取舍**：内容放纯 Dart 而不是直接写 HTML —— 两个消费端（Flutter 页 / 生成器）共用一份，**不会漂移**；版本号不写死在手册里，由 `AppVersion.display` 注入，改版本只需重新生成一次，且 `make_release.py` 会拦忘改的。
+
+**手册只写真实存在的行为** —— 每一章的事实都核对过代码：单据五档（今天/本周/本月/最近30天/全部）、缩放五档+恢复默认、备份保留策略（30 天每日 / 每周豁免 / 手动永不删）、导出五个挂点与按钮文案、散客散采当场结清、负库存提示放行、期初成本按 0、恢复三步、同盘诚实提示。
+
+---
+
 ## AH. Android 端规划提案（2026-09-29，**待裁定**）
 
 ### 一、最关键的一条：**Android 的第一天不在 Android**

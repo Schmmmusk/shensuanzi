@@ -56,6 +56,16 @@ export 'src/backup.dart'
         weekKeyOf;
 export 'src/typography.dart' show AppTypography;
 export 'src/version.dart' show AppVersion;
+export 'src/manual_content.dart' show
+    ManualBlock,
+    ManualNote,
+    ManualParagraph,
+    ManualQa,
+    ManualSection,
+    ManualSteps,
+    assertManualIsUserFacing,
+    buildManualSections,
+    manualForbiddenDevTerms;
 export 'src/log.dart' show AppLog, formatLogLine, logFileName, logFolderName;
 
 // ---- §AF 数据导出 ----

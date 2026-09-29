@@ -48,6 +48,7 @@ DIST = os.path.join(REPO, 'build', 'dist')
 # 随包文件：(仓库内路径, 包内文件名)。**必须都进包**，缺一即中止。
 EXTRA = [
     (os.path.join('packaging', '使用说明.txt'), '使用说明.txt'),
+    (os.path.join('packaging', '用户手册.html'), '用户手册.html'),
     ('LICENSE', 'LICENSE'),
     ('THIRD_PARTY.md', 'THIRD_PARTY.md'),
 ]
@@ -144,6 +145,20 @@ def main():
         raise SystemExit(
             f'❌ 版本号不一致：pubspec.yaml = {version}，'
             f'使用说明.txt = v{m.group(1)}'
+        )
+    # 手册 HTML 同理：改了版本忘重新生成手册，在这里拦下
+    manual_html = os.path.join(REPO, 'packaging', '用户手册.html')
+    if not os.path.isfile(manual_html):
+        raise SystemExit(
+            '❌ packaging/用户手册.html 缺失 —— '
+            'cd packages/shensuanzi_app && dart run tool/make_manual_html.dart'
+        )
+    with open(manual_html, encoding='utf-8') as fh:
+        html = fh.read()
+    if f'v{version}' not in html:
+        raise SystemExit(
+            f'❌ 用户手册.html 的版本戳不是 v{version} —— 重新生成：'
+            'cd packages/shensuanzi_app && dart run tool/make_manual_html.dart'
         )
 
     # ---------------------------------------------------------------- 3 清单
