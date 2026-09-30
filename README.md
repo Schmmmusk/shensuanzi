@@ -123,6 +123,9 @@ flutter test
 flutter build windows --release
 ```
 
+**换台机器开发？** 先看 [`docs/windows_build.md`](docs/windows_build.md) **§零「环境准备清单」**
+（Flutter 版本要求 / Visual Studio 的 C++ 工作负载 / **SQLite 源码预置** / Python / 原生库）。
+
 **Windows 构建前提**：`sqlite3_flutter_libs` 在配置阶段需要 SQLite 源码。
 仓库**不存**这份源码（`third_party/` 被忽略）——
 **换台机器克隆下来构建不了，必须先按 [`docs/windows_build.md`](docs/windows_build.md) §三 预置源码**。

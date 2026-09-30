@@ -59,7 +59,8 @@
 > §AO 批次 1a 落地（**✅ 闭环：核心「能赊能收」补齐；门禁全过，2026-09-30**） │
 > §AP 批次 1b 送货（待开工：导航入口 + 开单页 + 签收，**不含拒收**） │
 > §AQ Schema 批次收尾（**✅ 迁移前备份 + 标记刷新 + `schema_migration.md` 等四份文档 + 门面转发修复（§AQ·五）**；§AQ·六 一项待裁定） │
-> **§AR 当前待办总览**（👉 **「接下来做什么」只看这一节**，2026-09-30）
+> **§AR 当前待办总览**（👉 **「接下来做什么」只看这一节**，2026-09-30） │
+> §AS 换台机器环境准备清单（新增 `windows_build.md` §零）
 >
 > 📦 **已归档的节**（`~~删除线~~` 表示已移出本文件）：§0-§7 → `reply_review_archive_v1.md`；
 > **§F / §G / §I / §J / §K 与 §H 的落地记录部分** → `reply_review_archive_v2.md`（2026-09-28）。
@@ -3557,3 +3558,21 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 ### 五、有意识不做（首发范围外）
 
 见头部同名行：欢迎浮层 · 备份恢复 UI / 加密 · 单据分页 · mDNS（v1.5）· 退货 / 折扣抹零 / 利润显示 · 备份目录 README。
+
+---
+
+## §AS 换台机器：环境准备清单补入构建文档（2026-09-30）
+
+> 起因：用户提问「把项目克隆到另一台电脑开发，除 Flutter SDK 外还要准备什么」。
+> 此前 `windows_build.md` 只有「构建这一步的坑」，**没有「新机器的环境准备清单」**。
+
+**新增** `docs/windows_build.md` **§零「换台机器：环境准备清单」**；`README.md`「开发与运行」加指针。
+
+| 类别 | 内容 |
+|---|---|
+| 必装 | Flutter（**Dart ≥ 3.11** ⇒ Flutter ≥ 3.41）· **Visual Studio 2022 + 「使用 C++ 的桌面开发」工作负载**（Windows 桌面的**硬性依赖**，缺了 CMake 阶段就失败、与 Dart 代码无关）· Git |
+| ⚠️ **最容易漏** | **SQLite 源码预置** `third_party/sqlite3/` —— `.gitignore` 排除了它 ⇒ **克隆后没有** ⇒ 首次构建联网下载 `sqlite.org`、国内主站超时 ⇒ 0 字节 ⇒ 配置失败（即本文 §一~§三 那件事） |
+| 按需 | Python 3（**仅打包**用；`make_icon.py` 改图标才需 `Pillow`）· 纯 Dart 测试的原生库（查找序 `SQLITE3_DLL` → `sqlite3.dll` → `System32\winsqlite3.dll`）· `flutter pub get` 的网络 |
+| **不用装** | Dart（Flutter 自带）· SQLite 本体 · Android SDK/JDK（批次 3）· Node.js · VS Code / Android Studio |
+| 一致性 | `pubspec.lock` 已入库 ⇒ 两台机器装到**同一批依赖版本**，无需手动对齐 |
+| 避坑 | 若同时设了 `HTTP_PROXY` + `http_proxy`（**大小写重复**）⇒ MSBuild 抛 `MSB6001`、**C/C++ 直接编不了**（表现成「找不到编译器」）；构建前 `env -u http_proxy -u https_proxy <cmd>` |

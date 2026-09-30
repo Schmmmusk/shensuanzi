@@ -3,6 +3,44 @@
 > 本文只讲**构建这一步**的坑。数据放哪见 [`data_directory.md`](data_directory.md)，
 > 测试怎么跑见 [`testing.md` §零](testing.md)。
 
+## 零、换台机器：环境准备清单（2026-09-30）
+
+克隆到**另一台电脑**后、`flutter build windows` 之前，需要下面这些。
+**只有第 1 项是「本来就知道的」** —— 其余按顺序补齐，其中**第 4 项是本项目最特有的坑**。
+
+| # | 准备项 | 为什么需要 | 怎么确认 |
+|---|---|---|---|
+| 1 | **Flutter SDK**（**Dart ≥ 3.11**，对应 Flutter **≥ 3.41**） | 构建 Flutter 应用 | `flutter --version`；`pubspec.yaml` 钉的是 `sdk: ^3.11.0` |
+| 2 | **Visual Studio 2022 +「使用 C++ 的桌面开发」工作负载** | Flutter **Windows 桌面**的**硬性依赖**（CMake + MSVC + Windows SDK 都在这个工作负载里）。没有它 `flutter build windows` **一步都跑不起来**，且报错发生在 CMake 阶段、与 Dart 代码无关 | `flutter doctor` 里 `Visual Studio - develop Windows apps` 是 ✅ |
+| 3 | **Git** | 克隆与版本管理 | `git --version` |
+| 4 | ⚠️ **SQLite 源码预置** `third_party/sqlite3/` | **本项目最特有的坑**：`.gitignore` 排除了 `third_party/` ⇒ **克隆下来没有它** ⇒ 首次构建在 CMake 配置阶段联网下载 `sqlite.org` 的 tarball（国内主站超时 ⇒ 0 字节 ⇒ 配置失败） | 按本文 **§三** 预置（镜像站 + 剥顶层目录）；构建时打印 `[shensuanzi] 使用本地 SQLite 源码` 即成功 |
+| 5 | **Python 3**（**仅打包时需要**） | `packaging/make_release.py` 只用标准库；`packaging/make_icon.py` 需要 `Pillow`（**只在要改图标时**） | `python --version`；改图标才 `pip install pillow` |
+| 6 | **纯 Dart 测试的原生库**（三个包的 `dart test`） | 纯 Dart 环境**不含** SQLite 原生库，测试时要能加载 | 查找顺序 `SQLITE3_DLL` → `sqlite3.dll` → `C:\Windows\System32\winsqlite3.dll`。**Win10/11 多数靠最后一项兜底即可通过**；真失败再设 `SQLITE3_DLL` |
+| 7 | 网络：`flutter pub get` 要通 pub.dev | 拉依赖 + Flutter 首次物料下载 | 国内可设 `PUB_HOSTED_URL` / `FLUTTER_STORAGE_BASE_URL` 镜像 |
+
+**不需要准备的**（省得白装）：
+
+| 项 | 为什么不用 |
+|---|---|
+| 单独装 Dart SDK | Flutter SDK **自带** Dart |
+| 装 SQLite 本体 | 生产由 `sqlite3_flutter_libs` 提供；构建期用 §三 的源码现场编译 |
+| Android SDK / JDK | Android 端**尚未开工**（批次 3）；现在做 Windows 不需要 |
+| Node.js | 项目里没有任何 JS 构建步骤 |
+| VS Code / Android Studio | 命令行即可（`flutter` / `dart` / `python`）；用不用编辑器随你 |
+
+**两台机器之间的一致性**：构建与打包所需的**一切**都已入库 ——
+`pubspec.lock`（根 + 三个包共 4 份）、`packaging/用户手册.html`、`packaging/使用说明.txt`、
+`test/fixtures/v1_empty.db`（迁移化石）⇒ 克隆后 `flutter pub get` 会装到**同一批依赖版本**，
+不需要手动对齐。**唯二例外**已在上面点明：`third_party/sqlite3/`（第 4 项，必须手工预置）
+与 `build/`（产物，按需重新构建）。
+
+> ⚠️ **若这台机器设了代理**：Windows 的环境块允许 `HTTP_PROXY` 与 `http_proxy`
+> **同时存在**，而 MSBuild 的 CL.exe 任务用的是**大小写不敏感**的字典 ⇒ 抛
+> `MSB6001 … 已添加项。字典中的关键字:"HTTP_PROXY"`，**C/C++ 直接编不了**
+> （表现成「找不到编译器」，很容易误判成没装 Visual Studio）。
+> 规避：构建前清掉**小写**那一组 ——
+> Git Bash：`env -u http_proxy -u https_proxy flutter build windows`。
+
 ## 一、症状：应用**一直起不来**，但代码全绿
 
 `flutter run -d windows` / `flutter build windows` 失败。特征很固定：
