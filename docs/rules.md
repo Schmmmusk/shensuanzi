@@ -244,6 +244,10 @@ GROUP BY dl.product_id
 | 超收/预收 | N 条指向具体单 + 1 条 `target_doc_id = null` |
 | 用预收核新单 | 新建 1 条 settlement，`receipt_doc_id` 指向原收款单 |
 
+> **数据层已支持「一收核多单」的多对多**（`settlements` 表设计如此，两个索引齐备）。
+> v1 的 UI 只做**从单据详情发起的单笔核销**；**批量收款 / 预收入口是 v1.1 候选**
+> —— 将来加 UI **不需要改 schema**（§AK / reply.md 六个待审查项 · 3）。
+
 ---
 
 ## RULE-005 付款

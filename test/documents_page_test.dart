@@ -1,8 +1,9 @@
 // 单据列表页（`DocumentsPage`）的 widget 测试。
 //
 // 覆盖：时间范围默认最近 30 天（SC-3）/ 类型 chips 筛选 / 对方名与散客显示（SC-6）/
-// 点击复制单号（SC-4）/ 「全部」档的 200 条提示 /
-// 导出按钮（§AF-2 文案、AF-5 走独立查询、筛选条件与列表一致）。
+// **点击行打开单据详情（1a 起；以前是复制单号）** / 「全部」档的 200 条提示 /
+// 导出按钮（§AF-2 文案、AF-5 走独立查询、筛选条件与列表一致）/
+// **自动生成的收付款单被过滤**（§AN·二）。
 // ⚠️ 必须 `useLocalSqlite()`（§N）。
 import 'dart:io';
 
@@ -24,6 +25,7 @@ void main() {
   late DocumentDao dao;
   late PurchaseService purchases;
   late SaleService sales;
+  late SettlementService settlements;
 
   setUp(() {
     box = Directory.systemTemp.createTempSync('shensuanzi_documents_page_');
@@ -31,6 +33,7 @@ void main() {
     dao = DocumentDao(db);
     purchases = PurchaseService(engine: RuleEngine(db), queries: QueryDao(db));
     sales = SaleService(engine: RuleEngine(db), queries: QueryDao(db));
+    settlements = SettlementService(db: db, engine: RuleEngine(db));
 
     final int t = 1700000000000;
     ProductDao(db).insert(Product(
@@ -107,8 +110,17 @@ void main() {
     );
   }
 
-  Widget page({ExportSink? exports}) => MaterialApp(
-    home: Scaffold(body: DocumentsPage(dao: dao, exports: exports)),
+  Widget page({ExportSink? exports, bool withSettlement = false}) => MaterialApp(
+    home: Scaffold(
+      body: DocumentsPage(
+        dao: dao,
+        exports: exports,
+        // 默认**不接**核销服务：现有用例都是「只读列表」场景（行不可点）；
+        // 需要测「点行进详情」时显式传 true（与其他可选服务同款判定）
+        settlements: withSettlement ? settlements : null,
+        products: withSettlement ? ProductService(db) : null,
+      ),
+    ),
   );
 
   testWidgets('空范围给空态提示', (WidgetTester tester) async {
@@ -171,19 +183,64 @@ void main() {
     expect(find.textContaining('XS'), findsNothing, reason: '销售单被筛掉');
   });
 
-  testWidgets('点行复制单号（SC-4）', (WidgetTester tester) async {
+  testWidgets('点行打开单据详情（1a 起；复制单号挪到详情页）', (
+    WidgetTester tester,
+  ) async {
+    buy(date: '2026-09-28', qty: 10, partyId: 'pt1');
+    await tester.pumpWidget(page(withSettlement: true));
+    await tester.pumpAndSettle();
+
+    final String docId = dao.listDocuments(limit: 1).single.document.id;
+    await tester.tap(find.byKey(Key('doc-row-$docId')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('单据详情'), findsOneWidget, reason: 'push 进了详情页');
+    expect(
+      find.byKey(const Key('copy-doc-no')),
+      findsOneWidget,
+      reason: '复制单号在详情页（SC-4 的动作没丢，只是挪了地方）',
+    );
+  });
+
+  testWidgets('没接核销服务 → 行不可点（与其他可选服务同款判定）', (
+    WidgetTester tester,
+  ) async {
     buy(date: '2026-09-28', qty: 10, partyId: 'pt1');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
-    final String docNo = dao.listDocuments(limit: 1).single.document.docNo;
-    await tester.tap(find.text(docNo));
+    final String docId = dao.listDocuments(limit: 1).single.document.id;
+    await tester.tap(find.byKey(Key('doc-row-$docId')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('已复制单号'), findsOneWidget);
-    // 不回读 Clipboard.getData：widget 测试里没有真实剪贴板（平台通道是桩），
-    // 读回为 null 会让断言假红 —— 复制内容正确性由 SnackBar 文案 + 一行
-    // Clipboard.setData 平台调用兜底，属 Flutter 框架行为，不在本页测试范围。
+    expect(find.text('单据详情'), findsNothing, reason: '没接服务就不跳转');
+  });
+
+  testWidgets('赊账未结清的行显示未收额（1a）', (WidgetTester tester) async {
+    // 赊账销售：不收钱 → 未收 = 全额
+    sales.create(
+      SaleDraft(
+        partyId: 'pt2',
+        date: '2026-09-28',
+        lines: <SaleLineDraft>[
+          SaleLineDraft(
+            productId: 'p1',
+            productName: '商品',
+            quantity: '2',
+            unitPrice: '5.00',
+          ),
+        ],
+      ),
+      now: 1700000000000,
+    );
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('未收 ¥'),
+      findsOneWidget,
+      reason: '一眼看出哪张还欠钱（比状态词直接）',
+    );
   });
 
   testWidgets('「全部」档显示 200 条上限提示（SC-3）', (WidgetTester tester) async {

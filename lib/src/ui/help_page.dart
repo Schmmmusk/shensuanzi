@@ -33,7 +33,7 @@ class HelpPage extends StatelessWidget {
   /// 备份目录（恢复步骤第 2 步要打开它）
   final String? backupDirectory;
 
-  static const String _issuesUrl = 'https://github.com/xgopilot/shensuanzi/issues';
+  static const String _issuesUrl = 'https://github.com/Schmmmusk/shensuanzi/issues';
   static const String _supportEmail = 'cedarandjoy@163.com';
 
   /// 备份文件夹怎么说（有真实路径就给路径 —— 用户能照着做）

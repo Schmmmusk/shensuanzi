@@ -641,3 +641,49 @@ dart run tool/import_guard.dart        # §AF 复跑返工新增：只查「用�
 
 - 系统「选择文件夹」对话框本身（`file_selector` 插件）
 - 真实盘类型与剩余空间（纯 Dart 拿不到，需要 Win32 / 插件）
+
+---
+
+## P. Schema 迁移（`packages/shensuanzi_core/`）
+
+**两层保护**（`docs/reply_review.md` §AK·二 / reply.md Schema 篇）：
+
+| 层 | 位置 | 管什么 |
+|---|---|---|
+| **化石库**（端到端） | `test/fixtures/v1_empty.db` + `schema_test.dart`「化石库升到当前版」 | **历史真库能不能升上来** —— 结构补列、数据不丢、新列可写 |
+| **执行器单元** | `schema_test.dart`「降级构造的 v1 库」 | ALTER / 事务 / 回滚**本身**对不对（用当前 DDL 建表再降级造形状） |
+| **自检镜像** | `tool/selfcheck.dart` §M | `migrationStep` / `MissingMigrationException` / `SchemaTooNewException` / 化石升级（`dart run` 可跑，**不依赖 `dart test`**） |
+
+### 化石的纪律（**命门**）
+
+> ⚠️ **`test/fixtures/*.db` 一旦提交就不再修改。**
+> 它是「历史版本的化石」—— 改了它 = **篡改历史**：迁移测试会通过，但真用户的库不会。
+> 需要新场景 → **加新 fixture**（如将来的 `v2_empty.db`），**不改老的**。
+
+化石的内嵌 DDL 抄自 git 历史，复核命令：
+
+```bash
+git show 7da3323~1:packages/shensuanzi_core/lib/src/db/schema.dart | \
+  sed -n '/static const List<String> createStatements/,/^  \];$/p'
+```
+
+重新生成（**只在新增化石时**；文件已存在需显式 `--force`）：
+
+```bash
+cd packages/shensuanzi_core
+dart run tool/make_fixture.dart
+```
+
+### ⚠️ 写迁移测试的两个坑
+
+1. **打开化石前必须先拷到临时目录**：`Db.open` 会**就地**跑迁移 —— 直接打开
+   `test/fixtures/v1_empty.db` 会把 v1 结构升成 v2，**化石就被改坏了**。
+   测试里一律 `fixture.copySync(临时路径)` 之后再打开。
+2. **`sqlite_master` 里的索引数 ≠ 你写的数量**：TEXT 主键与 UNIQUE 约束会自动生成
+   `sqlite_autoindex_*`（v1 里是 13 个）—— 数索引要加
+   `AND name NOT LIKE 'sqlite_autoindex_%'`（`make_fixture.dart` 的自检因此被拦过一次）。
+
+### 迁移的硬约束（`Agents.md` 纪律 14/15）
+
+迁移链**逐版本、不允许跳跃**；`Schema.version` 与 `Schema.migrationStep(N-1)` 必须同改；
+**字段只增不删、语义变更视作新字段**；旧代码打开新库 → `SchemaTooNewException`（拒绝）。

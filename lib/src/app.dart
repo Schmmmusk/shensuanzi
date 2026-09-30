@@ -131,6 +131,9 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 规则引擎（库存页期初录入入口用；与各服务同库）
   RuleEngine? _engine;
 
+  /// 核销服务（单据详情页的收款 / 付款，批次 1a）
+  SettlementService? _settlements;
+
   /// 聚合查询（库存页 + 备份的空库判定共用同一个 DAO）
   QueryDao? _queries;
 
@@ -243,6 +246,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         _accounts = AccountService(AccountDao(db));
         _parties = PartyService(PartyDao(db));
         _engine = RuleEngine(db);
+        _settlements = SettlementService(db: db, engine: RuleEngine(db));
         _dbFailure = null;
       });
       // 先把状态读出来（设置页/概览页首帧就得有「上次备份」），
@@ -270,6 +274,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         _accounts = null;
         _parties = null;
         _engine = null;
+        _settlements = null;
         _dbFailure = '数据文件打不开（$error）。'
             '如果这个文件夹在 U 盘或网盘里，请换到本机磁盘上的文件夹。';
       });
@@ -423,6 +428,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       parties: _parties,
       queries: _queries,
       documents: _db == null ? null : DocumentDao(_db!),
+      settlements: _settlements,
       engine: _engine,
       uiScale: _config.uiScale,
       shopName: _config.shopName,

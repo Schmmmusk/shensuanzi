@@ -447,6 +447,242 @@ void main() {
       mainDocTypes.contains('receipt') && mainDocTypes.contains('payment'),
       '$mainDocTypes');
 
+  // ---------------------------------------------------------------- 核销视图 + 列表过滤
+  // 批次 1a（`docs/reply_review.md` §AM·二 / §AN·二）。与
+  // `test/settlement_view_test.dart` 断言等价（镜像）。
+  section('N. 核销视图 + 单据列表过滤（批次 1a）');
+
+  Document mdoc({
+    required DocType type,
+    String? partyId,
+    String? accountId,
+    required int totalAmount,
+    String? refDocId,
+  }) => Document(
+    id: newId(),
+    docNo: '${Document.pendingDocNoPrefix}${newId().substring(0, 8)}',
+    docType: type,
+    status: DocStatus.confirmed,
+    partyId: partyId,
+    accountId: accountId,
+    totalAmount: totalAmount,
+    refDocId: refDocId,
+    occurredAt: now(),
+    createdAt: now(),
+    updatedAt: now(),
+  );
+
+  final String vp = createProduct(code: 'P-VIEW');
+  final String va = createAccount(name: '现金-视图');
+  final String vparty = createParty(name: '老王批发');
+
+  // ① 销售 + 立即收款 → 自动 receipt（ref_doc_id 非空）
+  final Document vsale = mdoc(
+    type: DocType.sale,
+    partyId: vparty,
+    totalAmount: 5000,
+  );
+  engine.dispatch(
+    document: vsale,
+    lines: <DocumentLine>[
+      DocumentLine.create(
+        documentId: vsale.id,
+        productId: vp,
+        quantity: 10,
+        unitPrice: 500,
+      ),
+    ],
+    immediatePayments: <PaymentEntry>[
+      PaymentEntry(accountId: va, amount: 5000),
+    ],
+    now: now(),
+  );
+
+  // ② 赊账销售
+  final Document vsale2 = mdoc(
+    type: DocType.sale,
+    partyId: vparty,
+    totalAmount: 3000,
+  );
+  engine.dispatch(
+    document: vsale2,
+    lines: <DocumentLine>[
+      DocumentLine.create(
+        documentId: vsale2.id,
+        productId: vp,
+        quantity: 6,
+        unitPrice: 500,
+      ),
+    ],
+    now: now(),
+  );
+
+  // ③ 手动收款单（核销 vsale2 的一部分）—— ref_doc_id = null
+  final Document vreceipt = mdoc(
+    type: DocType.receipt,
+    partyId: vparty,
+    accountId: va,
+    totalAmount: 1000,
+  );
+  engine.dispatch(
+    document: vreceipt,
+    allocations: <Allocation>[
+      Allocation(targetDocId: vsale2.id, amount: 1000),
+    ],
+    now: now(),
+  );
+
+  // ④ 退货单 —— ref_doc_id 指向原单，但它是独立交易、必须显示
+  final Document vret = mdoc(
+    type: DocType.saleReturn,
+    partyId: vparty,
+    totalAmount: 500,
+    refDocId: vsale2.id,
+  );
+  engine.dispatch(
+    document: vret,
+    lines: <DocumentLine>[
+      DocumentLine.create(
+        documentId: vret.id,
+        productId: vp,
+        quantity: 1,
+        unitPrice: 500,
+      ),
+    ],
+    now: now(),
+  );
+
+  final Set<String> shown = documents
+      .listDocuments()
+      .map((DocumentSummary e) => e.document.id)
+      .toSet();
+  final Set<String> allShown = documents
+      .listDocuments(includeAutoSettlements: true)
+      .map((DocumentSummary e) => e.document.id)
+      .toSet();
+  final String autoReceiptId = db.raw
+          .select(
+            "SELECT id FROM documents "
+            "WHERE doc_type = 'receipt' AND ref_doc_id IS NOT NULL",
+          )
+          .first['id']!
+      as String;
+
+  check('自动生成的收款单不进列表', !shown.contains(autoReceiptId));
+  check(
+      'includeAutoSettlements: true 能看到全部', allShown.contains(autoReceiptId));
+  check('手动收款单要显示', shown.contains(vreceipt.id));
+  check('⚠️ 退货单不被误伤（只判 ref_doc_id 会把它一起滤掉）',
+      shown.contains(vret.id));
+
+  check('summaryById 命中并带对方名',
+      documents.summaryById(vsale.id)?.partyName == '老王批发');
+  check('summaryById 不存在 → null', documents.summaryById('没有这张单') == null);
+
+  final List<SettlementView> vFromReceipt =
+      settlements.settlementsOfReceipt(vreceipt.id);
+  final List<SettlementView> vFromTarget = settlements.settlementsOfTarget(
+    vsale2.id,
+  );
+  check(
+      '对称：收款单看 → 对端是销售单',
+      vFromReceipt.single.docId == vsale2.id &&
+          vFromReceipt.single.docNo == documents.findById(vsale2.id)!.docNo);
+  check(
+      '对称：销售单看 → 对端是收款单',
+      vFromTarget.single.docId == vreceipt.id &&
+          vFromTarget.single.docNo == documents.findById(vreceipt.id)!.docNo);
+  check('对称：两方向金额一致（同一笔核销）',
+      vFromReceipt.single.amount == 1000 && vFromTarget.single.amount == 1000,
+      '${vFromReceipt.single.amount} / ${vFromTarget.single.amount}');
+
+  // ---------------------------------------------------------------- 核销服务
+  // 批次 1a（`docs/reply_review.md` §AO）。与 `test/settlement_service_test.dart`
+  // 断言等价（镜像）。
+  section('O. SettlementService（核销：收款 / 付款）');
+
+  final SettlementService settlementService = SettlementService(
+    db: db,
+    engine: engine,
+  );
+
+  check('方向判定：sale 系 → 收款', SettlementService.isInbound(DocType.sale) == true);
+  check('方向判定：purchase 系 → 付款',
+      SettlementService.isInbound(DocType.purchase) == false);
+  check('方向判定：盘点/收付款单 → 不可核销',
+      SettlementService.isInbound(DocType.stocktake) == null &&
+          SettlementService.isInbound(DocType.receipt) == null);
+  check('内联提示：超收点名未收金额',
+      (SettlementService.amountNotice(
+                  rawAmount: '60', unsettledCents: 5000, inbound: true) ??
+              '')
+          .contains('超过未收金额 ¥50.00，请改小'));
+  check('结论句：部分收款说还欠',
+      SettlementService.resultLine(
+        amountCents: 2000,
+        unsettledCents: 5000,
+        inbound: true,
+      ).contains('还欠 ¥30.00'));
+
+  // 赊账销售 5000 → 部分收 2000 → 再收 3000 → 结清
+  final String sp = createProduct(code: 'P-SETTLE');
+  final String sa = createAccount(name: '现金-核销');
+  final String sparty = createParty(name: '核销客户');
+  final Document ssale = mdoc(
+    type: DocType.sale,
+    partyId: sparty,
+    totalAmount: 5000,
+  );
+  engine.dispatch(
+    document: ssale,
+    lines: <DocumentLine>[
+      DocumentLine.create(
+        documentId: ssale.id,
+        productId: sp,
+        quantity: 1,
+        unitPrice: 5000,
+      ),
+    ],
+    now: now(),
+  );
+
+  check('核销前未收 = 全额', settlementService.unsettledCentsOf(ssale.id) == 5000);
+
+  final SettlementSaved part1 = settlementService.settle(
+    targetDocId: ssale.id,
+    accountId: sa,
+    amountCents: 2000,
+    now: now(),
+  );
+  check('部分收款：还欠 3000', part1.targetUnsettledAfterCents == 3000);
+  check('部分收款：单号前缀 SK', part1.docNo.startsWith('SK'), part1.docNo);
+  check('部分收款：单据仍未结清',
+      documents.findById(ssale.id)!.status == DocStatus.confirmed);
+
+  var overRejected = false;
+  try {
+    settlementService.settle(
+      targetDocId: ssale.id,
+      accountId: sa,
+      amountCents: 9999,
+      now: now(),
+    );
+  } on SettlementInvalid {
+    overRejected = true;
+  }
+  check('超收被服务层拒绝（界面提示不是唯一防线）', overRejected);
+
+  final SettlementSaved part2 = settlementService.settle(
+    targetDocId: ssale.id,
+    accountId: sa,
+    amountCents: 3000,
+    now: now(),
+  );
+  check('收满后结清', part2.targetUnsettledAfterCents == 0);
+  check('收满后状态 settled',
+      documents.findById(ssale.id)!.status == DocStatus.settled);
+  check('两个方向都能查到这两笔', settlementService.settledBy(ssale.id).length == 2);
+
   db.close();
 
   stdout.writeln('\n${'=' * 46}');

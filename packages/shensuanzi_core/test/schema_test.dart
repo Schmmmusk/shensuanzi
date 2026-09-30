@@ -201,14 +201,17 @@ void main() {
     });
   });
 
-  // ============================================================ 迁移（v1 → v2）
+  // ============================================================ 迁移框架
   //
-  // §AJ·AI-5：schema 升 2（products 加 package_note）。迁移测试**必须造一个
-  // 真的 v1 老库**走 `Db.open` 全流程，只测 `migrationStatements` 返回什么
-  // 字符串是虚假的安全感（写错表名 / 忘了执行都测不出来）。
-  group('迁移（v1 → v2：products 补 package_note）', () {
-    test('migrationStatements(1) 恰好一条 ALTER，且点名 products 与列', () {
-      final List<String> statements = Schema.migrationStatements(1);
+  // **两层保护**（reply.md §二·②）：
+  //  - **化石库**（`test/fixtures/v1_empty.db`）：端到端 —— 真 v1 库能不能升上来。
+  //    化石由 `tool/make_fixture.dart` 从 git 历史生成，**一旦提交不再修改**。
+  //  - **执行器单元测试**（本组最后一条）：ALTER / 事务 / 回滚本身对不对。
+  //    它用「当前 DDL 建表 + DROP COLUMN 降级」造 v1 形状 —— 测的不是历史，
+  //    是执行器；与化石测试**不冲突**，两条各管一层。
+  group('迁移框架', () {
+    test('migrationStep(1) 恰好一条 ALTER，且点名 products 与列', () {
+      final List<String> statements = Schema.migrationStep(1);
       expect(statements, hasLength(1));
       expect(
         statements.single,
@@ -216,8 +219,64 @@ void main() {
       );
     });
 
-    test('已是最新版 → 没有迁移语句（重复打开不重复改表）', () {
-      expect(Schema.migrationStatements(Schema.version), isEmpty);
+    test('migrationStep(当前版) → MissingMigrationException（当前没有下一步）', () {
+      expect(
+        () => Schema.migrationStep(Schema.version),
+        throwsA(isA<MissingMigrationException>()),
+      );
+    });
+
+    test('旧代码打开新库 → SchemaTooNewException（拒绝，不是崩溃）', () {
+      final Directory box = Directory.systemTemp.createTempSync('sz_too_new_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/new.db';
+
+      // 造一个「更新版本创建的库」：只写 user_version
+      final Database raw = sqlite3.open(path);
+      raw.execute('PRAGMA user_version = ${Schema.version + 1}');
+      raw.dispose();
+
+      expect(
+        () => Db.open(path),
+        throwsA(isA<SchemaTooNewException>()),
+        reason: '拒绝比崩溃好：拒绝能告诉用户「升级软件或从备份恢复」',
+      );
+    });
+
+    test('迁移失败后连接已关闭 → 临时目录可删（句柄不泄漏）', () {
+      // 迁移失败的恢复要求连接**立即释放** —— 否则 Windows 上 .db 文件句柄
+      // 被持有，用户连数据目录都删不掉（本仓自检里真实出现过）。
+      final Directory box = Directory.systemTemp.createTempSync('sz_leak_');
+      final String path = '${box.path}/new.db';
+
+      final Database raw = sqlite3.open(path);
+      raw.execute('PRAGMA user_version = ${Schema.version + 1}');
+      raw.dispose();
+
+      expect(() => Db.open(path), throwsA(isA<SchemaTooNewException>()));
+
+      // 句柄已释放的**可观测证据**：目录删得掉
+      deleteQuietly(box);
+      expect(
+        box.existsSync(),
+        isFalse,
+        reason: '迁移失败必须 dispose 连接，否则文件句柄泄漏',
+      );
+    });
+
+    test('已是最新的库重复打开 → 不重复改表（幂等）', () {
+      final Directory box = Directory.systemTemp.createTempSync('sz_reopen_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/d.db';
+
+      final Db first = Db.open(path);
+      expect(first.schemaVersion, Schema.version);
+      first.close();
+
+      // 第二次：current == version → `_migrate` 直接返回，不重复建表/迁移
+      final Db second = Db.open(path);
+      addTearDown(second.close);
+      expect(second.schemaVersion, Schema.version);
     });
 
     test('新库直接含 package_note 列（不用迁移）', () {
@@ -228,21 +287,73 @@ void main() {
       expect(columns, contains('package_note'));
     });
 
-    test('v1 老库经 Db.open 自动升到 v2：老行 package_note 为 NULL，且可补写', () {
-      final Directory box = Directory.systemTemp.createTempSync(
-        'shensuanzi_schema_v1_',
+    test('化石库（v1_empty.db）升到当前版：结构补列、老数据仍在、列可写', () {
+      // ⚠️ **先拷贝再打开**：`Db.open` 会就地迁移 —— 直接打开化石会把它改坏，
+      // 而化石一旦被改就等于篡改历史（docs/testing.md）
+      final File fixture = File('test/fixtures/v1_empty.db');
+      expect(
+        fixture.existsSync(),
+        isTrue,
+        reason: '化石缺失：先在 core 包里跑 dart run tool/make_fixture.dart',
       );
-      addTearDown(() {
-        try {
-          box.deleteSync(recursive: true);
-        } catch (_) {
-          // 删不掉不影响结论
-        }
-      });
+
+      final Directory box = Directory.systemTemp.createTempSync('sz_fixture_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/v1.db';
+      fixture.copySync(path);
+
+      // 往化石副本里塞一条 v1 风格的老数据（化石只建结构，不带数据）
+      final Database raw = sqlite3.open(path);
+      expect(
+        raw.select('PRAGMA user_version').first['user_version'],
+        1,
+        reason: '化石必须是 v1',
+      );
+      final int t = now();
+      raw.execute(
+        'INSERT INTO products (id, code, name, unit, created_at, updated_at) '
+        "VALUES ('p-v1', 'P0001', '矿泉水', '瓶', ?, ?)",
+        <Object?>[t, t],
+      );
+      raw.dispose();
+
+      // 正常入口打开 → 逐版迁移到当前版本
+      final Db migrated = Db.open(path);
+      addTearDown(migrated.close);
+
+      expect(migrated.schemaVersion, Schema.version);
+      expect(
+        migrated.raw
+            .select("SELECT name FROM products WHERE id = 'p-v1'")
+            .first['name'],
+        '矿泉水',
+        reason: '迁移不能丢数据',
+      );
+      expect(
+        migrated.raw
+            .select("SELECT package_note FROM products WHERE id = 'p-v1'")
+            .first['package_note'],
+        isNull,
+        reason: 'ALTER ADD COLUMN 对已有行自动取 NULL，不需要回填',
+      );
+
+      // 新列是活的，不是摆设
+      migrated.raw.execute(
+        "UPDATE products SET package_note = '1 箱 = 48 瓶' WHERE id = 'p-v1'",
+      );
+      expect(
+        migrated.raw
+            .select("SELECT package_note FROM products WHERE id = 'p-v1'")
+            .first['package_note'],
+        '1 箱 = 48 瓶',
+      );
+    });
+
+    test('执行器单元测试：降级构造的 v1 库也走完整迁移（ALTER + 事务）', () {
+      final Directory box = Directory.systemTemp.createTempSync('sz_exec_');
+      addTearDown(() => deleteQuietly(box));
       final String path = '${box.path}/v1.db';
 
-      // ---- 造一个 v1 老库：用当前 DDL 建表后**降级** —— 删掉 package_note、
-      // 版本号写回 1。这样 v1 的表形状永远跟着当前 DDL 走，不会漂移。
       final Database raw = sqlite3.open(path);
       for (final String sql in Schema.createStatements) {
         raw.execute(sql);
@@ -257,30 +368,25 @@ void main() {
       raw.execute('PRAGMA user_version = 1');
       raw.dispose();
 
-      // ---- 用正常入口打开：应自动走 migrationStatements(1) 并升到 v2
       final Db migrated = Db.open(path);
       addTearDown(migrated.close);
 
       expect(migrated.schemaVersion, Schema.version);
-      final Map<String, Object?> row = migrated.raw
-          .select("SELECT package_note FROM products WHERE id = 'p-v1'")
-          .first;
-      expect(
-        row['package_note'],
-        isNull,
-        reason: 'ALTER ADD COLUMN 对已有行自动取 NULL，不需要回填',
-      );
-
-      // ---- 老行补写备注也能存能读（列是活的，不是摆设）
-      migrated.raw.execute(
-        "UPDATE products SET package_note = '1 箱 = 48 瓶' WHERE id = 'p-v1'",
-      );
       expect(
         migrated.raw
             .select("SELECT package_note FROM products WHERE id = 'p-v1'")
             .first['package_note'],
-        '1 箱 = 48 瓶',
+        isNull,
       );
     });
   });
+}
+
+/// 临时目录删不掉不影响结论（Windows 上文件可能还被占用）
+void deleteQuietly(Directory dir) {
+  try {
+    dir.deleteSync(recursive: true);
+  } catch (_) {
+    // ignore
+  }
 }

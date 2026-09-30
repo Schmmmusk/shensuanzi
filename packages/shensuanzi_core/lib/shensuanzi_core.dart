@@ -26,7 +26,8 @@ library;
 
 // 连接与 schema
 export 'src/db/database.dart' show Db;
-export 'src/db/schema.dart' show Schema;
+export 'src/db/schema.dart'
+    show Schema, MissingMigrationException, SchemaTooNewException;
 
 // 工具
 export 'src/util/ids.dart' show newId;
@@ -42,7 +43,7 @@ export 'src/models/money_ledger.dart' show MoneyLedger;
 export 'src/models/party.dart' show Party, PartyRole;
 export 'src/models/party_ledger.dart' show PartyLedger;
 export 'src/models/product.dart' show Product;
-export 'src/models/settlement.dart' show Settlement;
+export 'src/models/settlement.dart' show Settlement, SettlementView;
 export 'src/models/stock_ledger.dart' show StockLedger;
 export 'src/models/sync_queue_entry.dart' show SyncQueueEntry, SyncQueueStatus;
 
@@ -101,6 +102,8 @@ export 'src/documents/sale_draft.dart'
         SalePaymentField;
 export 'src/documents/sale_service.dart'
     show SaleDraftInvalid, SaleSaved, SaleService;
+export 'src/documents/settlement_service.dart'
+    show SettlementInvalid, SettlementSaved, SettlementService;
 export 'src/documents/stocktake_draft.dart'
     show StocktakeDraft, StocktakeLineDraft, StocktakeValidation;
 export 'src/documents/stocktake_service.dart'

@@ -65,11 +65,18 @@ class DocumentDao {
   /// - JOIN parties 带回**对方名**（散客/散采的 `party_id` 为空 ⇒ `partyName` 为
   ///   `null`，UI 显示「散客」/「散采」而不是空白，§AA 六同款处理）
   /// - 按 `occurred_at` 降序、`created_at` 降序兜底
+  /// 列表（默认过滤掉**自动生成的收付款单**，见 [_summaries]）
   List<DocumentSummary> listDocuments({
     DocType? type,
     int? sinceMillis,
     int limit = 200,
-  }) => _summaries(type: type, sinceMillis: sinceMillis, limit: limit);
+    bool includeAutoSettlements = false,
+  }) => _summaries(
+    type: type,
+    sinceMillis: sinceMillis,
+    limit: limit,
+    includeAutoSettlements: includeAutoSettlements,
+  );
 
   /// **导出用**：不分页（§AF-5）。
   ///
@@ -83,12 +90,39 @@ class DocumentDao {
   List<DocumentSummary> listDocumentsForExport({
     DocType? type,
     int? sinceMillis,
-  }) => _summaries(type: type, sinceMillis: sinceMillis, limit: null);
+    bool includeAutoSettlements = false,
+  }) => _summaries(
+    type: type,
+    sinceMillis: sinceMillis,
+    limit: null,
+    includeAutoSettlements: includeAutoSettlements,
+  );
+
+  /// 详情页用：按 id 取一行（含对方名）。不存在 → `null`。
+  ///
+  /// 与列表**同一份 JOIN**（`LEFT JOIN parties`），所以对方名的口径一致
+  /// —— 散客 / 散采为 `null`，由 `documentPartyLabel` 统一成文字。
+  DocumentSummary? summaryById(String id) {
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT d.*, pa.name AS party_name '
+      'FROM ${Schema.documents} d '
+      'LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id '
+      'WHERE d.id = ? LIMIT 1',
+      <Object?>[id],
+    );
+    if (rows.isEmpty) return null;
+    final Map<String, Object?> row = rows.first;
+    return DocumentSummary(
+      document: Document.fromRow(row),
+      partyName: row['party_name'] as String?,
+    );
+  }
 
   List<DocumentSummary> _summaries({
     DocType? type,
     int? sinceMillis,
     required int? limit,
+    bool includeAutoSettlements = false,
   }) {
     final List<Object?> args = <Object?>[];
     final List<String> conditions = <String>[];
@@ -99,6 +133,18 @@ class DocumentDao {
     if (sinceMillis != null) {
       conditions.add('d.occurred_at >= ?');
       args.add(sinceMillis);
+    }
+    if (!includeAutoSettlements) {
+      // **自动生成的收付款单不进列表**（§AN·二 / `docs/data_model.md` §3.6）：
+      // 销售时主机自动生成收款单，若也列出来，用户看到「一笔交易两条记录」
+      // 会以为系统记重了。手动创建的收款单（`ref_doc_id IS NULL`）**要显示**。
+      //
+      // ⚠️ 条件必须**同时**限定 `doc_type` —— 只判 `ref_doc_id IS NOT NULL`
+      // 会把**退货单**（`sale_return` / `purchase_return` 的 `ref_doc_id`
+      // 指向原单）一起滤掉，退货凭空消失在列表里。
+      conditions.add(
+        "NOT (d.doc_type IN ('receipt', 'payment') AND d.ref_doc_id IS NOT NULL)",
+      );
     }
     final String where = conditions.isEmpty
         ? ''

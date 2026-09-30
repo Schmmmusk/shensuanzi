@@ -1,6 +1,35 @@
 import '../db/schema.dart';
 import 'base.dart';
 
+/// 核销关系的**展示视图**：从**本侧**看**对端**那张单（详情页用）。
+///
+/// 两个方向共用它（`settlementsOfReceipt` / `settlementsOfTarget`）——
+/// 从收款单看和从销售单看，用户看到的是**同一份数据的两个方向**：
+///
+/// | 查询 | [docId] / [docNo] 指的是 |
+/// |---|---|
+/// | `settlementsOfReceipt(收款单)` | 这笔钱**核销掉的**单据 |
+/// | `settlementsOfTarget(销售单)` | 核销过这单的**收款单** |
+///
+/// `docId == null` ⇒ 预收 / 预付（`target_doc_id = NULL`，对端不存在）。
+class SettlementView {
+  const SettlementView({
+    required this.docId,
+    required this.docNo,
+    required this.amount,
+    required this.occurredAt,
+  });
+
+  /// 对端单据 id；`null` = 预收 / 预付
+  final String? docId;
+
+  /// 对端单号（`documents.doc_no`）；`null` = 预收 / 预付
+  final String? docNo;
+
+  final int amount;
+  final int occurredAt;
+}
+
 /// 核销关系（业务数据，**不可变**）
 ///
 /// ## 两类 `receipt_doc_id`（`docs/data_model.md` §3.6）

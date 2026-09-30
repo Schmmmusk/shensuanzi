@@ -11,13 +11,11 @@
 /// - 付款核销 / 退货入口**不在本阶段**（§Z 七：随核销阶段）
 library;
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'document_detail_page.dart';
 import 'export_button.dart';
 
 /// 时间范围档位
@@ -34,12 +32,24 @@ enum _TimeRange {
 
 /// 单据列表页。
 class DocumentsPage extends StatefulWidget {
-  const DocumentsPage({super.key, required this.dao, this.exports});
+  const DocumentsPage({
+    super.key,
+    required this.dao,
+    this.exports,
+    this.settlements,
+    this.products,
+  });
 
   final DocumentDao dao;
 
   /// 导出服务（`null` = 不显示导出按钮，与其他可选服务同款判定）
   final ExportSink? exports;
+
+  /// 核销服务（`null` = 行不可点进详情 —— 与其他可选服务同款判定）
+  final SettlementService? settlements;
+
+  /// 商品服务（详情页的明细行显示商品名）
+  final ProductService? products;
 
   @override
   State<DocumentsPage> createState() => _DocumentsPageState();
@@ -64,6 +74,26 @@ class _DocumentsPageState extends State<DocumentsPage> {
           .millisecondsSinceEpoch,
       _TimeRange.all => null,
     };
+  }
+
+  /// 打开单据详情（1a 起：行点击 = 看详情；**复制单号挪到详情页**）。
+  ///
+  /// 没接核销服务（`settlements == null`）时行不可点 —— 与其他可选服务
+  /// 同款判定（「没接就是不显示 / 不响应」）。
+  Future<void> _openDetail(String documentId) async {
+    final SettlementService? settlements = widget.settlements;
+    if (settlements == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => DocumentDetailPage(
+          documentId: documentId,
+          settlements: settlements,
+          products: widget.products,
+        ),
+      ),
+    );
+    // 详情里可能核销过 —— 回来重查列表（`build` 会重新查 dao）
+    if (mounted) setState(() {});
   }
 
   @override
@@ -113,7 +143,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
               ),
               const SizedBox(height: 4),
               Text(
-                '点一行可以复制单号。单据详情、退货、核销在后面的版本里做。',
+                '点一行看单据详情；收款、付款、复制单号都在详情页里。',
                 style: TextStyle(
                   height: 1.6,
                   color: theme.textTheme.bodySmall?.color,
@@ -189,6 +219,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                         _DocumentRow(
                           key: Key('doc-row-${rows[i].document.id}'),
                           entry: rows[i],
+                          onTap: widget.settlements == null
+                              ? null
+                              : () => _openDetail(rows[i].document.id),
                         ),
                       ],
                     ],
@@ -202,11 +235,14 @@ class _DocumentsPageState extends State<DocumentsPage> {
   }
 }
 
-/// 单据列表里的一行（SC-4：整行可点 = 复制单号）
+/// 单据列表里的一行（1a 起：整行可点 = **打开详情**；复制单号在详情页）
 class _DocumentRow extends StatelessWidget {
-  const _DocumentRow({super.key, required this.entry});
+  const _DocumentRow({super.key, required this.entry, this.onTap});
 
   final DocumentSummary entry;
+
+  /// `null` = 不可点（没接核销服务 —— 与其他可选服务同款判定）
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -216,20 +252,17 @@ class _DocumentRow extends StatelessWidget {
     // ⚠️ 措辞走**共用函数**（`documentPartyLabel`）—— 导出的「对方」列用的是
     //    同一句，两处各写一遍就会漂（§AF AF-9）
     final String party = documentPartyLabel(entry.partyName, doc.docType);
+    // 赊账未结清 → 一眼看出「这张还欠钱」（比状态词直接）。
+    // 收付款单自身不显示（它**就是**那笔钱）。
+    final int unsettled = doc.totalAmount - doc.paidAmount;
+    final bool showUnsettled = unsettled > 0 &&
+        doc.docType != DocType.receipt &&
+        doc.docType != DocType.payment;
+    final String unsettledVerb =
+        SettlementService.isInbound(doc.docType) == false ? '未付' : '未收';
 
     return InkWell(
-      onTap: () {
-        // 剪贴板写入**不等待**：真机上 setData 几乎必然成功，不该阻塞反馈；
-        // 而 widget 测试里平台通道的 Future 永不完成，await 会让 SnackBar
-        // 永远出不来（2026-09-28 单据页测试真实踩到）
-        unawaited(Clipboard.setData(ClipboardData(text: doc.docNo)));
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('已复制单号 ${doc.docNo}'),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      },
+      onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
@@ -286,16 +319,22 @@ class _DocumentRow extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  doc.status == DocStatus.settled
-                      ? '已结清'
-                      : doc.status == DocStatus.inTransit
-                          ? '在途'
-                          : doc.status.wire,
+                  // ⚠️ 走共用词汇表（`docStatusLabel`）：以前这里是内联三元，
+                  //    非「已结清」非「在途」时**直接印英文 wire 值**（`confirmed`）
+                  docStatusLabel(doc.status),
                   style: TextStyle(
                     height: 1.6,
                     color: theme.textTheme.bodySmall?.color,
                   ),
                 ),
+                if (showUnsettled)
+                  Text(
+                    '$unsettledVerb ¥${Money.formatGrouped(unsettled)}',
+                    style: const TextStyle(
+                      height: 1.6,
+                      color: Color(0xFFB45309),
+                    ),
+                  ),
               ],
             ),
           ],

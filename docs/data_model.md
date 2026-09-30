@@ -33,7 +33,7 @@
 | `category` | TEXT NULL | 分类 |
 | `is_active` | INTEGER | 默认 1 |
 | `remark` | TEXT NULL | |
-| `package_note` | TEXT NULL | 包装说明（如「1 箱 = 48 瓶」）。**纯备注，不参与任何计算**（§AJ·AI-5），库存页展示用。schema v2 新增，存量库经 `migrationStatements` 迁移 |
+| `package_note` | TEXT NULL | 包装说明（如「1 箱 = 48 瓶」）。**纯备注，不参与任何计算**（§AJ·AI-5），库存页展示用。schema v2 新增，存量库经 `Schema.migrationStep(1)` 迁移 |
 | `created_at` | INTEGER | |
 | `updated_at` | INTEGER | |
 | `sync_version` | INTEGER | 默认 0 |

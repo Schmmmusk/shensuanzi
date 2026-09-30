@@ -43,6 +43,7 @@ class AppShell extends StatefulWidget {
     this.parties,
     this.queries,
     this.documents,
+    this.settlements,
     this.engine,
     this.uiScale = UiScale.standard,
     this.shopName,
@@ -81,6 +82,9 @@ class AppShell extends StatefulWidget {
 
   /// 单据 DAO（单据列表页用）
   final DocumentDao? documents;
+
+  /// 核销服务（单据详情页的收款 / 付款；`null` = 列表行不可点）
+  final SettlementService? settlements;
 
   /// 规则引擎（库存页的期初录入「重新清点」入口用；`null` = 入口不可用，
   /// 库存页显示占位）
@@ -206,7 +210,12 @@ class _AppShellState extends State<AppShell> {
     } else if (current.id == 'documents') {
       page = widget.documents == null
           ? _PendingPage(destination: current)
-          : DocumentsPage(dao: widget.documents!, exports: widget.exports);
+          : DocumentsPage(
+              dao: widget.documents!,
+              exports: widget.exports,
+              settlements: widget.settlements,
+              products: widget.products,
+            );
     } else if (current.id == 'settings') {
       // §AI-1：configStore / onConfigChanged 已是 required —— 设置页是常驻
       // 入口（ui_principles），「占位页」分支整体删除（它曾把生产真机挡在外面）

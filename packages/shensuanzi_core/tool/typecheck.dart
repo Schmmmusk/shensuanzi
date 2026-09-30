@@ -36,6 +36,10 @@ import '../test/sale_draft_test.dart' as sale_draft_test;
 // ignore: unused_import
 import '../test/schema_test.dart' as schema_test;
 // ignore: unused_import
+import '../test/settlement_view_test.dart' as settlement_view_test;
+// ignore: unused_import
+import '../test/settlement_service_test.dart' as settlement_service_test;
+// ignore: unused_import
 import '../test/stocktake_service_test.dart' as stocktake_service_test;
 // ignore: unused_import
 import '../test/sync_client_test.dart' as sync_client_test;
@@ -73,10 +77,14 @@ import 'selfcheck_sale.dart' as selfcheck_sale;
 import 'selfcheck_stocktake.dart' as selfcheck_stocktake;
 // ignore: unused_import
 import 'selfcheck_sync_client.dart' as selfcheck_sync_client;
+// ignore: unused_import
+import 'make_fixture.dart' as make_fixture;
 
 void main() {
   // 只引用函数值，确保编译器保留（不调用）。
-  final List<void Function()> entries = <void Function()>[
+  // ⚠️ 用 `Function` 而不是 `void Function()`：`make_fixture.main` 带
+  // `List<String> args`（生成化石脚本要 `--force` 开关），窄签名放不进去。
+  final List<Function> entries = <Function>[
     // test/
     account_draft_test.main,
     database_test.main,
@@ -91,6 +99,8 @@ void main() {
     rule_engine_test.main,
     sale_draft_test.main,
     schema_test.main,
+    settlement_view_test.main,
+    settlement_service_test.main,
     stocktake_service_test.main,
     sync_client_test.main,
     util_test.main,
@@ -109,9 +119,10 @@ void main() {
     selfcheck_sale.main,
     selfcheck_stocktake.main,
     selfcheck_sync_client.main,
+    make_fixture.main,
   ];
   print(
-    '编译通过：16 个测试文件 + 14 个自检脚本已通过类型检查（未执行）。'
+    '编译通过：16 个测试文件 + 15 个 tool 入口已通过类型检查（未执行）。'
     '（共 ${entries.length} 个入口）',
   );
 }

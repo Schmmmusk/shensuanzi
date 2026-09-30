@@ -8,10 +8,20 @@
 /// - 金额整数分（`INTEGER`）
 /// - 布尔用 `INTEGER` 0/1
 /// - 软删除 `is_active`、乐观锁 `sync_version` **仅主数据有**
+///
+/// ## 版本与迁移（`docs/reply_review.md` §AK·二 / reply.md Schema 篇）
+///
+/// - **[version] 是唯一权威**，`PRAGMA user_version` 是迁移的判定依据；
+///   标记文件的 `schema_version` 只是「目录身份证」，**不参与迁移判定**
+/// - **迁移链逐版本、不允许跳跃**：[migrationStep] 一段管一版，
+///   执行器逐版跑（见 `database.dart` 的 `_migrate`）
+/// - **字段只增不删、语义变更视作新字段**（至少保留一个发布周期）——
+///   目的是让**旧客户端**还能读新库（个体工商户不会同时更新所有设备）
 class Schema {
   Schema._();
 
-  /// schema 版本。递增时需在 [migrationStatements] 补迁移步骤。
+  /// schema 版本。**递增时必须在 [migrationStep] 补一段**（漏写会被
+  /// [MissingMigrationException] 拦在启动时）。
   ///
   /// v2（2026-09-29，§AJ·AI-5）：`products` 加 `package_note`（包装说明，
   /// 纯备注）。
@@ -324,19 +334,58 @@ class Schema {
     ''',
   ];
 
-  /// 升级迁移。[from] = 打开时库里的 `PRAGMA user_version`。
+  /// 从 [from] 升到 [from + 1] 的迁移步骤 —— **逐版本精确匹配**。
+  ///
+  /// ⚠️ **迁移链逐版本、不允许跳跃**：`migrationStep(2)` 假定库已在 v2 上。
+  /// 执行器按 `for (v = current + 1; v <= version; v++)` 一版一版跑，**每版一个
+  /// 事务**（失败只影响那一版，重试从断点继续）。
+  ///
+  /// **别写成累积判断**（`if (from < N)`）：那种写法在**只有一步**时看着对，
+  /// 两步以上就错 —— from = 1、to = 3 时会跑 v1→v2 的步骤却**跳过 v2→v3**。
+  /// 「哪一步做什么」要在这一眼可见（switch 就是版本清单）。
+  ///
+  /// 缺失的版本 → [MissingMigrationException]：改 `version` 却忘写迁移，
+  /// **启动即拦**，不让用户的数据先踩坑。
   ///
   /// ## v1 → v2（2026-09-29，§AJ·AI-5）
   ///
   /// `products` 加 `package_note TEXT NULL`（包装说明，纯备注、不参与计算）。
   /// `ALTER TABLE ADD COLUMN` 对已有行自动取 NULL，不需要回填，不锁旧数据。
-  static List<String> migrationStatements(int from) {
-    final List<String> statements = <String>[];
-    if (from < 2) {
-      statements.add(
-        'ALTER TABLE $products ADD COLUMN package_note TEXT NULL',
-      );
-    }
-    return statements;
-  }
+  static List<String> migrationStep(int from) => switch (from) {
+    1 => <String>['ALTER TABLE $products ADD COLUMN package_note TEXT NULL'],
+    // 2 => <String>[...],   ← 将来 v2 → v3：加一行即可，不要动上面那步
+    _ => throw MissingMigrationException(from),
+  };
+}
+
+/// 迁移链缺一步（`Schema.migrationStep` 没有 `from` 那一段）。
+///
+/// 说明**改了 `Schema.version` 却忘了写迁移** —— 启动即拦。
+class MissingMigrationException implements Exception {
+  const MissingMigrationException(this.from);
+
+  /// 缺的是「从 [from] 到 [from] + 1」这一步
+  final int from;
+
+  @override
+  String toString() =>
+      '缺少 v$from → v${from + 1} 的迁移步骤（检查 Schema.migrationStep）';
+}
+
+/// 库的版本**高于**本程序支持的版本（用户装回了旧版软件）。
+///
+/// 旧代码读新结构会静默错误或崩溃 —— **拒绝比崩溃好**：
+/// 拒绝能明确告诉用户怎么办，崩溃只会让用户以为软件坏了。
+class SchemaTooNewException implements Exception {
+  const SchemaTooNewException({required this.dbVersion, required this.appVersion});
+
+  /// 库文件的实际版本（`PRAGMA user_version`）
+  final int dbVersion;
+
+  /// 本程序支持的版本（`Schema.version`）
+  final int appVersion;
+
+  @override
+  String toString() =>
+      '数据库 schema 版本 $dbVersion 高于本程序支持的 $appVersion，请升级程序后再打开';
 }

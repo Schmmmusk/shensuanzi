@@ -287,6 +287,101 @@ void main() {
   reopened.close();
   tmp.deleteSync(recursive: true);
 
+  section('M. 迁移链（reply.md Schema 篇 / §AK·二）');
+
+  final List<String> step1 = Schema.migrationStep(1);
+  check(
+      'migrationStep(1) 恰好一条 ALTER package_note',
+      step1.length == 1 &&
+          step1.single.contains('ALTER TABLE products ADD COLUMN package_note'),
+      '${step1.length} 条');
+
+  var missingThrown = false;
+  try {
+    Schema.migrationStep(Schema.version);
+  } on MissingMigrationException {
+    missingThrown = true;
+  }
+  check('migrationStep(当前版) → MissingMigrationException（漏写迁移启动即拦）',
+      missingThrown);
+
+  final Directory migTmp = Directory.systemTemp.createTempSync('ssz_migrate');
+  String migPath(String name) => '${migTmp.path}${Platform.pathSeparator}$name';
+
+  // 旧代码打开新库 → 拒绝（不是崩溃）
+  var tooNewThrown = false;
+  final Database tooNewRaw = sqlite3.open(migPath('toonew.db'));
+  tooNewRaw.execute('PRAGMA user_version = ${Schema.version + 1}');
+  tooNewRaw.dispose();
+  try {
+    Db.open(migPath('toonew.db'));
+  } on SchemaTooNewException {
+    tooNewThrown = true;
+  }
+  check('旧代码打开新库 → SchemaTooNewException（拒绝比崩溃好）', tooNewThrown);
+
+  // 迁移失败后连接必须**已释放** —— 与上面同一场景的延伸：
+  // Windows 上句柄没释放 ⇒ 目录删不掉（本仓真实出现过）
+  final Directory leakTmp = Directory.systemTemp.createTempSync('ssz_leak');
+  final String leakPath = '${leakTmp.path}${Platform.pathSeparator}new.db';
+  final Database leakRaw = sqlite3.open(leakPath);
+  leakRaw.execute('PRAGMA user_version = ${Schema.version + 1}');
+  leakRaw.dispose();
+  try {
+    Db.open(leakPath);
+  } on SchemaTooNewException {
+    // 预期路径
+  }
+  var leakRemoved = true;
+  try {
+    leakTmp.deleteSync(recursive: true);
+  } catch (_) {
+    leakRemoved = false;
+  }
+  check('迁移失败后连接已关闭（目录可删 ⇒ 句柄已释放）', leakRemoved);
+
+  // 化石库端到端 —— ⚠️ **先拷贝再打开**：Db.open 会就地迁移，直接打开会改坏化石
+  final File fixture = File('test/fixtures/v1_empty.db');
+  if (!fixture.existsSync()) {
+    check('化石库 v1_empty.db 存在', false,
+        '缺文件：先在 core 包跑 dart run tool/make_fixture.dart');
+  } else {
+    final String fxPath = migPath('v1.db');
+    fixture.copySync(fxPath);
+    final Database fxRaw = sqlite3.open(fxPath);
+    final int fxVersion =
+        fxRaw.select('PRAGMA user_version').first['user_version']! as int;
+    final int fxNow = now();
+    fxRaw.execute(
+      'INSERT INTO products (id, code, name, unit, created_at, updated_at) '
+      "VALUES ('p-v1', 'P0001', '矿泉水', '瓶', ?, ?)",
+      <Object?>[fxNow, fxNow],
+    );
+    fxRaw.dispose();
+
+    check('化石是 v1（user_version = 1）', fxVersion == 1, '实际 $fxVersion');
+    final Db fxMigrated = Db.open(fxPath);
+    check('化石库升到当前版本', fxMigrated.schemaVersion == Schema.version);
+    check(
+        '迁移不丢数据',
+        fxMigrated.raw
+                .select("SELECT name FROM products WHERE id = 'p-v1'")
+                .first['name'] ==
+            '矿泉水');
+    check(
+        '新列对老行取 NULL',
+        fxMigrated.raw
+                .select("SELECT package_note FROM products WHERE id = 'p-v1'")
+                .first['package_note'] ==
+            null);
+    fxMigrated.close();
+  }
+  try {
+    migTmp.deleteSync(recursive: true);
+  } catch (_) {
+    // Windows 上文件可能还被占用 —— 不影响结论
+  }
+
   db.close();
   check('close() 后可用', !db.inTransaction);
 
