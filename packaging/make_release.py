@@ -223,7 +223,7 @@ def main():
     print(f'   压缩后 {human(zipped)}（{zipped / total:.0%}）')
     print(f'   sha256 {sha}')
     print()
-    print('   发给用户前，按 docs/windows_build.md §8.4 的 14 步清单在干净环境验一遍。')
+    print('   发给用户前，按 docs/windows_build.md §8.4 的 15 步清单在干净环境验一遍。')
 
 
 if __name__ == '__main__':

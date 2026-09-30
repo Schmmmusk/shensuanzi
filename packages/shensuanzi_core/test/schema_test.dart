@@ -349,6 +349,74 @@ void main() {
       );
     });
 
+    test('存量库迁移前先备份：<db>.before-v1 是升级前的样子', () {
+      final File fixture = File('test/fixtures/v1_empty.db');
+      final Directory box = Directory.systemTemp.createTempSync('sz_backup_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/v1.db';
+      fixture.copySync(path);
+
+      final Db migrated = Db.open(path);
+      addTearDown(migrated.close);
+      expect(migrated.schemaVersion, Schema.version);
+
+      final File backup = File('$path.before-v1');
+      expect(backup.existsSync(), isTrue, reason: '升级前必须留一份退路');
+
+      // 备份是**迁移前**的样子：user_version 仍是 1、没有新列
+      final Database raw = sqlite3.open(backup.path);
+      expect(raw.select('PRAGMA user_version').first['user_version'], 1);
+      expect(
+        raw.select('PRAGMA table_info(products)').map((Row r) => r['name']),
+        isNot(contains('package_note')),
+      );
+      raw.dispose();
+    });
+
+    test('空库（v0）不备份 —— 没有旧数据要保', () {
+      final Directory box = Directory.systemTemp.createTempSync('sz_nov0_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/fresh.db';
+
+      final Db fresh = Db.open(path);
+      addTearDown(fresh.close);
+      expect(fresh.schemaVersion, Schema.version);
+      expect(File('$path.before-v0').existsSync(), isFalse);
+    });
+
+    test('迁移失败 → 库回到迁移前（仍能打开、仍是 v1），备份留着供诊断', () {
+      // 构造「迁移必然失败」的库：v1 结构上**已经有 package_note 列**
+      // ⇒ v1→v2 的 `ALTER TABLE ... ADD COLUMN` 报 duplicate column。
+      // ⚠️ 「恢复」的完整验证需要两版迁移（部分成功后再失败）—— 当前只有
+      // v1→v2 一版，故本用例覆盖的是「备份生成 + 失败后没有半升级状态」。
+      final File fixture = File('test/fixtures/v1_empty.db');
+      final Directory box = Directory.systemTemp.createTempSync('sz_failmig_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/v1.db';
+      fixture.copySync(path);
+
+      final Database raw = sqlite3.open(path);
+      raw.execute('ALTER TABLE products ADD COLUMN package_note TEXT');
+      raw.execute('PRAGMA user_version = 1');
+      raw.dispose();
+
+      expect(() => Db.open(path), throwsA(isA<SqliteException>()));
+
+      expect(
+        File('$path.before-v1').existsSync(),
+        isTrue,
+        reason: '失败了也要把退路留着供诊断',
+      );
+
+      final Database check = sqlite3.open(path);
+      expect(
+        check.select('PRAGMA user_version').first['user_version'],
+        1,
+        reason: '没有半升级状态',
+      );
+      check.dispose();
+    });
+
     test('执行器单元测试：降级构造的 v1 库也走完整迁移（ALTER + 事务）', () {
       final Directory box = Directory.systemTemp.createTempSync('sz_exec_');
       addTearDown(() => deleteQuietly(box));

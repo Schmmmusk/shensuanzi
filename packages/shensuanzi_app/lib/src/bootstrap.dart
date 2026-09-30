@@ -179,6 +179,25 @@ class AppBootstrap {
   /// ⚠️ 客户端镜像相反 —— 必须 `foreignKeys: false`（见 `SyncClient` 构造函数）。
   Db open(DataLocation location) => Db.open(location.databasePath);
 
+  /// 迁移成功后，把标记文件的版本刷新到**库的真实版本**。
+  ///
+  /// ## 三处版本号的关系（reply.md Schema 篇 §3.3）
+  ///
+  /// | 位置 | 是什么 | 参与迁移判定？ |
+  /// |---|---|---|
+  /// | `Schema.version` | 当前代码的能力 | — |
+  /// | `PRAGMA user_version` | 这个库文件的现状 | ✅ **唯一依据** |
+  /// | 标记文件的 `schema_version` | 这个目录**最后一次被哪个版本操作过** | ❌ 只是「目录身份证」 |
+  ///
+  /// 身份证不参与判定，但**升级之后得跟上** —— 否则每次启动都会觉得
+  /// 「三处版本号不一致」，诊断日志永远在喊狼来了。
+  DataMarker refreshMarker(DataLocation location, int schemaVersion) =>
+      DataMarker.write(
+        location.directory,
+        schemaVersion: schemaVersion,
+        now: DateTime.now().millisecondsSinceEpoch,
+      );
+
   /// 迁移前检查：目标能否用、会不会把数据搬进自己的备份里。
   ///
   /// ⚠️ **逻辑在 [DataDirectoryPolicy.inspectMigration]**，这里是给 UI 的转发入口。

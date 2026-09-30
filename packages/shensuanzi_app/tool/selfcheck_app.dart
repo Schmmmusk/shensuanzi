@@ -100,6 +100,41 @@ void main() {
     if (dir.existsSync()) dir.deleteSync(recursive: true);
   }
 
+  // ============================================================ 迁移后刷新标记
+  section('迁移后刷新标记文件（reply.md Schema 篇 §3.3）');
+  // ⚠️ **必须用独立沙箱**：`prepare()` 会写配置文件（`saveConfig`），
+  // 跟主 box 共用会污染后面「没配过 → 走向导」的用例（本轮真实踩过 ——
+  // 自检是一个长脚本，跨段共用的对象要小心）
+  final Directory refreshBox = Directory.systemTemp.createTempSync(
+    'sz_refresh_',
+  );
+  final String refreshDir = p.join(refreshBox.path, 'data');
+  Directory(refreshDir).createSync(recursive: true);
+  DataMarker.write(refreshDir, schemaVersion: 1, now: 1700000000000);
+  check('初始标记是 v1（老用户的数据目录）',
+      DataMarker.read(refreshDir)?.schemaVersion == 1);
+
+  final AppBootstrap refreshBootstrap = bootstrapIn(refreshBox);
+  final DataLocation refreshLoc = refreshBootstrap.prepare(
+    refreshDir,
+    now: 1700000000001,
+  );
+  check('prepare 读到的标记仍是 v1', refreshLoc.marker.schemaVersion == 1);
+
+  refreshBootstrap.refreshMarker(refreshLoc, Schema.version);
+  check(
+      'refreshMarker 后标记跟上了库的版本',
+      DataMarker.read(refreshDir)?.schemaVersion == Schema.version,
+      '实际 ${DataMarker.read(refreshDir)?.schemaVersion}');
+  check(
+      '刷新标记不动数据文件本身',
+      !File(p.join(refreshDir, AppBootstrap.databaseFileName)).existsSync());
+  try {
+    refreshBox.deleteSync(recursive: true);
+  } catch (_) {
+    // 删不掉不影响结论
+  }
+
   // ============================================================ 默认位置
   section('默认数据目录');
   check('有非系统盘 → 优先非系统盘',
@@ -521,6 +556,17 @@ void main() {
     check('open 打的是数据目录里的库，且外键开着（主机端）',
         File(loc.databasePath).existsSync() && svcDb.foreignKeysEnabled);
     svcDb.close();
+
+    // ⚠️ 这条 check 的**主要价值在编译期**：UI（`app.dart`）经门面调
+    // `refreshMarker`，门面若漏转发这一手，只有 `flutter analyze` 才炸 ——
+    // 而根 `lib/` 没有我侧可跑的编译门禁（2026-09-30 真实漏过一次）。
+    // 在这里**真的调一次门面方法** ⇒ 缺方法时本脚本当场编译不过。
+    DataMarker.write(loc.directory, schemaVersion: 1, now: 222);
+    final DataMarker refreshed = svc.refreshMarker(loc, Schema.version);
+    check('refreshMarker 经门面转发 → 落后标记被刷到库版本',
+        refreshed.schemaVersion == Schema.version &&
+            DataMarker.read(loc.directory)?.schemaVersion == Schema.version,
+        '${refreshed.schemaVersion}');
   }
 
   // ============================================================ 对话框状态机

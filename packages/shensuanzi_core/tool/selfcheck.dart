@@ -375,7 +375,30 @@ void main() {
                 .first['package_note'] ==
             null);
     fxMigrated.close();
+
+    // 迁移前自动备份（reply.md Schema 篇 §3.2）—— 升级前必须留退路
+    final File fxBackup = File('$fxPath.before-v1');
+    check('迁移前已备份 <db>.before-v1', fxBackup.existsSync());
+    if (fxBackup.existsSync()) {
+      final Database backupRaw = sqlite3.open(fxBackup.path);
+      final int backupVersion =
+          backupRaw.select('PRAGMA user_version').first['user_version']! as int;
+      final bool backupHasNewColumn = backupRaw
+          .select('PRAGMA table_info(products)')
+          .map((Row r) => r['name'])
+          .contains('package_note');
+      backupRaw.dispose();
+      check('备份是**迁移前**的样子（v1 且无 package_note）',
+          backupVersion == 1 && !backupHasNewColumn,
+          'v$backupVersion / 有新列=$backupHasNewColumn');
+    }
   }
+
+  // 空库（v0）不备份 —— 没有旧数据要保
+  final String freshPath = migPath('fresh.db');
+  final Db fresh = Db.open(freshPath);
+  check('空库（v0）不备份', !File('$freshPath.before-v0').existsSync());
+  fresh.close();
   try {
     migTmp.deleteSync(recursive: true);
   } catch (_) {

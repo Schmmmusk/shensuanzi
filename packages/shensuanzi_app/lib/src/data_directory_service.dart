@@ -86,4 +86,11 @@ class DataDirectoryService {
   /// 打开数据目录里的数据库。**主机端：外键开启**（主机是权威）；
   /// 客户端镜像相反，必须 `foreignKeys: false`（见 `SyncClient`）。
   Db open(DataLocation location) => bootstrap.open(location);
+
+  /// 迁移成功后把标记文件的版本刷新到**库的真实版本**。
+  ///
+  /// 标记只是「目录身份证」、不参与迁移判定（见 `AppBootstrap.refreshMarker`），
+  /// 但升级后得跟上 —— 否则每次启动都判「三处版本号不一致」。
+  DataMarker refreshMarker(DataLocation location, int schemaVersion) =>
+      bootstrap.refreshMarker(location, schemaVersion);
 }

@@ -219,6 +219,19 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       // 打开即迁移完毕 —— 之后的自动备份内容是这个版本的格式，
       // 文件名（AE-4）必须标它，不能标标记文件里可能过时的版本
       final int schemaVersion = db.schemaVersion;
+
+      // 三处版本号（程序 / 库 / 标记）：不一致 → 记日志（诊断用，不拦人），
+      // 并把「目录身份证」刷新到库的真实版本（reply.md Schema 篇 §3.3）。
+      // 刷新后下次启动就一致了 —— 所以这条日志只在「刚升级过」的那一次出现。
+      if (location.marker.schemaVersion != schemaVersion) {
+        _log.write(
+          '版本号不一致：程序 schema v${Schema.version}'
+          ' / 库 v$schemaVersion'
+          ' / 标记 v${location.marker.schemaVersion}'
+          '（库已迁移，刷新标记文件）',
+        );
+        _service.refreshMarker(location, schemaVersion);
+      }
       final BackupService backup = BackupService(
         dataDirectory: location.directory,
         backupDirectory: location.backupDirectory,
