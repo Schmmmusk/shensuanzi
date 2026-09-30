@@ -418,7 +418,7 @@ void main() {
 
   // ============================================================ v1 边界
 
-  test('documentAction → rejected + action_not_implemented，并进重试而非死信', () async {
+  test('documentAction：purchase 收 mark_delivered → rejected（规则不允许），进重试', () async {
     final String docId = newId();
     clientA.queue.enqueue(
       SyncQueueEntry.create(
@@ -440,8 +440,8 @@ void main() {
           entity: Schema.documents,
           entityId: docId,
           operation: SyncOpType.documentAction,
+          // R-3（2026-09-29 裁定）后的 payload 契约：只有 action 与 occurred_at
           payload: <String, Object?>{
-            'document_id': docId,
             'action': 'mark_delivered',
             'occurred_at': hostNow,
           },
@@ -452,10 +452,10 @@ void main() {
 
     final SyncPushReport report = await clientA.push();
 
-    expect(report.rejected, 1);
+    expect(report.rejected, 1, reason: 'purchase 不适用「签收」—— 规则不允许');
     final SyncQueueEntry after = clientA.queue.findById(action.id)!;
-    expect(after.status, SyncQueueStatus.pending, reason: 'v1 未落地 → 排重试');
-    expect(after.lastError, contains('action_not_implemented'));
+    expect(after.status, SyncQueueStatus.pending, reason: 'rejected 排重试（§六 处置不变）');
+    expect(after.lastError, contains('不适用'));
     expect(after.retryCount, 1);
   });
 

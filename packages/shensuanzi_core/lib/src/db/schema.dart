@@ -11,8 +11,11 @@
 class Schema {
   Schema._();
 
-  /// schema 版本。递增时需在 [_migrateOnUpgrade] 补迁移步骤。
-  static const int version = 1;
+  /// schema 版本。递增时需在 [migrationStatements] 补迁移步骤。
+  ///
+  /// v2（2026-09-29，§AJ·AI-5）：`products` 加 `package_note`（包装说明，
+  /// 纯备注）。
+  static const int version = 2;
 
   // ---------------------------------------------------------------- 表名
 
@@ -112,6 +115,7 @@ class Schema {
       category      TEXT,
       is_active     INTEGER NOT NULL DEFAULT 1,
       remark        TEXT,
+      package_note  TEXT,
       created_at    INTEGER NOT NULL,
       updated_at    INTEGER NOT NULL,
       sync_version  INTEGER NOT NULL DEFAULT 0
@@ -320,10 +324,19 @@ class Schema {
     ''',
   ];
 
-  /// 升级迁移。schema 版本仍为 1 时不会被调用。
+  /// 升级迁移。[from] = 打开时库里的 `PRAGMA user_version`。
   ///
-  /// 新增版本时在这里补 `if (from < N) { ... }` 分支，并在 [version] 上 +1。
+  /// ## v1 → v2（2026-09-29，§AJ·AI-5）
+  ///
+  /// `products` 加 `package_note TEXT NULL`（包装说明，纯备注、不参与计算）。
+  /// `ALTER TABLE ADD COLUMN` 对已有行自动取 NULL，不需要回填，不锁旧数据。
   static List<String> migrationStatements(int from) {
-    throw UnsupportedError('尚未定义 $from → $version 的迁移步骤');
+    final List<String> statements = <String>[];
+    if (from < 2) {
+      statements.add(
+        'ALTER TABLE $products ADD COLUMN package_note TEXT NULL',
+      );
+    }
+    return statements;
   }
 }

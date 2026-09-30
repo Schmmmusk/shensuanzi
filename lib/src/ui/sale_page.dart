@@ -12,6 +12,10 @@
 /// | 必填项红星（§Z 遗漏 7） | 各 `labelText` |
 /// | v1 不显示利润（§Z 遗漏 6：SnackBar 也不带） | `_afterSaved` |
 /// | 抹零：改最后一行单价即可，不做整单折扣（§Z 遗漏 2） | 无折扣控件 |
+/// | **现金找零辅助行**：顾客给了 100 买 93 的货 → 当场显示「找零 ¥7.00」。
+///   **落库永远是应收** —— 找零是现金箱内部的物理流动，不进
+///   `immediate_payments`、不持久化；「顾客给了」< 应收显示「不够」但照常放行
+///   （reply_review.md §AJ·AI-4） | `_cashChangeRow` |
 library;
 
 import 'package:flutter/material.dart';
@@ -104,6 +108,10 @@ class _SalePageState extends State<SalePage> {
   String? _partyName;
   DateTime _date = DateTime.now();
   final TextEditingController _remark = TextEditingController();
+
+  /// 「顾客给了」的原文（现金找零辅助行，§AJ·AI-4）。
+  /// ⚠️ **只用于算找零** —— 永远不进 [_draft]、不落库，保存 / 取消即清。
+  final TextEditingController _given = TextEditingController();
   final List<_RowCtl> _rows = <_RowCtl>[];
   final List<_PayCtl> _pays = <_PayCtl>[];
 
@@ -130,6 +138,7 @@ class _SalePageState extends State<SalePage> {
   @override
   void dispose() {
     _remark.dispose();
+    _given.dispose();
     for (final _RowCtl row in _rows) {
       row.dispose();
     }
@@ -224,6 +233,33 @@ class _SalePageState extends State<SalePage> {
     });
   }
 
+  // ---- 现金找零辅助（§AJ·AI-4）----
+
+  /// 只有**第一条收款行**选了现金账户时才显示找零辅助行 ——
+  /// 找零是现金的物理属性，微信 / 银行卡不存在「找零」。
+  bool get _showCashChange {
+    final Account? account = _pays.isEmpty ? null : _pays.first.account;
+    return account != null && account.type == AccountType.cash;
+  }
+
+  /// [收整] 的整额：应收**向上取整到元**（93.50 → 94，93 → 93）。
+  ///
+  /// 裁定原文写「向下取整到元」，但向下取整对带角分的应收恒小于应收
+  /// （必然显示「不够」），「一次点击完成算找零」就不成立了；
+  /// 按个体户口语里「凑个整」的语义取向上取整。**待用户复核**（§AJ）。
+  int get _roundUpYuanCents => ((_draft.totalCents + 99) ~/ 100) * 100;
+
+  /// 找零辅助行的快捷键：收款框填**应收全额**，「顾客给了」填整额 ——
+  /// 一次点击完成「算找零」。个体户的现金交易八成是整钱。
+  void _quickGiven(int cents) {
+    if (_pays.isEmpty || _saving) return;
+    setState(() {
+      _pays.first.amount.text = Money.format(_draft.totalCents);
+      _given.text = Money.format(cents);
+      _invalid = null;
+    });
+  }
+
   Future<void> _pickDate() async {
     final DateTime? picked = await showDatePicker(
       context: context,
@@ -301,6 +337,8 @@ class _SalePageState extends State<SalePage> {
       if (_accounts.isNotEmpty) {
         _pays.add(_PayCtl(account: _accounts.first));
       }
+      // 「顾客给了」不持久化：保存即清（§AJ·AI-4）
+      _given.clear();
       _invalid = null;
       _saving = false;
     });
@@ -368,6 +406,7 @@ class _SalePageState extends State<SalePage> {
       if (_accounts.isNotEmpty) {
         _pays.add(_PayCtl(account: _accounts.first));
       }
+      _given.clear();
       _invalid = null;
     });
   }
@@ -625,6 +664,12 @@ class _SalePageState extends State<SalePage> {
             onChanged: () => setState(() => _invalid = null),
             onRemove: _pays.length > 1 ? () => _removePayment(i) : null,
           ),
+        // 现金找零辅助行（§AJ·AI-4）：要用就用、不用就不看（不做成弹窗 ——
+        // 收款是高频动作，弹窗每次都多一步）
+        if (_showCashChange) ...<Widget>[
+          const SizedBox(height: 4),
+          _cashChangeRow(theme),
+        ],
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
@@ -636,6 +681,86 @@ class _SalePageState extends State<SalePage> {
       ],
     ],
   );
+
+  /// 现金找零辅助行（§AJ·AI-4）。**只算找零，不记账**：
+  /// 「顾客给了」永不出现在草稿里；小于应收显示「不够」但**照常允许提交**
+  /// （用户可能只是拿它算个数）。快捷键 = 一次点击完成「算找零」。
+  Widget _cashChangeRow(ThemeData theme) {
+    final int total = _draft.totalCents;
+    final int? given = Money.tryParseYuan(_given.text.trim());
+    final bool notEnough = given != null && given < total;
+    final String? changeText = given == null
+        ? null
+        : notEnough
+            ? '不够'
+            : '找零 ¥${Money.formatGrouped(given - total)}';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Text('顾客给了', style: theme.textTheme.bodySmall),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 120,
+              child: TextField(
+                key: const Key('sale-given'),
+                controller: _given,
+                enabled: !_saving,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  hintText: '选填',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  suffixText: '元',
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            if (changeText != null)
+              Text(
+                changeText,
+                style: TextStyle(
+                  height: 1.6,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const <FontFeature>[
+                    FontFeature.tabularFigures(),
+                  ],
+                  // 「不够」是提醒不是拦截 —— 用内联橙，错误红只留给真错误
+                  color: notEnough
+                      ? const Color(0xFFB45309)
+                      : theme.colorScheme.onSurface,
+                ),
+              ),
+            const Spacer(),
+            TextButton(
+              onPressed: _saving ? null : () => _quickGiven(_roundUpYuanCents),
+              child: const Text('收整'),
+            ),
+            TextButton(
+              onPressed: _saving ? null : () => _quickGiven(5000),
+              child: const Text('收 50'),
+            ),
+            TextButton(
+              onPressed: _saving ? null : () => _quickGiven(10000),
+              child: const Text('收 100'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '只用于算找零，不用记账 —— 收款框填多少，进账就是多少。',
+          style: TextStyle(
+            height: 1.6,
+            color: theme.textTheme.bodySmall?.color,
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _remarkField() => TextField(
     controller: _remark,

@@ -50,6 +50,7 @@ class SyncWhitelist {
       'category',
       'is_active',
       'remark',
+      'package_note',
     },
     Schema.parties: <String>{
       'id',

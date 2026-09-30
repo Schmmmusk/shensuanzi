@@ -1,12 +1,20 @@
-/// 商品建档表单（`docs/reply.md` 裁定的 6 个字段）。
+/// 商品建档表单（`docs/reply.md` 裁定的 6 个字段 + §AJ·AI-5 的包装说明）。
 ///
 /// ```text
 /// 商品名称   [                                ]
 /// 单位 [ 件 ]        售价 [        ] 元
-///           件 个 斤 箱 包 瓶        ← 点一下即填
+///      ↑ 最小销售单位 —— 不是进货的箱子单位（§AJ·AI-5）
+///           件 个 斤 公斤 瓶 … 其他▾   ← 点一下即填；[其他▾] 聚焦输入框（§AJ·AI-6）
+/// 包装说明（可选） [ 1 箱 = 48 瓶 ]   ← 纯备注，不影响记账
 /// 进价 [      ] 元   安全库存 [     ]
 /// 条码       [                                ]   ← 扫码枪扫完回车即保存
 /// ```
+///
+/// ## 单位是自由文本（§AJ·AI-6）
+///
+/// **不是白名单** —— 单位可以随便打字，常用单位 chips 只是「顺手就能点」的
+/// 快捷方式。chips 摆在那儿容易让用户以为「只能选」，所以：placeholder 用
+/// 「例：」开头（自由填的信号）、chips 末尾给 [其他▾]（点了聚焦输入框）。
 ///
 /// ## 校验不在这里
 ///
@@ -28,7 +36,14 @@ import 'package:flutter/material.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 /// 常用单位。**不是白名单** —— 单位仍是自由文本，这只是「顺手就能点」的快捷方式。
-const List<String> _commonUnits = <String>['件', '个', '斤', '箱', '包', '瓶'];
+///
+/// 清单按真实个体户的高频单位扩充到 14 个（§AJ·AI-6，**刻意没有「箱」** ——
+/// 单位要填最小售卖单位，按箱进按个卖的写进包装说明；超过 15 个就失去
+/// 「快捷」的意义，剩下的用户自己打字）。
+const List<String> _commonUnits = <String>[
+  '件', '个', '斤', '公斤', '瓶', '包', '袋',
+  '盒', '条', '桶', '捆', '扎', '提', '串',
+];
 
 /// 提示色（条码重复这类「需要注意但不拦人」的话）。
 ///
@@ -65,6 +80,10 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   late final TextEditingController _costPrice;
   late final TextEditingController _barcode;
   late final TextEditingController _safetyStock;
+  late final TextEditingController _packageNote;
+
+  /// [其他▾] chips（§AJ·AI-6）：点了聚焦单位输入框 —— 「直接打字」的显式入口
+  final FocusNode _unitFocus = FocusNode();
 
   /// 字段级错误（界面标红哪一栏就看它）
   Map<ProductField, String> _errors = <ProductField, String>{};
@@ -89,6 +108,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _costPrice = TextEditingController(text: draft.costPrice);
     _barcode = TextEditingController(text: draft.barcode);
     _safetyStock = TextEditingController(text: draft.safetyStock);
+    _packageNote = TextEditingController(text: draft.packageNote);
     // 编辑一条条码本身就已重复的商品时，一打开就该看到提示（不用等用户改动）
     _barcodeNotice = _computeBarcodeNotice();
   }
@@ -101,6 +121,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _costPrice.dispose();
     _barcode.dispose();
     _safetyStock.dispose();
+    _packageNote.dispose();
+    _unitFocus.dispose();
     super.dispose();
   }
 
@@ -111,6 +133,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     costPrice: _costPrice.text,
     barcode: _barcode.text,
     safetyStock: _safetyStock.text,
+    packageNote: _packageNote.text,
   );
 
   /// 用户一改这个字段就把它那条错误清掉 —— 边改边消，而不是等再点一次保存
@@ -202,16 +225,21 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
               ),
               const SizedBox(height: 16),
 
-              // 单位（短的放左边）
+              // 单位（短的放左边）。placeholder 用「例：」开头 ——
+              // 给「这里可以自由填」的信号，比「请输入单位」强得多（§AJ·AI-6）
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Expanded(
                     child: TextField(
                       controller: _unit,
+                      focusNode: _unitFocus,
                       textInputAction: TextInputAction.next,
                       onChanged: (_) => _clearError(ProductField.unit),
-                      decoration: _decoration(ProductField.unit),
+                      decoration: _decoration(
+                        ProductField.unit,
+                        hint: '例：桶、箱、捆、扎',
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -233,7 +261,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                 ],
               ),
               const SizedBox(height: 8),
-              // 常用单位：点一下就填好，不用敲字
+              // 常用单位：点一下就填好，不用敲字。末尾的 [其他▾] 是
+              // 「可以自由填」的显式入口 —— 点击聚焦输入框（§AJ·AI-6）
               Wrap(
                 spacing: 8,
                 children: <Widget>[
@@ -245,7 +274,37 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                         _clearError(ProductField.unit);
                       },
                     ),
+                  ActionChip(
+                    label: const Text('其他 ▾'),
+                    onPressed: () => _unitFocus.requestFocus(),
+                  ),
                 ],
+              ),
+              const SizedBox(height: 6),
+              // 单位 = 最小销售单位（§AJ·AI-5）—— 这行小字解决 90% 的
+              // 「按箱进、按个卖」困惑；「系统按个记，你心里按箱想」
+              Text(
+                '单位填最小的售卖单位（个 / 瓶 / 斤），不是进货的箱子单位。'
+                '按箱进的货，装箱关系写在下面的「包装说明」里。',
+                style: TextStyle(
+                  height: 1.6,
+                  color: Theme.of(context).textTheme.bodySmall?.color,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // 包装说明（§AJ·AI-5）：纯文本备注，**不参与任何计算** ——
+              // 用户看着「144 瓶」心算「是几箱」时靠它，零风险
+              TextField(
+                controller: _packageNote,
+                textInputAction: TextInputAction.next,
+                onChanged: (_) => _clearError(ProductField.packageNote),
+                decoration: _decoration(
+                  ProductField.packageNote,
+                  label: '包装说明（可选）',
+                  hint: '例：1 箱 = 48 瓶',
+                  helper: '只是备注，不影响记账',
+                ),
               ),
               const SizedBox(height: 16),
 
@@ -337,13 +396,16 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     ProductField field, {
     String? suffix,
     String? helper,
+    String? hint,
+    String? label,
   }) => InputDecoration(
-    labelText: field.label,
+    labelText: label ?? field.label,
     suffixText: suffix,
     // 字段级错误直接挂在这一栏下面 —— 用户不用猜是哪一栏填错了
     errorText: _errors[field],
     helperText: helper,
     helperMaxLines: 2,
+    hintText: hint,
     border: const OutlineInputBorder(),
   );
 

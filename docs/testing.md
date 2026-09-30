@@ -5,6 +5,11 @@
 
 ## 零、本地运行前提
 
+> ⚠️ **测试是「警报」，不是「命令」**（2026-09-29，§AJ·一）。测试红时，第一反应必须是
+> 「**为什么红**」，而不是「怎么让它绿」。**改断言让测试变绿**和**改生产代码让测试变绿**，
+> 在未获授权时都是越权 —— 先报告「哪个测试红了、根因是什么、有哪几个方案」，由人裁定后再动手。
+> 另见 `Agents.md` §二纪律 12。
+
 > ⚠️ **`dart test` 在两个纯 Dart 包里跑，不在仓库根。** 三种位置用**不同的运行器**：
 >
 > | 位置 | 命令 | 原因 |
@@ -255,9 +260,10 @@ dart run tool/import_guard.dart        # §AF 复跑返工新增：只查「用�
   明细**随主单同页**且无独立游标；**同一毫秒的多行分页不丢不重且游标必推进**；
   明细**不按 `limit` 截断**
 
-> ⏸ **暂缓**：原「`documentAction` 幂等」一项推迟到 **R-3** 裁定后
-> （见 `docs/reply_review.md` §H）。v1 只需要断言 `documentAction` → `rejected` +
-> `action_not_implemented`。
+> ✅ **已落地（R-3，2026-09-29）**：动作矩阵见 `sync_server_test.dart`
+> 「documentAction（R-3 已裁定）」组 —— in_transit → `applied`（单据落 `delivered`）/
+> 重复 → `already_exists` / cancelled → `conflict` + `server_state` /
+> 未知动作 → `unknown_action` / purchase 收签收 → `rejected`（不适用）/ 单据不存在 → `rejected`。
 
 ## G2. 主机端传输层（`packages/shensuanzi_host/`）
 

@@ -497,7 +497,7 @@ class SyncPushReport {
   /// 乐观锁冲突 → 本地已被 `server_state` 覆盖、条目已删
   final int conflicts;
 
-  /// 业务拒绝（含 v1 的 `action_not_implemented`）→ 已排重试
+  /// 业务拒绝 → 已排重试（回执分类见 `sync_protocol.md` §8.5）
   final int rejected;
 
   /// 排入重试（含传输失败、无回执）

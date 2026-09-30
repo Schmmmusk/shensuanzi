@@ -1,8 +1,10 @@
-/// 商品建档表单（`docs/reply.md` 裁定的 **6 个字段**）。
+/// 商品建档表单（`docs/reply.md` 裁定的 6 个字段 + §AJ·AI-5 的包装说明）。
 ///
 /// ```
 /// 商品名称   [                                ]
 /// 单位       [ 件 ▾ ]      售价 [       ] 元
+///            ↑ 最小销售单位（个/瓶/斤），不是进货的箱子单位
+/// 包装说明   [ 1 箱 = 48 瓶 ]   ← 可选，纯备注不参与计算（§AJ·AI-5）
 /// 进价       [       ] 元   安全库存 [     ]
 /// 条码       [                                ]   ← 扫码枪可直接扫
 /// ```
@@ -37,7 +39,8 @@ enum ProductField {
   sellPrice('售价'),
   costPrice('进价'),
   barcode('条码'),
-  safetyStock('安全库存');
+  safetyStock('安全库存'),
+  packageNote('包装说明');
 
   const ProductField(this.label);
 
@@ -52,6 +55,7 @@ class ProductDraft {
     this.costPrice = '',
     this.barcode = '',
     this.safetyStock = '',
+    this.packageNote = '',
   });
 
   /// 从已有商品回填（编辑用）。金额按「分 → 元」展示，用户看到的就是库里存的值。
@@ -62,6 +66,7 @@ class ProductDraft {
     costPrice: Money.format(product.costPrice),
     barcode: product.barcode ?? '',
     safetyStock: product.safetyStock.toString(),
+    packageNote: product.packageNote ?? '',
   );
 
   /// 名称上限（表单护栏，不是 schema 约束）：防止误把一整段话粘进来
@@ -70,10 +75,16 @@ class ProductDraft {
   /// 条码上限：常见条码 ≤ 48 位，留些余量
   static const int maxBarcodeLength = 64;
 
+  /// 包装说明上限（与名称同款护栏；正常就写「1 箱 = 48 瓶」这种一句话）
+  static const int maxPackageNoteLength = 60;
+
   /// 商品名称（原文）
   final String name;
 
   /// 单位（原文，默认「件」）
+  ///
+  /// ⚠️ **单位 = 最小销售单位**（§AJ·AI-5 裁定）：库存、成本、流水全部按它记。
+  /// 按箱进、按个卖的商品，这里填「个」，装箱关系写进 [packageNote]。
   final String unit;
 
   /// 售价（**用户输入的「元」原文**）
@@ -88,6 +99,9 @@ class ProductDraft {
   /// 安全库存（原文；空 = 0）
   final String safetyStock;
 
+  /// 包装说明（原文；空 = 没填）。**纯备注，不参与任何计算**（§AJ·AI-5）
+  final String packageNote;
+
   ProductDraft copyWith({
     String? name,
     String? unit,
@@ -95,6 +109,7 @@ class ProductDraft {
     String? costPrice,
     String? barcode,
     String? safetyStock,
+    String? packageNote,
   }) => ProductDraft(
     name: name ?? this.name,
     unit: unit ?? this.unit,
@@ -102,6 +117,7 @@ class ProductDraft {
     costPrice: costPrice ?? this.costPrice,
     barcode: barcode ?? this.barcode,
     safetyStock: safetyStock ?? this.safetyStock,
+    packageNote: packageNote ?? this.packageNote,
   );
 
   /// 校验。**空 map = 通过**；否则 `字段 → 给用户看的一句话`。
@@ -126,6 +142,7 @@ class ProductDraft {
     _checkMoney(errors, ProductField.costPrice, costPrice, mustFill: false);
     _checkStock(errors);
     _checkBarcode(errors);
+    _checkPackageNote(errors);
 
     return errors;
   }
@@ -143,6 +160,12 @@ class ProductDraft {
   /// 唯一性判断里语义不同，混用迟早出问题）
   String? get normalizedBarcode {
     final String trimmed = barcode.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// 包装说明：空白归一成 `null`（与条码同理，不存空串）
+  String? get normalizedPackageNote {
+    final String trimmed = packageNote.trim();
     return trimmed.isEmpty ? null : trimmed;
   }
 
@@ -189,10 +212,21 @@ class ProductDraft {
     }
   }
 
+  /// 包装说明**只拦超长**（防误粘一整段话），内容不管 —— 它是纯备注，
+  /// 写「1 箱 = 48 瓶」还是「一箱 24 袋」都行，系统不读它（§AJ·AI-5）
+  void _checkPackageNote(Map<ProductField, String> errors) {
+    final String text = packageNote.trim();
+    if (text.length > maxPackageNoteLength) {
+      errors[ProductField.packageNote] =
+          '包装说明太长了，写一句话就好，比如「1 箱 = 48 瓶」';
+    }
+  }
+
   @override
   String toString() =>
       'ProductDraft(name=$name, unit=$unit, sell=$sellPrice, cost=$costPrice, '
-      'barcode=${barcode.isEmpty ? '（无）' : barcode}, safety=$safetyStock)';
+      'barcode=${barcode.isEmpty ? '（无）' : barcode}, safety=$safetyStock, '
+      'packageNote=${packageNote.isEmpty ? '（无）' : packageNote})';
 
   // ------------------------------------------------------------ 条码重复提示（R-15）
   /// 条码已经被别人用过了吗 —— 有就返回给用户看的一句话，没有返回 `null`。

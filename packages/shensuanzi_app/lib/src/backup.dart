@@ -34,9 +34,11 @@ import 'fs.dart';
 
 /// 备份文件名（解析 / 生成）。
 ///
-/// - 自动：`shensuanzi-schema1-20260928-1530.db`
-/// - 手动：`shensuanzi-m-schema1-20260928-1530.db`（`m-` 前缀 = 不参与自动清理）
-/// - schema 版本进文件名（AE-4：用户在文件管理器里就能看到版本差异）
+/// - 自动：`shensuanzi-schema2-20260928-1530.db`
+/// - 手动：`shensuanzi-m-schema2-20260928-1530.db`（`m-` 前缀 = 不参与自动清理）
+/// - schema 版本进文件名（AE-4：用户在文件管理器里就能看到版本差异）。
+///   **N 随库的真实数据格式版本走**（`db.schemaVersion`，示例里的 2 只是
+///   当前 Schema.version）—— 老用户标记还是 v1 时，备份内容已是迁移后的 v2
 class BackupFileName {
   const BackupFileName({
     required this.manual,

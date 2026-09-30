@@ -74,6 +74,11 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   final AppEnvironment _environment = AppEnvironment.detect();
 
   /// 配置读写：测试传沙箱，生产用 `%APPDATA%`。
+  ///
+  /// ⚠️ **全应用唯一的配置入口**（台账 §AI-1）：启动加载、设置页读写、
+  /// 传给 AppShell 的都必须是**这一个解析后的实例** ——
+  /// 绝不把可空的 `widget.configStore` 往下传（2026-09-29 真机踩坑：
+  /// 生产里它是 null，设置页因此在真机上永远是占位页）。
   late final AppConfigStore _configStore =
       widget.configStore ?? AppConfigStore.forEnvironment(_environment);
 
@@ -155,11 +160,21 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 开库失败的原因（含「怎么办」）
   String? _dbFailure;
 
+  /// 库的**真实数据格式版本**（`PRAGMA user_version`）。
+  ///
+  /// ⚠️ 不能用 `location.marker.schemaVersion`：老用户的标记还是 v1，
+  /// 但 `Db.open` 已把库迁到 v2 —— 备份文件名（AE-4）与概览文案标的是
+  /// 「备份内容是什么格式」，必须跟数据走。`0` = 库还没打开成功（此时没有
+  /// 备份，显示回退到标记版本）。
+  int _schemaVersion = 0;
+
   @override
   void initState() {
     super.initState();
-    // 配置读一次（设置页修改会走 onConfigChanged 更新本状态）
-    _config = widget.configStore?.load() ?? const AppConfig();
+    // 配置读一次（设置页修改会走 onConfigChanged 更新本状态）。
+    // ⚠️ 必须用解析后的 `_configStore`：`widget.configStore` 在生产里是 null，
+    // 用它读会永远拿到默认配置，缩放 / 店名 / 首启判定全部失效（§AI-1）
+    _config = _configStore.load();
     // 首帧之后再弹对话框：此时才有可用的 Navigator
     WidgetsBinding.instance.addPostFrameCallback((_) => _prepare());
   }
@@ -198,10 +213,13 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   void _openDatabase(DataLocation location) {
     try {
       final Db db = _service.open(location);
+      // 打开即迁移完毕 —— 之后的自动备份内容是这个版本的格式，
+      // 文件名（AE-4）必须标它，不能标标记文件里可能过时的版本
+      final int schemaVersion = db.schemaVersion;
       final BackupService backup = BackupService(
         dataDirectory: location.directory,
         backupDirectory: location.backupDirectory,
-        schemaVersion: location.marker.schemaVersion,
+        schemaVersion: schemaVersion,
       );
       final ExportService exports = ExportService(
         exportDirectory: location.exportDirectory,
@@ -209,6 +227,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       setState(() {
         _location = location;
         _db = db;
+        _schemaVersion = schemaVersion;
         _queries = QueryDao(db);
         _backup = backup;
         _exports = exports;
@@ -238,6 +257,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       setState(() {
         _location = location;
         _db = null;
+        _schemaVersion = 0;
         _queries = null;
         _backup = null;
         _exports = null;
@@ -391,7 +411,10 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     return AppShell(
       dataDirectory: location.directory,
       backupDirectory: location.backupDirectory,
-      schemaVersion: location.marker.schemaVersion,
+      // 库打开成功后用真实数据格式版本；没打开时没有备份，回退标记版本
+      schemaVersion: _schemaVersion > 0
+          ? _schemaVersion
+          : location.marker.schemaVersion,
       databaseReady: _db != null,
       products: _products,
       purchases: _purchases,
@@ -433,9 +456,10 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
             ),
       onBackupNow: _backup == null ? null : _backupNow,
       exports: _exports,
-      configStore: widget.configStore,
+      // §AI-1：传**解析后**的实例（生产里 widget.configStore 是 null）
+      configStore: _configStore,
       onConfigChanged: (AppConfig config) {
-        widget.configStore?.save(config);
+        _configStore.save(config);
         setState(() => _config = config);
       },
     );

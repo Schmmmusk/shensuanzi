@@ -676,7 +676,7 @@ void main() {
       expect(client.queue.findById(a.id)!.lastError, '规则拒绝');
     });
 
-    test('rejected → 重试计数 +1、退避 1s、记原因（含 v1 的 action_not_implemented）',
+    test('rejected → 重试计数 +1、退避 1s、记原因',
         () async {
       // 固定时钟：退避是「从本次尝试时刻起算」，而 `push` 自己会读一次时钟 ——
       // 用会推进的时钟做算术，差值里会混进「调用次数」而不是退避长度。
@@ -691,7 +691,7 @@ void main() {
       final SyncQueueEntry entry = enqueueDoc('d1');
       transport.replyJson(
         pushBody(<Map<String, Object?>>[
-          receipt('d1', 'rejected', reason: 'action_not_implemented'),
+          receipt('d1', 'rejected', reason: 'unknown_action: un_cancel'),
         ]),
       );
 
@@ -699,7 +699,7 @@ void main() {
 
       final SyncQueueEntry after = c.queue.findById(entry.id)!;
       expect(after.retryCount, 1);
-      expect(after.lastError, 'action_not_implemented');
+      expect(after.lastError, 'unknown_action: un_cancel');
       expect(after.nextRetryAt, fixed + 1000, reason: '首次退避 1s');
       expect(after.isDue(after.nextRetryAt - 1), isFalse);
     });

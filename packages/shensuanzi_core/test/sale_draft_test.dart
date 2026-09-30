@@ -192,16 +192,18 @@ void main() {
       expect(line.validate().keys, <SaleLineField>[SaleLineField.quantity]);
     });
 
-    test('收款合计超过本单合计 → payments 报（金额说清楚超了多少）', () {
+    test('收款合计超过本单合计 → payments 报，并**把找零算给用户看**（§AJ·AI-4）', () {
       final SaleDraft draft = goodDraft(
         payments: const <SalePaymentDraft>[
           SalePaymentDraft(accountId: 'a1', amount: '999'),
         ],
       );
-      expect(
-        draft.validate()[SaleField.payments],
-        contains('超过了本单合计'),
-      );
+      final String? message = draft.validate()[SaleField.payments];
+      expect(message, contains('收款金额不能超过应收'));
+      // 找零三件套必须齐全：给多少 / 填多少 / 找多少 —— 只拦不算，用户会以为软件坏了
+      expect(message, contains('给了 ¥999.00'));
+      expect(message, contains('请填 ¥'));
+      expect(message, contains('找零不需要记账'));
       expect(draft.dueCents < 0, isTrue);
     });
   });

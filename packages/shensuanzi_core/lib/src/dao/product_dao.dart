@@ -133,7 +133,7 @@ class ProductDao {
       UPDATE ${Schema.products} SET
         code = ?, name = ?, barcode = ?, unit = ?,
         cost_price = ?, sell_price = ?, safety_stock = ?,
-        category = ?, is_active = ?, remark = ?,
+        category = ?, is_active = ?, remark = ?, package_note = ?,
         updated_at = ?, sync_version = ?
       WHERE id = ?
       ''',
@@ -148,6 +148,7 @@ class ProductDao {
         product.category,
         product.isActive ? 1 : 0,
         product.remark,
+        product.packageNote,
         product.updatedAt,
         product.syncVersion,
         product.id,

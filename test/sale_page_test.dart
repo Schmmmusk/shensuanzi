@@ -256,4 +256,121 @@ void main() {
     expect(find.text('点此选商品'), findsOneWidget);
     expect(find.text('放弃这次开单？'), findsNothing);
   });
+
+  // ---------------------------------------------------------------- §AJ·AI-4 现金找零
+
+  testWidgets('现金找零辅助行：默认现金账户可见；给了 100 买 50 的货 → 找零 ¥50.00', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 辅助行常驻（第一条收款行默认是现金账户）
+    expect(find.text('顾客给了'), findsOneWidget);
+
+    await fillRow(tester); // 10 × 5.00 = 50
+    await tester.enterText(find.byKey(const Key('sale-given')), '100');
+    await tester.pumpAndSettle();
+
+    expect(find.text('找零 ¥50.00'), findsOneWidget);
+  });
+
+  testWidgets('「顾客给了」小于应收 → 显示「不够」（内联橙），仍允许提交', (
+    WidgetTester tester,
+  ) async {
+    stockUp();
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await fillRow(tester); // 合计 50
+    await tester.tap(find.text('全款'));
+    await tester.enterText(find.byKey(const Key('sale-given')), '30');
+    await tester.pumpAndSettle();
+
+    expect(find.text('不够'), findsOneWidget);
+
+    // 「不够」只是提醒 —— 提交照常放行（用户可能只是拿它算个数）
+    await tapBottomButton(tester, '保存 (Ctrl+S)');
+    expect(find.textContaining('已保存'), findsOneWidget);
+  });
+
+  testWidgets('「顾客给了」不记账：给 100 收 50 → money_ledger 只进 50', (
+    WidgetTester tester,
+  ) async {
+    stockUp();
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await fillRow(tester);
+    await tester.tap(find.text('全款')); // 收款框 = 50.00（应收）
+    await tester.enterText(find.byKey(const Key('sale-given')), '100');
+    await tester.pumpAndSettle();
+    await tapBottomButton(tester, '保存 (Ctrl+S)');
+
+    expect(find.textContaining('已保存'), findsOneWidget);
+    // 落库永远是应收：现金箱净流入 50 元。⚠️ 只 sum 收入方向 ——
+    // stockUp 的采购付款（-3500）也在 money_ledger 里，全表 SUM 会混入
+    final int cashIn = db.raw
+        .select('SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
+            'WHERE amount > 0')
+        .first['s']! as int;
+    expect(cashIn, 5000, reason: '落库 50 元，不是顾客给的 100 元（§AJ·AI-4）');
+    // 保存后「顾客给了」即清（不持久化）
+    expect(find.text('100'), findsNothing);
+  });
+
+  testWidgets('快捷键 [收 100]：收款框填应收全额，「顾客给了」填整额', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await fillRow(tester); // 合计 50
+    await tester.tap(find.text('收 100'));
+    await tester.pumpAndSettle();
+
+    final TextField payField = tester.widget<TextField>(
+      find.byKey(const Key('sale-pay-amount')),
+    );
+    final TextField givenField = tester.widget<TextField>(
+      find.byKey(const Key('sale-given')),
+    );
+    expect(payField.controller!.text, '50.00', reason: '收款框填的是应收');
+    expect(givenField.controller!.text, '100.00');
+    expect(find.text('找零 ¥50.00'), findsOneWidget);
+  });
+
+  testWidgets('非现金账户不显示找零辅助行（找零是现金的物理属性）', (
+    WidgetTester tester,
+  ) async {
+    final int t = 1700000000000;
+    AccountDao(db).insert(Account(
+      id: newId(),
+      name: '微信收款',
+      type: AccountType.wechat,
+      createdAt: t,
+      updatedAt: t,
+    ));
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // ⚠️ 账户下拉按 name 排序（`ORDER BY name`）——「微信收款」按码点排在
+    // 「现金」前面，页面默认选中的是微信收款。先切到现金，再断言辅助行在。
+    await tester.tap(find.text('微信收款').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('现金').last);
+    await tester.pumpAndSettle();
+
+    // 现金账户时辅助行在
+    expect(find.text('顾客给了'), findsOneWidget);
+
+    // 切到微信 → 辅助行消失
+    await tester.tap(find.text('现金').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('微信收款').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('顾客给了'), findsNothing);
+  });
 }

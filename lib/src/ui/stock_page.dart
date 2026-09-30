@@ -319,7 +319,11 @@ class _StockRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      product.name,
+                      // §AJ·AI-5：有包装说明时附在名称后 —— 用户看着「144 瓶」
+                      // 心算「是几箱」时靠它。纯展示，不参与计算
+                      product.packageNote == null
+                          ? product.name
+                          : '${product.name}（${product.packageNote}）',
                       style: TextStyle(
                         height: 1.6,
                         fontSize: 16,

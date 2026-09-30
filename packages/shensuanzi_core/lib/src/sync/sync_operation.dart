@@ -18,7 +18,9 @@ enum SyncOpType {
   updateMasterData('updateMasterData'),
   deleteMasterData('deleteMasterData'),
 
-  /// **v1 不落地**：一律返回 `rejected` + `action_not_implemented`（R-3）。
+  /// **动作通道**（R-3，2026-09-29 裁定）：v1 唯一落地 `mark_delivered`
+  /// （送货单 `in_transit → delivered`）；未知动作 → `rejected` + `unknown_action`；
+  /// 状态不匹配 → `conflict` + `server_state`（客户端自动对齐，见 R-3.4）。
   documentAction('documentAction');
 
   const SyncOpType(this.wire);

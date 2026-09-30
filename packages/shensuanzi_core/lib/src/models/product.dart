@@ -15,6 +15,7 @@ class Product extends MutableEntity {
     this.category,
     this.isActive = true,
     this.remark,
+    this.packageNote,
     required this.createdAt,
     required this.updatedAt,
     this.syncVersion = 0,
@@ -32,6 +33,7 @@ class Product extends MutableEntity {
     category: row.optionalString('category'),
     isActive: row.requiredBool('is_active'),
     remark: row.optionalString('remark'),
+    packageNote: row.optionalString('package_note'),
     createdAt: row.requiredInt('created_at'),
     updatedAt: row.requiredInt('updated_at'),
     syncVersion: row.requiredInt('sync_version'),
@@ -53,6 +55,11 @@ class Product extends MutableEntity {
   final String? category;
   final bool isActive;
   final String? remark;
+
+  /// 包装说明（§AJ·AI-5）：如「1 箱 = 48 瓶」。**纯备注 —— 不参与任何
+  /// 计算**，库存页展示用。用户按最小销售单位记账，看着库存数心算「几箱」时
+  /// 靠它。可空（建档可不填）。
+  final String? packageNote;
   final int createdAt;
   final int updatedAt;
 
@@ -72,6 +79,7 @@ class Product extends MutableEntity {
     'category': category,
     'is_active': boolToInt(isActive),
     'remark': remark,
+    'package_note': packageNote,
     'created_at': createdAt,
     'updated_at': updatedAt,
     'sync_version': syncVersion,
@@ -91,6 +99,7 @@ class Product extends MutableEntity {
     String? category,
     bool? isActive,
     String? remark,
+    String? packageNote,
     int? updatedAt,
     int? syncVersion,
   }) => Product(
@@ -105,6 +114,7 @@ class Product extends MutableEntity {
     category: category ?? this.category,
     isActive: isActive ?? this.isActive,
     remark: remark ?? this.remark,
+    packageNote: packageNote ?? this.packageNote,
     createdAt: createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     syncVersion: syncVersion ?? this.syncVersion,

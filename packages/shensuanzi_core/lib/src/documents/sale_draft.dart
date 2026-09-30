@@ -260,11 +260,18 @@ class SaleDraft {
       errors[SaleField.lines] = '至少要有一行商品，点「加一行」或扫商品条码';
     }
 
-    // 收款合计 ≤ 本单合计（RULE-002 约束；规则层还有一道闸，这里先给出友好文案）
+    // 收款合计 ≤ 本单合计（RULE-002 约束；规则层还有一道闸，这里先给出友好文案）。
+    //
+    // 文案语义（reply_review.md §AJ·AI-4 裁定）：**落库金额永远是「应收」，
+    // 找零是现金箱内部的物理流动，不进 immediate_payments**。所以这里不只拦，
+    // 还要把「顾客给了 100 → 请填 93，找零 7」直接算给用户看 ——
+    // 被拦本身不是最糟的，「不知道为什么被拦、以为软件坏了」才是。
     if (paymentsOk && paidCents > totalCents) {
       errors[SaleField.payments] =
-          '收款合计（¥${Money.format(paidCents)}）超过了本单合计'
-          '（¥${Money.format(totalCents)}），请检查收款金额';
+          '收款金额不能超过应收 ¥${Money.format(totalCents)}。'
+          '如果顾客给了 ¥${Money.format(paidCents)}，'
+          '请填 ¥${Money.format(totalCents)}，'
+          '找零 ¥${Money.format(paidCents - totalCents)}——找零不需要记账。';
     }
 
     // 散客（未选客户）必须当场结清 —— 与散采同一约束的 UI 表达。

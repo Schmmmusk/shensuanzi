@@ -4,6 +4,8 @@
 //   - 非 Windows：通常能自动找到系统 sqlite3
 //   - Windows：需自行提供 sqlite3.dll，或设置环境变量 SQLITE3_DLL 指向它
 // 见 `lib/sqlite_local.dart`。
+import 'dart:io';
+
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
@@ -195,6 +197,89 @@ void main() {
           <Object?>[now()],
         ),
         throwsA(isA<SqliteException>()),
+      );
+    });
+  });
+
+  // ============================================================ 迁移（v1 → v2）
+  //
+  // §AJ·AI-5：schema 升 2（products 加 package_note）。迁移测试**必须造一个
+  // 真的 v1 老库**走 `Db.open` 全流程，只测 `migrationStatements` 返回什么
+  // 字符串是虚假的安全感（写错表名 / 忘了执行都测不出来）。
+  group('迁移（v1 → v2：products 补 package_note）', () {
+    test('migrationStatements(1) 恰好一条 ALTER，且点名 products 与列', () {
+      final List<String> statements = Schema.migrationStatements(1);
+      expect(statements, hasLength(1));
+      expect(
+        statements.single,
+        contains('ALTER TABLE products ADD COLUMN package_note'),
+      );
+    });
+
+    test('已是最新版 → 没有迁移语句（重复打开不重复改表）', () {
+      expect(Schema.migrationStatements(Schema.version), isEmpty);
+    });
+
+    test('新库直接含 package_note 列（不用迁移）', () {
+      final List<String> columns = db.raw
+          .select('PRAGMA table_info(products)')
+          .map((Row r) => r['name']! as String)
+          .toList();
+      expect(columns, contains('package_note'));
+    });
+
+    test('v1 老库经 Db.open 自动升到 v2：老行 package_note 为 NULL，且可补写', () {
+      final Directory box = Directory.systemTemp.createTempSync(
+        'shensuanzi_schema_v1_',
+      );
+      addTearDown(() {
+        try {
+          box.deleteSync(recursive: true);
+        } catch (_) {
+          // 删不掉不影响结论
+        }
+      });
+      final String path = '${box.path}/v1.db';
+
+      // ---- 造一个 v1 老库：用当前 DDL 建表后**降级** —— 删掉 package_note、
+      // 版本号写回 1。这样 v1 的表形状永远跟着当前 DDL 走，不会漂移。
+      final Database raw = sqlite3.open(path);
+      for (final String sql in Schema.createStatements) {
+        raw.execute(sql);
+      }
+      raw.execute('ALTER TABLE products DROP COLUMN package_note');
+      final int t = now();
+      raw.execute(
+        'INSERT INTO products (id, code, name, unit, created_at, updated_at) '
+        "VALUES ('p-v1', 'P0001', '矿泉水', '瓶', ?, ?)",
+        <Object?>[t, t],
+      );
+      raw.execute('PRAGMA user_version = 1');
+      raw.dispose();
+
+      // ---- 用正常入口打开：应自动走 migrationStatements(1) 并升到 v2
+      final Db migrated = Db.open(path);
+      addTearDown(migrated.close);
+
+      expect(migrated.schemaVersion, Schema.version);
+      final Map<String, Object?> row = migrated.raw
+          .select("SELECT package_note FROM products WHERE id = 'p-v1'")
+          .first;
+      expect(
+        row['package_note'],
+        isNull,
+        reason: 'ALTER ADD COLUMN 对已有行自动取 NULL，不需要回填',
+      );
+
+      // ---- 老行补写备注也能存能读（列是活的，不是摆设）
+      migrated.raw.execute(
+        "UPDATE products SET package_note = '1 箱 = 48 瓶' WHERE id = 'p-v1'",
+      );
+      expect(
+        migrated.raw
+            .select("SELECT package_note FROM products WHERE id = 'p-v1'")
+            .first['package_note'],
+        '1 箱 = 48 瓶',
       );
     });
   });

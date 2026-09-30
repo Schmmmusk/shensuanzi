@@ -41,6 +41,12 @@ class SyncServer {
     'allocations',
   };
 
+  /// `documentAction` 的 payload 允许出现的顶层字段（`sync_protocol.md` §三）
+  static const Set<String> actionPayloadKeys = <String>{'action', 'occurred_at'};
+
+  /// v1 唯一落地的动作（R-3.1：动作只做**单向终态转变**）
+  static const String markDeliveredAction = 'mark_delivered';
+
   // ------------------------------------------------------------ 推送
 
   /// 批量推送（`sync_protocol.md` §8.1）。**逐条独立处理**，互不影响。
@@ -70,16 +76,104 @@ class SyncServer {
         case SyncOpType.deleteMasterData:
           return _deleteMasterData(op, now);
         case SyncOpType.documentAction:
-          return SyncResponse.rejected(
-            op.entityId,
-            'action_not_implemented: v1 不落地「动作」通道'
-            '（R-3，五问清单见 docs/reply_review.md §H）',
-          );
+          return _applyAction(op, now);
       }
     } on FormatException catch (error) {
       return SyncResponse.rejected(op.entityId, error.message);
     } catch (error) {
       return SyncResponse.rejected(op.entityId, '操作失败：$error');
+    }
+  }
+
+  // ------------------------------------------------------------ documentAction
+
+  /// `documentAction` 通道（R-3，2026-09-29 裁定）。
+  ///
+  /// **动作只做单向终态转变**：v1 唯一的动作是 [markDeliveredAction]
+  /// （`in_transit → delivered`）。转变本体在 `RuleEngine.markDelivered`
+  /// （**规则的实现只应有一处**，纪律 9），本方法只做协议层的两件事：
+  /// **payload 校验** 与 **回执分类**（R-3.4 的分类原则）：
+  ///
+  /// | 情形 | 回执 |
+  /// |---|---|
+  /// | 转变执行 | `applied` |
+  /// | 已是 `delivered` / `settled`（重复签收） | `alreadyExists` |
+  /// | **状态不匹配**（draft / confirmed / cancelled） | `conflict` + `server_state` —— 客户端自动对齐 |
+  /// | 规则不允许（docType 不适用 / 单据不存在 / 参数错） | `rejected` |
+  /// | 未知动作名 | `rejected` + `unknown_action: <名>` |
+  ///
+  /// 并发语义是 **FAW（first-arrival-wins）**（R-3.3 / R-3.5）：客户端时钟不可信，
+  /// **到达主机顺序是唯一可观测的真相** —— 谁先到谁生效，后到者拿
+  /// `conflict` + 主机状态。v1 没有 cancel 动作，两台设备不会同时做互斥的事
+  /// （R-3.5 的场景在 v1 不发生；FAW 是「将来加 cancel 时」的判定规则）。
+  ///
+  /// `occurred_at`（客户端提供）**仅展示用，不参与任何判定、不落库**
+  /// （R-3.3：不引入 `delivered_at` —— 主机 `updated_at` 已记录状态何时变化）。
+  SyncResponse _applyAction(SyncOperation op, int now) {
+    if (op.entity != Schema.documents) {
+      return SyncResponse.rejected(
+        op.entityId,
+        'documentAction 的 entity 必须是 ${Schema.documents}，实际 ${op.entity}',
+      );
+    }
+    final Set<String> unknownKeys = op.payload.keys
+        .toSet()
+        .difference(actionPayloadKeys);
+    if (unknownKeys.isNotEmpty) {
+      return SyncResponse.rejected(
+        op.entityId,
+        'documentAction 的 payload 含未知字段：${unknownKeys.join(', ')}'
+        '（允许：${actionPayloadKeys.join(', ')}）',
+      );
+    }
+    final Object? action = op.payload['action'];
+    if (action is! String || action.isEmpty) {
+      return SyncResponse.rejected(op.entityId, 'payload.action 缺失或不是字符串');
+    }
+    if (action != markDeliveredAction) {
+      return SyncResponse.rejected(
+        op.entityId,
+        'unknown_action: $action（v1 只支持 $markDeliveredAction）',
+      );
+    }
+    final Object? occurredAt = op.payload['occurred_at'];
+    if (occurredAt != null && occurredAt is! int) {
+      return SyncResponse.rejected(
+        op.entityId,
+        'payload.occurred_at 必须是 UTC 毫秒整数（客户端提供，仅展示用）',
+      );
+    }
+
+    final RuleOutcome outcome = _engine.markDelivered(
+      documentId: op.entityId,
+      now: now,
+    );
+    switch (outcome.status) {
+      case RuleStatus.applied:
+        return SyncResponse(entityId: op.entityId, status: SyncStatus.applied);
+      case RuleStatus.alreadyExists:
+        return SyncResponse(
+          entityId: op.entityId,
+          status: SyncStatus.alreadyExists,
+        );
+      case RuleStatus.rejected:
+        // R-3.4 分类：引擎拒绝有两种，回执语义不同 ——
+        // **状态不匹配**（单据存在、类型也对，但前提不成立）→ `conflict`，
+        // 让客户端用 server_state 对齐；**规则不允许**（类型不符 / 不存在）→ `rejected`。
+        // 已是 delivered / settled 的情形到不了这里（引擎返回 alreadyExists）。
+        // 注：in_transit 上的执行异常（「已回滚」）状态仍是 in_transit，
+        // 不会误入 conflict 分支。
+        final Row? row = _findRow(Schema.documents, op.entityId);
+        final bool statusMismatch =
+            row != null && row['doc_type'] == DocType.delivery.wire;
+        if (statusMismatch) {
+          return SyncResponse(
+            entityId: op.entityId,
+            status: SyncStatus.conflict,
+            serverState: Map<String, Object?>.from(row),
+          );
+        }
+        return SyncResponse.rejected(op.entityId, outcome.reason ?? '动作被拒绝');
     }
   }
 

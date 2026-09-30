@@ -48,18 +48,21 @@ RuleEngine 落地                 本地镜像（权威状态的副本，FK 关�
 | `createMasterData` | `id` 已存在 → `already_exists` | 无冲突 |
 | `updateMasterData` | `base_version == 主机 sync_version` → 应用；否则拒绝 | **主机赢**，返回 `server_state` |
 | `deleteMasterData` | 主数据软删。已删 → 幂等返回 | 主机赢 |
-| `documentAction` | **v1 未实现** → 一律 `rejected` + `action_not_implemented` | —（待 R-3） |
+| `documentAction` | 状态判定（R-3.1）：`in_transit` → 应用；`delivered` / `settled` → `already_exists`；其余状态 → `conflict` | **FAW**（R-3.5）—— 谁先到达主机谁生效，后到者拿 `conflict` + `server_state` |
 
 **业务数据永不 update / delete**。客户端只能 create 或执行 action。
 
-> ⚠️ **`documentAction` 在 v1 不落地**（2026-09-25 裁定，落地记录见 `docs/reply_review.md` §H）。
+> ✅ **`documentAction` 已于 2026-09-29 落地**（R-3 裁定，见 `docs/reply_review.md` §H）。
 >
-> 「动作」这个抽象还没定型 —— 它会影响 `sync_queue` 的操作枚举、`SyncServer`
-> 的处理路径、甚至是否需要一张动作表。现在猜，等于把 `sync_queue` 的字段设计
-> 押在一个未验证的假设上。
->
-> - **枚举值保留**，客户端可以入队，但主机返回 `rejected` + `action_not_implemented`
-> - **Android 端的"签收"按钮在 v1 禁用**（标注"v1.1 开放"）
+> - v1 唯一动作 **`mark_delivered`**（送货单 `in_transit → delivered`，规则本体在
+>   `RuleEngine.markDelivered` —— 规则的实现只应有一处，纪律 9）；
+>   未知动作 → `rejected` + `unknown_action: <名>`
+> - **动作只做单向终态转变** —— 反向业务（如反签收）用**新建单据**表达，不修改历史；
+>   幂等判定因此只看当前状态，**不需要 `document_actions` 表**。
+>   出现双向动作时才需要建表（口子记在 `docs/reply_review.md` §H）
+> - **判定不看时间**（R-3.3）：`occurred_at` 客户端提供、仅展示、不落库；
+>   并发语义 = **FAW**（first-arrival-wins，R-3.5）—— 到达顺序是主机可观测的唯一真相
+> - **Android 端「签收」按钮随 AH-B 解锁**
 > - v1 的签收走**主机本地**路径：`RuleEngine.markDelivered`（`rules.md` RULE-003）
 >
 > 进入同步层时需要回答的五个问题（R-3.1 ~ R-3.5）见
@@ -160,7 +163,7 @@ RuleEngine 落地                 本地镜像（权威状态的副本，FK 关�
 | 情形 | 归类 | 处置 |
 |---|---|---|
 | 连不上 / 非 200 / 401 | **协议层失败** | 整批退避，条目**仍是 `pending`**；401 另需重新配对 |
-| 回执 `rejected` | **业务拒绝** | 该条退避 + 记原因（如 v1 的 `action_not_implemented`） |
+| 回执 `rejected` | **业务拒绝** | 该条退避 + 记原因（如 `unknown_action`） |
 | 该条没有回执 | 主机未处理 | 该条退避，**不影响同批其它条** |
 
 把 401 当成 `rejected` 写进队列，会让「令牌过期」伪装成「单据被业务规则拒绝」。
@@ -425,7 +428,7 @@ GET    /api/party_ledger?party_id=&since=
 | 表 | 允许的操作 |
 |---|---|
 | `products` / `parties` / `accounts` | `createMasterData` / `updateMasterData` / `deleteMasterData` |
-| `documents` | `createDocument` / `documentAction`（v1 返回 `action_not_implemented`） |
+| `documents` | `createDocument` / `documentAction`（落地 `mark_delivered`；未知动作 `unknown_action`） |
 
 **任何其它表名一律 `rejected`** —— 包括四张流水表、`document_lines`（随主单走）、
 `sync_queue`、`clock_offset`，以及 `sqlite_master` 这类注入尝试。
@@ -434,7 +437,7 @@ GET    /api/party_ledger?party_id=&since=
 
 | 表 | 列 |
 |---|---|
-| `products` | `id` `code` `name` `barcode` `unit` `cost_price` `sell_price` `safety_stock` `category` `is_active` `remark` |
+| `products` | `id` `code` `name` `barcode` `unit` `cost_price` `sell_price` `safety_stock` `category` `is_active` `remark` `package_note` |
 | `parties` | `id` `name` `phone` `address` `roles` `credit_limit` `is_active` `remark` |
 | `accounts` | `id` `name` `type` `initial_balance` `is_active` |
 | `documents` | `id` `doc_no` `doc_type` `status` `party_id` `account_id` `total_amount` `ref_doc_id` `occurred_at` `time_estimated` `remark` |
@@ -459,10 +462,29 @@ GET    /api/party_ledger?party_id=&since=
 
 | 错误码 | 出处 | 含义 |
 |---|---|---|
-| `action_not_implemented` | `documentAction` | v1 不落地「动作」通道（R-3） |
+| `unknown_action` | `documentAction` | 未知的动作名（v1 只支持 `mark_delivered`） |
 | `return_exceeds_original` | RULE-007 / RULE-008 | 累计退货量超过原单量 |
 
 其余拒绝原因是**自由文本**（含中文诊断信息），客户端只需展示，不要解析。
+
+#### `rejected` 与 `conflict` 的分类原则（R-3.4）
+
+两者都**重试无意义**，但客户端处置不同 —— 这就是区分的标准：
+
+| 回执 | 何时用 | 客户端行为 |
+|---|---|---|
+| `rejected` | **规则不允许**：参数错、类型不符、约束违反 | 停在失败队列，给人看原因 |
+| `conflict` | **状态不匹配**：乐观锁落后、动作前提不成立 | 用 `server_state` **自动对齐**本地，删队列条目 |
+
+> 典型：`cancelled` 的单收到 `mark_delivered` → `conflict`。客户端的用户看到的
+> 不是「同步失败」，而是「这单在主机上已取消」—— 真相对齐，困惑消失。
+
+#### 动作并发：FAW（R-3.5）
+
+多端并发动作的判定是 **FAW（first-arrival-wins，先到主机者赢）**，**不是 LWW** ——
+客户端时钟不可信（R-3.3），到达顺序才是主机可观测的唯一真相。后到者拿
+`conflict` + `server_state` 自动对齐。v1 没有 cancel 动作，此场景暂不发生；
+**将来加 cancel 必须按 FAW 实现**，不要默认「最后写入的赢」。
 
 ## 九、配对与发现
 
@@ -507,7 +529,9 @@ GET    /api/party_ledger?party_id=&since=
 时钟偏移 +1 小时 → seq_no 顺序仍正确
 delete 非主数据 → rejected
 表名/列名白名单外 → rejected（含 sqlite_master 这类注入尝试）
-documentAction → rejected + action_not_implemented（v1 不落地）
+mark_delivered：in_transit → applied；重复 → already_exists；
+cancelled → conflict + server_state；未知动作 → rejected + unknown_action
+purchase 收签收 → rejected（规则不允许，进重试）
 响应与队列按 entityId 匹配（顺序打乱不影响）
 批量 push 里一条失败不影响其它条目
 同一 created_at 的多张单：分页不丢行、不重复、游标必推进
@@ -542,5 +566,5 @@ deltaOf 符号表：purchase/sale_return 为 +，sale/delivery/purchase_return �
 镜像开着外键 → 构造时明确拒绝
 ```
 
-> ⏸ **暂缓**：原「`documentAction` 幂等」一项**推迟到 R-3 裁定后**（见 `docs/reply_review.md` §H）。
-> 其余各项不受影响。
+> ✅ **已落地（2026-09-29）**：原「`documentAction` 幂等」一项随 **R-3 裁定**实现
+> （`docs/reply_review.md` §H；自检 `selfcheck_sync.dart` 含动作矩阵 8 项）。

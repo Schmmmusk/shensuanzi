@@ -26,13 +26,14 @@
 | `code` | TEXT UNIQUE | 商品编码。**由系统生成**（`P0001` 起，见 `docs/reply.md`），用户不填 |
 | `name` | TEXT | 名称 |
 | `barcode` | TEXT NULL | 条码，索引 |
-| `unit` | TEXT | 单位，默认"件" |
+| `unit` | TEXT | 单位，默认"件"。**最小销售单位**（§AJ·AI-5 裁定）—— 库存、成本、流水均按此单位记。按箱进、按个卖的商品填「个」，装箱关系写 `package_note` |
 | `cost_price` | INTEGER | 参考进价（分） |
 | `sell_price` | INTEGER | 售价（分） |
 | `safety_stock` | INTEGER | 安全库存 |
 | `category` | TEXT NULL | 分类 |
 | `is_active` | INTEGER | 默认 1 |
 | `remark` | TEXT NULL | |
+| `package_note` | TEXT NULL | 包装说明（如「1 箱 = 48 瓶」）。**纯备注，不参与任何计算**（§AJ·AI-5），库存页展示用。schema v2 新增，存量库经 `migrationStatements` 迁移 |
 | `created_at` | INTEGER | |
 | `updated_at` | INTEGER | |
 | `sync_version` | INTEGER | 默认 0 |
@@ -154,6 +155,11 @@ status      = paid_amount >= total_amount ? settled : confirmed
   - 创建即 `in_transit`，**即使已收满款也不改**（钱到了，货还在路上）
   - 签收后（`RuleEngine.markDelivered`）才允许由 `paid_amount` 决定
     `delivered` / `settled`
+
+**动作只做单向终态转变**（R-3，2026-09-29）：`mark_delivered` 是 v1 唯一的动作
+（送货单 `in_transit → delivered`），**反向业务用新建单据表达，不修改历史**
+（如「反签收」= 新建冲抵单，不是把状态改回去）。因此幂等判定**只看当前状态**、
+不需要 `document_actions` 表；动作的回执分类与 FAW 并发语义见 `sync_protocol.md` §8.5。
 
 **索引**：
 
@@ -404,28 +410,27 @@ UI 单据列表默认用 `ref_doc_id IS NOT NULL` 过滤掉自动生成的收付
 | `createMasterData` | 新主数据 | Product / Party / Account |
 | `updateMasterData` | 改主数据 | 同上，带 `base_version` |
 | `deleteMasterData` | 软删主数据 | 同上 |
-| `documentAction` | 对已有单据执行动作 | 如"司机已签收" —— **v1 返回 `action_not_implemented`**，见下 |
+| `documentAction` | 对已有单据执行动作 | 如"司机已签收" —— 已落地 `mark_delivered`（R-3，2026-09-29），见下 |
 
 `documentAction` 的 `payload`：
 
 ```json
 {
-  "document_id": "...",
   "action": "mark_delivered",
-  "occurred_at": 1234567890,
-  "remark": "张三签收"
+  "occurred_at": 1234567890
 }
 ```
 
 主机收到后，在事务内执行动作并更新 `status`。动作本身不产生新 `Document`。
+`occurred_at`（客户端提供）仅展示用，不参与判定、不落库（R-3.3）。
 
-> ⚠️ **v1 状态**：「动作」这一抽象的**幂等判定与存储**尚未定型（待裁定项 **R-3**，
-> 五问清单见 `docs/reply_review.md` §H）。因此：
->
-> - **枚举值保留**（客户端仍可入队），但 `SyncServer` 一律返回
->   `rejected` + 错误码 `action_not_implemented`
-> - **Android 端的"签收"按钮在 v1 禁用**（标注"v1.1 开放"）
-> - v1 的签收由**主机本地**路径完成：`RuleEngine.markDelivered`（见 `rules.md` RULE-003）
+> ✅ **已落地（R-3，2026-09-29 裁定）**：动作只做**单向终态转变**，
+> v1 唯一动作 `mark_delivered`（送货单 `in_transit → delivered`，规则本体
+> `RuleEngine.markDelivered`）。回执：转变 → `applied`；重复签收 → `already_exists`；
+> 状态不匹配（如已取消）→ `conflict` + `server_state`（客户端自动对齐）；
+> 规则不允许（类型不符 / 单据不存在）→ `rejected`；未知动作 → `rejected` +
+> `unknown_action`。分类原则与 FAW 并发语义见 `sync_protocol.md` §8.5。
+> 将来做 MSIX/AH-B：Android 端「签收」按钮随之解锁。
 
 索引：`idx_sync_status(status, next_retry_at)`、`idx_sync_entity(entity_id, operation)`
 

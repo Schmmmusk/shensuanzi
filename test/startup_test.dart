@@ -277,8 +277,8 @@ void main() {
     expect(packs, hasLength(1), reason: '启动即生成一份，且只有一份');
     expect(
       p.basename(packs.single.path),
-      startsWith('shensuanzi-schema1-'),
-      reason: 'AE-4：文件名带 schema 版本',
+      startsWith('shensuanzi-schema${Schema.version}-'),
+      reason: 'AE-4：文件名带 schema 版本（跟随 Schema.version，升版不再红）',
     );
     expect(backupCard, findsNothing, reason: '刚备份成功 → 不该再提醒');
   });

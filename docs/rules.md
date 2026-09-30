@@ -120,6 +120,13 @@
 
 **约束**：每条 `payment_entry.amount > 0`；`SUM(immediate_payments.amount) ≤ sale.total_amount`
 
+> **落库金额永远是「应收」，不是「顾客给的」**（`reply_review.md` §AJ·AI-4 裁定）：
+> 收款金额 = 这笔交易让老板**净赚**的钱；找零是**现金箱内部的物理流动**
+> （顾客给 100、找零 7，箱内 +100−7 = 净 +93），不是交易的一部分 ——
+> 所以"顾客给了"**不进** `immediate_payments`、不落库。若记 100，现金箱会凭空多 7 元。
+> UI 在现金收款行下方提供找零辅助行替用户算差价；这里只拦「合计超过应收」，
+> 拦的时候把"请填 93、找零 7"直接算给用户看（`SaleDraft.validate()` 的文案）。
+
 **场景**：
 
 | 场景 | `immediate_payments` | 结果 |

@@ -451,8 +451,8 @@ Future<void> main() async {
           entity: Schema.documents,
           entityId: docId,
           operation: SyncOpType.documentAction,
+          // R-3（2026-09-29 裁定）后的 payload 契约：只有 action 与 occurred_at
           payload: <String, Object?>{
-            'document_id': docId,
             'action': 'mark_delivered',
             'occurred_at': _hostNow,
           },
@@ -461,12 +461,12 @@ Future<void> main() async {
       ),
     );
     final SyncPushReport report = await w.clientA.push();
-    check('documentAction → rejected', report.rejected == 1);
+    check('documentAction（purchase 收签收）→ rejected', report.rejected == 1);
     final SyncQueueEntry after = w.clientA.queue.findById(action.id)!;
-    check('v1 未落地 → 进重试而非死信',
+    check('rejected → 进重试而非死信',
         after.status == SyncQueueStatus.pending && after.retryCount == 1);
-    check('原因含 action_not_implemented',
-        after.lastError!.contains('action_not_implemented'), '${after.lastError}');
+    check('原因含「不适用」',
+        after.lastError!.contains('不适用'), '${after.lastError}');
 
     final SyncClient wrong = SyncClient(
       db: w.mirrorA,

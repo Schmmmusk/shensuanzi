@@ -521,21 +521,84 @@ void main() {
   }
 
   // ============================================================ documentAction
-  section('documentAction（v1 不落地）');
+  section('documentAction（R-3 已裁定：mark_delivered）');
   {
     freshDb();
-    final SyncResponse r = server.handle(
+    final String p = syncProduct();
+    final String party = syncParty();
+    final Document delivery = pending(
+      type: DocType.delivery,
+      partyId: party,
+      totalAmount: 1000,
+    );
+    final SyncResponse created = server.handle(
+      opCreateDocument(delivery, lines: oneLine(delivery.id, p, 2, 500)),
+      now: now(),
+    );
+    check('送货单建单 applied', created.status == SyncStatus.applied,
+        '${created.reason}');
+
+    SyncOperation action(String id) => SyncOperation(
+      entity: Schema.documents,
+      entityId: id,
+      operation: SyncOpType.documentAction,
+      payload: <String, Object?>{'action': 'mark_delivered'},
+    );
+
+    final SyncResponse ok = server.handle(action(delivery.id), now: now());
+    check('in_transit → applied', ok.status == SyncStatus.applied, '${ok.reason}');
+    check('单据落到 delivered',
+        DocumentDao(db).findById(delivery.id)!.status == DocStatus.delivered);
+
+    final SyncResponse again = server.handle(action(delivery.id), now: now());
+    check('重复签收 → already_exists', again.status == SyncStatus.alreadyExists);
+
+    // cancelled → conflict + server_state（R-3.4：状态不匹配，客户端自动对齐）
+    DocumentDao(db).updateStatusAndPaid(
+      id: delivery.id,
+      status: DocStatus.cancelled,
+      updatedAt: now(),
+    );
+    final SyncResponse conflict = server.handle(action(delivery.id), now: now());
+    check('cancelled → conflict', conflict.status == SyncStatus.conflict);
+    check('server_state 带主机状态',
+        conflict.serverState?['status'] == DocStatus.cancelled.wire,
+        '${conflict.serverState}');
+
+    // 未知动作 / 未知字段 → rejected
+    final SyncResponse unknown = server.handle(
       const SyncOperation(
         entity: 'documents',
-        entityId: 'd-1',
+        entityId: 'd-x',
         operation: SyncOpType.documentAction,
-        payload: <String, Object?>{'action': 'mark_delivered'},
+        payload: <String, Object?>{'action': 'un_cancel'},
       ),
       now: now(),
     );
-    check('rejected', r.status == SyncStatus.rejected);
-    check('错误码 action_not_implemented',
-        r.reason?.contains('action_not_implemented') ?? false, '${r.reason}');
+    check('未知动作 → rejected + unknown_action',
+        unknown.status == SyncStatus.rejected &&
+            (unknown.reason?.contains('unknown_action: un_cancel') ?? false),
+        '${unknown.reason}');
+
+    // purchase 收签收 → rejected（规则不允许：docType 不适用）
+    freshDb();
+    final String p2 = syncProduct();
+    final String party2 = syncParty();
+    final Document purchase = pending(
+      type: DocType.purchase,
+      partyId: party2,
+      totalAmount: 1000,
+    );
+    server.handle(
+      opCreateDocument(purchase, lines: oneLine(purchase.id, p2, 10, 100)),
+      now: now(),
+    );
+    final SyncResponse wrongType = server.handle(action(purchase.id), now: now());
+    check('purchase 收签收 → rejected（不适用）',
+        wrongType.status == SyncStatus.rejected &&
+            (wrongType.reason?.contains('不适用') ?? false),
+        '${wrongType.reason}');
+
     db.close();
   }
 

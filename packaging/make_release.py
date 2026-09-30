@@ -17,9 +17,13 @@
 
 ## 为什么要有这个脚本（而不是手敲命令）
 
-1. **防「打包了旧产物」** —— 先比对 `Release/shensuanzi.exe` 与**全部构建输入**的时间戳
+1. **防「打包了旧产物」** —— 先比对**产物基准**与**全部构建输入**的时间戳
    （`lib/` `packages/` `windows/runner/` `pubspec.yaml` `pubspec.lock`），有更新的就停下。
    这是发布流程里最贵的错误：发了旧代码，而且从外表完全看不出来。
+   ⚠️ 产物基准是 **max(`shensuanzi.exe`, `data/app.so`) 的 mtime**，不是只有 exe：
+   Flutter Windows 把全部 Dart 代码编进 `data\app.so`，**只改 Dart 时 exe 根本不重链**
+   （2026-09-29 实测：exe 16:02 vs app.so 21:13）—— 只拿 exe 当基准会把
+   「刚构建完的新产物」误报成「产物是旧的」。
 2. **随包文件不能漏** —— AGPL-3.0 要求分发时**随附许可全文** ⇒ `LICENSE` 必须进包；
    `THIRD_PARTY.md`（第三方组件与字体）与 `使用说明.txt`（用户第一份文档）同理。
    三份缺任一份都会直接中止，不会静默少给。
@@ -43,6 +47,8 @@ import zipfile
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELEASE = os.path.join(REPO, 'build', 'windows', 'x64', 'runner', 'Release')
 EXE = os.path.join(RELEASE, 'shensuanzi.exe')
+# Dart 代码的真正载体（见文件头「防打包旧产物」说明）
+APP_SO = os.path.join(RELEASE, 'data', 'app.so')
 DIST = os.path.join(REPO, 'build', 'dist')
 
 # 随包文件：(仓库内路径, 包内文件名)。**必须都进包**，缺一即中止。
@@ -53,7 +59,7 @@ EXTRA = [
     ('THIRD_PARTY.md', 'THIRD_PARTY.md'),
 ]
 
-# 构建输入：任一比 exe 新 ⇒ 产物是旧的（说明改了代码没重新构建）
+# 构建输入：任一比产物基准新 ⇒ 产物是旧的（说明改了代码没重新构建）
 INPUT_FILES = ['pubspec.yaml', 'pubspec.lock']
 INPUT_DIRS = ['lib', 'packages', os.path.join('windows', 'runner')]
 INPUT_EXT = ('.dart', '.yaml', '.rc', '.ico')
@@ -105,6 +111,18 @@ def stamp(p):
     return time.strftime('%m-%d %H:%M:%S', time.localtime(os.path.getmtime(p)))
 
 
+def artifact_baseline():
+    """产物新鲜度基准 = max(exe, data/app.so) 的 mtime。
+
+    只改 Dart 时 app.so 更新而 exe 不重链 —— 只看 exe 会把新产物误判成旧的。
+    app.so 缺失（从未构建成功过）时退回 exe，让「找不到产物」的错误先说话。
+    """
+    ts = os.path.getmtime(EXE)
+    if os.path.isfile(APP_SO):
+        ts = max(ts, os.path.getmtime(APP_SO))
+    return ts
+
+
 def main():
     force = '--force' in sys.argv
 
@@ -118,9 +136,9 @@ def main():
     top = f'神算子-v{version}'
 
     # ---------------------------------------------------------------- 1 新鲜度
-    stale = inputs_newer_than(os.path.getmtime(EXE))
+    stale = inputs_newer_than(artifact_baseline())
     if stale:
-        print(f'{"⚠️  " if force else "❌ "}产物是旧的 —— 下面这些文件比 shensuanzi.exe 新：')
+        print(f'{"⚠️  " if force else "❌ "}产物是旧的 —— 下面这些文件比产物（exe / app.so）新：')
         for p in stale[:8]:
             print(f'     {stamp(p)}  {os.path.relpath(p, REPO).replace(os.sep, "/")}')
         if len(stale) > 8:
@@ -205,7 +223,7 @@ def main():
     print(f'   压缩后 {human(zipped)}（{zipped / total:.0%}）')
     print(f'   sha256 {sha}')
     print()
-    print('   发给用户前，按 docs/windows_build.md §8.4 的 13 步在干净环境验一遍。')
+    print('   发给用户前，按 docs/windows_build.md §8.4 的 14 步清单在干净环境验一遍。')
 
 
 if __name__ == '__main__':

@@ -471,7 +471,7 @@ Future<void> main() async {
         c3.queue.enqueue(SyncQueueEntry.create(docOp('d-b', 'sale', <int>[3]), now: now()));
     t3.replyJson(pushBody(<Map<String, Object?>>[
       receipt('d-b', 'applied'),
-      receipt('d-a', 'rejected', reason: 'action_not_implemented'),
+      receipt('d-a', 'rejected', reason: 'unknown_action: un_cancel'),
     ]));
     final SyncPushReport pushed = await c3.push();
     check('回执按 entity_id 配对（顺序打乱不影响）',
@@ -480,7 +480,7 @@ Future<void> main() async {
         c3.queue.findById(b.id)!.status == SyncQueueStatus.sent);
     check('rejected → 转 pending 并记原因',
         c3.queue.findById(a.id)!.status == SyncQueueStatus.pending &&
-            c3.queue.findById(a.id)!.lastError == 'action_not_implemented');
+            c3.queue.findById(a.id)!.lastError == 'unknown_action: un_cancel');
     check('推送请求是 POST', t3.last.method == 'POST');
     check('请求体含 operations 数组',
         (jsonDecode(t3.last.body!) as Map<String, Object?>)['operations'] is List<Object?>);

@@ -578,12 +578,193 @@ void main() {
 
   // ============================================================ documentAction
 
-  group('documentAction（v1 不落地）', () {
-    test('一律 rejected + action_not_implemented', () {
+  group('documentAction（R-3 已裁定：mark_delivered）', () {
+    test('in_transit → applied，单据落到 delivered（R-3.1：归约为状态判定）', () {
+      final String p = syncProduct();
+      final String party = syncParty();
+      final Document delivery = pending(
+        type: DocType.delivery,
+        partyId: party,
+        totalAmount: 1000,
+      );
+      expect(
+        server
+            .handle(
+              opCreateDocument(
+                delivery,
+                lines: oneLine(delivery.id, p, 2, 500),
+              ),
+              now: now(),
+            )
+            .status,
+        SyncStatus.applied,
+      );
+      expect(DocumentDao(db).findById(delivery.id)!.status, DocStatus.inTransit,
+          reason: '送货单一律以 in_transit 起步');
+
+      final SyncResponse response = server.handle(
+        SyncOperation(
+          entity: Schema.documents,
+          entityId: delivery.id,
+          operation: SyncOpType.documentAction,
+          payload: <String, Object?>{
+            'action': 'mark_delivered',
+            'occurred_at': now(),
+          },
+        ),
+        now: now(),
+      );
+
+      expect(response.status, SyncStatus.applied, reason: response.reason);
+      expect(DocumentDao(db).findById(delivery.id)!.status, DocStatus.delivered);
+    });
+
+    test('已是 delivered → already_exists（重复签收是 no-op，R-3.1）', () {
+      final String p = syncProduct();
+      final String party = syncParty();
+      final Document delivery = pending(
+        type: DocType.delivery,
+        partyId: party,
+        totalAmount: 1000,
+      );
+      expect(
+        server
+            .handle(
+              opCreateDocument(
+                delivery,
+                lines: oneLine(delivery.id, p, 2, 500),
+              ),
+              now: now(),
+            )
+            .status,
+        SyncStatus.applied,
+      );
+      final SyncOperation action = SyncOperation(
+        entity: Schema.documents,
+        entityId: delivery.id,
+        operation: SyncOpType.documentAction,
+        payload: <String, Object?>{'action': 'mark_delivered'},
+      );
+
+      expect(server.handle(action, now: now()).status, SyncStatus.applied);
+      expect(server.handle(action, now: now()).status, SyncStatus.alreadyExists);
+    });
+
+    test('cancelled 收到签收 → conflict + server_state（R-3.4：状态不匹配，'
+        '让客户端自动对齐，不是 rejected）', () {
+      final String p = syncProduct();
+      final String party = syncParty();
+      final Document delivery = pending(
+        type: DocType.delivery,
+        partyId: party,
+        totalAmount: 1000,
+      );
+      expect(
+        server
+            .handle(
+              opCreateDocument(
+                delivery,
+                lines: oneLine(delivery.id, p, 2, 500),
+              ),
+              now: now(),
+            )
+            .status,
+        SyncStatus.applied,
+      );
+      // 取消（主机本地路径 —— v1 没有 cancel 动作，R-3.5）
+      DocumentDao(db).updateStatusAndPaid(
+        id: delivery.id,
+        status: DocStatus.cancelled,
+        updatedAt: now(),
+      );
+
+      final SyncResponse response = server.handle(
+        SyncOperation(
+          entity: Schema.documents,
+          entityId: delivery.id,
+          operation: SyncOpType.documentAction,
+          payload: <String, Object?>{'action': 'mark_delivered'},
+        ),
+        now: now(),
+      );
+
+      expect(response.status, SyncStatus.conflict);
+      expect(response.serverState, isNotNull);
+      expect(response.serverState!['status'], DocStatus.cancelled.wire,
+          reason: 'server_state 必须带主机当前状态 —— 客户端拿它对齐');
+      expect(DocumentDao(db).findById(delivery.id)!.status, DocStatus.cancelled,
+          reason: 'conflict 不改主机状态');
+    });
+
+    test('未知动作名 → rejected + unknown_action（R-3.4：规则不允许）', () {
       final SyncResponse response = server.handle(
         const SyncOperation(
-          entity: 'documents',
-          entityId: 'd-1',
+          entity: Schema.documents,
+          entityId: 'd-x',
+          operation: SyncOpType.documentAction,
+          payload: <String, Object?>{'action': 'un_cancel'},
+        ),
+        now: now(),
+      );
+
+      expect(response.status, SyncStatus.rejected);
+      expect(response.reason, contains('unknown_action: un_cancel'));
+    });
+
+    test('payload 含未知字段 / action 缺失 → rejected', () {
+      final SyncResponse extra = server.handle(
+        const SyncOperation(
+          entity: Schema.documents,
+          entityId: 'd-x',
+          operation: SyncOpType.documentAction,
+          payload: <String, Object?>{
+            'action': 'mark_delivered',
+            'note': '自带的字段',
+          },
+        ),
+        now: now(),
+      );
+      expect(extra.status, SyncStatus.rejected);
+      expect(extra.reason, contains('未知字段'));
+
+      final SyncResponse noAction = server.handle(
+        const SyncOperation(
+          entity: Schema.documents,
+          entityId: 'd-x',
+          operation: SyncOpType.documentAction,
+          payload: <String, Object?>{'occurred_at': 1},
+        ),
+        now: now(),
+      );
+      expect(noAction.status, SyncStatus.rejected);
+      expect(noAction.reason, contains('action'));
+    });
+
+    test('purchase 单收到签收 → rejected（规则不允许：docType 不适用）', () {
+      final String p = syncProduct();
+      final String party = syncParty();
+      final Document purchase = pending(
+        type: DocType.purchase,
+        partyId: party,
+        totalAmount: 1000,
+      );
+      expect(
+        server
+            .handle(
+              opCreateDocument(
+                purchase,
+                lines: oneLine(purchase.id, p, 10, 100),
+              ),
+              now: now(),
+            )
+            .status,
+        SyncStatus.applied,
+      );
+
+      final SyncResponse response = server.handle(
+        SyncOperation(
+          entity: Schema.documents,
+          entityId: purchase.id,
           operation: SyncOpType.documentAction,
           payload: <String, Object?>{'action': 'mark_delivered'},
         ),
@@ -591,7 +772,22 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('action_not_implemented'));
+      expect(response.reason, contains('不适用'));
+    });
+
+    test('单据不存在 → rejected', () {
+      final SyncResponse response = server.handle(
+        const SyncOperation(
+          entity: Schema.documents,
+          entityId: 'd-missing',
+          operation: SyncOpType.documentAction,
+          payload: <String, Object?>{'action': 'mark_delivered'},
+        ),
+        now: now(),
+      );
+
+      expect(response.status, SyncStatus.rejected);
+      expect(response.reason, contains('不存在'));
     });
   });
 

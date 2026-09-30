@@ -1,26 +1,53 @@
 // 根应用的 widget 测试。
 //
-// ⚠️ **只测不需要磁盘与插件的东西。** 启动流程会读配置、可能弹对话框、
-// 还会调文件夹选择器插件 —— 那些在 widget 测试里都会炸（或需要 mock）。
-// 启动逻辑本身在 `packages/shensuanzi_app`，由那边的 `dart test` 覆盖。
+// ⚠️ **只测不需要插件、不碰真实配置的东西。** 启动流程会真弹系统框、
+// 默认配置落在真实 `%APPDATA%` —— 那些在 widget 测试里都会炸（或越红线）。
+// 启动流程本身在 `test/startup_test.dart`（注入 `pickDirectory` + 沙箱
+// `configStore`），更底层的判断在 `packages/shensuanzi_app`（`dart test`）。
 //
 // 这里能测的、也正是最该测的：**左侧导航的入口是否常驻可见**、
-// **沉浸模式是否真的不显示面包屑** —— 这两条是 `docs/ui_principles.md`
-// 的硬规则，值得用测试钉住而不是靠人眼看截图。
+// **沉浸模式是否真的不显示面包屑**、**设置页是不是真页面** ——
+// 这些是 `docs/ui_principles.md` 的硬规则，值得用测试钉住而不是靠人眼看截图。
+//
+// §AI-1（2026-09-29）：AppShell 的 `configStore` / `onConfigChanged` 改为
+// **必传**（生产入口不注入曾是「设置页永远是占位页」的根因），所以本文件的
+// shell 也必须给一个沙箱实例（临时目录，纯 dart:io，用完即删）。
 //
 // 运行：`flutter test`（本机由用户执行）
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/app_shell.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 
 void main() {
+  // 沙箱配置（testing.md §K 红线：绝不指向真实 %APPDATA%）
+  final Directory box = Directory.systemTemp.createTempSync(
+    'shensuanzi_shell_test_',
+  );
+  final AppConfigStore store = AppConfigStore(
+    File(p.join(box.path, 'config.json')),
+  );
+
+  tearDownAll(() {
+    try {
+      box.deleteSync(recursive: true);
+    } catch (_) {
+      // 删不掉（占用等）不影响结论
+    }
+  });
+
   Widget shell({bool databaseReady = true}) => MaterialApp(
     home: AppShell(
       dataDirectory: r'D:\神算子数据',
       backupDirectory: r'D:\神算子备份',
       schemaVersion: 1,
       databaseReady: databaseReady,
+      configStore: store,
+      onConfigChanged: (AppConfig config) {},
     ),
   );
 
@@ -94,5 +121,16 @@ void main() {
     await tester.pumpWidget(shell(databaseReady: false));
 
     expect(find.textContaining('换一个位置'), findsOneWidget);
+  });
+
+  // §AI-1 回归：生产入口不注入任何东西时，设置页曾因 AppShell 拿到 null
+  // 而永远显示「正在开发」占位页。configStore 改必传后这条占位分支已删除，
+  // 这里钉住「点设置 → 看到的是真页面」。
+  testWidgets('点「设置」→ 是真页面（界面大小可调），不是「正在开发」占位', (WidgetTester tester) async {
+    await tester.pumpWidget(shell());
+    await tapNav(tester, 'settings');
+
+    expect(find.byKey(const Key('setting-scale')), findsOneWidget);
+    expect(find.text('设置：正在开发'), findsNothing);
   });
 }

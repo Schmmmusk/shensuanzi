@@ -51,8 +51,8 @@ class AppShell extends StatefulWidget {
     this.backupReminder,
     this.onBackupNow,
     this.exports,
-    this.configStore,
-    this.onConfigChanged,
+    required this.configStore,
+    required this.onConfigChanged,
     this.initialDestinationId,
   });
 
@@ -110,11 +110,17 @@ class AppShell extends StatefulWidget {
   /// 导出服务（§AF）。`null` = 不显示导出按钮（库没打开时）
   final ExportSink? exports;
 
-  /// 配置读写入口（设置页用；`null` = 配置不可用，设置页显示占位）
-  final AppConfigStore? configStore;
+  /// 配置读写入口（设置页用）。
+  ///
+  /// ⚠️ **必传**（2026-09-29 台账 §AI-1）：曾经「可选 + 为 null 就显示占位页」，
+  /// 而生产入口 `runApp(const ShensuanziApp())` 恰好不注入 → AppShell 拿到
+  /// null → 真机上设置页**永远停在「正在开发」占位页**；且所有测试都注入了
+  /// 沙箱 store，这条生产路径零覆盖、门禁全绿照过。改成 required 后
+  /// 「忘了接」直接编译不过 —— 让这个 bug 不可表示。
+  final AppConfigStore configStore;
 
   /// 设置页修改配置后的回调（宿主热应用缩放/店名）
-  final void Function(AppConfig config)? onConfigChanged;
+  final void Function(AppConfig config) onConfigChanged;
 
   /// 从哪个入口开始（不传 = 概览）
   final String? initialDestinationId;
@@ -202,17 +208,17 @@ class _AppShellState extends State<AppShell> {
           ? _PendingPage(destination: current)
           : DocumentsPage(dao: widget.documents!, exports: widget.exports);
     } else if (current.id == 'settings') {
-      page = widget.configStore == null || widget.onConfigChanged == null
-          ? _PendingPage(destination: current)
-          : SettingsPage(
-              config: widget.configStore!.load(),
-              configStore: widget.configStore!,
-              backupDirectory: widget.backupDirectory,
-              backupStatusLine: widget.backupStatusLine,
-              backupNeedsAttention: widget.backupNeedsAttention,
-              onBackupNow: widget.onBackupNow,
-              onChanged: widget.onConfigChanged!,
-            );
+      // §AI-1：configStore / onConfigChanged 已是 required —— 设置页是常驻
+      // 入口（ui_principles），「占位页」分支整体删除（它曾把生产真机挡在外面）
+      page = SettingsPage(
+        config: widget.configStore.load(),
+        configStore: widget.configStore,
+        backupDirectory: widget.backupDirectory,
+        backupStatusLine: widget.backupStatusLine,
+        backupNeedsAttention: widget.backupNeedsAttention,
+        onBackupNow: widget.onBackupNow,
+        onChanged: widget.onConfigChanged,
+      );
     } else if (current.id == 'help') {
       // AE-6：恢复步骤要带**用户真实的两个文件夹**，否则他照做不下去
       page = HelpPage(

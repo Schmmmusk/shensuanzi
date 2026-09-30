@@ -740,15 +740,16 @@ class RuleEngine {
 
   /// **主机本地**把送货单标记为已签收（`docs/rules.md` RULE-003）。
   ///
-  /// ⚠️ **这不是 `documentAction` 通道。** 离线签收（`documentAction: mark_delivered`）
-  /// 属待裁定项 **R-3**（动作的幂等判定与存储），随 `SyncServer` 落地。
-  /// 本方法是 v1 的**替代路径**：司机回店后由主机 UI 手动改状态。
+  /// 两条路径共用这里：
+  /// ① 主机 UI 手动改状态；② 同步通道 `documentAction: mark_delivered`
+  /// （`SyncServer._applyAction`，R-3 已于 2026-09-29 裁定：归约为状态判定、
+  /// 不建 `document_actions` 表，回执分类见 `sync_protocol.md` §8.5）。
   ///
   /// **为何不直接让 UI 调 `DocumentDao.updateStatusAndPaid`**：那个方法按契约
   /// 「只在主机本地事务内由 RuleEngine 调用」，裸调用无法拦住
   /// `cancelled → delivered` 这类非法迁移。规则的实现只应有一处。
   ///
-  /// **幂等判定基于状态**（`docs/reply.md` R-3.1 的候选答案，尚未裁定）：
+  /// **幂等判定基于状态**（R-3.1 已裁定：动作只做单向终态转变，反向用新建单据）：
   ///
   /// - `in_transit` → `delivered`；若已收满款，同一事务内直接落到 `settled`
   /// - 已是 `delivered` / `settled` → `alreadyExists`（重复签收是 no-op）

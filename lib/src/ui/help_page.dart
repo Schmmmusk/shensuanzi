@@ -13,10 +13,13 @@
 ///   —— 「先改名成 .bak 再粘贴」那一步不能省，它是用户的心理安全带
 /// - **§AE 遗漏 8**：坦白「备份和数据在同一块硬盘」—— 备份解决的是误删误操作，
 ///   不是硬盘坏；重要数据要自己再拷一份到 U 盘
+/// - **§AJ·AI-5**：FAQ 覆盖「按箱进货、按个卖」—— 单位 = 最小销售单位，
+///   「系统按个记，你心里按箱想」是用户心智与系统模型之间的桥
 library;
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
+import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'manual_page.dart';
 
@@ -117,6 +120,18 @@ class HelpPage extends StatelessWidget {
                     '单据提交后不能改（账要留痕）。录错了用「再盘一次」纠正库存，'
                         '或开一张相反方向的单子冲抵。',
                   ),
+                  // §AJ·AI-5：按箱进、按个卖是用户第一天就会撞上的问题
+                  _Faq(
+                    '我按箱进货、按个卖怎么办？',
+                    '把商品的「单位」填成个（最小的售卖单位）。\n\n'
+                        '比如矿泉水 1 箱 = 48 瓶：\n'
+                        '· 进货 3 箱 → 数量录 144（3 × 48），单价按箱价 ÷ 48 换算\n'
+                        '· 卖 1 瓶 → 库存变成 143\n'
+                        '· 卖一整箱 → 数量录 48\n\n'
+                        '「1 箱 = 48 瓶」这个换算关系填在商品建档的「包装说明」里，'
+                        '库存页会显示在商品名旁边。\n\n'
+                        '系统按「个」记账，你心里按「箱」想就行。',
+                  ),
                   // §AE-6：恢复写成**六步能照做**的形式（带真实路径）
                   _Faq(
                     '备份放在哪？数据弄丢了怎么找回来？',
@@ -204,8 +219,10 @@ class HelpPage extends StatelessWidget {
               // §AG-1：版本号**从 AppVersion 取**（唯一来源），并带上
               // 「（第一个可部署版本）」限定词 —— `v0.1.0` 对用户读起来像
               // 「试用版 / 会不会过期」，限定词是**消除疑虑**，不是美化
+              // 版本号里的数据格式版本**从 Schema.version 取**（唯一来源）——
+              // 手写 v1 的教训：schema 升 2 时这里就会变成谎言
               Text(
-                '神算子 ${AppVersion.display} · 数据格式版本 schema v1',
+                '神算子 ${AppVersion.display} · 数据格式版本 schema v${Schema.version}',
                 textAlign: TextAlign.center,
                 style: TextStyle(height: 1.6, color: theme.hintColor),
               ),

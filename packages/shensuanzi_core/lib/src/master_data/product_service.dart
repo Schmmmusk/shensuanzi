@@ -104,6 +104,7 @@ class ProductService {
         costPrice: draft.costPriceCents,
         sellPrice: draft.sellPriceCents,
         safetyStock: draft.safetyStockValue,
+        packageNote: draft.normalizedPackageNote,
         createdAt: stamp,
         updatedAt: stamp,
       );
@@ -138,6 +139,7 @@ class ProductService {
         costPrice: draft.costPriceCents,
         sellPrice: draft.sellPriceCents,
         safetyStock: draft.safetyStockValue,
+        packageNote: draft.normalizedPackageNote,
         category: existing.category,
         isActive: existing.isActive,
         remark: existing.remark,

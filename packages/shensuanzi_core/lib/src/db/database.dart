@@ -71,7 +71,8 @@ class Db {
       );
     }
 
-    // 当前只有 v0（空库）→ v1 一种情形；v1 起的新增版本走 migrationStatements。
+    // v0（空库）直接建全量表；v1 起的存量库走 migrationStatements 逐版升级
+    // （v1 → v2：products 加 package_note，见 Schema.migrationStatements）。
     final List<String> statements = current == 0
         ? Schema.createStatements
         : Schema.migrationStatements(current);

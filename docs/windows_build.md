@@ -241,6 +241,12 @@ flutter build windows --release
 python packaging\make_release.py
 ```
 
+> ⚠️ **报 `LNK1104: 无法打开文件 ...shensuanzi.exe` = 旧 exe 被占用**，不是构建坏了：
+> ① 软件本体还开着（先退出神算子）；② **「文件属性」对话框开着也会锁** ——
+> 资源管理器在属性页打开期间持有文件句柄（2026-09-29 真实踩过：
+> 核对新 FileDescription 后忘了关属性框，下一次构建直接挂）。
+> 关掉再重跑即可，无需清理任何目录。
+
 `packaging/make_release.py` 做四件事（**每一条都对应一次真实踩坑**）：
 
 1. **拦「拿旧产物打包」** —— 比对 `Release/shensuanzi.exe` 与全部构建输入

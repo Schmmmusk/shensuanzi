@@ -32,6 +32,7 @@ void main() {
     String costPrice = '3.20',
     String barcode = '6901234567890',
     String safetyStock = '10',
+    String packageNote = '',
   }) => ProductDraft(
     name: name,
     unit: unit,
@@ -39,6 +40,7 @@ void main() {
     costPrice: costPrice,
     barcode: barcode,
     safetyStock: safetyStock,
+    packageNote: packageNote,
   );
 
   /// 直接把一条商品塞进库里（用于构造编码边界等前置状态）
@@ -183,6 +185,24 @@ void main() {
       expect(goodDraft(barcode: '1' * 64).validate(), isEmpty);
     });
 
+    test('包装说明可空；超长要报（60 上限，防误粘一整段话）（§AJ·AI-5）', () {
+      expect(goodDraft(packageNote: '').validate(), isEmpty);
+      expect(goodDraft(packageNote: '  ').validate(), isEmpty);
+      expect(
+        goodDraft(packageNote: '长' * 61).validate()[ProductField.packageNote],
+        contains('包装说明太长'),
+      );
+      expect(goodDraft(packageNote: '长' * 60).validate(), isEmpty);
+    });
+
+    test('包装说明空白归一成 null，不是空串（与条码同理）', () {
+      expect(goodDraft(packageNote: '  ').normalizedPackageNote, isNull);
+      expect(
+        goodDraft(packageNote: ' 1 箱 = 48 瓶 ').normalizedPackageNote,
+        '1 箱 = 48 瓶',
+      );
+    });
+
     test('一次能报多个字段（界面据此标红多栏）', () {
       final Map<ProductField, String> errors =
           const ProductDraft().validate(); // 除了单位默认「件」，其余全空
@@ -224,6 +244,21 @@ void main() {
       expect(draft.safetyStockValue, created.safetyStock);
       expect(draft.normalizedBarcode, created.barcode);
     });
+
+    test('包装说明回填：null → 空串（TextField 的 text 不能是 null）', () {
+      final Product withNote = service.create(
+        goodDraft(packageNote: '1 箱 = 48 瓶'),
+        now: 1000,
+      );
+      final Product withoutNote = service.create(
+        goodDraft(name: '无备注货'),
+        now: 1001,
+      );
+
+      expect(ProductDraft.of(withNote).packageNote, '1 箱 = 48 瓶');
+      expect(ProductDraft.of(withoutNote).packageNote, '');
+      expect(ProductDraft.of(withoutNote).normalizedPackageNote, isNull);
+    });
   });
 
   // ============================================================ 建档
@@ -245,6 +280,7 @@ void main() {
       expect(product.isActive, isTrue);
       expect(product.category, isNull);
       expect(product.remark, isNull);
+      expect(product.packageNote, isNull, reason: '没填包装说明 → 不存空串');
     });
 
     test('6 个字段都落库（含金额转分）', () {
@@ -281,6 +317,31 @@ void main() {
             <Object?>[product.id],
           )
           .first['barcode'];
+      expect(raw, isNull);
+    });
+
+    test('包装说明落库：原样存，能读回（§AJ·AI-5）', () {
+      final Product product = service.create(
+        goodDraft(packageNote: '1 箱 = 48 瓶'),
+        now: 1000,
+      );
+
+      final Product? loaded = service.byId(product.id);
+      expect(loaded, isNotNull);
+      expect(loaded!.packageNote, '1 箱 = 48 瓶');
+    });
+
+    test('包装说明空白 → 库里是 NULL 而不是空串（与条码同理）', () {
+      final Product product = service.create(
+        goodDraft(packageNote: '   '),
+        now: 1000,
+      );
+      final Object? raw = db.raw
+          .select(
+            'SELECT package_note FROM products WHERE id = ?',
+            <Object?>[product.id],
+          )
+          .first['package_note'];
       expect(raw, isNull);
     });
 
@@ -370,6 +431,30 @@ void main() {
       expect(after.category, '水果');
       expect(after.remark, '常卖品');
       expect(after.isActive, isTrue);
+    });
+
+    test('包装说明归表单管：update 会覆盖，不归「保持原值」那一类（§AJ·AI-5）', () {
+      final Product created = service.create(
+        goodDraft(packageNote: '1 箱 = 48 瓶'),
+        now: 1000,
+      );
+
+      // 改名 + 换备注 —— 一次保存同时生效
+      final Product after = service.update(
+        created.id,
+        goodDraft(name: '矿泉水（新批次）', packageNote: '1 箱 = 24 瓶'),
+        now: 2000,
+      );
+      expect(after.name, '矿泉水（新批次）');
+      expect(after.packageNote, '1 箱 = 24 瓶');
+
+      // 清空备注 —— update 写 NULL（若误归「保持原值」类，这里会残留旧值）
+      final Product cleared = service.update(
+        created.id,
+        goodDraft(name: '矿泉水（新批次）'),
+        now: 3000,
+      );
+      expect(cleared.packageNote, isNull);
     });
 
     test('校验不过 → 抛，且库里原值不变', () {
