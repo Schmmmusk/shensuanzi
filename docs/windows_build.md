@@ -16,7 +16,7 @@
 | 4 | ⚠️ **SQLite 源码预置** `third_party/sqlite3/` | **本项目最特有的坑**：`.gitignore` 排除了 `third_party/` ⇒ **克隆下来没有它** ⇒ 首次构建在 CMake 配置阶段联网下载 `sqlite.org` 的 tarball（国内主站超时 ⇒ 0 字节 ⇒ 配置失败） | 按本文 **§三** 预置（镜像站 + 剥顶层目录）；构建时打印 `[shensuanzi] 使用本地 SQLite 源码` 即成功 |
 | 5 | **Python 3**（**仅打包时需要**） | `packaging/make_release.py` 只用标准库；`packaging/make_icon.py` 需要 `Pillow`（**只在要改图标时**） | `python --version`；改图标才 `pip install pillow` |
 | 6 | **纯 Dart 测试的原生库**（三个包的 `dart test`） | 纯 Dart 环境**不含** SQLite 原生库，测试时要能加载 | 查找顺序 `SQLITE3_DLL` → `sqlite3.dll` → `C:\Windows\System32\winsqlite3.dll`。**Win10/11 多数靠最后一项兜底即可通过**；真失败再设 `SQLITE3_DLL` |
-| 7 | 网络：`flutter pub get` 要通 pub.dev | 拉依赖 + Flutter 首次物料下载 | 国内可设 `PUB_HOSTED_URL` / `FLUTTER_STORAGE_BASE_URL` 镜像 |
+| 7 | 网络：`flutter pub get` 要通 pub 源 | 拉依赖 + Flutter 首次物料下载 | 国内可设 `PUB_HOSTED_URL` / `FLUTTER_STORAGE_BASE_URL` 镜像。⚠️ **两台机器必须设成同一个值** —— 否则 `pubspec.lock` 会整片抖红，见下方 ⚠️ |
 
 **不需要准备的**（省得白装）：
 
@@ -33,6 +33,27 @@
 `test/fixtures/v1_empty.db`（迁移化石）⇒ 克隆后 `flutter pub get` 会装到**同一批依赖版本**，
 不需要手动对齐。**唯二例外**已在上面点明：`third_party/sqlite3/`（第 4 项，必须手工预置）
 与 `build/`（产物，按需重新构建）。
+
+> ⚠️ **`pubspec.lock` 里的 `url:` 会跟着 `PUB_HOSTED_URL` 变**（`docs/reply_review.md` §AS / §BB·七）。
+>
+> 入库的这几份 `pubspec.lock` 是在**镜像**（`pub.flutter-io.cn`）下生成的。
+> 在一台**没设镜像**的机器上跑一次 `flutter pub get`，它会把里面**所有** `url:`
+> 改写成 `https://pub.dev` —— 版本一个没变、锁文件却整片翻红
+> （2026-10-03 实测：**44 行**被改写，看着像依赖大升级，其实什么都没发生）。
+>
+> **后果不是坏掉，是噪声**：每次换机器都抖一遍，久了就没人认真看 lock 的 diff，
+> 真正的依赖变更反而藏起来了。
+>
+> **做法**：两台机器都把 `PUB_HOSTED_URL` 设成同一个值（或者都不设），再跑 `pub get`。
+> 想按已入库的镜像口径改回来：
+>
+> ```powershell
+> $env:PUB_HOSTED_URL = "https://pub.flutter-io.cn"
+> flutter pub get
+> ```
+>
+> 想改用 `pub.dev` 也行 —— 那就**单独一个提交**把 5 份 `pubspec.lock`（根 + 三个包 + 将来更多）
+> 一起重新生成，别让它混在功能提交里。
 
 > ⚠️ **若这台机器设了代理**：Windows 的环境块允许 `HTTP_PROXY` 与 `http_proxy`
 > **同时存在**，而 MSBuild 的 CL.exe 任务用的是**大小写不敏感**的字典 ⇒ 抛

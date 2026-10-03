@@ -51,6 +51,20 @@ void main() {
       schemaVersion: '${Schema.version}',
     );
 
+    // 环境探测降级：**不弹窗**（这是启动路径，弹窗只会让用户以为软件坏了），
+    // 只留一条日志。两种降级分开记（`docs/reply_review.md` §AT / §AT·六-3）：
+    //   ① 盘符枚举整体失败 ⇒ 本次按「没有非系统盘」处理
+    //   ② 某些盘符占着位、但类型问不出来 ⇒ 已跳过
+    // 没有它，「软件能开、但某块盘不见了」永远查不出原因。
+    if (environment.isWindows && environment.drives.isEmpty) {
+      log.write('环境探测降级：盘符枚举失败，本次按「没有非系统盘」处理');
+    }
+    if (environment.probeFailures.isNotEmpty) {
+      log.write(
+        '环境探测降级：${environment.probeFailures.join('、')} 盘的类型问不出来，已跳过这些盘',
+      );
+    }
+
     runApp(const ShensuanziApp());
   }, (Object error, StackTrace stack) {
     log.crash(error, stack);

@@ -12,6 +12,7 @@
 // ignore: unused_import
 import '../test/database_test.dart' as database_test;
 // ignore: unused_import
+import '../test/delivery_draft_test.dart' as delivery_draft_test;
 import '../test/delivery_test.dart' as delivery_test;
 // ignore: unused_import
 import '../test/export_reads_test.dart' as export_reads_test;
@@ -88,6 +89,7 @@ void main() {
     // test/
     account_draft_test.main,
     database_test.main,
+    delivery_draft_test.main,
     delivery_test.main,
     export_reads_test.main,
     immediate_payment_test.main,

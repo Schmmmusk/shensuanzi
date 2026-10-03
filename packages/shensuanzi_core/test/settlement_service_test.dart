@@ -147,55 +147,73 @@ void main() {
   // ============================================================ 文案
 
   group('内联提示与结论句（纯函数）', () {
-    test('amountNotice：空 → 不打扰；非数字 / ≤0 / 超收 → 各有一条', () {
+    test('amountError：空 / 正常 / **超收** → 都不是错误（超收不再是拦的理由）', () {
+      // §AX·一：超收走「告知」路径，不再是硬错误 —— 这条是**行为变更**的锚点
       expect(
-        SettlementService.amountNotice(
-          rawAmount: '   ',
-          unsettledCents: 5000,
-          inbound: true,
-        ),
+        SettlementService.amountError(rawAmount: '   ', unsettledCents: 5000),
         isNull,
       );
       expect(
-        SettlementService.amountNotice(
-          rawAmount: 'abc',
-          unsettledCents: 5000,
-          inbound: true,
-        ),
+        SettlementService.amountError(rawAmount: '50', unsettledCents: 5000),
+        isNull,
+      );
+      expect(
+        SettlementService.amountError(rawAmount: '60', unsettledCents: 5000),
+        isNull,
+        reason: '超收（60 > 50）**不再报错** —— 多出的是找零',
+      );
+    });
+
+    test('amountError：非数字 / ≤ 0 → 仍是硬错误', () {
+      expect(
+        SettlementService.amountError(rawAmount: 'abc', unsettledCents: 5000),
         contains('只能填数字'),
       );
       expect(
-        SettlementService.amountNotice(
-          rawAmount: '0',
-          unsettledCents: 5000,
-          inbound: true,
-        ),
+        SettlementService.amountError(rawAmount: '0', unsettledCents: 5000),
         contains('大于 0'),
       );
-      // 超收：内联提示（不弹窗），文案点名「未收金额」
+    });
+
+    test('changeNotice：超收 → 「实收 / 入账 / 找零」三件事；未超收 → null', () {
       expect(
-        SettlementService.amountNotice(
+        SettlementService.changeNotice(
           rawAmount: '60',
           unsettledCents: 5000,
           inbound: true,
         ),
-        contains('超过未收金额 ¥50.00，请改小'),
+        '实收 ¥60.00，其中 ¥50.00 入账、找零 ¥10.00',
       );
-      // 付款方向用「未付」
+      // 付款方向只有第一个字不同
       expect(
-        SettlementService.amountNotice(
+        SettlementService.changeNotice(
           rawAmount: '60',
           unsettledCents: 5000,
           inbound: false,
         ),
-        contains('超过未付金额'),
+        startsWith('实付 '),
+      );
+      // 未超收 / 刚好 / 空 都**不打扰**
+      for (final String raw in <String>['50', '30', '', 'abc']) {
+        expect(
+          SettlementService.changeNotice(
+            rawAmount: raw,
+            unsettledCents: 5000,
+            inbound: true,
+          ),
+          isNull,
+          reason: '「$raw」不该有找零告知',
+        );
+      }
+    });
+
+    test('actionLabel：超收 → 「记 ¥93 并找零 ¥7」；否则 null（用默认文字）', () {
+      expect(
+        SettlementService.actionLabel(rawAmount: '60', unsettledCents: 5000),
+        '记 ¥50.00 并找零 ¥10.00',
       );
       expect(
-        SettlementService.amountNotice(
-          rawAmount: '50',
-          unsettledCents: 5000,
-          inbound: true,
-        ),
+        SettlementService.actionLabel(rawAmount: '50', unsettledCents: 5000),
         isNull,
       );
     });
@@ -301,7 +319,7 @@ void main() {
       expect(documents.findById(purchase.id)!.status, DocStatus.settled);
     });
 
-    test('拒绝：找不到单 / 类型不可核销 / 金额 ≤ 0 / 超收', () {
+    test('拒绝：找不到单 / 金额 ≤ 0', () {
       final String p = createProduct();
       final String acc = createAccount();
       final String party = createParty();
@@ -325,23 +343,65 @@ void main() {
         ),
         throwsA(isA<SettlementInvalid>()),
       );
-      // 超收：服务层**自己拦一遍**（界面内联提示只是提前告知，不是唯一防线）
+      expect(service.unsettledCentsOf(sale.id), 5000, reason: '拒绝时不落库');
+    });
+
+    // ---------------------------------------------- §AX·一：超收**不再拒绝**
+    test('超收：**不再抛**，改为封顶到未收额 + 返回找零', () {
+      final String p = createProduct();
+      final String acc = createAccount();
+      final String party = createParty();
+      final Document sale = saleOnCredit(p, party, 5000);
+
+      final SettlementSaved over = service.settle(
+        targetDocId: sale.id,
+        accountId: acc,
+        amountCents: 9999,
+        now: now(),
+      );
+      expect(
+        over.amountCents,
+        5000,
+        reason: '入账**封顶**到未收额（不是 9999）—— 旧行为是抛「超过未收金额…请改小」',
+      );
+      expect(over.changeCents, 4999, reason: '多出的是找零，不落库');
+      expect(over.targetUnsettledAfterCents, 0);
+      expect(service.unsettledCentsOf(sale.id), 0, reason: '封顶后正好结清');
+      // 现金箱只进 5000（找零不是收入）
+      final int cashIn = db.raw
+          .select('SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
+              'WHERE amount > 0')
+          .first['s']! as int;
+      expect(cashIn, 5000, reason: '⚡ 关键：找零 4999 没进账');
+    });
+
+    test('已结清的单：再核销仍拦（那是「没得收」，不是超收）', () {
+      final String p = createProduct();
+      final String acc = createAccount();
+      final String party = createParty();
+      final Document sale = saleOnCredit(p, party, 5000);
+      service.settle(
+        targetDocId: sale.id,
+        accountId: acc,
+        amountCents: 5000,
+        now: now(),
+      );
+
       expect(
         () => service.settle(
           targetDocId: sale.id,
           accountId: acc,
-          amountCents: 9999,
+          amountCents: 100,
           now: now(),
         ),
         throwsA(
           isA<SettlementInvalid>().having(
             (SettlementInvalid e) => e.message,
             'message',
-            contains('超过未收金额'),
+            contains('已经结清'),
           ),
         ),
       );
-      expect(service.unsettledCentsOf(sale.id), 5000, reason: '拒绝时不落库');
     });
 
     test('核销后：这笔钱能在两个方向查到，且金额一致', () {

@@ -30,6 +30,7 @@ library;
 
 import '../models/product.dart';
 import '../util/money.dart';
+import 'overpay.dart';
 
 /// 主单级字段（错误定位的键 —— 界面据此知道该标红哪一栏）
 enum SaleField { party, date, lines, payments, remark }
@@ -260,23 +261,23 @@ class SaleDraft {
       errors[SaleField.lines] = '至少要有一行商品，点「加一行」或扫商品条码';
     }
 
-    // 收款合计 ≤ 本单合计（RULE-002 约束；规则层还有一道闸，这里先给出友好文案）。
+    // 收款 > 应收：**不再报错**（§AX·一，2026-10-02 裁定「方案 3甲」）。
     //
-    // 文案语义（reply_review.md §AJ·AI-4 裁定）：**落库金额永远是「应收」，
-    // 找零是现金箱内部的物理流动，不进 immediate_payments**。所以这里不只拦，
-    // 还要把「顾客给了 100 → 请填 93，找零 7」直接算给用户看 ——
-    // 被拦本身不是最糟的，「不知道为什么被拦、以为软件坏了」才是。
-    if (paymentsOk && paidCents > totalCents) {
-      errors[SaleField.payments] =
-          '收款金额不能超过应收 ¥${Money.format(totalCents)}。'
-          '如果顾客给了 ¥${Money.format(paidCents)}，'
-          '请填 ¥${Money.format(totalCents)}，'
-          '找零 ¥${Money.format(paidCents - totalCents)}——找零不需要记账。';
-    }
+    // 旧行为是拦下来 + 一条友好文案（§AJ·AI-4）。裁定复核后**维持核心判断**
+    // ——「落库金额永远 = 应收，找零不持久化」—— 但把「拦」改成
+    // 「**按应收折算 + 两处提前告知**」：老板不必心算改回 93，
+    // 而「记了多少」由内联提示与[按钮文字][saveActionLabel]在**提交前**说清。
+    //
+    // ⚠️ 折算**不是**「草稿里改掉用户填的数」：草稿保留原文，
+    // 落库金额由 [recordedPaymentCents] 派生（`SaleService` 消费它）。
+    // 这样 UI 能显示「实收 100 / 入账 93 / 找零 7」三件事。
 
     // 散客（未选客户）必须当场结清 —— 与散采同一约束的 UI 表达。
     // 只在行与收款本身都合法时才判（否则先报更基础的错，一次一个重点）。
-    if (partyId == null && linesOk && paymentsOk && dueCents > 0) {
+    //
+    // ⚠️ 欠款按**落库金额**算（`recordedPaidCents`）：用户填 100 时
+    // 落库是 93 ⇒ 欠款 0 ⇒ 散客**允许**（那 7 元是找零，不是欠款）。
+    if (partyId == null && linesOk && paymentsOk && recordedDueCents > 0) {
       errors[SaleField.party] =
           '散客要当场结清，或选一个客户把欠款记到名下';
     }
@@ -321,8 +322,69 @@ class SaleDraft {
     return sum;
   }
 
-  /// 欠款（分）= 合计 − 已收。校验通过时 ≥ 0。
+  /// 欠款（分）= 合计 − 已收。
+  ///
+  /// ⚠️ **可能为负**（用户填的超过应收 = 超收/找零）—— 这是常态，不是错误
+  /// （§AX·一）。要「入账后欠多少」请用 [recordedDueCents]。
   int get dueCents => totalCents - paidCents;
+
+  // ------------------------------------------- §AX·一：超收（找零，方案 3甲）
+
+  /// **落库的收款金额**（分，与 [payments] **按位置对齐**）。
+  ///
+  /// 超收部分**不落库**（它是找零）：按 [totalCents] 逐行顺次钳制 ⇒
+  /// 「合计 ≤ 应收」由构造保证（RULE-002 的约束仍然成立）。
+  /// 例：填 `[100]` + 应收 93 ⇒ `[93]`；填 `[50, 50]` + 应收 93 ⇒ `[50, 43]`。
+  List<int> get recordedPaymentCents => Overpay.clamp(
+    <int>[for (final SalePaymentDraft p in payments) p.amountCents ?? 0],
+    totalCents,
+  );
+
+  /// 落库后**实际入账**的收款合计（分）= `min(已填, 应收)`。
+  int get recordedPaidCents {
+    int sum = 0;
+    for (final int cents in recordedPaymentCents) {
+      sum += cents;
+    }
+    return sum;
+  }
+
+  /// **找零**（分）= 填的 − 应收；未超收 ⇒ `0`。
+  int get changeCents =>
+      Overpay(givenCents: paidCents, dueCents: totalCents).changeCents;
+
+  /// 按**落库金额**算的欠款（分）= 应收 − 入账 —— **散客判定的依据**
+  /// （超收时 `dueCents` 是负的，不能拿它判定「还没结清」）。
+  int get recordedDueCents => totalCents - recordedPaidCents;
+
+  /// 收款框填得超过应收 ⇒ **内联橙色告知**；否则 `null`。
+  ///
+  /// > 实收 ¥100，其中 ¥93 入账、找零 ¥7
+  ///
+  /// 与 [saveActionLabel] **同源**（文案都在 [Overpay]），但**触发条件不同**：
+  /// 本 getter 只看草稿里的收款行；按钮文字还要看「顾客给了」
+  /// （它在开单页的辅助框里，**不进草稿**）。
+  String? get overpayNotice =>
+      Overpay(givenCents: paidCents, dueCents: totalCents).notice();
+
+  /// **提交按钮文字** —— §AX·一 裁定：*按钮文字是用户动作的最终确认*。
+  ///
+  /// [givenCents] = 开单页「顾客给了」那个辅助框的值。它**不进草稿**
+  /// （找零不持久化），只用来算按钮文字；不传 ⇒ 只看收款框。
+  ///
+  /// | 情况 | 按钮 |
+  /// |---|---|
+  /// | 未填 / 填得不够 / 刚好结清 | `保存` |
+  /// | **超收** | `记 ¥93 并找零 ¥7` |
+  ///
+  /// 文案在 [Overpay] 里，**不在这里造句** —— 与核销对话框**同源**
+  /// （§AX·一：两处措辞必须一致，见 `Overpay` 的文件头）。
+  String saveActionLabel({int? givenCents}) =>
+      Overpay(
+        givenCents: givenCents ?? paidCents,
+        dueCents: totalCents,
+      ).actionLabel ??
+      '保存';
 
   /// 业务发生时间（毫秒）：当天 00:00（本地时区）
   int get occurredAt => DateTime.parse(date.trim()).millisecondsSinceEpoch;

@@ -41,6 +41,13 @@ dependencies:
   shensuanzi_app:
     path: packages/shensuanzi_app
 
+  # 主机端同步服务（shelf / SyncServer / 令牌 / 端口 / 配对数据）。
+  # ⚠️ 加在**根 Flutter 应用**：`shensuanzi_core` 不能依赖它（core 要能被
+  # 客户端复用），而设置页要驱动它启停（§AH · AH-A）。
+  # 本包**无 Flutter 依赖** ⇒ 两个路径依赖都不影响 `dart test`。
+  shensuanzi_host:
+    path: packages/shensuanzi_host
+
   # SQLite 原生库（Windows / Android）。
   # ⚠️ **必须加在根 Flutter 应用**，不能加进纯 Dart 包 ——
   # 它是 Flutter 插件，加进纯 Dart 包会让 `dart test` 失效。

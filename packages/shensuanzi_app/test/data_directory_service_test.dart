@@ -218,4 +218,64 @@ void main() {
       db.close();
     });
   });
+
+  // ============================================== ⑤ 刷新标记（§AQ·六 方案 A）
+  //
+  // 背景：`refreshMarker` 在 `_openDatabase` 里与 `Db.open` **同处一个 try**，
+  // 目录变只读 / 磁盘满时它会抛 ⇒ **开得好好的库**被连坐成「数据文件打不开」。
+  // 裁定（2026-10-02）：走不抛版本，失败只记日志。
+
+  group('⑤ tryRefreshMarker（诊断动作永不抛）', () {
+    /// 指到一个「**其实是个文件**」的路径 —— `DataMarker.write` 里的
+    /// `Directory(...).createSync(recursive: true)` 必然抛 `FileSystemException`。
+    DataLocation locationAt(String directory) => DataLocation(
+      directory: directory,
+      marker: const DataMarker(schemaVersion: 1, createdAt: 0),
+      createdNow: false,
+      backupDirectory: p.join(box.path, 'backup'),
+      exportDirectory: p.join(box.path, 'export'),
+    );
+
+    String blockingFile(String name) {
+      final String path = sandboxPath(box, name);
+      File(path).writeAsStringSync('我不是目录');
+      return path;
+    }
+
+    test('目录正常 → 刷新成功、返回 null、标记真的跟上了', () {
+      final DataLocation location =
+          service.ensureInitialized(sandboxPath(box, 'data'), now: 111);
+
+      final Object? error =
+          service.tryRefreshMarker(location, Schema.version + 1);
+
+      expect(error, isNull);
+      expect(
+        DataMarker.read(location.directory)!.schemaVersion,
+        Schema.version + 1,
+        reason: '不抛 ≠ 什么也不做：成功路径必须真的写进去',
+      );
+    });
+
+    test('目录写不进去 → **返回原因、不抛**（启动不会因此崩）', () {
+      final DataLocation location = locationAt(blockingFile('blocked'));
+
+      // 关键断言：这里**不写** `throwsA` —— 它必须**安静地**返回一个原因。
+      final Object? error =
+          service.tryRefreshMarker(location, Schema.version);
+
+      expect(error, isNotNull);
+      expect(error, isA<FileSystemException>());
+    });
+
+    test('⚠️ 反向灵敏度：**未加保护**的 refreshMarker 仍会抛 —— 证明上一条不是空断言', () {
+      final DataLocation location = locationAt(blockingFile('blocked2'));
+
+      expect(
+        () => service.refreshMarker(location, Schema.version),
+        throwsA(isA<FileSystemException>()),
+        reason: '两个方法必须行为可分，否则 tryRefreshMarker 的 try 是死代码',
+      );
+    });
+  });
 }

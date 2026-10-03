@@ -125,8 +125,7 @@ void main() {
   }
 
   /// 底部按钮先滚到可见再点（800×600 视口装不下整页）
-  Future<void> tapBottomButton(WidgetTester tester, String label) async {
-    final Finder button = find.text(label);
+  Future<void> tapFinder(WidgetTester tester, Finder button) async {
     await tester.scrollUntilVisible(
       button,
       120,
@@ -136,6 +135,15 @@ void main() {
     await tester.tap(button);
     await tester.pumpAndSettle();
   }
+
+  /// 按**文案**点底部按钮。⚠️ 保存按钮的文案会随「有没有找零」变（§AX·一）
+  /// ⇒ 涉及找零的用例请用 [tapFinder] + `Key('sale-save')`（按 Key 找，不按文案）。
+  Future<void> tapBottomButton(WidgetTester tester, String label) =>
+      tapFinder(tester, find.text(label));
+
+  /// 点底部「保存」—— **按 Key 找**，与文案解耦。
+  Future<void> tapSave(WidgetTester tester) =>
+      tapFinder(tester, find.byKey(const Key('sale-save')));
 
   testWidgets('空表单点保存 → 行级报「请选一个商品」', (WidgetTester tester) async {
     await tester.pumpWidget(page());
@@ -305,7 +313,20 @@ void main() {
     await tester.tap(find.text('全款')); // 收款框 = 50.00（应收）
     await tester.enterText(find.byKey(const Key('sale-given')), '100');
     await tester.pumpAndSettle();
-    await tapBottomButton(tester, '保存 (Ctrl+S)');
+
+    // 这条路是**「顾客给了」超收**：那个数**不进草稿** ⇒
+    // ① 找零辅助行照旧写「找零 ¥50.00」 ② **按钮文字**说清「记多少 / 找多少」。
+    // ⚠️ **不**出现「实收/入账」橙色告知 —— 那是**收款框自己填超**时才有的
+    //（那时系统要替用户折算，必须说清；这里收款框本来就是应收，什么都没改）。
+    expect(find.text('找零 ¥50.00'), findsOneWidget);
+    expect(find.textContaining('记 ¥50.00 并找零 ¥50.00'), findsOneWidget);
+    expect(
+      find.textContaining('实收 ¥100.00'),
+      findsNothing,
+      reason: '收款框没填超 ⇒ 不该有折算告知',
+    );
+
+    await tapSave(tester); // 按 Key 找 —— 不依赖会变的文案
 
     expect(find.textContaining('已保存'), findsOneWidget);
     // 落库永远是应收：现金箱净流入 50 元。⚠️ 只 sum 收入方向 ——
@@ -317,6 +338,43 @@ void main() {
     expect(cashIn, 5000, reason: '落库 50 元，不是顾客给的 100 元（§AJ·AI-4）');
     // 保存后「顾客给了」即清（不持久化）
     expect(find.text('100'), findsNothing);
+  });
+
+  testWidgets('收款框直接填超（100 > 应收 50）→ 橙色告知 + 按钮 + SnackBar 说清记账额', (
+    WidgetTester tester,
+  ) async {
+    stockUp();
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await fillRow(tester);
+    // 直接在**收款框**里填 100（不点「全款」）—— 旧行为是报错「不能超过应收」并拦住
+    await tester.enterText(find.byKey(const Key('sale-pay-amount')), '100');
+    await tester.pumpAndSettle();
+
+    // ① 橙色内联告知（系统替他折算 ⇒ **必须**说清记多少 / 找多少）
+    expect(
+      find.textContaining('实收 ¥100.00，其中 ¥50.00 入账、找零 ¥50.00'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('不能超过应收'), findsNothing, reason: '§AX·一 旧文案已废止');
+    // ② 按钮文字
+    expect(find.textContaining('记 ¥50.00 并找零 ¥50.00'), findsOneWidget);
+
+    await tapSave(tester);
+
+    // ③ 保存后再说一次（第二处告知）
+    expect(find.textContaining('已保存'), findsOneWidget);
+    expect(
+      find.textContaining('记账 ¥50.00（找零 ¥50.00）'),
+      findsOneWidget,
+      reason: '第二处告知：保存后再说一次记了多少',
+    );
+    final int cashIn = db.raw
+        .select('SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
+            'WHERE amount > 0')
+        .first['s']! as int;
+    expect(cashIn, 5000, reason: '⚡ 关键：找零的 50 元没进账');
   });
 
   testWidgets('快捷键 [收 100]：收款框填应收全额，「顾客给了」填整额', (

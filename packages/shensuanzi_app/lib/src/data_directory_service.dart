@@ -93,4 +93,14 @@ class DataDirectoryService {
   /// 但升级后得跟上 —— 否则每次启动都判「三处版本号不一致」。
   DataMarker refreshMarker(DataLocation location, int schemaVersion) =>
       bootstrap.refreshMarker(location, schemaVersion);
+
+  /// [refreshMarker] 的**不抛版本** —— 失败返回原因（`null` = 成功），
+  /// 由 UI 记日志（§AQ·六 方案 A / 2026-10-02 裁定）。
+  ///
+  /// **启动路径一律用这个**：刷新标记只是诊断辅助，不该把可用软件弄挂。
+  ///
+  /// 本方法**只转发**（判据在 `AppBootstrap.tryRefreshMarker`）——
+  /// 与本类其余方法一致，见文件头「本类不含逻辑」。
+  Object? tryRefreshMarker(DataLocation location, int schemaVersion) =>
+      bootstrap.tryRefreshMarker(location, schemaVersion);
 }

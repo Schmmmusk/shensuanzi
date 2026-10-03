@@ -111,6 +111,15 @@ class AppNavigation {
       section: NavSection.quick,
       immersive: true,
     ),
+    // §AP：**送货**与销售 / 采购并列，**不做模式开关** ——
+    // 开关会让用户每次问「我该选哪个」（`ui_principles.md` §1.1「不愿意思考」）
+    NavDestination(
+      id: 'delivery',
+      label: '送货',
+      iconKey: 'local_shipping',
+      section: NavSection.quick,
+      immersive: true,
+    ),
     NavDestination(
       id: 'purchase',
       label: '采购入库',

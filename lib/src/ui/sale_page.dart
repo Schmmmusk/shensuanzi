@@ -11,7 +11,7 @@
 /// | 无资金账户时橙色提示 + 「全款」禁用（死局预防，同采购页） | `_paymentSection` |
 /// | 必填项红星（§Z 遗漏 7） | 各 `labelText` |
 /// | v1 不显示利润（§Z 遗漏 6：SnackBar 也不带） | `_afterSaved` |
-/// | 抹零：改最后一行单价即可，不做整单折扣（§Z 遗漏 2） | 无折扣控件 |
+/// | 抹零 / 整单议价：走 `document_lines.discount_amount` 字段（§AU·3.2 的 A1+B2，v3 批次 —— §BA·一） | 合计下方「让价 ¥__」；`unit_price` 保持档价 |
 /// | **现金找零辅助行**：顾客给了 100 买 93 的货 → 当场显示「找零 ¥7.00」。
 ///   **落库永远是应收** —— 找零是现金箱内部的物理流动，不进
 ///   `immediate_payments`、不持久化；「顾客给了」< 应收显示「不够」但照常放行
@@ -242,8 +242,12 @@ class _SalePageState extends State<SalePage> {
     return account != null && account.type == AccountType.cash;
   }
 
+  /// 收款框填得超过应收 ⇒ 一句橙色告知（`null` = 没有要说的事）。
+  /// 判断与文案都在 core（`SaleDraft.overpayNotice` → `Overpay`）——
+  /// 这里**只取值**（铁律：判断放纯 Dart）。
+  String? get _overpayNotice => _draft.overpayNotice;
+
   /// [收整] 的整额：应收**向上取整到元**（93.50 → 94，93 → 93）。
-  ///
   /// 裁定原文写「向下取整到元」，但向下取整对带角分的应收恒小于应收
   /// （必然显示「不够」），「一次点击完成算找零」就不成立了；
   /// 按个体户口语里「凑个整」的语义取向上取整。**待用户复核**（§AJ）。
@@ -346,13 +350,21 @@ class _SalePageState extends State<SalePage> {
     final String due = saved.dueCents > 0
         ? '，欠款 ¥${Money.formatGrouped(saved.dueCents)}'
         : '（已结清）';
+    // §AX·一 的**第二处告知**：SnackBar 再说一次「记了多少、找了多少」。
+    // 措辞取自 core 的 `Overpay.savedNoteOf` —— 与提交前的内联提示、
+    // 按钮文字**同源**（这里不造句）。
+    final String change = Overpay.savedNoteOf(
+      recordedCents: saved.paidCents,
+      changeCents: saved.changeCents,
+    );
     final String partyDue = saved.partyDueCents > 0
         ? '；$_partyName 累计欠款 ¥${Money.formatGrouped(saved.partyDueCents)}'
         : '';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '单号 ${saved.docNo} 已保存 ¥${Money.formatGrouped(saved.totalCents)}$due$partyDue',
+          '单号 ${saved.docNo} 已保存 ¥${Money.formatGrouped(saved.totalCents)}'
+          '$due${change.isEmpty ? '' : '，$change'}$partyDue',
         ),
         duration: const Duration(seconds: 6),
       ),
@@ -664,6 +676,13 @@ class _SalePageState extends State<SalePage> {
             onChanged: () => setState(() => _invalid = null),
             onRemove: _pays.length > 1 ? () => _removePayment(i) : null,
           ),
+        // 超收告知（§AX·一）：**橙色内联**、**不拦住提交** ——
+        // 「实收 ¥100，其中 ¥93 入账、找零 ¥7」。文案在 core 的 `Overpay`，
+        // 与核销对话框、与下方按钮文字**同源**。
+        if (_overpayNotice != null) ...<Widget>[
+          const SizedBox(height: 4),
+          _overpayLine(theme, _overpayNotice!),
+        ],
         // 现金找零辅助行（§AJ·AI-4）：要用就用、不用就不看（不做成弹窗 ——
         // 收款是高频动作，弹窗每次都多一步）
         if (_showCashChange) ...<Widget>[
@@ -682,6 +701,24 @@ class _SalePageState extends State<SalePage> {
     ],
   );
 
+  /// 超收告知行（橙色）—— §AX·一：「实收 ¥100，其中 ¥93 入账、找零 ¥7」。
+  ///
+  /// 与「错误红」明确区分：它**不拦人**（填超了照样能保存），
+  /// 只是把「记多少、找多少」在**提交前**说清 —— 这是 3甲 成立的前提。
+  Widget _overpayLine(ThemeData theme, String text) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: <Widget>[
+      const Icon(Icons.info_outline, color: Color(0xFFB45309), size: 18),
+      const SizedBox(width: 6),
+      Expanded(
+        child: Text(
+          text,
+          style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+        ),
+      ),
+    ],
+  );
+
   /// 现金找零辅助行（§AJ·AI-4）。**只算找零，不记账**：
   /// 「顾客给了」永不出现在草稿里；小于应收显示「不够」但**照常允许提交**
   /// （用户可能只是拿它算个数）。快捷键 = 一次点击完成「算找零」。
@@ -689,11 +726,15 @@ class _SalePageState extends State<SalePage> {
     final int total = _draft.totalCents;
     final int? given = Money.tryParseYuan(_given.text.trim());
     final bool notEnough = given != null && given < total;
+    // ⚠️ 找零的**数**只有一个出处：core 的 `Overpay`（与内联告知、按钮文字、
+    // SnackBar、核销对话框同源）—— 这里再算一遍 `given - total` 就是第二处口径。
     final String? changeText = given == null
         ? null
         : notEnough
             ? '不够'
-            : '找零 ¥${Money.formatGrouped(given - total)}';
+            : '找零 ¥${Money.formatGrouped(
+                Overpay(givenCents: given, dueCents: total).changeCents,
+              )}';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -781,6 +822,9 @@ class _SalePageState extends State<SalePage> {
       ),
       const SizedBox(width: 16),
       FilledButton.icon(
+        // ⚠️ **稳定 Key**：按钮文案会随「有没有找零」变（§AX·一），
+        // 测试**不要**按文案找它 —— 按 Key 找（`test/sale_page_test.dart`）。
+        key: const Key('sale-save'),
         onPressed: _saving ? null : _save,
         icon: _saving
             ? const SizedBox(
@@ -789,7 +833,13 @@ class _SalePageState extends State<SalePage> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : const Icon(Icons.save_outlined),
-        label: const Text('保存 (Ctrl+S)'),
+        // §AX·一：**按钮文字是用户动作的最终确认** —— 超收时直接说清会记多少。
+        // 文案由 core 给（`SaleDraft.saveActionLabel`），这里只取值。
+        label: Text(
+          _saving
+              ? '保存中…'
+              : '${_draft.saveActionLabel(givenCents: Money.tryParseYuan(_given.text.trim()))} (Ctrl+S)',
+        ),
       ),
     ],
   );

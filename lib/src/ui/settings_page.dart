@@ -22,6 +22,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
+import 'package:shensuanzi_host/shensuanzi_host.dart';
+
+import 'host_service_section.dart';
 
 /// 设置页。
 class SettingsPage extends StatefulWidget {
@@ -33,6 +36,7 @@ class SettingsPage extends StatefulWidget {
     this.backupStatusLine,
     this.backupNeedsAttention = false,
     this.onBackupNow,
+    this.hostService,
     required this.onChanged,
   });
 
@@ -54,6 +58,10 @@ class SettingsPage extends StatefulWidget {
 
   /// 「立即备份」；`null` = 不可用 → 不显示按钮（空按钮比不做糟）
   final Future<BackupOutcome> Function()? onBackupNow;
+
+  /// 主机同步服务（§AH · AH-A）。`null` = 库没开起来 / 页面在测试里单跑
+  /// ⇒ 整块显示「不可用」而不是装作能用（与 `backupStatusLine` 同款判定）。
+  final HostServiceController? hostService;
 
   /// 任何修改都会回调（宿主据此热应用缩放 / 店名）
   final void Function(AppConfig config) onChanged;
@@ -286,36 +294,22 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
               ),
 
-              // ---- 多设备同步（§AG-6 裁定：显示但禁用，不是隐藏）----
+              // ---- 多设备同步（§AH · AH-A 落地；原 §AG-6「开发中」占位在此退场）----
               //
-              // 为什么「显示一行灰字」比「藏起来」好：藏起来用户不知道将来会有
-              // 这个功能，等它出现时会想「之前怎么没有？」；显示成「开发中」
-              // 既告诉用户**软件在往哪走**，也免得他现在去找。
-              // 一个灰色标签比「没有这一行」信息量大。
+              // §AG-6 当年裁定「显示一行灰字、不隐藏」：藏起来用户不会知道将来
+              // 会有这个功能。现在功能真的到了，占位换成实装 —— 那条裁定的目的
+              // （让用户看得见产品在往哪走）已完成，不是被推翻。
               _Section(
                 title: '多设备同步',
                 children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      const Expanded(child: Text('手机 / 平板开单')),
-                      Text(
-                        '开发中',
-                        style: TextStyle(
-                          height: 1.6,
-                          color: theme.textTheme.bodySmall?.color,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '将来可以用手机扫码配对、在店里走动时开单，数据自动回到这台电脑。'
-                    '现在还没有开放。',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
-                  ),
+                  if (widget.hostService == null)
+                    Text(
+                      '数据目录还没准备好，这个功能暂时用不了。'
+                      '先把上面的数据位置设好，再回来打开它。',
+                      style: TextStyle(height: 1.6, color: theme.hintColor),
+                    )
+                  else
+                    HostServicePanel(controller: widget.hostService!),
                 ],
               ),
             ],

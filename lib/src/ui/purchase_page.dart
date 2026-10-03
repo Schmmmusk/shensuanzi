@@ -306,13 +306,20 @@ class _PurchasePageState extends State<PurchasePage> {
     final String due = saved.dueCents > 0
         ? '，欠款 ¥${Money.formatGrouped(saved.dueCents)}'
         : '（已结清）';
+    // §AY·四 的**第二处告知**：SnackBar 再说一次「记了多少、找了多少」。
+    // 措辞取自 core 的 `Overpay.savedNoteOf` —— 与销售页、核销对话框**同源**。
+    final String change = Overpay.savedNoteOf(
+      recordedCents: saved.paidCents,
+      changeCents: saved.changeCents,
+    );
     final String partyDue = saved.partyDueCents > 0
         ? '；$_partyName 累计欠款 ¥${Money.formatGrouped(saved.partyDueCents)}'
         : '';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '单号 ${saved.docNo} 已保存 ¥${Money.formatGrouped(saved.totalCents)}$due$partyDue',
+          '单号 ${saved.docNo} 已保存 ¥${Money.formatGrouped(saved.totalCents)}'
+          '$due${change.isEmpty ? '' : '，$change'}$partyDue',
         ),
         duration: const Duration(seconds: 6),
       ),
@@ -627,6 +634,12 @@ class _PurchasePageState extends State<PurchasePage> {
             onChanged: () => setState(() => _invalid = null),
             onRemove: _pays.length > 1 ? () => _removePayment(i) : null,
           ),
+        // 多付告知（§AY·四，与销售同构）：**橙色内联**、**不拦住提交** ——
+        // 「实付 ¥100，其中 ¥93 入账、找零 ¥7」。文案在 core 的 `Overpay`。
+        if (_draft.overpayNotice != null) ...<Widget>[
+          const SizedBox(height: 4),
+          _overpayLine(theme, _draft.overpayNotice!),
+        ],
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
@@ -636,6 +649,22 @@ class _PurchasePageState extends State<PurchasePage> {
           ),
         ),
       ],
+    ],
+  );
+
+  /// 多付告知行（橙色）—— 与「错误红」区分：它**不拦人**。
+  /// 文案来自 core（`PurchaseDraft.overpayNotice`），这里只摆放。
+  Widget _overpayLine(ThemeData theme, String text) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: <Widget>[
+      const Icon(Icons.info_outline, color: Color(0xFFB45309), size: 18),
+      const SizedBox(width: 6),
+      Expanded(
+        child: Text(
+          text,
+          style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+        ),
+      ),
     ],
   );
 
@@ -658,6 +687,9 @@ class _PurchasePageState extends State<PurchasePage> {
       ),
       const SizedBox(width: 16),
       FilledButton.icon(
+        // ⚠️ **稳定 Key**：按钮文案会随「有没有找回」变（§AY·四），
+        // 测试**不要**按文案找它 —— 按 Key 找。
+        key: const Key('purchase-save'),
         onPressed: _saving ? null : _save,
         icon: _saving
             ? const SizedBox(
@@ -666,7 +698,11 @@ class _PurchasePageState extends State<PurchasePage> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : const Icon(Icons.save_outlined),
-        label: const Text('保存 (Ctrl+S)'),
+        // §AY·四（与销售同构）：**按钮文字是用户动作的最终确认**。
+        // 文案由 core 给（`PurchaseDraft.saveActionLabel`），这里只取值。
+        label: Text(
+          _saving ? '保存中…' : '${_draft.saveActionLabel()} (Ctrl+S)',
+        ),
       ),
     ],
   );

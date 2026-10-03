@@ -13,8 +13,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/settings_page.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
+import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'package:shensuanzi_core/sqlite_local.dart';
+import 'package:shensuanzi_host/shensuanzi_host.dart';
 
 void main() {
+  setUpAll(useLocalSqlite);
+
   late Directory box;
   late AppConfigStore store;
   AppConfig current = const AppConfig();
@@ -39,6 +44,7 @@ void main() {
     String? backupStatusLine,
     bool backupNeedsAttention = false,
     Future<BackupOutcome> Function()? onBackupNow,
+    HostServiceController? hostService,
   }) => MaterialApp(
     home: Scaffold(
       body: SettingsPage(
@@ -48,6 +54,7 @@ void main() {
         backupStatusLine: backupStatusLine,
         backupNeedsAttention: backupNeedsAttention,
         onBackupNow: onBackupNow,
+        hostService: hostService,
         onChanged: (AppConfig config) {
           current = config;
           onChanged(config);
@@ -233,5 +240,48 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.text('立即备份'), findsOneWidget);
+  });
+
+  // ---- 多设备同步（§AH · AH-A；原 §AG-6「开发中」占位已换成实装）----
+
+  testWidgets('库没就绪时不装作能用：整段显示「暂时用不了」', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      page((AppConfig _) {}, hostService: null),
+    );
+
+    expect(find.text('多设备同步'), findsOneWidget);
+    expect(find.textContaining('数据目录还没准备好'), findsOneWidget);
+    // 不给假入口
+    expect(find.byKey(const Key('host-service-switch')), findsNothing);
+  });
+
+  testWidgets('库就绪时出现真正的开关，且默认关（§AH 遗漏 5）', (
+    WidgetTester tester,
+  ) async {
+    final Db db = Db.openInMemory();
+    final HostServiceController hostService = HostServiceController(
+      db: db,
+      identities: HostIdentityStore.inMemory(),
+      ports: const PortRange(start: 17970, end: 17979),
+      detectLocalIp: () async => '192.168.1.7',
+    );
+    addTearDown(() async {
+      await hostService.stop();
+      db.close();
+    });
+
+    await tester.pumpWidget(
+      page((AppConfig _) {}, hostService: hostService),
+    );
+
+    expect(find.text('多设备同步'), findsOneWidget);
+    expect(
+      tester
+          .widget<Switch>(find.byKey(const Key('host-service-switch')))
+          .value,
+      isFalse,
+    );
+    expect(find.text('已关闭'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

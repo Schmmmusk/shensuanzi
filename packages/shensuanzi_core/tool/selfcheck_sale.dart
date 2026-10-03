@@ -176,14 +176,17 @@ void main() {
           line.validate().keys.single == SaleLineField.quantity;
     }());
 
-    check('收款合计超合计 → payments 报「超过了本单合计」', () {
+    check('收款合计超合计 → **不再报错**（§AX·一：多付是找零）', () {
       final SaleDraft d = goodDraft(
         payments: const <SalePaymentDraft>[
           SalePaymentDraft(accountId: 'a1', amount: '999'),
         ],
       );
-      return (d.validate()[SaleField.payments] ?? '').contains('超过了本单合计') &&
-          d.dueCents < 0;
+      return d.validate()[SaleField.payments] == null &&
+          d.dueCents < 0 &&
+          d.recordedPaidCents == d.totalCents &&
+          d.changeCents == 99900 - d.totalCents &&
+          (d.overpayNotice ?? '').contains('入账、找零');
     }());
   }
 

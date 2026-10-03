@@ -17,6 +17,8 @@ IconData navIcon(String key) {
       return Icons.point_of_sale;
     case 'inventory_2':
       return Icons.inventory_2;
+    case 'local_shipping':
+      return Icons.local_shipping;
     case 'category':
       return Icons.category;
     case 'warehouse':

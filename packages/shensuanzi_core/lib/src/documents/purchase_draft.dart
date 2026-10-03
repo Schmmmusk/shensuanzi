@@ -25,6 +25,7 @@ library;
 
 import '../models/product.dart';
 import '../util/money.dart';
+import 'overpay.dart';
 
 /// 主单级字段（错误定位的键 —— 界面据此知道该标红哪一栏）
 enum PurchaseField { party, date, lines, payments, remark }
@@ -259,16 +260,18 @@ class PurchaseDraft {
       errors[PurchaseField.lines] = '至少要有一行商品，点「加一行」或扫商品条码';
     }
 
-    // 付款合计 ≤ 本单合计（RULE-001 约束；规则层还有一道闸，这里先给出友好文案）
-    if (paymentsOk && paidCents > totalCents) {
-      errors[PurchaseField.payments] =
-          '付款合计（¥${Money.format(paidCents)}）超过了本单合计'
-          '（¥${Money.format(totalCents)}），请检查付款金额';
-    }
+    // 付款 > 本单合计：**不再报错**（§AY·四，2026-10-02 裁定：与 `SaleDraft`
+    // **同构**）。多付的部分是**找回**，不是支出 —— 落库金额 = 应付（RULE-001）。
+    //
+    // ⚠️ 两份草稿的文档写明**刻意逐字段同构**（§Z 三）—— 只改销售不改采购
+    // 会让它们分叉，所以这一处必须一起改。
 
     // 散采（未选供应商）必须当场结清 —— R-12 的 UI 表达。
     // 只在行与付款本身都合法时才判（否则先报更基础的错，一次一个重点）。
-    if (partyId == null && linesOk && paymentsOk && dueCents > 0) {
+    //
+    // ⚠️ 欠款按**落库金额**算（`recordedPaidCents`）：填超时落库是应付，
+    // 欠款 0 ⇒ 散采**允许**（多出的部分是找回，不是欠款）。
+    if (partyId == null && linesOk && paymentsOk && recordedDueCents > 0) {
       errors[PurchaseField.party] =
           '散采要当场结清，或选一个供应商把欠款记到名下';
     }
@@ -313,8 +316,56 @@ class PurchaseDraft {
     return sum;
   }
 
-  /// 欠款（分）= 合计 − 已付。校验通过时 ≥ 0。
+  /// 欠款（分）= 合计 − 已付。
+  ///
+  /// ⚠️ **可能为负**（多付 = 找回，§AY·四）—— 这是常态，不是错误。
+  /// 要「入账后欠多少」请用 [recordedDueCents]。
   int get dueCents => totalCents - paidCents;
+
+  // --------------------------------------- §AY·四：多付（找回）——与销售同构
+
+  /// **落库的付款金额**（分，与 [payments] **按位置对齐**）。
+  ///
+  /// 多付的部分**不落库**（它是找回）：按 [totalCents] 逐行顺次封顶 ⇒
+  /// `SUM(immediate_payments) ≤ total_amount`（RULE-001）由构造保证。
+  /// 例：填 `[100]` + 应付 93 ⇒ `[93]`。
+  List<int> get recordedPaymentCents => Overpay.clamp(
+    <int>[for (final PurchasePaymentDraft p in payments) p.amountCents ?? 0],
+    totalCents,
+  );
+
+  /// 落库后**实际支出**的付款合计（分）= `min(已填, 应付)`。
+  int get recordedPaidCents {
+    int sum = 0;
+    for (final int cents in recordedPaymentCents) {
+      sum += cents;
+    }
+    return sum;
+  }
+
+  /// **找回**（分）= 付的 − 应付；未多付 ⇒ `0`。
+  int get changeCents =>
+      Overpay(givenCents: paidCents, dueCents: totalCents).changeCents;
+
+  /// 按**落库金额**算的欠款（分）—— **散采判定的依据**
+  /// （多付时 `dueCents` 是负的，不能拿它判定「还没结清」）。
+  int get recordedDueCents => totalCents - recordedPaidCents;
+
+  /// 付款框填得超过应付 ⇒ **内联橙色告知**；否则 `null`。
+  /// 文案在 [Overpay]，与销售开单页、与核销对话框**同源**。
+  ///
+  /// ⚠️ 采购方向用「实**付**」（销售是「实收」）—— 只有第一个字不同。
+  String? get overpayNotice =>
+      Overpay(givenCents: paidCents, dueCents: totalCents).notice(paidVerb: '付');
+
+  /// **提交按钮文字** —— §AY·四：与销售 `SaleDraft.saveActionLabel` 同构。
+  /// 未多付 ⇒ `保存`；多付 ⇒ `记 ¥93 并找零 ¥7`。
+  String saveActionLabel({int? givenCents}) =>
+      Overpay(
+        givenCents: givenCents ?? paidCents,
+        dueCents: totalCents,
+      ).actionLabel ??
+      '保存';
 
   /// 业务发生时间（毫秒）：当天 00:00（本地时区）
   int get occurredAt => DateTime.parse(date.trim()).millisecondsSinceEpoch;

@@ -192,19 +192,26 @@ void main() {
       expect(line.validate().keys, <SaleLineField>[SaleLineField.quantity]);
     });
 
-    test('收款合计超过本单合计 → payments 报，并**把找零算给用户看**（§AJ·AI-4）', () {
+    test('收款合计超过本单合计 → **不再报错**，改由落库金额折算（§AY·二）', () {
       final SaleDraft draft = goodDraft(
         payments: const <SalePaymentDraft>[
           SalePaymentDraft(accountId: 'a1', amount: '999'),
         ],
       );
-      final String? message = draft.validate()[SaleField.payments];
-      expect(message, contains('收款金额不能超过应收'));
-      // 找零三件套必须齐全：给多少 / 填多少 / 找多少 —— 只拦不算，用户会以为软件坏了
-      expect(message, contains('给了 ¥999.00'));
-      expect(message, contains('请填 ¥'));
-      expect(message, contains('找零不需要记账'));
-      expect(draft.dueCents < 0, isTrue);
+      expect(
+        draft.validate()[SaleField.payments],
+        isNull,
+        reason: '旧行为是报「收款金额不能超过应收…」—— §AX·一 已废止（3甲：不拦）',
+      );
+      expect(draft.dueCents < 0, isTrue, reason: '草稿保留原文：多付 999 > 合计 50');
+      expect(draft.recordedPaidCents, draft.totalCents, reason: '落库封顶到应收');
+      expect(draft.changeCents, 99900 - draft.totalCents);
+      // 告知三件套（给多少 / 记多少 / 找多少）由 core 的 `Overpay` 统一给 ——
+      // 开单页与核销对话框**同源**，不各写一份
+      expect(
+        draft.overpayNotice,
+        '实收 ¥999.00，其中 ¥50.00 入账、找零 ¥949.00',
+      );
     });
   });
 
@@ -479,6 +486,111 @@ void main() {
       expect(party.roles.map((PartyRole r) => r.wire), <String>['customer']);
 
       expect(() => service.createCustomer('   '), throwsStateError);
+    });
+  });
+
+  // ============================================ §AX·一：超收（找零，方案 3甲）
+  //
+  // 裁定（2026-10-02）：**核心判断不变**（落库 = 应收，找零不持久化），
+  // 但把「拦」改成「按应收折算 + 两处提前告知」。本组钉住这句话的每一半。
+
+  group('§AX·一 超收 / 找零', () {
+    /// 应收 93.00（3 × 31.00）
+    SaleDraft draftWith(List<String> paidTexts, {String? partyId}) => SaleDraft(
+      partyId: partyId,
+      date: '2026-09-27',
+      lines: const <SaleLineDraft>[
+        SaleLineDraft(
+          productId: 'p1',
+          productName: '红富士苹果',
+          quantity: '3',
+          unitPrice: '31.00',
+        ),
+      ],
+      payments: <SalePaymentDraft>[
+        for (final String text in paidTexts)
+          SalePaymentDraft(accountId: 'a1', accountName: '现金', amount: text),
+      ],
+    );
+
+    test('应收 93.00 时，填 100 → **不再报错**（行为的锚点）', () {
+      final SaleDraft d = draftWith(<String>['100']);
+      expect(d.totalCents, 9300);
+      expect(d.paidCents, 10000);
+      expect(
+        d.validate(),
+        isEmpty,
+        reason: '旧行为是报「收款金额不能超过应收…」—— §AX·一 已废止',
+      );
+    });
+
+    test('落库金额钳到应收：填 100 ⇒ 记 93，找零 7', () {
+      final SaleDraft d = draftWith(<String>['100']);
+      expect(d.recordedPaymentCents, <int>[9300]);
+      expect(d.recordedPaidCents, 9300);
+      expect(d.changeCents, 700);
+      expect(d.recordedDueCents, 0, reason: '记 93 = 应收 ⇒ 不欠');
+    });
+
+    test('逐行钳制（多行）：[50, 50] + 应收 93 ⇒ [50, 43]；只钳最后一行是不够的', () {
+      final SaleDraft d = draftWith(<String>['50', '50']);
+      expect(d.recordedPaymentCents, <int>[5000, 4300]);
+      expect(d.recordedPaidCents, 9300);
+      expect(d.changeCents, 700);
+    });
+
+    test('未超收 / 刚好 / 空 ⇒ 一律原样（**不是**把一切都钳成 0）', () {
+      expect(draftWith(<String>['50']).recordedPaymentCents, <int>[5000]);
+      expect(draftWith(<String>['50']).changeCents, 0);
+      expect(draftWith(<String>['93']).recordedPaymentCents, <int>[9300]);
+      expect(draftWith(<String>['93']).changeCents, 0);
+      expect(draftWith(<String>['']).recordedPaymentCents, <int>[0]);
+      // ⚠️ 反向灵敏度：钳制**不是**「超了就清零」—— 刚好时不丢钱
+      expect(Overpay.clamp(<int>[9300], 9300), <int>[9300]);
+      expect(Overpay.clamp(<int>[9400], 9300), <int>[9300]);
+    });
+
+    test('saveActionLabel：四档（未填 / 不够 / 有找零 / 已结清）', () {
+      final SaleDraft d = draftWith(<String>['93']);
+      expect(d.saveActionLabel(), '保存', reason: '未填「顾客给了」');
+      expect(
+        d.saveActionLabel(givenCents: 5000),
+        '保存',
+        reason: '给了 50 < 93：内联行已说「不够」，按钮不变',
+      );
+      expect(
+        d.saveActionLabel(givenCents: 9300),
+        '保存',
+        reason: '刚好结清、无找零',
+      );
+      expect(
+        d.saveActionLabel(givenCents: 10000),
+        '记 ¥93.00 并找零 ¥7.00',
+        reason: '**按钮文字是用户动作的最终确认**',
+      );
+      // 未填「顾客给了」但收款框自己填超了 —— 按钮也要说清
+      expect(draftWith(<String>['100']).saveActionLabel(), '记 ¥93.00 并找零 ¥7.00');
+    });
+
+    test('overpayNotice：只有超收才出声，且说清三件事', () {
+      expect(draftWith(<String>['100']).overpayNotice,
+          '实收 ¥100.00，其中 ¥93.00 入账、找零 ¥7.00');
+      expect(draftWith(<String>['93']).overpayNotice, isNull);
+      expect(draftWith(<String>['50']).overpayNotice, isNull);
+    });
+
+    test('散客 + 超收 ⇒ **允许**（按落库金额结清，不是按填的数）', () {
+      final SaleDraft d = draftWith(<String>['100']); // partyId = null = 散客
+      expect(
+        d.validate(),
+        isEmpty,
+        reason: '记录 93 = 应收 ⇒ 当场结清；那 7 元是找零，不是欠款',
+      );
+      // 对照：真的没付够时散客仍然被拦
+      expect(
+        draftWith(<String>['50']).validate()[SaleField.party],
+        contains('散客要当场结清'),
+      );
     });
   });
 }

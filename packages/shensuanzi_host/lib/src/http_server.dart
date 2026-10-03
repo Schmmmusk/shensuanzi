@@ -63,12 +63,17 @@ class HostHttpServer {
   ///
   /// **逐个真正 `serve`，不做「先探测再绑」**：先探测再绑存在竞态，
   /// 而这里只可能失败一次，代价可以忽略。
+  ///
+  /// [onAuthenticated] 每有一次**通过鉴权**的请求就回调一次 —— 给
+  /// `HostServiceController` 统计「有没有手机在连」用。**只在鉴权通过后调**：
+  /// 拿它当「有活动」的判据，就不能把被人乱扫端口也算进来。
   static Future<HostHttpServer> start({
     required Db db,
     required HostIdentity identity,
     PortRange ports = PortRange.defaults,
     InternetAddress? address,
     int Function()? clock,
+    void Function()? onAuthenticated,
   }) async {
     final int Function() now =
         clock ?? () => DateTime.now().millisecondsSinceEpoch;
@@ -76,6 +81,7 @@ class HostHttpServer {
       sync: SyncServer(db),
       identity: identity,
       clock: now,
+      onAuthenticated: onAuthenticated,
     );
     final InternetAddress bind = address ?? InternetAddress.anyIPv4;
 
@@ -106,11 +112,19 @@ class HostHttpServer {
 /// 路由与中间件。抽成独立类是为了让 [HostHttpServer.start] 能把
 /// 实例交给返回的服务器 —— handler 需要先于 `serve` 构建。
 class _HostRoutes {
-  _HostRoutes({required this.sync, required this.identity, required this.clock});
+  _HostRoutes({
+    required this.sync,
+    required this.identity,
+    required this.clock,
+    this.onAuthenticated,
+  });
 
   final SyncServer sync;
   final HostIdentity identity;
   final int Function() clock;
+
+  /// 鉴权通过一次调一次（`null` = 不关心）
+  final void Function()? onAuthenticated;
 
   Handler get handler {
     final Router router = Router()
@@ -188,6 +202,7 @@ class _HostRoutes {
     if (!identity.authorizes(token)) {
       return _error(401, '令牌无效或缺失');
     }
+    onAuthenticated?.call();
     return inner(request);
   };
 

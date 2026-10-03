@@ -54,10 +54,11 @@ void main() {
 
   // ============================================================ 分组内容
   group('导航结构 · 分组内容', () {
-    test('高频动作只有两个开单页，且排在最上面', () {
+    test('高频动作是三个开单页，且排在最上面', () {
       expect(
         AppNavigation.of(NavSection.quick).map((NavDestination d) => d.id),
-        <String>['sale', 'purchase'],
+        <String>['sale', 'delivery', 'purchase'],
+        reason: '§AP：送货与销售 / 采购并列，**不做模式开关**',
       );
       // 在整张列表里紧随首页之后
       expect(AppNavigation.destinations[1].section, NavSection.quick);
@@ -89,12 +90,12 @@ void main() {
 
   // ============================================================ 沉浸模式
   group('沉浸模式', () {
-    test('只有开单页是沉浸模式（销售开单 / 采购入库）', () {
+    test('只有开单页是沉浸模式（销售开单 / 送货 / 采购入库）', () {
       final Set<String> immersive = <String>{
         for (final NavDestination d in AppNavigation.destinations)
           if (d.immersive) d.id,
       };
-      expect(immersive, <String>{'sale', 'purchase'});
+      expect(immersive, <String>{'sale', 'delivery', 'purchase'});
     });
 
     test('查询类与系统类都不是沉浸模式（要显示面包屑）', () {

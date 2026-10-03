@@ -214,7 +214,7 @@ void main() {
       ]);
     });
 
-    test('付款合计超过本单合计 → payments 报（金额说清楚超了多少）', () {
+    test('付款合计超过本单合计 → **不再报错**（§AY·四：多付是找回）', () {
       final PurchaseDraft draft = goodDraft(
         payments: const <PurchasePaymentDraft>[
           PurchasePaymentDraft(accountId: 'a1', amount: '999'),
@@ -222,9 +222,76 @@ void main() {
       );
       expect(
         draft.validate()[PurchaseField.payments],
-        contains('超过了本单合计'),
+        isNull,
+        reason: '旧行为是报「超过了本单合计」—— §AY·四 已废止（与销售同构）',
       );
       expect(draft.dueCents < 0, isTrue, reason: '多付 999 元 > 合计 35 元');
+      expect(draft.recordedPaidCents, draft.totalCents, reason: '落库封顶到应付');
+      expect(draft.changeCents, 99900 - draft.totalCents);
+    });
+  });
+
+  // ======================================== §AY·四：多付（找回）——与销售同构
+  group('§AY·四 多付 / 找回', () {
+    /// 应付 35.00（10 × 3.50）
+    PurchaseDraft draftWith(List<String> paidTexts, {String? partyId}) =>
+        PurchaseDraft(
+          partyId: partyId,
+          date: '2026-09-27',
+          lines: const <PurchaseLineDraft>[
+            PurchaseLineDraft(
+              productId: 'p1',
+              productName: '红富士苹果',
+              quantity: '10',
+              unitPrice: '3.50',
+            ),
+          ],
+          payments: <PurchasePaymentDraft>[
+            for (final String text in paidTexts)
+              PurchasePaymentDraft(
+                accountId: 'a1',
+                accountName: '现金',
+                amount: text,
+              ),
+          ],
+        );
+
+    test('多付 → 不再报错；落库钳到应付、找回 = 差额', () {
+      final PurchaseDraft d = draftWith(<String>['50']);
+      expect(d.totalCents, 3500);
+      expect(d.validate(), isEmpty);
+      expect(d.recordedPaymentCents, <int>[3500]);
+      expect(d.recordedPaidCents, 3500);
+      expect(d.changeCents, 1500);
+      expect(d.recordedDueCents, 0);
+    });
+
+    test('⚠️ 反向：未多付 / 刚好 ⇒ 原样（不是把一切都钳成 0）', () {
+      expect(draftWith(<String>['20']).recordedPaymentCents, <int>[2000]);
+      expect(draftWith(<String>['20']).changeCents, 0);
+      expect(draftWith(<String>['35']).recordedPaymentCents, <int>[3500]);
+      expect(draftWith(<String>['35']).changeCents, 0);
+    });
+
+    test('overpayNotice 用「实**付**」（销售是「实收」）', () {
+      expect(
+        draftWith(<String>['50']).overpayNotice,
+        '实付 ¥50.00，其中 ¥35.00 入账、找零 ¥15.00',
+      );
+      expect(draftWith(<String>['35']).overpayNotice, isNull);
+    });
+
+    test('saveActionLabel：多付 ⇒ 说清记多少；否则「保存」', () {
+      expect(draftWith(<String>['50']).saveActionLabel(), '记 ¥35.00 并找零 ¥15.00');
+      expect(draftWith(<String>['35']).saveActionLabel(), '保存');
+    });
+
+    test('散采 + 多付 ⇒ **允许**（按落库金额结清）', () {
+      expect(draftWith(<String>['50']).validate(), isEmpty);
+      expect(
+        draftWith(<String>['20']).validate()[PurchaseField.party],
+        contains('散采要当场结清'),
+      );
     });
   });
 

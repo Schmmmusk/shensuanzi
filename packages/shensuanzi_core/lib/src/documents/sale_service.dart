@@ -53,6 +53,7 @@ class SaleSaved {
     required this.paidCents,
     required this.dueCents,
     required this.partyDueCents,
+    this.changeCents = 0,
   });
 
   /// 正式单号（主机生成，如 `XS20260927-001`）
@@ -66,6 +67,12 @@ class SaleSaved {
   /// 该客户**累计**欠款（客户欠我，≥ 0）；散客恒为 0。
   /// 语义取自 `QueryDao.partyBalances`：正 = 对方欠我。
   final int partyDueCents;
+
+  /// **找零**（分）—— 用户填的超过应收的部分（§AX·一）。`0` = 没有找零。
+  ///
+  /// SnackBar 用它说清「本单记账 ¥93（找零 ¥7）」——
+  /// 这是裁定的**第二处告知**（第一处是提交前的内联提示与按钮文字）。
+  final int changeCents;
 }
 
 /// 店内销售开单服务。**不注入 `AppEnvironment` 之类的东西** —— 它只关心库与规则。
@@ -145,12 +152,16 @@ class SaleService {
           ),
     ];
 
+    // §AX·一：落库按**钳制后**的金额走 —— 超收的部分是找零，不落库。
+    // 逐行钳制（`recordedPaymentCents`），并跳过被钳成 0 的行：
+    // 0 元的收付款单没有意义，规则层也会拒。
+    final List<int> recorded = draft.recordedPaymentCents;
     final List<PaymentEntry> payments = <PaymentEntry>[
-      for (final SalePaymentDraft payment in draft.payments)
-        if (!payment.isBlank)
+      for (int i = 0; i < draft.payments.length; i++)
+        if (!draft.payments[i].isBlank && recorded[i] > 0)
           PaymentEntry(
-            accountId: payment.accountId,
-            amount: payment.amountCents!,
+            accountId: draft.payments[i].accountId,
+            amount: recorded[i],
           ),
     ];
 
@@ -184,6 +195,7 @@ class SaleService {
       paidCents: stored.paidAmount,
       dueCents: stored.totalAmount - stored.paidAmount,
       partyDueCents: balance > 0 ? balance : 0,
+      changeCents: draft.changeCents,
     );
   }
 

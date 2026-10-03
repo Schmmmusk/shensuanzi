@@ -15,7 +15,8 @@ dependencies:
   shelf: ^1.4.2
   shelf_router: ^1.1.4
 
-  # 二维码**数据**生成（渲染由根 Flutter 应用的 qr_flutter 负责）
+  # 二维码**数据**生成（渲染由根 Flutter 应用**自绘**：拿 `PairingQr.matrix`
+  # 画 CustomPainter —— 见 `reply_review.md` §BB·三，不引 `qr_flutter`）。
   qr: ^3.0.2
 
   # token 哈希（主机只存 sha256，不存明文）

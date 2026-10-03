@@ -198,6 +198,34 @@ class AppBootstrap {
         now: DateTime.now().millisecondsSinceEpoch,
       );
 
+  /// [refreshMarker] 的**不抛版本**（§AQ·六 方案 A，2026-10-02 裁定）。
+  ///
+  /// ## 为什么要它
+  ///
+  /// 刷新标记是**诊断性辅助动作** —— 只做「把目录身份证跟上库的真实版本」。
+  /// 但它里面是**真实文件写入**（[DataMarker.write]）：目录变只读 / 磁盘满时**会抛**。
+  /// 而调用方 `_openDatabase` 里它与 `Db.open` **同处一个 `try`** ⇒
+  /// 一个辅助动作能把**开得好好的库**连坐成「数据文件打不开」，整页不可用。
+  ///
+  /// ## 契约
+  ///
+  /// 返回 `null` = 成功；否则返回失败的异常对象。**由调用方记日志** ——
+  /// 本层不知道日志该写去哪：`AppLog` 的路径是从**配置位置**推导的，
+  /// 在这里再推一次就是**第二处路径推导**（`log.dart` 文件头明令避免）。
+  ///
+  /// ## 失败的影响面极小
+  ///
+  /// 标记没刷新 ⇒ 下次启动**再判一次**「三处版本号不一致」，多一条日志而已，
+  /// **没有功能损失**。所以「不抛」在这里是严格更优的。
+  Object? tryRefreshMarker(DataLocation location, int schemaVersion) {
+    try {
+      refreshMarker(location, schemaVersion);
+      return null;
+    } catch (error) {
+      return error;
+    }
+  }
+
   /// 迁移前检查：目标能否用、会不会把数据搬进自己的备份里。
   ///
   /// ⚠️ **逻辑在 [DataDirectoryPolicy.inspectMigration]**，这里是给 UI 的转发入口。

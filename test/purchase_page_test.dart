@@ -105,8 +105,7 @@ void main() {
   /// ⚠️ 测试视口是 800×600，而页面内容（表头 + 明细 + 合计 + 付款 + 操作区）
   /// 超过一屏 —— 直接 `tap` 会得到「offset 在渲染树之外」的 miss。
   /// 先滚到可见再点（真机上窗口小了同样要滚，语义一致）。
-  Future<void> tapBottomButton(WidgetTester tester, String label) async {
-    final Finder button = find.text(label);
+  Future<void> tapFinder(WidgetTester tester, Finder button) async {
     await tester.scrollUntilVisible(
       button,
       120,
@@ -116,6 +115,11 @@ void main() {
     await tester.tap(button);
     await tester.pumpAndSettle();
   }
+
+  /// 按**文案**点底部按钮。⚠️ 保存按钮的文案会随「有没有找回」变（§AY·四）
+  /// ⇒ 涉及找回的用例请用 [tapFinder] + `Key('purchase-save')`（按 Key 找）。
+  Future<void> tapBottomButton(WidgetTester tester, String label) =>
+      tapFinder(tester, find.text(label));
 
   testWidgets('空表单点保存 → 行级报「请选一个商品」等（不是整单级）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
@@ -218,5 +222,56 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('王老板'), findsNothing);
+  });
+
+  // ------------------------------------------------- §AY·四 多付（找回）
+
+  testWidgets('多付：内联告知 + 按钮说清记多少；落库只记应付', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await fillRow(tester); // 10 × 3.50 = 35.00
+    await tester.tap(find.text('全款'));
+    await tester.pumpAndSettle();
+    // 把付款金额改成 50（> 应付 35）—— 旧行为是报「超过了本单合计」并拦住
+    await tester.enterText(find.byKey(const Key('purchase-pay-amount')), '50');
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('实付 ¥50.00，其中 ¥35.00 入账、找零 ¥15.00'),
+      findsOneWidget,
+      reason: '§AY·四：橙色内联告知（采购用「实付」）',
+    );
+    expect(find.textContaining('超过了本单合计'), findsNothing, reason: '旧文案已废止');
+    expect(
+      find.textContaining('记 ¥35.00 并找零 ¥15.00'),
+      findsOneWidget,
+      reason: '按钮文字是用户动作的最终确认',
+    );
+
+    await tapFinder(tester, find.byKey(const Key('purchase-save')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('已保存'), findsOneWidget);
+    expect(
+      find.textContaining('记账 ¥35.00（找零 ¥15.00）'),
+      findsOneWidget,
+      reason: '第二处告知：保存后再说一次记了多少',
+    );
+    // 库存进来了、成本按应付算（找回不影响成本口径）
+    expect(StockLedgerDao(db).stockOf(productId), 10);
+    final int cost = db.raw
+        .select('SELECT total_cost FROM stock_ledger WHERE product_id = ?',
+            <Object?>[productId])
+        .first
+        .values
+        .first! as int;
+    expect(cost, 3500, reason: '入库成本 = 应付 35.00，不是付出的 50.00');
+    // 资金流水只出 3500
+    final int cashOut = db.raw
+        .select('SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
+            'WHERE amount < 0')
+        .first['s']! as int;
+    expect(cashOut, -3500, reason: '出账 35.00（找回的 15.00 没进出）');
   });
 }

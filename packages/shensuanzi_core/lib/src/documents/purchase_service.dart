@@ -57,6 +57,7 @@ class PurchaseSaved {
     required this.paidCents,
     required this.dueCents,
     required this.partyDueCents,
+    this.changeCents = 0,
   });
 
   /// 正式单号（主机生成，如 `XS20260927-001`；`doc_no` 前缀按 RULE 约定）
@@ -66,6 +67,12 @@ class PurchaseSaved {
 
   /// 本单欠款 = 合计 − 立即付款（≥ 0）
   final int dueCents;
+
+  /// **找回**（分）—— 付的超过应付的部分（§AY·四）。`0` = 没有找回。
+  ///
+  /// SnackBar 用它说清「本单记账 ¥93（找回 ¥7）」——
+  /// 与销售 `SaleSaved.changeCents` **同构**。
+  final int changeCents;
 
   /// 该供应商**累计**欠款（我欠对方，≥ 0）；散采恒为 0。
   /// 语义取自 `QueryDao.partyBalances`：负 = 我欠对方。
@@ -139,12 +146,14 @@ class PurchaseService {
           ),
     ];
 
+    // §AY·四（与销售同构）：落库走**封顶后**的金额 —— 多付的部分是找回，不落库。
+    final List<int> recorded = draft.recordedPaymentCents;
     final List<PaymentEntry> payments = <PaymentEntry>[
-      for (final PurchasePaymentDraft payment in draft.payments)
-        if (!payment.isBlank)
+      for (int i = 0; i < draft.payments.length; i++)
+        if (!draft.payments[i].isBlank && recorded[i] > 0)
           PaymentEntry(
-            accountId: payment.accountId,
-            amount: payment.amountCents!,
+            accountId: draft.payments[i].accountId,
+            amount: recorded[i],
           ),
     ];
 
@@ -181,6 +190,7 @@ class PurchaseService {
       paidCents: stored.paidAmount,
       dueCents: stored.totalAmount - stored.paidAmount,
       partyDueCents: balance < 0 ? -balance : 0,
+      changeCents: draft.changeCents,
     );
   }
 

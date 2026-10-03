@@ -37,6 +37,7 @@ class DocumentsPage extends StatefulWidget {
     required this.dao,
     this.exports,
     this.settlements,
+    this.deliveries,
     this.products,
   });
 
@@ -47,6 +48,9 @@ class DocumentsPage extends StatefulWidget {
 
   /// 核销服务（`null` = 行不可点进详情 —— 与其他可选服务同款判定）
   final SettlementService? settlements;
+
+  /// 送货服务（详情页的 **[签收]** 按钮用；`null` = 签收入口不可用）
+  final DeliveryService? deliveries;
 
   /// 商品服务（详情页的明细行显示商品名）
   final ProductService? products;
@@ -88,6 +92,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
         builder: (BuildContext context) => DocumentDetailPage(
           documentId: documentId,
           settlements: settlements,
+          deliveries: widget.deliveries,
           products: widget.products,
         ),
       ),

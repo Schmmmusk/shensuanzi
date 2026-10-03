@@ -114,7 +114,7 @@ void main() {
     expect(find.byKey(const Key('copy-doc-no')), findsOneWidget, reason: '复制单号挪到本页');
   });
 
-  testWidgets('对话框：预填未收额；超收 → 内联提示且不弹第二个窗', (
+  testWidgets('对话框：预填未收额；超收 → 内联告知、不弹第二个窗、按未收额落库', (
     WidgetTester tester,
   ) async {
     final Document doc = sellOnCredit();
@@ -133,17 +133,27 @@ void main() {
     await tester.enterText(find.byKey(const Key('settle-amount')), '200');
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('超过未收金额 ¥10.00，请改小'), findsOneWidget);
+    // §AX·一：超收**不再报错**，改为橙色内联**告知**「记多少 / 找多少」
+    expect(
+      find.textContaining('实收 ¥200.00，其中 ¥10.00 入账、找零 ¥190.00'),
+      findsOneWidget,
+    );
     expect(
       find.byType(AlertDialog),
       findsOneWidget,
-      reason: '内联提示 —— 只该有一个对话框（不弹第二个窗）',
+      reason: '内联 —— 只该有一个对话框（不弹第二个窗）',
     );
+    // **按钮文字**跟着变（裁定：按钮文字是用户动作的最终确认）
+    expect(find.textContaining('记 ¥10.00 并找零 ¥190.00'), findsOneWidget);
 
-    // 确认按钮点了也不该记账（提示还在）
-    await tester.tap(find.text('确认收款'));
+    // 点确认 → **按未收额封顶落库**（旧行为是拦住不落库）
+    await tester.tap(find.textContaining('记 ¥10.00 并找零 ¥190.00'));
     await tester.pumpAndSettle();
-    expect(settlements.unsettledCentsOf(doc.id), 1000, reason: '被拦住，没落库');
+    expect(
+      settlements.unsettledCentsOf(doc.id),
+      0,
+      reason: '封顶到未收额 ¥10.00 ⇒ 正好结清',
+    );
   });
 
   testWidgets('全额收款 → SnackBar + 状态变已结清 + 按钮消失', (

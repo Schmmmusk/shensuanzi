@@ -90,6 +90,11 @@ export 'src/documents/purchase_draft.dart'
         PurchaseLineField,
         PurchasePaymentDraft,
         PurchasePaymentField;
+export 'src/documents/delivery_draft.dart'
+    show DeliveryDraft, DeliveryField, DeliveryLineDraft, DeliveryLineField;
+export 'src/documents/delivery_service.dart'
+    show DeliveryDraftInvalid, DeliverySaved, DeliveryService, DeliverySigned;
+export 'src/documents/overpay.dart' show Overpay;
 export 'src/documents/purchase_service.dart'
     show PurchaseDraftInvalid, PurchaseSaved, PurchaseService;
 export 'src/documents/sale_draft.dart'

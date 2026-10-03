@@ -16,6 +16,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'package:shensuanzi_host/shensuanzi_host.dart';
 
 import 'nav_icons.dart';
 import 'overview_page.dart';
@@ -27,6 +28,7 @@ import 'settings_page.dart';
 import 'parties_page.dart';
 import 'purchase_page.dart';
 import 'sale_page.dart';
+import 'delivery_page.dart';
 import 'stock_page.dart';
 
 class AppShell extends StatefulWidget {
@@ -39,6 +41,7 @@ class AppShell extends StatefulWidget {
     this.products,
     this.purchases,
     this.sales,
+    this.deliveries,
     this.accounts,
     this.parties,
     this.queries,
@@ -52,6 +55,7 @@ class AppShell extends StatefulWidget {
     this.backupReminder,
     this.onBackupNow,
     this.exports,
+    this.hostService,
     required this.configStore,
     required this.onConfigChanged,
     this.initialDestinationId,
@@ -71,6 +75,10 @@ class AppShell extends StatefulWidget {
   /// 店内销售开单服务（同一数据库；为 `null` 时销售页显示占位）
   final SaleService? sales;
 
+  /// 送货服务（同一数据库；为 `null` 时送货页显示占位）。
+  /// 批次 1b —— 规则早就在 core 里（RULE-003），本批次只补入口。
+  final DeliveryService? deliveries;
+
   /// 账户建档服务（同一数据库；为 `null` 时账户页显示「数据文件还没就绪」）
   final AccountService? accounts;
 
@@ -82,6 +90,10 @@ class AppShell extends StatefulWidget {
 
   /// 单据 DAO（单据列表页用）
   final DocumentDao? documents;
+
+  /// 主机同步服务（§AH · AH-A；库打开成功才有）。
+  /// `null` 时设置页那一段显示「暂时用不了」，而不是装作能用。
+  final HostServiceController? hostService;
 
   /// 核销服务（单据详情页的收款 / 付款；`null` = 列表行不可点）
   final SettlementService? settlements;
@@ -193,6 +205,19 @@ class _AppShellState extends State<AppShell> {
               productService: widget.products!,
               partyService: widget.parties!,
             );
+    } else if (current.id == 'delivery') {
+      // 送货（批次 1b / RULE-003）：创建即扣库存、状态强制 in_transit，
+      // 客户必选。**不能从销售单转** —— 转了会双扣（§AP）。
+      page =
+          widget.deliveries == null ||
+              widget.products == null ||
+              widget.parties == null
+          ? _PendingPage(destination: current)
+          : DeliveryPage(
+              service: widget.deliveries!,
+              productService: widget.products!,
+              partyService: widget.parties!,
+            );
     } else if (current.id == 'stock') {
       // 库存查询是 RULE-006 的纯聚合读；期初录入入口（§AD）还要引擎
       page = widget.engine == null || widget.products == null || widget.queries == null
@@ -214,6 +239,7 @@ class _AppShellState extends State<AppShell> {
               dao: widget.documents!,
               exports: widget.exports,
               settlements: widget.settlements,
+              deliveries: widget.deliveries,
               products: widget.products,
             );
     } else if (current.id == 'settings') {
@@ -226,6 +252,7 @@ class _AppShellState extends State<AppShell> {
         backupStatusLine: widget.backupStatusLine,
         backupNeedsAttention: widget.backupNeedsAttention,
         onBackupNow: widget.onBackupNow,
+        hostService: widget.hostService,
         onChanged: widget.onConfigChanged,
       );
     } else if (current.id == 'help') {

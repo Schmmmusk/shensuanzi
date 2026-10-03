@@ -86,16 +86,30 @@ class _SettlementDialogState extends State<_SettlementDialog> {
 
   String get _verb => widget.inbound ? '收款' : '付款';
 
-  /// 内联提示（每帧算一次；逻辑在 core）
-  String? get _notice => SettlementService.amountNotice(
+  /// **硬错误**（拦住提交）：填了但不是数字 / ≤ 0。逻辑在 core。
+  String? get _error => SettlementService.amountError(
+    rawAmount: _amount.text,
+    unsettledCents: widget.unsettledCents,
+  );
+
+  /// **超收告知**（橙色，**不拦住提交**）—— §AX·一：
+  /// 「实收 ¥100，其中 ¥93 入账、找零 ¥7」。文案在 core，与开单页同源。
+  String? get _change => SettlementService.changeNotice(
     rawAmount: _amount.text,
     unsettledCents: widget.unsettledCents,
     inbound: widget.inbound,
   );
 
+  /// 提交按钮文字：超收时改成「记 ¥93 并找零 ¥7」——**用户动作的最终确认**
+  /// （§AX·一 裁定原文）。未超收 ⇒ `null`，用默认的「确认收款 / 确认付款」。
+  String? get _actionLabel => SettlementService.actionLabel(
+    rawAmount: _amount.text,
+    unsettledCents: widget.unsettledCents,
+  );
+
   /// 金额合法时的结论句（「就结清了」/「还欠 ¥Y」）
   String? get _resultLine {
-    if (_notice != null) return null;
+    if (_error != null) return null;
     final int? cents = Money.tryParseYuan(_amount.text.trim());
     if (cents == null) return null;
     return SettlementService.resultLine(
@@ -106,7 +120,7 @@ class _SettlementDialogState extends State<_SettlementDialog> {
   }
 
   Future<void> _confirm() async {
-    if (_notice != null) return; // 内联提示已经在屏幕上，用户看得见
+    if (_error != null) return; // 内联提示已经在屏幕上，用户看得见
     final Account? account = _account;
     if (account == null) {
       setState(() => _failure = '还没有资金账户。先到「账户」页新建一个，再回来$_verb。');
@@ -143,7 +157,8 @@ class _SettlementDialogState extends State<_SettlementDialog> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final String? notice = _notice;
+    final String? notice = _error;
+    final String? change = _change;
 
     return AlertDialog(
       title: Text(_verb),
@@ -193,6 +208,14 @@ class _SettlementDialogState extends State<_SettlementDialog> {
               ),
               const SizedBox(height: 12),
 
+              // 超收告知（§AX·一）：**橙色内联**，不拦住提交 ——
+              // 「可以不拦人的提醒一律内联」（`ui_principles.md` §1.3）。
+              // 必须与开单页**同一句话**（文案在 core 的 `Overpay`）。
+              if (change != null) ...<Widget>[
+                _changeNotice(theme, change),
+                const SizedBox(height: 8),
+              ],
+
               Text('进哪个账户', style: theme.textTheme.bodySmall),
               const SizedBox(height: 4),
               if (_accounts.isEmpty)
@@ -241,9 +264,33 @@ class _SettlementDialogState extends State<_SettlementDialog> {
         ),
         FilledButton(
           onPressed: _saving ? null : _confirm,
-          child: Text(_saving ? '记账中…' : '确认$_verb'),
+          // 按钮文字是**用户动作的最终确认**（§AX·一）—— 超收时直接说清会记多少
+          child: Text(_saving ? '记账中…' : (_actionLabel ?? '确认$_verb')),
         ),
       ],
+    );
+  }
+
+  /// 超收告知（橙色）—— 与「错误红」明确区分：它**不拦人**，
+  /// 只是把「记多少、找多少」在**提交前**说清（§AX·一 裁定原文的前提）。
+  Widget _changeNotice(ThemeData theme, String text) {
+    const Color color = Color(0xFFB45309);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: color),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Icon(Icons.info_outline, color: color, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text, style: const TextStyle(height: 1.6, color: color)),
+          ),
+        ],
+      ),
     );
   }
 

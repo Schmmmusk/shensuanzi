@@ -184,9 +184,24 @@ CREATE INDEX idx_documents_created     ON documents(created_at, id);
 | `document_id` | TEXT FK | |
 | `product_id` | TEXT FK | |
 | `quantity` | INTEGER | 正数。语义按 `doc_type` 分支 |
-| `unit_price` | INTEGER | 单价（分） |
-| `amount` | INTEGER | 小计 = `quantity × unit_price` |
+| `unit_price` | INTEGER | 单价（分）。**派生展示**：不等于档价时可解释（议价行），但 `amount` 才是真相 |
+| `amount` | INTEGER | 小计（分）。**这一行真正发生多少钱** —— 当前 = `quantity × unit_price`；v3 起再减去 `discount_amount`（见下） |
 | `remark` | TEXT NULL | |
+
+> 🔜 **v3 预留（未实现）：`discount_amount`（让价）** —— 整单议价 / 抹零的落点。
+>
+> | 项 | 约定 |
+> |---|---|
+> | 单位 | **分**（与 `amount` / `unit_price` 同口径） |
+> | 符号 | **正数** = 这一行让掉多少（**不是**「负商品」） |
+> | 关系 | `amount = quantity × unit_price − discount_amount` |
+> | 约束 | `0 ≤ discount_amount ≤ quantity × unit_price` |
+> | 默认 | **0**（不是 `NULL` —— 老行 `ALTER ADD` 自动为 0，与「无让价」同义） |
+> | 落点 | **整单议价** = 把差额记在**某一行**（UI 默认最后一行）；`unit_price` **保持档价**，不再被改 |
+> | 不变量 | 列级 **`Σ amount = documents.total_amount` 不变**（B5 守的正是这条，**不守**行级乘积） |
+>
+> 排期见 `reply_review.md` §BA·一（schema v3 · `migrationStep(2)`，与 `entry_quantity` / `entry_unit` 同一次迁移）。
+> ⚠️ **`amount` 是真相、`unit_price` 是派生展示** —— 与 `total_cost` / `unit_cost` 同哲学（§AY·一 已解除行级严格约束）。
 
 **`quantity` 语义分支**：
 
@@ -506,6 +521,8 @@ UI 单据列表默认用 `ref_doc_id IS NOT NULL` 过滤掉自动生成的收付
    （它们只出现在 `receipt_doc_id`）
 6. **B5**：`SUM(document_lines.amount) = document.total_amount`，适用于
    `doc_type ∈ {purchase, sale, delivery, sale_return, purchase_return}`
+   —— ⚠️ 这是**列级**不变量：守的是「合计 = 各行小计之和」，
+   **不守**行级 `amount = quantity × unit_price`（该严格等式已于 2026-10-02 解除 —— `reply_review.md` §AY·一）
    - `stocktake`：`total_amount = 0`
    - `receipt` / `payment`：`total_amount` = 收/付款金额，`document_lines` 为空
 7. `SUM(stock_ledger.quantity) × 单价区间` 与 `SUM(total_cost)` 的关系仅通过 `unit_cost` 派生

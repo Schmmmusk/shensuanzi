@@ -25,7 +25,15 @@ library;
 
 export 'src/auth.dart' show HostIdentity, HostIdentityStore, HostToken;
 export 'src/http_server.dart' show HostHttpServer, PortRange;
+export 'src/local_ip.dart' show LocalIp, NetCandidate;
 export 'src/pairing.dart' show PairingPayload, PairingQr;
+export 'src/service_controller.dart'
+    show
+        HostServiceController,
+        HostServiceSnapshot,
+        HostServiceState,
+        hostIdentityFile,
+        hostIdentityFileName;
 
 // 同步服务端实现（协议 DTO 由 shensuanzi_core 提供，此处只导出服务端）
 export 'src/sync_server.dart' show SyncServer;

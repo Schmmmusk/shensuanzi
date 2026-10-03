@@ -612,11 +612,17 @@ void main() {
   check('方向判定：盘点/收付款单 → 不可核销',
       SettlementService.isInbound(DocType.stocktake) == null &&
           SettlementService.isInbound(DocType.receipt) == null);
-  check('内联提示：超收点名未收金额',
-      (SettlementService.amountNotice(
+  check('内联提示：超收**不再是错误**（§AX·一：多出的是找零）',
+      SettlementService.amountError(rawAmount: '60', unsettledCents: 5000) ==
+          null);
+  check('超收告知：说清「实收 / 入账 / 找零」三件事',
+      (SettlementService.changeNotice(
                   rawAmount: '60', unsettledCents: 5000, inbound: true) ??
               '')
-          .contains('超过未收金额 ¥50.00，请改小'));
+          .contains('实收 ¥60.00，其中 ¥50.00 入账、找零 ¥10.00'));
+  check('按钮文字：超收时是「记 ¥50.00 并找零 ¥10.00」',
+      SettlementService.actionLabel(rawAmount: '60', unsettledCents: 5000) ==
+          '记 ¥50.00 并找零 ¥10.00');
   check('结论句：部分收款说还欠',
       SettlementService.resultLine(
         amountCents: 2000,

@@ -58,10 +58,13 @@ AppEnvironment machine({
   List<DriveInfo>? drives,
   Map<String, String>? environment,
   bool isWindows = true,
+  List<String> probeFailures = const <String>[],
 }) => AppEnvironment(
   isWindows: isWindows,
   homeDirectory: home,
   drives: drives ?? <DriveInfo>[cDrive, dDrive],
+  // 诊断字段：`detect()` 之外没人在意，但造「类型问不出来的盘」时要能带上
+  probeFailures: probeFailures,
   environment:
       environment ??
       <String, String>{

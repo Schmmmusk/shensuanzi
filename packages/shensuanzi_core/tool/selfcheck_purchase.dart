@@ -189,13 +189,15 @@ void main() {
           line.validate().keys.single == PurchaseLineField.quantity;
     }());
 
-    check('付款合计超合计 → payments 报「超过了本单合计」', () {
+    check('付款合计超合计 → **不再报错**（§AY·四：多付是找回）', () {
       final PurchaseDraft d = goodDraft(
         payments: const <PurchasePaymentDraft>[
           PurchasePaymentDraft(accountId: 'a1', amount: '999'),
         ],
       );
-      return (d.validate()[PurchaseField.payments] ?? '').contains('超过了本单合计');
+      return d.validate()[PurchaseField.payments] == null &&
+          d.recordedPaidCents == d.totalCents &&
+          d.changeCents == 99900 - d.totalCents;
     }());
   }
 

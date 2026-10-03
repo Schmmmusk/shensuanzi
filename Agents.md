@@ -49,8 +49,15 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 
 ## 四、关键裁定（v0.4）
 
-> 49 条裁决按**类别**分组（2026-09-28）—— **表的内容一行未改**，只是加了分类标题，
-> 便于按「我要改哪一块」跳读。要按编号查（R-x / P0-x / AF-x）请用 `docs/reply_review.md` 的编号索引。
+> **52 条**裁决按**类别**分组（分组 2026-09-28；**条数 2026-10-02 更正** ——
+> 头部原写「49 条」，其后又加了 3 条（`送货签收` / `拒收` / `Schema 迁移`）没同步改这个数字）。
+> 要按编号查（R-x / P0-x / AF-x）请用 `docs/reply_review.md` 的编号索引。
+>
+> 🔧 **目标形态（2026-10-02 裁定）**：**本表只放「一句话结论 + 一句话依据」**；
+> 更长的设计论述与实现细节一律移到 `docs/` 对应文件。逐条去向见
+> `docs/proposals/AGENTS-裁定细节去向盘点.md`。
+> **进度（2026-10-02）**：**28 / 52 条已收紧**（总长 7311 → **5780** 字，均长 140.6 → **111.2**，
+> 最长 398 → 252）；其余 **24 条未动**（本就是「结论 + 一句话依据」）。见台账 §AW。
 
 ### 4.1 数据与规则
 
@@ -62,16 +69,16 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | 盘点 | `document_lines.quantity` 语义为"盘点后实际数量"，`total_amount = 0` |
 | 时钟 | `time_estimated` 标记离线估算时间 |
 | 收款单 | `allocations` 随 `createDocument` 的 payload 传入，**不进 `document_lines`**（R-1 / 2026-09-25） |
-| 立即收付 | 所有"立即收/付款"由主机**自动生成** `receipt` / `payment` 单 + `settlement`，主单通过刷新 `paid_amount` 派生 `status`。UI 可合并展示，但数据层**永不分叉**（R-6 方案 C / 2026-09-25） |
+| 立即收付 | 所有"立即收/付款"由主机**自动生成** `receipt` / `payment` 单 + `settlement`，主单通过刷新 `paid_amount` 派生 `status`。UI 可合并展示，但数据层**永不分叉**（R-6 / 2026-09-25） |
 | 退货成本 | 按**原单比例精确回退**（累计分摊 − 已分摊，消除多次退货的舍入余数）。不加 `document_line_id`（R-11 / 2026-09-25） |
-| 送货签收 | 两条路径共用 `RuleEngine.markDelivered`：主机本地 UI + 同步通道 `documentAction: mark_delivered`（R-3 已于 2026-09-29 裁定并落地，见 4.2「动作归约」行） |
+| 送货签收 | 两条路径共用 `RuleEngine.markDelivered`：主机本地 UI + 同步通道 `documentAction: mark_delivered`。见 4.2「动作归约」行 |
 | 拒收 | `sale_return.ref_doc_id` 可指向 `delivery`，成本按原送货单比例回退（RULE-003 → RULE-007） |
-| **商品建档字段** | 第一版**只有 6 个**：名称 / 单位 / 售价 / 进价 / 条码 / 安全库存。**`code` 由系统生成**（`P0001` 起），`category` / `remark` 延后，`is_active` 是列表页的「停用」操作。⚠️ **`barcode` 必须在第一版** —— 它是唯一有「补录成本」的字段（首次录入时手上正好有货，补录时要对着一屋子货逐个扫）；`cost_price` / `safety_stock` 也不能隐藏（隐藏了用户永远不知道有这回事——进价不填则毛利永远是 0）。见 `docs/reply_review.md` §R |
-| **商品编码与排序** | `code` 是定宽补零的，**不能用来排序**（`P10000` 的字典序小于 `P9999`）。列表用 `(created_at, id)`；取最大编码用 `ORDER BY LENGTH(code) DESC, code DESC` |
-| **建档只有一条路径** | 建档 / 编辑必须走 `ProductService`（生成编码 + 补时间戳与版本 + 服务层重新校验）。Windows 界面与将来的 `SyncServer.createMasterData` **共用同一条路径**，不各写一套 |
-| **条码重复** | **允许**（同箱拆卖、同款不同批次是常态，拦下来会挡住合法操作；中老年用户被拦会认为「软件坏了」）。建档时在**条码输入框下方内联提示**（橙色）—— **可以不拦人的提醒一律内联，弹窗只留给重大 / 危险 / 不可逆操作**（`docs/ui_principles.md` §1.3），文案同时说清「已经给谁用过」与「保存后扫码会显示 N 条供选择」。`ProductDao.findByBarcode` **返回 `List<Product>`**，`ProductService.barcodeOwners` **绝不静默挑一条**：0 条说没找到 / 1 条直接用 / **≥ 2 条弹选择器让用户点选**（R-15 / 2026-09-26） |
-| **单位 = 最小销售单位** | 库存、成本、流水**全部按最小售卖单位记账**（按箱进、按个卖 ⇒ 建档单位填「个」不填「箱」）—— 否则卖 1 个出现小数库存，INTEGER 直接崩。装箱关系写 `package_note`（**纯备注，不参与任何计算**；换算入账是 v1.1 候选，见 `reply_review.md` §AJ）。配套：建档页单位说明小字 + 包装说明输入框 + 帮助页 FAQ（§AJ·AI-5 / 2026-09-29） |
-| **Schema 迁移** | 版本号单一来源 = **`PRAGMA user_version`**（标记文件的 `schema_version` 只是「目录身份证」，**不参与迁移判定**）；迁移链**逐版本、不许跳跃**（`Schema.migrationStep` 一段一版）；**每条迁移一个事务**（失败只影响那一版，重试从断点继续）；**旧代码打开新库直接拒绝**（`SchemaTooNewException`）；**迁移前自动备份** `before-v{N}`（备份失败即不迁移）+ 迁移失败**自动恢复** + **迁移后刷新标记文件**（三版本号不一致记一条日志）。⚠️ **唯一未落地**：客户端镜像「**重建而非迁移**」（`mirror_schema_version`）——随 AH-B Android 端做。单一来源见 `docs/schema_migration.md`（2026-09-30） |
+| **商品建档字段** | 第一版**只有 6 个**：名称 / 单位 / 售价 / 进价 / 条码 / 安全库存（`code` 由系统生成，`category` / `remark` 延后）。⚠️ **`barcode` 必须在第一版**（唯一有「补录成本」的字段），`cost_price` / `safety_stock` 也不可隐藏 —— 依据见 §R，字段定义见 `docs/data_model.md` §2.1 |
+| **商品编码与排序** | `code` 定宽补零，**不能用来排序**（`P10000` 的字典序小于 `P9999`）。列表排序与取最大编码的具体写法见 `docs/data_model.md` |
+| **建档只有一条路径** | 建档 / 编辑**必须走 `ProductService`**（生成编码、校验、补版本都在里面）；Windows 界面与将来的 `SyncServer.createMasterData` **共用同一条路径**。见 §R |
+| **条码重复** | **允许** —— 同箱拆卖、同款不同批次是常态（拦下来会挡住合法操作，中老年用户会认为「软件坏了」）。建档时**内联提示**（橙色）；`barcodeOwners` **绝不静默挑一条**（0 条没找到 / 1 条直接用 / ≥2 条弹选择器让用户点选）。见 §R-15、`docs/ui_principles.md` §1.3 |
+| **单位 = 最小销售单位** | 库存、成本、流水**全部按最小售卖单位记账**（按箱进、按个卖 ⇒ 建档单位填「个」不填「箱」）—— 否则卖 1 个出现小数库存，INTEGER 直接崩。装箱关系写 `package_note`（**纯备注，不参与计算**；换算入账是候选）。字段见 `docs/data_model.md` §2.1、文案要求见 `docs/ui_principles.md` §4.1、裁定见 §AJ |
+| **Schema 迁移** | 五条硬约束：版本号单一来源 = **`PRAGMA user_version`**（标记文件的 `schema_version` **不参与迁移判定**）· 迁移链**逐版本、不许跳跃** · **每条迁移一个事务** · **旧代码打开新库直接拒绝**（`SchemaTooNewException`）· **迁移前自动备份、备份失败即不迁移**。⚠️ **唯一未落地**：客户端镜像「**重建而非迁移**」（随 AH-B 做）。**单一来源**见 `docs/schema_migration.md` |
 
 ### 4.2 同步
 
@@ -81,53 +88,53 @@ Android 端是瘦客户端，只做扫码、查询和离线操作队列。
 | 单号 | 主机生成。客户端离线用 `待同步-XXXXXX` 临时展示号 |
 | seq_no | 每表独立单调。同步游标按实体分开 |
 | 发现 | v1 只做二维码配对，mDNS 延后到 v1.5 |
-| 同步游标 | 四张流水用 `seq_no`（开区间）；`documents` 用 **`(created_at, id)`**、主数据用 **`(updated_at, id)`**（均复合）；`document_lines` **无独立游标**（由本页 `documents` 派生）。见 §8.2（R-4 / R-13） |
+| 同步游标 | 四张流水用 `seq_no`（开区间）；`documents` 用 **`(created_at, id)`**、主数据用 **`(updated_at, id)`**（均复合）；`document_lines` **无独立游标**。见 `docs/sync_protocol.md` §8.2 |
 | pull 的实体面 | **9 个实体**（6 业务 + 3 主数据），是同步的**唯一入口**；§8.3 的 REST **不承担同步职责**（R-13 方案 A / 2026-09-26） |
 | wire 形态 | **列名 = 数据库列名（snake_case），值 = `toRow()` 的形态** —— 布尔 `1/0`、时间毫秒、金额整数分。模型自带编解码器，无转换层 |
 | **客户端游标** | **原样保存主机返回的 `next_cursors`**（`sync_cursor` 表），**不得从本地镜像推算** —— 游标是「服务器已交付到哪里」（通信状态），不是「我本地有什么」（数据状态）（R-14 方案 A / 2026-09-26） |
-| **客户端不跑规则** | 客户端**不实现 `RuleEngine`**，只做 `±quantity` 数量累加（由 `sync_queue` 派生）。**不算成本、不算往来、不算盘点** —— 宁可诚实地不提供，也不要「看起来精确的错误」，因为客户端侧**没有任何门禁**能发现规则漂移（R-14 附带问题 3 / 2026-09-26） |
-| **未同步影响** | push 成功后队列条目转 `sent` 而**不删除**，等 pull 确认后才删 —— 否则「用户刚卖的货」在下次 pull 前不可见。UI：`显示 = 权威镜像 + 未同步影响`（R-14 附带问题 3 / 2026-09-26） |
+| **客户端不跑规则** | 客户端**不实现 `RuleEngine`**，只做 `±quantity` 数量累加（由 `sync_queue` 派生）—— 宁可诚实地不提供，也不要「看起来精确的错误」。见 `docs/sync_protocol.md` §一 / `data_model.md` §七 |
+| **未同步影响** | push 成功后队列条目转 `sent` 而**不删除**，等 pull 确认后才删 —— 否则「用户刚卖的货」在下次 pull 前不可见。UI：`显示 = 权威镜像 + 未同步影响`。见 `data_model.md` §七 |
 | **客户端镜像** | 必须 `foreignKeys: false`（否则 pull 变毒丸）；落库按**依赖顺序**（主数据在前），不照 §8.2 的字段顺序（2026-09-26） |
-| **客户端传输** | `Transport` 抽象类（请求/响应对象 + `method`/`headers`）；**绑定由应用层提供**，core 零新依赖。⚠️ 实现方必须**显式 utf8 编码**请求体（中文 payload 否则直接抛） |
+| **客户端传输** | `Transport` 抽象类；**绑定由应用层提供**，core 零新依赖。⚠️ 实现方必须**显式 utf8 编码**请求体。见 `docs/sync_protocol.md` §8.0 |
 | SyncServer 边界 | **不含 HTTP**。接 `SyncOperation`、返 `SyncResponse`；shelf 适配层属 Windows 应用侧。保持纯 Dart、零新依赖 |
-| **动作归约（R-3）** | `documentAction` **归约为状态判定**，不建 `document_actions` 表 —— 动作只做**单向终态转变**，反向用新建单据。回执分类：状态不匹配 → `conflict` + `server_state`（客户端自动对齐）；规则不允许 → `rejected`；未知动作 → `unknown_action`。并发 = **FAW**（先到主机者赢，R-3.5 —— 客户端时钟不可信，到达顺序是唯一真相） |
-| **包边界** | `shensuanzi_core` = 模型 / DAO / 规则 / **同步协议（DTO + 白名单 + 游标）+ `SyncClient`**；`shensuanzi_host` = **shelf 服务 / SyncServer / 令牌 / 端口 / 二维码数据**；`shensuanzi_app` = **数据目录策略 / 配置 / 标记文件 / 启动恢复 / 缩放档位**；二维码**渲染**留 Flutter 层。三包都无 Flutter 依赖 ⇒ `dart test` 全程可跑（2026-09-25 / 09-26） |
+| **动作归约（R-3）** | `documentAction` **归约为状态判定**，不建 `document_actions` 表 —— 动作只做**单向终态转变**，反向用新建单据；动作并发 = **FAW**（先到主机者赢，客户端时钟不可信）。回执分类与并发细节见 `docs/sync_protocol.md` §8.5 |
+| **包边界** | `shensuanzi_core` / `shensuanzi_host` / `shensuanzi_app` **都是纯 Dart**（无 Flutter 依赖）⇒ `dart test` 全程可跑；三者职责划分见 `README.md` §「包边界」。二维码**渲染**留 Flutter 层 |
 
 ### 4.3 UI / 交互
 
 | 编号 | 内容 |
 |---|---|
-| **数据目录** | **默认非系统盘 + 用户可改 + 立刻校验**（三档：拒绝 / 警告 / 放行）。**警告不拦人** —— 中老年用户被拦住会认为「软件坏了」。配置（`%APPDATA%\神算子\config.json`）与数据分离；数据目录里放 `.shensuanzi-data` 标记，**配置被清后重选原目录即可复用**（2026-09-26） |
+| **数据目录** | **默认非系统盘 + 用户可改 + 立刻校验**（三档：拒绝 / 警告 / 放行）。**警告不拦人** —— 中老年用户被拦住会认为「软件坏了」。配置与数据**分离**；标记文件让配置被清后仍可复用原目录。完整规则见 `docs/data_directory.md` |
 | **备份位置** | 数据目录的**兄弟目录**（`D:\神算子数据\` + `D:\神算子备份\`），**不放 `文档`**（OneDrive 会同步它，SQLite 有损坏风险） |
-| **UI 基线** | 面向中老年用户：**所有功能有常驻可见入口 + 文字标签**（图标可以加，文字必须在）；尺寸用相对单位；错误信息**说「怎么办」不说「哪里错了」**，且由领域层给出、UI 不造句。见 `docs/ui_principles.md` |
-| **界面字体** | **中文字体必须显式指定** —— Flutter 自带的 Roboto 不含中文字形，Windows 上会兜到**宋体**（实机一看就是「外国软件没适配」）。Windows 栈 `Microsoft YaHei UI` → `Microsoft YaHei` → `SimHei` → `Segoe UI`（**族名必须写英文**，DirectWrite 只认不变族名）；**Android 不指定**（默认字体本来就是 Noto / 思源）。字体栈在纯 Dart 的 `AppTypography`，Flutter 只取值。⚠️ 族名写错**不报错、只静默降级**，所以有断言钉住（2026-09-26） |
-| **UI 提示形态** | **可以不拦人的提醒一律内联**（放相关输入框下方，与动作同屏），且必须说清「下一步会发生什么」；**弹窗只留给重大 / 危险 / 不可逆操作**（删除、覆盖、放弃未保存）—— 这类弹窗要的是**明确确认**，不是告知。内联用**橙色**（不用错误红）。见 `docs/ui_principles.md` §1.3（2026-09-26） |
-| **启动流程的两个注入点** | `ShensuanziApp(pickDirectory:, configStore:)` —— **启动流程的全部系统交互就这两个，再多一个都嫌多**。`pickDirectory` 默认值就地指向真实实现（编译期常量）；`configStore` 默认 `null`（真实位置依赖运行时 `%APPDATA%`，编译期算不出来）⇒ 字段初始化时 `??` 解析。**`AppEnvironment` / `DataDirectoryService` / `AppBootstrap` 都不注入**：前一个会把「真实机器」变成假的，后两个把「流程」当成依赖（测出来的是 mock）。见 `docs/reply_review.md` §W（2026-09-26） |
-| **UI 分层** | **判断在纯 Dart，Flutter 只做摆放**。对话框状态机 `DataDirectoryDialogModel`、路径策略、配置都在 `shensuanzi_app`（`dart test` 可跑）；根 `lib/src/` 只放「摆放控件、调插件、pop 结果」。**全项目唯一调用 Flutter 插件的地方是 `lib/src/folder_picker.dart`**（`pickFolderFromSystem`）；**启动流程的两个注入点**（`pickDirectory` + `configStore`）见上一行（2026-09-26） |
+| **UI 基线** | 面向中老年用户：**所有功能有常驻可见入口 + 文字标签**；尺寸用相对单位；错误信息**说「怎么办」不说「哪里错了」**，且由领域层给出、UI 不造句。见 `docs/ui_principles.md` |
+| **界面字体** | **中文字体必须显式指定** —— Flutter 自带的 Roboto 不含中文字形，Windows 上会兜到**宋体**（实机一看就是「外国软件没适配」）。**族名必须写英文**（DirectWrite 只认不变族名）；Android **不指定**。字体栈见 `docs/ui_principles.md` §二、代码见 `AppTypography`（`typography.dart`）。⚠️ 族名写错**不报错、只静默降级**，所以有断言钉住 |
+| **UI 提示形态** | **可以不拦人的提醒一律内联**（与动作同屏），且必须说清「下一步会发生什么」；**弹窗只留给重大 / 危险 / 不可逆操作**。内联用**橙色**，不用错误红。见 `docs/ui_principles.md` §1.3 |
+| **启动流程的两个注入点** | `ShensuanziApp(pickDirectory:, configStore:)` —— **启动流程的全部系统交互就这两个，再多一个都嫌多**。`AppEnvironment` / `DataDirectoryService` / `AppBootstrap` **都不注入**（前一个会把「真实机器」变成假的，后两个把「流程」当依赖，测出来的是 mock）。默认值写法见 §V / §W |
+| **UI 分层** | **判断在纯 Dart，Flutter 只做摆放**。根 `lib/src/` 只放「摆放控件、调插件、pop 结果」；**全项目唯一调用 Flutter 插件的地方是 `lib/src/folder_picker.dart`**。分层表见 `docs/data_directory.md` §9.4，裁定见 §W / §V |
 | **首启只做一步** | 首启**不做 5 步模态向导**，只做「选择数据存放位置」对话框（唯一硬依赖）；欢迎 / 店名 / 账户 / 完成页**第 10 天回补**，且回补时也用**一屏浮层**而不是模态向导。见 `docs/reply_review.md` §P |
-| **主界面导航** | **左侧常驻导航**（220px + 缩放），不用顶部标签页 —— 表格要垂直空间，标签页超过 6 项会折叠成「更多」= 隐藏入口。分组：首页 / 高频动作 / 数据查询 / 系统；**高亮给三重信号**（背景 + 3px 竖条 + 加粗）；开单页是**沉浸模式**（不显示面包屑，但导航仍在）。结构在 `AppNavigation`（纯 Dart、可测），Flutter 只映射图标与摆放。见 `docs/ui_principles.md` §八 |
+| **主界面导航** | **左侧常驻导航**，不用顶部标签页 —— 表格要垂直空间，标签页超过 6 项会折叠成「更多」= 隐藏入口。分组 / 高亮三重信号 / 开单页沉浸模式 / 宽度常量的完整规则见 `docs/ui_principles.md` §八（结构在 `AppNavigation`，纯 Dart 可测） |
 
 ### 4.4 构建 / 打包 / 门禁
 
 | 编号 | 内容 |
 |---|---|
-| 依赖 | `sqlite3_flutter_libs` 加在**根 Flutter 应用**；`shensuanzi_core` 保持**纯 Dart**，只依赖 `sqlite3` 绑定（否则纯 Dart 测试无法运行） |
-| **lint 归零** | `flutter analyze`（**必须在仓库根跑**，它会连带分析 path 依赖的全部包）是本项目**唯一的全仓 lint 门禁**；`tool/typecheck.dart` 只编译不 lint，**不可替代**。目标维持 **0 issues**（2026-09-26 清掉 37 项累积债） |
-| **Windows 构建前提** | `sqlite3_flutter_libs` 在**配置阶段**从 `sqlite.org` 下载 SQLite 源码再现场编译。国内直连会**下载到 0 字节** ⇒ 配置失败 ⇒ **应用一直起不来，且与 Dart 代码无关**（`flutter analyze` / `flutter test` 全绿照样起不来）。把源码放到 `third_party/sqlite3/`（`windows/CMakeLists.txt` 有守卫，有就不联网）。见 `docs/windows_build.md` |
-| **C++ 源文件按 UTF-8 读** | `windows/` 下的 C++ 源码是 UTF-8（无 BOM），而 MSVC 默认按**系统代码页**解码 ⇒ **中文注释**会触发 `C4819`，又因 `apply_standard_settings` 带 `/WX` 把它变成错误（`C2220`），**直接编不过**。已在 `windows/runner/CMakeLists.txt` 加 `$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>`（**不能省语言限定**，否则会传给 `rc.exe`）。⚠️ 把字符串写成 `\uXXXX` **只解决字面量，注释照样报错** —— 见 `docs/windows_build.md` §七 |
+| 依赖 | `sqlite3_flutter_libs` 加在**根 Flutter 应用**；`shensuanzi_core` 保持**纯 Dart**，否则纯 Dart 测试跑不了。见 `README.md` §包边界 |
+| **lint 归零** | `flutter analyze`（**必须在仓库根跑**，连带分析 path 依赖的全部包）是**唯一的全仓 lint 门禁**，目标 **0 issues（`info` 也算）**；`tool/typecheck.dart` 只编译不 lint，**不可替代** |
+| **Windows 构建前提** | `sqlite3_flutter_libs` 在**配置阶段**从 `sqlite.org` 下载源码再现场编译；国内直连**下到 0 字节** ⇒ 配置失败 ⇒ **应用一直起不来，且与 Dart 代码无关**（analyze / test 全绿照样起不来）。把源码预置到 `third_party/sqlite3/`（`windows/CMakeLists.txt` 有守卫）。见 `docs/windows_build.md` |
+| **C++ 源文件按 UTF-8 读** | `windows/` 下的 C++ 是 UTF-8（无 BOM），MSVC 默认按**系统代码页**解码 ⇒ **中文注释**触发 `C4819`，又因 `/WX` 变成 `C2220`，**直接编不过**。已在 `windows/runner/CMakeLists.txt` 加 `/utf-8`（**不能省语言限定**，否则会传给 `rc.exe`）。见 `docs/windows_build.md` §七 |
 
 ### 4.5 数据安全
 
 | 编号 | 内容 |
 |---|---|
-| **数据可携带性原则** | 所有**面向用户的输出**（备份、导出，将来还有打印 / XLSX）优先选择**开放格式**，不引入专有封装 —— **用户的文件永远能在神算子之外被打开**。这条是「减法」的依据：备份从 ZIP 退回**裸 SQLite 文件**、导出只做 CSV 不做 XLSX/PDF，都由它解释；它与帮助页「导出的文件完全属于你」这句 UI 承诺**对齐**。**UI 承诺与开发纪律是同一条**（2026-09-28） |
-| **备份模式** | **WAL checkpoint 之后再拷贝** —— 直接拷 `.db` 会丢未 checkpoint 的事务。备份是**同步文件拷贝**（`File.copySync`），所以启动时**先让出一次事件循环再跑**，别卡在首屏那一下 |
-| **备份格式** | **裸 SQLite 文件**（非 ZIP，见「数据可携带性原则」）。文件名 `shensuanzi-schemaN-YYYYMMDD-HHMM.db`（**N = 库的真实数据格式版本** `db.schemaVersion`，随 schema 升版自动变——老用户标记还是 v1 时备份内容已是 v2，文件名必须跟数据走）；**手动包加 `m-` 前缀** ⇒ 保留策略能识别哪些不许自动清理 |
+| **数据可携带性原则** | 所有**面向用户的输出**（备份、导出，将来还有打印 / XLSX）优先**开放格式**，不引入专有封装 —— **用户的文件永远能在神算子之外被打开**。这是「减法」的依据（备份非 ZIP、导出只做 CSV），与帮助页「导出的文件完全属于你」这句 UI 承诺**同源**。四条立场的展开见 `README.md` §设计立场 |
+| **备份模式** | **WAL checkpoint 之后再拷贝** —— 直接拷 `.db` 会丢未 checkpoint 的事务。备份是**同步拷贝**（`File.copySync`），启动时**先让出一次事件循环再跑**，别卡在首屏。见 §AE |
+| **备份格式** | **裸 SQLite 文件**（非 ZIP，见「数据可携带性原则」）。文件名带 **schema 版本 + 日期**（版本 = **库的真实版本**，非标记版本），手动包加 `m-` 前缀。细节见 §AE-4 / `backup.dart` / `docs/schema_migration.md` |
 | **备份校验** | 拷完执行 `PRAGMA integrity_check`，**不通过则删除该文件并报失败** —— 一份坏的备份比没有备份更危险（用户以为有退路） |
 | **备份恢复 UI** | **v1 不做** —— 覆盖现有数据是高危操作；逃生门用文件操作已经够（帮助页给了六步）。**「不做」也要写进帮助页**，否则用户以为软件能一键恢复 |
 | **备份加密** | **v1 不做** —— 加了口令就多一条「忘记密码 = 数据全丢」的路径，而目标用户记不住密码 |
 | **备份保留策略** | 自动备份：**30 天内每天留一份、更早每周留一份**；**手动包永不自动清理**（用户主动存的，只有他知道为什么）。⚠️ 空库（没有任何单据）**不自动备份**，也不提醒 |
-| **导出的金额不带千分位** | 导出用 `Money.format`（`1234.56`），**绝不用 `Money.formatGrouped`**（`1,234.56`）—— 含逗号会被 CSV 整段加引号 ⇒ Excel 当**文本**、求和跳过，且用户看不出来（这不是格式问题，是**账算错**）。千分位只给**界面**用。两个测试文件各有一组镜像断言 + **哨兵**守着（2026-09-28） |
+| **导出的金额不带千分位** | 导出用 `Money.format`，**绝不用 `Money.formatGrouped`** —— 逗号会被 CSV 整段加引号 ⇒ Excel 当**文本**、求和跳过，且用户看不出来（**这不是格式问题，是账算错**）。千分位只给**界面**用。两道防线 + 哨兵见 §AF |
 
 ## 五、待裁定清单
 
@@ -201,6 +208,12 @@ R-3.1 ~ R-3.5 五问**已全部裁定**（2026-09-29），结论在 `docs/reply_
   - 规范条文**不要**用「见 `docs/reply.md`」引用它 —— 指向 `reply_review.md` 的对应小节
   - 从它里面摘出来的、需要长期有效的东西（清单、候选答案），**必须迁进 `reply_review.md`**
   - 已被覆盖仍需追溯的内容 → 从 git 历史取（`git show <commit>:docs/reply.md`）
+  - ⭐ **只写不改**（2026-10-02 升为治理规则）：规范 / 台账变化时**不回头追改它**。
+    它写的「**当时如何**」（如「§AL 在台账里」）**保留原样** —— 那是**当轮的历史记录**，
+    不是「当前规范」；历史正确性由 git 保证。**改它 = 篡改「当时是怎么决定的」**，
+    而"当时是怎么决定的"正是它存在的价值。
+  - ⇒ 引用它的地方（`§AR` / `§AT` 等）是在**引用「当时的描述」**，
+    不是「当前状态」—— **不需要跟着改**；要反映当前状态，改**台账 / 规范**，不是改它。
 
 ## 七、开发顺序
 

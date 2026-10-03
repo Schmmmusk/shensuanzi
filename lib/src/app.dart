@@ -30,6 +30,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'package:shensuanzi_host/shensuanzi_host.dart';
 
 import 'folder_picker.dart';
 import 'ui/app_shell.dart';
@@ -122,6 +123,9 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 店内销售开单服务（同一数据库）
   SaleService? _sales;
 
+  /// 送货服务（同一数据库）—— 批次 1b
+  DeliveryService? _deliveries;
+
   /// 账户建档服务（同一数据库）
   AccountService? _accounts;
 
@@ -139,6 +143,13 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
 
   /// 备份服务（库打开成功才有；自动与手动共用它，于是共用单飞锁）
   BackupService? _backup;
+
+  /// 主机同步服务（§AH · AH-A）。**库打开成功才有** —— 它要拿 `Db` 跑
+  /// `SyncServer`，而配对文件 `host.json` 放数据目录。
+  ///
+  /// 注意它**不是** `AppBootstrap` 那种启动注入点：它只在设置页被用户
+  /// 显式开关，**启动时不自动bind端口**（§AH 遗漏 5）。
+  HostServiceController? _hostService;
 
   /// 导出服务（§AF；只依赖导出目录，不碰数据库）
   ExportService? _exports;
@@ -184,6 +195,11 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
 
   @override
   void dispose() {
+    // 主机服务可能正听着端口 —— 退出时**主动关掉**，不要把 socket 留给下一次
+    // 启动（`stop()` 是异步的，这里不 await：dispose 不能挂起，进程退出会收尾）
+    final HostServiceController? host = _hostService;
+    _hostService = null;
+    if (host != null) unawaited(host.stop());
     _db?.close();
     super.dispose();
   }
@@ -230,7 +246,18 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
           ' / 标记 v${location.marker.schemaVersion}'
           '（库已迁移，刷新标记文件）',
         );
-        _service.refreshMarker(location, schemaVersion);
+        // §AQ·六 方案 A（2026-10-02 裁定）：刷新标记是**诊断性辅助动作**，
+        // 它在这里与 `Db.open` **同处一个 try** —— 一旦抛出，**开得好好的库**
+        // 会被连坐成「数据文件打不开」，软件整页不可用（目录变只读 / 磁盘满就会）。
+        // 所以走**不抛版本**，失败只记一条日志：标记没刷新 ⇒ 下次启动再判一次，
+        // 多一条日志而已，**没有功能损失**。
+        final Object? refreshError =
+            _service.tryRefreshMarker(location, schemaVersion);
+        if (refreshError != null) {
+          _log.write(
+            '刷新标记文件失败（$refreshError）—— 数据可正常使用，下次启动会再试',
+          );
+        }
       }
       final BackupService backup = BackupService(
         dataDirectory: location.directory,
@@ -256,10 +283,21 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
           engine: RuleEngine(db),
           queries: QueryDao(_db!),
         );
+        _deliveries = DeliveryService(
+          engine: RuleEngine(db),
+          queries: QueryDao(_db!),
+        );
         _accounts = AccountService(AccountDao(db));
         _parties = PartyService(PartyDao(db));
         _engine = RuleEngine(db);
         _settlements = SettlementService(db: db, engine: RuleEngine(db));
+        // §AH · AH-A：主机同步服务。**只建对象，不启服务** ——
+        // 监听端口必须由用户在设置页显式打开（遗漏 5）。
+        // `host.json` 与库同目录（`auth.dart`：主机设施放文件、不动 schema）。
+        _hostService = HostServiceController(
+          db: db,
+          identities: HostIdentityStore(hostIdentityFile(location.directory)),
+        );
         _dbFailure = null;
       });
       // 先把状态读出来（设置页/概览页首帧就得有「上次备份」），
@@ -271,6 +309,11 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       // 而这里恰好知道「是哪个位置、哪条异常」。路径不是经营数据，可以记。
       _log.crash(error, stack, label: '打开数据库失败');
       _log.write('数据位置：${location.directory}');
+      // 换库 / 换目录时**先把旧的主机服务停掉** —— 否则那个 shelf 实例
+      // 会继续占着端口、还握着一个即将失效的 `Db`。
+      final HostServiceController? leavingHost = _hostService;
+      _hostService = null;
+      if (leavingHost != null) unawaited(leavingHost.stop());
       setState(() {
         _location = location;
         _db = null;
@@ -284,6 +327,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         _products = null;
         _purchases = null;
         _sales = null;
+        _deliveries = null;
         _accounts = null;
         _parties = null;
         _engine = null;
@@ -406,6 +450,9 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
           _location = null;
           _db = null;
           // 与失败分支保持同一份清单：库没了，依赖它的东西一起清掉
+          final HostServiceController? leavingHost = _hostService;
+          _hostService = null;
+          if (leavingHost != null) unawaited(leavingHost.stop());
           _queries = null;
           _backup = null;
           _exports = null;
@@ -437,12 +484,14 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       products: _products,
       purchases: _purchases,
       sales: _sales,
+      deliveries: _deliveries,
       accounts: _accounts,
       parties: _parties,
       queries: _queries,
       documents: _db == null ? null : DocumentDao(_db!),
       settlements: _settlements,
       engine: _engine,
+      hostService: _hostService,
       uiScale: _config.uiScale,
       shopName: _config.shopName,
       // ---- 备份文案（§AE-3 / AE-5 / 遗漏 2）----

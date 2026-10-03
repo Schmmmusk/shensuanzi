@@ -34,6 +34,7 @@ class DocumentDetailPage extends StatefulWidget {
     super.key,
     required this.documentId,
     required this.settlements,
+    this.deliveries,
     this.products,
     this.onChanged,
   });
@@ -42,6 +43,10 @@ class DocumentDetailPage extends StatefulWidget {
 
   /// 核销服务（读详情 + 执行核销）
   final SettlementService settlements;
+
+  /// 送货服务（批次 1b：`in_transit` 的送货单要显示 **[签收]**）。
+  /// `null` = 签收入口不可用（与其余可选服务同款判定）。
+  final DeliveryService? deliveries;
 
   /// 明细行要显示商品名；`null` = 只显示数量与单价
   final ProductService? products;
@@ -256,30 +261,110 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     final Document doc = summary.document;
     final bool? inbound = SettlementService.isInbound(doc.docType);
     final int unsettled = widget.settlements.unsettledCentsOf(widget.documentId);
+    final bool isDelivery = doc.docType == DocType.delivery;
 
-    if (inbound == null || unsettled <= 0) {
-      return Text(
-        inbound == null
-            ? '这类单据不需要收付款。'
-            : '这张单已经结清了。',
-        style: TextStyle(
-          height: 1.6,
-          color: theme.textTheme.bodySmall?.color,
+    final List<Widget> children = <Widget>[];
+
+    // ---- 送货单：**签收**（批次 1b / RULE-003）----
+    // 放在收款之前：货送到了才谈得上收钱（状态机：in_transit → delivered → settled）
+    if (isDelivery) {
+      children.add(_deliverRow(theme, doc));
+      children.add(const SizedBox(height: 12));
+    }
+
+    if (inbound != null && unsettled > 0) {
+      children.add(
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.icon(
+            key: const Key('settle-button'),
+            onPressed: _settle,
+            icon: const Icon(Icons.payments_outlined),
+            label: Text(
+              '${inbound ? '收款' : '付款'} ¥${Money.formatGrouped(unsettled)}',
+            ),
+          ),
+        ),
+      );
+    } else {
+      children.add(
+        Text(
+          inbound == null ? '这类单据不需要收付款。' : '这张单已经结清了。',
+          style: TextStyle(
+            height: 1.6,
+            color: theme.textTheme.bodySmall?.color,
+          ),
         ),
       );
     }
 
+    // ---- 送货单：**拒收的出口**（1b 明确不做拒收，但要给一条能照做的路）----
+    if (isDelivery) {
+      children.add(const SizedBox(height: 8));
+      children.add(
+        const Text(
+          '客户拒收：请改用「销售退货」把货退回来（退货功能开发中）。',
+          style: TextStyle(height: 1.6, color: Color(0xFFB45309)),
+        ),
+      );
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+  }
+
+  /// 送货单的「签收」行（`in_transit` 才有按钮）。
+  Widget _deliverRow(ThemeData theme, Document doc) {
+    if (doc.status != DocStatus.inTransit) {
+      return Text(
+        '这张送货单已签收。',
+        style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+      );
+    }
+    if (widget.deliveries == null) {
+      return Text(
+        '签收入口暂时用不了（数据还没就绪）。',
+        style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+      );
+    }
     return Align(
       alignment: Alignment.centerLeft,
       child: FilledButton.icon(
-        key: const Key('settle-button'),
-        onPressed: _settle,
-        icon: const Icon(Icons.payments_outlined),
-        label: Text(
-          '${inbound ? '收款' : '付款'} ¥${Money.formatGrouped(unsettled)}',
-        ),
+        key: const Key('mark-delivered-button'),
+        onPressed: _markDelivered,
+        icon: const Icon(Icons.local_shipping_outlined),
+        label: const Text('签收'),
       ),
     );
+  }
+
+  /// 签收（RULE-003）。**重复点是 no-op**（core 返回 `alreadyDone`，
+  /// 文案已说清「这次什么都没变」）—— 中老年用户多点一次不该看到报错。
+  Future<void> _markDelivered() async {
+    final DeliveryService? deliveries = widget.deliveries;
+    if (deliveries == null) return;
+    try {
+      final DeliverySigned signed = deliveries.markDelivered(widget.documentId);
+      if (!mounted) return;
+      setState(_load);
+      widget.onChanged?.call();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(signed.message),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '没能签收（$error）。'
+            '先关掉这一页再试一次；如果一直这样，请把这句话告诉技术支持。',
+          ),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
   }
 
   Widget _linesTable(ThemeData theme) {

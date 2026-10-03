@@ -37,7 +37,12 @@ export 'src/data_marker.dart'
     show DataMarker, DirectoryContents, contentsOf;
 export 'src/dialog_model.dart'
     show ConfirmOutcome, DataDirectoryDialogModel, DialogNoticeKind;
-export 'src/environment.dart' show AppEnvironment, DriveInfo, DriveKind;
+// ⚠️ 这里只导出**接缝本身**（`DriveEnumerator` 的契约 = `() → DriveEnumeration`）。
+// `RawDrive` / `winDrive*` / `mapRawDrives` 是**生产实现的词汇**，不是接缝的一部分 ——
+// 它们**刻意不导出**（不扩大包的公开面），但仍是 public 的，
+// 好让包内测试能直接测那层映射（`test/environment_test.dart` 用 `src/` 导入）。
+export 'src/environment.dart'
+    show AppEnvironment, DriveEnumeration, DriveEnumerator, DriveInfo, DriveKind;
 export 'src/navigation.dart'
     show AppNavigation, NavDestination, NavSection;
 export 'src/backup.dart'

@@ -32,6 +32,7 @@ import '../rules/payment_entry.dart';
 import '../rules/rule_engine.dart';
 import '../util/ids.dart';
 import '../util/money.dart';
+import 'overpay.dart';
 
 /// 核销失败（文案已说清「怎么办」，UI 直接显示）。
 class SettlementInvalid implements Exception {
@@ -51,6 +52,7 @@ class SettlementSaved {
     required this.amountCents,
     required this.inbound,
     required this.targetUnsettledAfterCents,
+    this.changeCents = 0,
   });
 
   /// 新建的收付款单 id（详情页可据此跳转）
@@ -59,6 +61,7 @@ class SettlementSaved {
   /// 新建的收付款单号（主机已分配正式号）
   final String docNo;
 
+  /// **实际入账**金额（分）—— 用户填的超过未收额时**已封顶**（§AX·一）
   final int amountCents;
 
   /// `true` = 收款（`receipt`）；`false` = 付款（`payment`）
@@ -66,6 +69,12 @@ class SettlementSaved {
 
   /// 核销后**被核销单**还差多少（0 = 已结清）
   final int targetUnsettledAfterCents;
+
+  /// **找零**（分）—— 用户填的超出未收额的部分。`0` = 没有找零。
+  ///
+  /// UI 用它在 SnackBar 里说清「已收 ¥93（找零 ¥7）」——
+  /// 裁定的**第二处告知**（第一处是提交前的内联提示与按钮文字，§AX·一）。
+  final int changeCents;
 }
 
 class SettlementService {
@@ -113,14 +122,18 @@ class SettlementService {
 
   // ------------------------------------------------------------ 文案（纯函数，可测）
 
-  /// 金额输入的内联提示（UI 每帧调用；`null` = 没问题）。
+  /// 金额输入的**内联提示**（UI 每帧调用；`null` = 没问题）。
   ///
-  /// 超收**内联提示**而不是弹窗（reply.md 六个待审查项 · 2 / `ui_principles.md` §1.3）：
+  /// 内联而不是弹窗（reply.md 六个待审查项 · 2 / `ui_principles.md` §1.3）：
   /// 「可以不拦人的提醒一律内联，弹窗只留给重大 / 危险 / 不可逆操作」。
-  static String? amountNotice({
+  ///
+  /// **硬错误**（必须拦住）：填了但不是数字 / ≤ 0。
+  ///
+  /// ⚠️ **超收不在此列**（§AX·一，2026-10-02 裁定）—— 填的超过未收额
+  /// 是**找零**，不是错误。它走 [changeNotice] / [actionLabel] 的**告知**路径。
+  static String? amountError({
     required String rawAmount,
     required int unsettledCents,
-    required bool inbound,
   }) {
     final String text = rawAmount.trim();
     if (text.isEmpty) return null; // 还没填 —— 不打扰
@@ -129,24 +142,55 @@ class SettlementService {
       return '只能填数字，比如 ${Money.format(unsettledCents)}';
     }
     if (cents <= 0) return '金额要大于 0';
-    if (cents > unsettledCents) {
-      return '超过未${inbound ? '收' : '付'}金额 '
-          '¥${Money.format(unsettledCents)}，请改小';
-    }
     return null;
   }
 
-  /// 提交前的结论句：「…… 后这张单就结清了」/「…… 后还欠 ¥Y」
+  /// **超收告知**（橙色，**不是错误**）：`实收 ¥100，其中 ¥93 入账、找零 ¥7`。
+  /// 未超收 ⇒ `null`（不打扰）。文案在 [Overpay]，与开单页**同源**。
+  static String? changeNotice({
+    required String rawAmount,
+    required int unsettledCents,
+    required bool inbound,
+  }) {
+    final int? cents = Money.tryParseYuan(rawAmount.trim());
+    if (cents == null) return null;
+    return Overpay(
+      givenCents: cents,
+      dueCents: unsettledCents,
+    ).notice(paidVerb: inbound ? '收' : '付');
+  }
+
+  /// **提交按钮文字**：超收 ⇒ `记 ¥93 并找零 ¥7`；否则 `null`（调用方用默认文字）。
+  static String? actionLabel({
+    required String rawAmount,
+    required int unsettledCents,
+  }) {
+    final int? cents = Money.tryParseYuan(rawAmount.trim());
+    if (cents == null) return null;
+    return Overpay(
+      givenCents: cents,
+      dueCents: unsettledCents,
+    ).actionLabel;
+  }
+
+  /// 提交前的结论句：「…… 后这张单就结清了」/「…… 后还欠 ¥Y」。
+  ///
+  /// ⚠️ 按**入账金额**（封顶后）算 —— 超收时 `amountCents` 大于未收额，
+  /// 直接拿它减会得到负数（§AX·一）。
   static String resultLine({
     required int amountCents,
     required int unsettledCents,
     required bool inbound,
   }) {
     final String verb = inbound ? '收' : '付';
-    final int after = unsettledCents - amountCents;
+    final int recorded = Overpay(
+      givenCents: amountCents,
+      dueCents: unsettledCents,
+    ).recordedCents;
+    final int after = unsettledCents - recorded;
     return after <= 0
-        ? '$verb ¥${Money.format(amountCents)} 后这张单就结清了'
-        : '$verb ¥${Money.format(amountCents)} 后还欠 ¥${Money.format(after)}';
+        ? '$verb ¥${Money.format(recorded)} 后这张单就结清了'
+        : '$verb ¥${Money.format(recorded)} 后还欠 ¥${Money.format(after)}';
   }
 
   // ------------------------------------------------------------ 写（核销）
@@ -176,11 +220,16 @@ class SettlementService {
     if (amountCents <= 0) {
       throw const SettlementInvalid('金额要大于 0。');
     }
-    if (amountCents > unsettled) {
-      throw SettlementInvalid(
-        '超过未${inbound ? '收' : '付'}金额 ¥${Money.format(unsettled)}，请改小。',
-      );
+    // §AX·一（3甲）：超收**不再抛** —— 按未收额**封顶**，多出的是**找零**
+    // （现金箱内部的物理流动，不落库）。老板不必心算改回应收额。
+    //
+    // 但「这张单已经结清了」仍要拦：那时封顶后是 0，落一张 0 元的收付款单
+    // 没有意义（规则层也会拒），而且它**不是**超收语义。
+    if (unsettled <= 0) {
+      throw const SettlementInvalid('这张单已经结清了，不用再收付。');
     }
+    final Overpay over = Overpay(givenCents: amountCents, dueCents: unsettled);
+    final int recorded = over.recordedCents;
 
     final int stamp = now ?? DateTime.now().millisecondsSinceEpoch;
     final Document receipt = Document(
@@ -192,7 +241,7 @@ class SettlementService {
       status: DocStatus.settled,
       partyId: target.partyId,
       accountId: accountId,
-      totalAmount: amountCents,
+      totalAmount: recorded,
       occurredAt: stamp,
       createdAt: stamp,
       updatedAt: stamp,
@@ -201,7 +250,7 @@ class SettlementService {
     final RuleOutcome outcome = _engine.dispatch(
       document: receipt,
       allocations: <Allocation>[
-        Allocation(targetDocId: targetDocId, amount: amountCents),
+        Allocation(targetDocId: targetDocId, amount: recorded),
       ],
       now: stamp,
     );
@@ -217,12 +266,13 @@ class SettlementService {
     return SettlementSaved(
       docId: stored?.id ?? applied.id,
       docNo: stored?.docNo ?? applied.docNo,
-      amountCents: amountCents,
+      amountCents: recorded,
       inbound: inbound,
       targetUnsettledAfterCents: targetAfter == null
           ? 0
           : targetAfter.totalAmount -
                 SettlementDao(_db).settledAmountOf(targetDocId),
+      changeCents: over.changeCents,
     );
   }
 }

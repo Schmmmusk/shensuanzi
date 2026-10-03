@@ -16,6 +16,7 @@ import '../test/csv_test.dart' as csv_test;
 import '../test/data_directory_service_test.dart' as data_directory_service_test;
 import '../test/data_directory_test.dart' as data_directory_test;
 import '../test/dialog_model_test.dart' as dialog_model_test;
+import '../test/environment_test.dart' as environment_test;
 import '../test/export_test.dart' as export_test;
 import '../test/log_test.dart' as log_test;
 import '../test/manual_test.dart' as manual_test;
@@ -39,6 +40,7 @@ void main() {
     data_directory_service_test.main,
     data_directory_test.main,
     dialog_model_test.main,
+    environment_test.main,
     export_test.main,
     log_test.main,
     manual_test.main,
@@ -53,7 +55,7 @@ void main() {
     selfcheck_manual.main,
   ];
   print(
-    '编译通过：12 个测试文件 + 5 个自检脚本 + 1 个生成脚本已通过类型检查（未执行）。'
+    '编译通过：13 个测试文件 + 5 个自检脚本 + 1 个生成脚本已通过类型检查（未执行）。'
     '（共 ${entries.length} 个入口）',
   );
 }
