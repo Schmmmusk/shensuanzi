@@ -296,6 +296,21 @@ void main() {
           step1.single.contains('ALTER TABLE products ADD COLUMN package_note'),
       '${step1.length} 条');
 
+  // v2 → v3（2026-10-03，§BD）：五列一次到齐
+  final List<String> step2 = Schema.migrationStep(2);
+  check(
+      'migrationStep(2) 恰好五条 ALTER（两张表 / 五列 / discount 带默认 0）',
+      step2.length == 5 &&
+          step2.every((String s) => s.startsWith('ALTER TABLE')) &&
+          step2[0].contains('ADD COLUMN package_unit TEXT') &&
+          step2[1].contains('ADD COLUMN package_size INTEGER') &&
+          step2[2].contains(
+              'ADD COLUMN discount_amount INTEGER NOT NULL DEFAULT 0') &&
+          step2[3].contains('ADD COLUMN entry_quantity INTEGER') &&
+          step2[4].contains('ADD COLUMN entry_unit TEXT'),
+      '${step2.length} 条');
+  check('改 v3 没回头动 v2 那一步', step1.length == 1);
+
   var missingThrown = false;
   try {
     Schema.migrationStep(Schema.version);
@@ -374,6 +389,26 @@ void main() {
                 .select("SELECT package_note FROM products WHERE id = 'p-v1'")
                 .first['package_note'] ==
             null);
+
+    // 环级（审查意见 §五）：不只查「最终到了 v3」，还查**中间 v2 那一环真的跑了**
+    // —— 只断言最终结构会漏掉「链跳环」，因为 v2 的列也可能由别的路径补上。
+    final Set<Object?> fxP = fxMigrated.raw
+        .select('PRAGMA table_info(${Schema.products})')
+        .map((Row r) => r['name'])
+        .toSet();
+    final Set<Object?> fxL = fxMigrated.raw
+        .select('PRAGMA table_info(${Schema.documentLines})')
+        .map((Row r) => r['name'])
+        .toSet();
+    check(
+        '环级：v1→v2→v3 **两环都留下产物**（package_note + v3 五列）',
+        fxP.contains('package_note') &&
+            fxP.contains('package_unit') &&
+            fxP.contains('package_size') &&
+            fxL.contains('discount_amount') &&
+            fxL.contains('entry_quantity') &&
+            fxL.contains('entry_unit'),
+        'products / document_lines 的列不全');
     fxMigrated.close();
 
     // 迁移前自动备份（reply.md Schema 篇 §3.2）—— 升级前必须留退路
@@ -392,6 +427,55 @@ void main() {
           backupVersion == 1 && !backupHasNewColumn,
           'v$backupVersion / 有新列=$backupHasNewColumn');
     }
+
+    // 环级：v2→v3 中途失败 ⇒ **停在 v2**（该版整条事务回滚），重试从断点继续。
+    // 用「预先塞一个 v3 要加的同名列」制造必然失败（与 schema_test 同款构造）。
+    final String ringPath = migPath('ring.db');
+    fixture.copySync(ringPath);
+    final Database ringRaw = sqlite3.open(ringPath);
+    ringRaw.execute('ALTER TABLE document_lines ADD COLUMN entry_unit TEXT');
+    ringRaw.execute('PRAGMA user_version = 1');
+    ringRaw.dispose();
+
+    var ringThrew = false;
+    try {
+      Db.open(ringPath);
+    } catch (_) {
+      ringThrew = true;
+    }
+    check('环级：v2→v3 失败会抛（不静默）', ringThrew);
+
+    final Database ringChk = sqlite3.open(ringPath);
+    final int ringVersion =
+        ringChk.select('PRAGMA user_version').first['user_version']! as int;
+    final Set<Object?> ringP = ringChk
+        .select('PRAGMA table_info(products)')
+        .map((Row r) => r['name'])
+        .toSet();
+    final Set<Object?> ringL = ringChk
+        .select('PRAGMA table_info(document_lines)')
+        .map((Row r) => r['name'])
+        .toSet();
+    ringChk.dispose();
+    check('环级：**停在 v2**（v1→v2 已提交并保留）', ringVersion == 2,
+        'v$ringVersion');
+    check(
+        '环级：v2→v3 **整条回滚**（package_unit / discount_amount 都不在）',
+        ringP.contains('package_note') &&
+            !ringP.contains('package_unit') &&
+            !ringL.contains('discount_amount'));
+
+    final Database ringFix = sqlite3.open(ringPath);
+    ringFix.execute('ALTER TABLE document_lines DROP COLUMN entry_unit');
+    ringFix.dispose();
+    final Db ringRetry = Db.open(ringPath);
+    check('环级：重试后升到 v3（从断点继续）',
+        ringRetry.schemaVersion == Schema.version);
+    check(
+        '环级：重试生成 before-v2（不覆盖 before-v1）',
+        File('$ringPath.before-v2').existsSync() &&
+            File('$ringPath.before-v1').existsSync());
+    ringRetry.close();
   }
 
   // 空库（v0）不备份 —— 没有旧数据要保

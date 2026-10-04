@@ -49,4 +49,4 @@ app.*.map.json
 /android/app/release
 
 # AI assistant related
-/.workbuddy 
+/.workbuddy/

@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.shensuanzi"
+    namespace = "com.shensuanzi.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,11 +20,11 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.shensuanzi"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // §AH-1 裁定（2026-09-29）：包名 com.shensuanzi.app（不用 com.example）
+        applicationId = "com.shensuanzi.app"
+        // §AH-2 裁定：minSdk 24（Android 7，按「个体户手上的旧机」定）；
+        // compileSdk / targetSdk 用最新，不为兼容旧机降 target
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

@@ -319,15 +319,25 @@ class _PairingDialog extends StatelessWidget {
       actions: <Widget>[
         FilledButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('知道了'),
+          // 「收起」而不是「关闭」：**「关闭」暗示「关掉服务」**，
+          // 中老年用户看到会以为关掉之后手机就连不上了，于是**不敢点**
+          // （`ui_principles` §1.2 的「给用户明确预期」）。
+          // 「收起」说的是「码还能再拿出来」—— 事实也如此（令牌仍在内存）。
+          child: const Text('收起'),
         ),
       ],
     );
   }
 }
 
-/// 二维码画布（**零新依赖** —— 见 `reply_review.md` §BB·三）。
-class _QrView extends StatelessWidget {
+/// 二维码画布（**零新依赖** —— 见 `reply_review.md` §BB·三 / §BF）。
+///
+/// ⚠️ **StatefulWidget 持 `PairingQr` 实例**（§BF·二 补强 1 —— 三处修复的**第二处**）：
+/// 编码必须在**这里**发生一次，**不能在 painter 的 `paint()` 里** ——
+/// 否则哪怕库层缓存了，每帧 paint 仍会构造新实例、重新编码。
+/// 判据：`_QrViewState` 只在 `initState` / `didUpdateWidget` 构造 `PairingQr`；
+/// `paint()` **不再构造**。
+class _QrView extends StatefulWidget {
   const _QrView({required this.payload});
 
   /// 边长（≈ 手机屏幕上的常见二维码尺寸）。
@@ -337,24 +347,46 @@ class _QrView extends StatelessWidget {
   final PairingPayload payload;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: size,
-    height: size,
-    child: CustomPaint(
-      size: Size.square(size),
-      painter: _QrPainter(payload: payload),
-    ),
-  );
+  State<_QrView> createState() => _QrViewState();
 }
 
-/// 自绘二维码。
-///
-/// 为什么不用 `qr_flutter`：见 `reply_review.md` §BB·三（本侧无法 `pub get`，
-/// 而纯 Dart 的 `PairingQr.matrix` 本来就是**为自绘准备**的）。
-class _QrPainter extends CustomPainter {
-  const _QrPainter({required this.payload});
+class _QrViewState extends State<_QrView> {
+  late PairingQr _qr = PairingQr(widget.payload);
 
-  final PairingPayload payload;
+  @override
+  void didUpdateWidget(covariant _QrView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.payload.uri != widget.payload.uri) {
+      _qr = PairingQr(widget.payload);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      // §BF·二 补强 1：对话框入场动画期间**不重 paint**（三处修复的第三处）
+      child: SizedBox(
+        width: _QrView.size,
+        height: _QrView.size,
+        child: CustomPaint(
+          size: const Size.square(_QrView.size),
+          painter: PairingQrPainter(_qr),
+        ),
+      ),
+    );
+  }
+}
+
+/// 自绘二维码。**只画，不算** —— 矩阵已在 [PairingQr] 里缓存好（§BF·二）。
+///
+/// 为什么不用 `qr_flutter`：见 `reply_review.md` §BB·三 / §BF（治标 + 推翻零依赖裁定）。
+///
+/// **公开**（而非 `_` 私有）是为了让根层测试能断言 [shouldRepaint]
+/// （§BF·二 补强 3：它是「缓存生效」的最后一环）。
+class PairingQrPainter extends CustomPainter {
+  const PairingQrPainter(this.qr);
+
+  final PairingQr qr;
 
   /// 四周留白（**模块数**）。规范要求 ≥ 4。
   ///
@@ -364,7 +396,6 @@ class _QrPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final PairingQr qr = PairingQr(payload);
     final int modules = qr.moduleCount + quietZone * 2;
     final double sideless = size.shortestSide;
     final double cell = sideless / modules;
@@ -398,7 +429,11 @@ class _QrPainter extends CustomPainter {
     }
   }
 
+  /// 同一实例 ⇒ **false**（`RepaintBoundary` 才不被 painter 自己绕过，§BF·二 补强 3）；
+  /// 实例不同（载荷真的换了，经 `didUpdateWidget` 换入）⇒ true ——
+  /// **无条件 false 是错的**：`CustomPaint` 换 painter 时要靠这里决定重画与否，
+  /// 一律 false 会把**旧码留在屏上**。
   @override
-  bool shouldRepaint(covariant _QrPainter oldDelegate) =>
-      oldDelegate.payload.uri != payload.uri;
+  bool shouldRepaint(covariant PairingQrPainter oldDelegate) =>
+      qr != oldDelegate.qr;
 }

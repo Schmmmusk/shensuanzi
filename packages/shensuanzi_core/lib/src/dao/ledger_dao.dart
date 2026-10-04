@@ -135,6 +135,28 @@ class StockLedgerDao {
     );
   }
 
+  /// 某原单**已被退货的金额**（分，按商品聚合）—— Σ 此前退货**单行**的
+  /// `amount`。与 [returnedFlow]（数量/成本，走 stock_ledger）**不同源**：
+  /// 退款冲减的是单据金额，在 `document_lines` 上（§BH·七 B1c 的可退额度）。
+  Map<String, int> returnedAmountsByProduct({
+    required String refDocId,
+    required DocType returnType,
+  }) {
+    final ResultSet rows = _raw.select(
+      '''
+      SELECT l.product_id AS pid, COALESCE(SUM(l.amount), 0) AS s
+      FROM ${Schema.documentLines} l
+      JOIN ${Schema.documents} d ON d.id = l.document_id
+      WHERE d.ref_doc_id = ? AND d.doc_type = ?
+      GROUP BY l.product_id
+      ''',
+      <Object?>[refDocId, returnType.wire],
+    );
+    return <String, int>{
+      for (final Row row in rows) row['pid']! as String: row['s']! as int,
+    };
+  }
+
   List<StockLedger> ofProduct(String productId) => _raw
       .select(
         'SELECT * FROM ${Schema.stockLedger} WHERE product_id = ? ORDER BY seq_no',

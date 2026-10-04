@@ -13,7 +13,8 @@
 /// |---|---|---|
 /// | `sale` 系（有客户） | 未收 > 0 | **[收款]**（RULE-004） |
 /// | `purchase` 系（有供应商） | 未付 > 0 | **[付款]**（RULE-005） |
-/// | `delivery` | `in_transit` | 1b 做（送货批次），本页只显示状态 |
+/// | `delivery` | `in_transit` | **[签收]**（1b）+ **[客户拒收（整单退回）]**（§BI） |
+/// | `sale` / `purchase` / 已签收 `delivery` | 服务已接 | **[退货]**（RULE-007/008，§BI） |
 /// | `receipt` / `payment` | — | 只读 + **核销去向** |
 /// | 全部 | — | **[复制单号]** |
 ///
@@ -28,6 +29,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'settlement_dialog.dart';
+import 'return_page.dart';
 
 class DocumentDetailPage extends StatefulWidget {
   const DocumentDetailPage({
@@ -36,6 +38,7 @@ class DocumentDetailPage extends StatefulWidget {
     required this.settlements,
     this.deliveries,
     this.products,
+    this.returnService,
     this.onChanged,
   });
 
@@ -50,6 +53,10 @@ class DocumentDetailPage extends StatefulWidget {
 
   /// 明细行要显示商品名；`null` = 只显示数量与单价
   final ProductService? products;
+
+  /// 退货服务（§BI R2：`sale` / `delivery` / `purchase` 详情的 **[退货]** 与
+  /// **[客户拒收]** 入口）。`null` = 入口不可用（与其他可选服务同款判定）。
+  final ReturnService? returnService;
 
   /// 核销成功后回调（列表页据此刷新）
   final VoidCallback? onChanged;
@@ -217,8 +224,18 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
             Text(doc.docType.label, style: const TextStyle(height: 1.6)),
           ],
         ),
+        // §BG 方案甲：`occurred_at` 是**业务日期**（天粒度，可补录改日期），
+        // 套带时分的格式会印出误导性的「00:00」（真机踩过）⇒ 只显示到日；
+        // 真实录入时刻在 `created_at`（各司其职），另起一行小字。
         Text(
-          '$_partyLabel · ${formatDateTime(doc.occurredAt)}',
+          '$_partyLabel · ${formatDate(doc.occurredAt)}',
+          style: TextStyle(
+            height: 1.6,
+            color: theme.textTheme.bodySmall?.color,
+          ),
+        ),
+        Text(
+          '录入于 ${formatDateTime(doc.createdAt)}',
           style: TextStyle(
             height: 1.6,
             color: theme.textTheme.bodySmall?.color,
@@ -298,18 +315,73 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
       );
     }
 
-    // ---- 送货单：**拒收的出口**（1b 明确不做拒收，但要给一条能照做的路）----
-    if (isDelivery) {
+    // ---- 送货单：**拒收的出口**（§BI R2 —— 手册承诺兑现，不再是开发中占位）----
+    // 拒收 = 全量 `sale_return` ref delivery（预填全部可退量），原送货单
+    // 同事务置 cancelled（裁定 2）。已签收的送货单走普通退货。
+    if (isDelivery && widget.returnService != null) {
+      children.add(const SizedBox(height: 8));
+      if (doc.status == DocStatus.inTransit) {
+        children.add(
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              key: const Key('reject-button'),
+              onPressed: () => _startReturn(doc, fullReturn: true),
+              icon: const Icon(Icons.assignment_return_outlined),
+              label: const Text('客户拒收（整单退回）'),
+            ),
+          ),
+        );
+      } else {
+        children.add(
+          const Text(
+            '这张送货单已签收 —— 要退货请走下面的「退货」。',
+            style: TextStyle(height: 1.6, color: Color(0xFFB45309)),
+          ),
+        );
+      }
+    }
+
+    // ---- 退货入口（§BI R2）：原单类型可退 且 服务已接 ----
+    if (widget.returnService != null &&
+        (doc.docType == DocType.sale ||
+            doc.docType == DocType.purchase ||
+            (isDelivery && doc.status != DocStatus.inTransit)) &&
+        doc.status != DocStatus.cancelled) {
       children.add(const SizedBox(height: 8));
       children.add(
-        const Text(
-          '客户拒收：请改用「销售退货」把货退回来（退货功能开发中）。',
-          style: TextStyle(height: 1.6, color: Color(0xFFB45309)),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            key: const Key('return-button'),
+            onPressed: () => _startReturn(doc, fullReturn: false),
+            icon: const Icon(Icons.undo_outlined),
+            label: const Text('退货'),
+          ),
         ),
       );
     }
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+  }
+
+  /// 打开退货页；回来后刷新详情（状态可能变过 —— 拒收会 cancel 原送货单）。
+  Future<void> _startReturn(Document doc, {required bool fullReturn}) async {
+    final ReturnService? service = widget.returnService;
+    if (service == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => ReturnPage(
+          original: doc,
+          service: service,
+          fullReturn: fullReturn,
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(_load);
+      widget.onChanged?.call();
+    }
   }
 
   /// 送货单的「签收」行（`in_transit` 才有按钮）。
@@ -376,9 +448,17 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
             if (i > 0) const Divider(height: 1),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Expanded(child: Text(_productLabel(_lines[i]), style: const TextStyle(height: 1.6))),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          _productLabel(_lines[i]),
+                          style: const TextStyle(height: 1.6),
+                        ),
+                      ),
                   Text(
                     '× ${_lines[i].quantity}',
                     style: TextStyle(
@@ -387,14 +467,32 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Text(
-                    '¥${Money.formatGrouped(_lines[i].amount)}',
-                    style: const TextStyle(
-                      height: 1.6,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
-                    ),
+                      Text(
+                        '¥${Money.formatGrouped(_lines[i].amount)}',
+                        style: const TextStyle(
+                          height: 1.6,
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: <FontFeature>[
+                            FontFeature.tabularFigures(),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
+                  // v3：有让价的行显示一行小字 —— 原始报价与让价额都可追溯
+                  //（amount 是真相；原始报价 = (amount + discount) / entry_quantity）
+                  if (_lines[i].discountAmount > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        '让价 -¥${Money.format(_lines[i].discountAmount)}'
+                        '（折前 ¥${Money.format(_lines[i].amount + _lines[i].discountAmount)}）',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),

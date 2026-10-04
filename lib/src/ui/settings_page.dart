@@ -37,6 +37,9 @@ class SettingsPage extends StatefulWidget {
     this.backupNeedsAttention = false,
     this.onBackupNow,
     this.hostService,
+    this.dataPathsNote,
+    this.hostSyncNote,
+    this.onExportBackup,
     required this.onChanged,
   });
 
@@ -63,6 +66,19 @@ class SettingsPage extends StatefulWidget {
   /// ⇒ 整块显示「不可用」而不是装作能用（与 `backupStatusLine` 同款判定）。
   final HostServiceController? hostService;
 
+  /// 数据区路径行的替代文案（§BH·六 B1c：Android 私有目录用户打不开，
+  /// 「打开」按钮无效 ⇒ 显示友好文案、隐藏两行路径）。`null` = 桌面（零变化）。
+  final String? dataPathsNote;
+
+  /// 多设备同步区的替代文案（§BH·六 B1c：Android 是**客户端**，不做主机 ——
+  /// 显示「到电脑上开主机、手机扫码」的引导）。`null` = 桌面（hostService 面板）。
+  final String? hostSyncNote;
+
+  /// 「导出备份到手机文件」（§BH·六 B1c；裁定：v1.1 之前必须有）。
+  /// 宿主实现（SAF 选位置 → 拷贝 db 文件），返回给用户看的结果文案；
+  /// `null` = 不显示入口（桌面备份在兄弟目录，直接可拷）。
+  final Future<String> Function()? onExportBackup;
+
   /// 任何修改都会回调（宿主据此热应用缩放 / 店名）
   final void Function(AppConfig config) onChanged;
 
@@ -84,6 +100,9 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 「立即备份」进行中（遗漏 11：禁用 + 文案，先给反馈再谈并发）
   bool _backupBusy = false;
 
+  /// 「导出备份」进行中（§BH·六 B1c；与备份按钮同款「先禁用再谈并发」）
+  bool _exporting = false;
+
   @override
   void dispose() {
     _shopName.dispose();
@@ -104,6 +123,27 @@ class _SettingsPageState extends State<SettingsPage> {
         content: Text(backupOutcomeMessage(outcome)),
         duration: const Duration(seconds: 4),
       ),
+    );
+  }
+
+  /// 「导出备份到手机文件」（§BH·六 B1c）。宿主实现（SAF 选位置 → 拷贝
+  /// db 文件），返回的文案直接进 SnackBar（与「立即备份」同款反馈）。
+  Future<void> _exportBackup() async {
+    final Future<String> Function()? run = widget.onExportBackup;
+    if (run == null || _exporting) return;
+    setState(() => _exporting = true);
+    // ⚠️ **必须兜住一切异常** —— 真机教训：file_selector 在 Android 不支持
+    // 「选保存位置」，抛出后 `_exporting` 永远 true（只剩转圈）。
+    String message;
+    try {
+      message = await run();
+    } catch (error) {
+      message = '导出失败（$error）—— 请把这句话告诉技术支持';
+    }
+    if (!mounted) return;
+    setState(() => _exporting = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 6)),
     );
   }
 
@@ -234,7 +274,17 @@ class _SettingsPageState extends State<SettingsPage> {
               _Section(
                 title: '数据',
                 children: <Widget>[
-                  if (_current.dataDirectory != null) ...<Widget>[
+                  // §BH·六 B1c：Android 私有目录用户打不开，「打开」按钮无效
+                  // ⇒ 显示友好文案、隐藏两行路径（桌面 `null` = 零变化）
+                  if (widget.dataPathsNote != null)
+                    Text(
+                      widget.dataPathsNote!,
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                    )
+                  else if (_current.dataDirectory != null) ...<Widget>[
                     _FolderRow(
                       label: '数据位置',
                       path: _current.dataDirectory!,
@@ -280,6 +330,35 @@ class _SettingsPageState extends State<SettingsPage> {
                       ],
                     ),
                   ],
+                  // §BH·六 B1c（裁定：v1.1 之前必须有）：卸载 = 数据全丢，
+                  // Android 上唯一的保留手段就是导出备份
+                  if (widget.onExportBackup != null) ...<Widget>[
+                    const SizedBox(height: 4),
+                    ListTile(
+                      key: const Key('setting-export-backup'),
+                      contentPadding: EdgeInsets.zero,
+                      leading: _exporting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.upload_file_outlined),
+                      title: Text(
+                        _exporting ? '导出中…' : '导出备份到手机文件',
+                        style: const TextStyle(height: 1.6),
+                      ),
+                      subtitle: Text(
+                        '把备份文件存到你选的位置（可发微信 / 存网盘）',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _exporting ? null : _exportBackup,
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   Text(
                     // 遗漏 6：第一次看到「上次备份：从未」的人要知道这是什么，
@@ -302,7 +381,17 @@ class _SettingsPageState extends State<SettingsPage> {
               _Section(
                 title: '多设备同步',
                 children: <Widget>[
-                  if (widget.hostService == null)
+                  // §BH·六 B1c：Android 是**客户端**，不做主机 —— 显示引导
+                  // 而不是 Windows 同款二维码（真机反馈，2026-10-04）
+                  if (widget.hostSyncNote != null)
+                    Text(
+                      widget.hostSyncNote!,
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                    )
+                  else if (widget.hostService == null)
                     Text(
                       '数据目录还没准备好，这个功能暂时用不了。'
                       '先把上面的数据位置设好，再回来打开它。',

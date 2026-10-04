@@ -144,11 +144,16 @@ class SaleService {
     final List<DocumentLine> lines = <DocumentLine>[
       for (final SaleLineDraft line in draft.lines)
         if (!line.isEmpty)
+          // v3：quantity = 换算后的最小单位数量；amount = 真相（含让价）；
+          // entry_* 记录入原文（§BD·三 第 1/2/6 条）
           DocumentLine.create(
             documentId: document.id,
             productId: line.productId,
-            quantity: line.quantityValue!,
-            unitPrice: line.unitPriceCents!,
+            quantity: line.baseQuantityValue!,
+            amount: line.amountCents!,
+            entryQuantity: line.entryQuantityValue!,
+            entryUnit: line.entryUnitValue,
+            discountAmount: line.discountCents ?? 0,
           ),
     ];
 

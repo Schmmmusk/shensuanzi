@@ -593,4 +593,94 @@ void main() {
       );
     });
   });
+
+  group('v3 包装换算与让价（§BD）', () {
+    // 与 fromProduct 同构的行：带换算上下文（baseUnit/packageUnit/packageSize）
+    SaleLineDraft boxed({
+      String qty = '3',
+      String price = '250.00',
+      String entryUnit = '箱',
+      String? packageSize = '12',
+      String discount = '',
+    }) => SaleLineDraft(
+      productId: 'p1',
+      productName: '牛奶',
+      quantity: qty,
+      unitPrice: price,
+      entryUnit: entryUnit,
+      discountAmount: discount,
+      baseUnit: '个',
+      packageUnit: '箱', // 恒定 —— "没设 size" 是档案缺列，不是包装不启用
+      packageSize: packageSize == null ? null : int.parse(packageSize),
+    );
+
+    test('按箱录入 ⇒ quantity 换算 36、amount 按录入报价 3 × ¥250/箱', () {
+      final SaleLineDraft line = boxed();
+      expect(line.validate(), isEmpty);
+      expect(line.baseQuantityValue, 36, reason: '3 箱 × 12 = 36 个');
+      expect(line.amountCents, 75000, reason: '3 × ¥250.00（真相，按录入报价）');
+      expect(line.entryUnitValue, '箱');
+      expect(line.discountCents, 0);
+    });
+
+    test('没切单位（entryUnit 空）⇒ 原样，行为与 v2 一致', () {
+      final SaleLineDraft line = boxed(qty: '10', price: '5.00', entryUnit: '');
+      expect(line.validate(), isEmpty);
+      expect(line.baseQuantityValue, 10);
+      expect(line.amountCents, 5000);
+      expect(line.entryUnitValue, isNull);
+    });
+
+    test('让价 ⇒ amount = entry_qty × entry_price − discount', () {
+      final SaleLineDraft line = boxed(
+        qty: '10',
+        price: '5.00',
+        entryUnit: '',
+        discount: '0.50',
+      );
+      expect(line.validate(), isEmpty);
+      expect(line.amountCents, 4950, reason: '5000 − 50（让价已含在 amount 里）');
+    });
+
+    test('让价越界 ⇒ 报「让价不能超过本行金额」且 amountCents null', () {
+      final SaleLineDraft line = boxed(
+        qty: '10',
+        price: '5.00',
+        entryUnit: '',
+        discount: '60',
+      );
+      expect(
+        line.validate()[SaleLineField.discount],
+        contains('让价不能超过本行金额 ¥50.00'),
+      );
+      expect(line.amountCents, isNull);
+    });
+
+    test('三种换算失败 ⇒ 三句文案分开（§BD·九）', () {
+      expect(
+        boxed(packageSize: null).validate()[SaleLineField.entryUnit],
+        '这个商品没设包装换算',
+      );
+      expect(
+        boxed(packageSize: '0').validate()[SaleLineField.entryUnit],
+        '包装换算无效',
+      );
+      expect(
+        boxed(entryUnit: '桶').validate()[SaleLineField.entryUnit],
+        '单位不合法',
+      );
+    });
+
+    test('草稿 totalCents = Σ（amount，含让价）—— B5 的草稿侧', () {
+      final SaleDraft draft = SaleDraft(
+        partyName: '',
+        date: '2026-09-27',
+        lines: <SaleLineDraft>[
+          boxed(),                                                    // 75000
+          boxed(qty: '10', price: '5.00', entryUnit: '', discount: '0.50'), // 4950
+        ],
+      );
+      expect(draft.totalCents, 79950);
+    });
+  });
 }

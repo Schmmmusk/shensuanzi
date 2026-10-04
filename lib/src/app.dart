@@ -26,8 +26,11 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+import 'package:share_plus/share_plus.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
@@ -35,6 +38,7 @@ import 'package:shensuanzi_host/shensuanzi_host.dart';
 import 'folder_picker.dart';
 import 'ui/app_shell.dart';
 import 'ui/data_directory_dialog.dart';
+import 'ui/mobile_shell.dart';
 
 class ShensuanziApp extends StatefulWidget {
   /// `pickDirectory` 的默认值**就在参数上就地给出**（真实实现）——
@@ -45,6 +49,8 @@ class ShensuanziApp extends StatefulWidget {
     super.key,
     this.pickDirectory = pickFolderFromSystem,
     this.configStore,
+    this.shellKind,
+    this.dataRoot,
   });
 
   /// 选文件夹。**启动流程的两个系统交互之一** —— 它会真弹系统框，
@@ -61,6 +67,15 @@ class ShensuanziApp extends StatefulWidget {
   /// ⚠️ **widget 测试必须把它指向沙箱**：否则测试会读、甚至**改写**开发者真实的
   /// 配置文件 —— 下次真机启动就会开到测试用的临时目录（`docs/testing.md` §K）。
   final AppConfigStore? configStore;
+
+  /// 壳形态（§BH B1a）。`null` = 按真实平台判（`shellKindFor`，纯 Dart 可测）。
+  /// 测试里跑在 Windows 上 ⇒ 恒为桌面壳，注入只供将来移动端测试用。
+  final ShellKind? shellKind;
+
+  /// 移动端私有目录根（§BH·五 B1b；`main.dart` 的移动分支注入）。
+  /// `null` = 桌面（走选目录对话框）。Android 的 data/backup/export
+  /// 全部收在它下面（目录布局沿用 Windows 的兄弟目录算法）。
+  final String? dataRoot;
 
   @override
   State<ShensuanziApp> createState() => _ShensuanziAppState();
@@ -96,6 +111,11 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 于是测试把 `configStore` 指向沙箱时，日志也自动进沙箱，
   /// **不会往开发者真实的 `%APPDATA%` 里写文件**（`docs/testing.md` §K 的红线）。
   late final AppLog _log = AppLog.besideConfig(_configStore);
+
+  /// 壳形态：判断在 app 包（纯 Dart，`dart test` 覆盖），这里只取值分支。
+  /// 平台不会中途变，`late final` 一次定死。
+  late final ShellKind _shellKind =
+      widget.shellKind ?? shellKindFor(operatingSystem: Platform.operatingSystem);
 
   /// ⚠️ **弹对话框必须用这个 key 的 context，不能用本 State 的 `context`。**
   ///
@@ -137,6 +157,9 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
 
   /// 核销服务（单据详情页的收款 / 付款，批次 1a）
   SettlementService? _settlements;
+
+  /// 退货服务（§BI R2：单据详情页的退货 / 拒收入口）
+  ReturnService? _returns;
 
   /// 聚合查询（库存页 + 备份的空库判定共用同一个 DAO）
   QueryDao? _queries;
@@ -211,6 +234,30 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       return;
     }
     if (!mounted) return;
+
+    // §BH·五 B1b（2026-10-04 裁定）：Android **不弹选目录对话框** ——
+    // 私有目录用户选不了（scoped storage，真机实测 `/storage/emulated/0`
+    // 写不进、还会建议 `C:\` 这种 Windows 路径），数据直接落在
+    // `<私有目录>/data`（兄弟目录算法自动生成 神算子备份 / 神算子导出）。
+    if (_shellKind == ShellKind.mobile) {
+      final String? root = widget.dataRoot;
+      if (root == null) {
+        setState(() {
+          _dbFailure = '应用数据目录不可用（没有拿到私有目录）。'
+              '请卸载后重新安装再试；如果还不行，请把这句话告诉技术支持。';
+        });
+        return;
+      }
+      try {
+        _openDatabase(_service.ensureInitialized(p.join(root, 'data')));
+      } on DataDirectoryRejected catch (error) {
+        // 私有目录被拒（系统占位 / 只读）—— 诚实展示，不兜圈子
+        setState(() {
+          _dbFailure = '${error.reason}。${error.howTo ?? '请重新安装后再试。'}';
+        });
+      }
+      return;
+    }
 
     // 用 Navigator 的 context（见 `_navigatorKey` 的注释）
     final BuildContext? dialogContext = _navigatorKey.currentContext;
@@ -289,15 +336,25 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         );
         _accounts = AccountService(AccountDao(db));
         _parties = PartyService(PartyDao(db));
-        _engine = RuleEngine(db);
+        // ⚠️ State 的实例字段不做类型提升 —— 刚赋值的 `_engine` 仍是 `RuleEngine?`，
+        // 必须先落局部变量再传（`_engine!` 也能过，但局部变量让两处共享同一实例更明确）。
+        final RuleEngine engine = RuleEngine(db);
+        _engine = engine;
         _settlements = SettlementService(db: db, engine: RuleEngine(db));
+        _returns = ReturnService(engine: engine, queries: QueryDao(db));
         // §AH · AH-A：主机同步服务。**只建对象，不启服务** ——
         // 监听端口必须由用户在设置页显式打开（遗漏 5）。
         // `host.json` 与库同目录（`auth.dart`：主机设施放文件、不动 schema）。
-        _hostService = HostServiceController(
-          db: db,
-          identities: HostIdentityStore(hostIdentityFile(location.directory)),
-        );
+        // ⚠️ §BH·六 B1c（真机反馈 2026-10-04）：**Android 不是主机**（§AH 定位）
+        // —— 不建主机服务，设置页的多设备区显示客户端引导（hostSyncNote）。
+        _hostService = _shellKind == ShellKind.mobile
+            ? null
+            : HostServiceController(
+                db: db,
+                identities: HostIdentityStore(
+                  hostIdentityFile(location.directory),
+                ),
+              );
         _dbFailure = null;
       });
       // 先把状态读出来（设置页/概览页首帧就得有「上次备份」），
@@ -332,6 +389,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         _parties = null;
         _engine = null;
         _settlements = null;
+        _returns = null;
         _dbFailure = '数据文件打不开（$error）。'
             '如果这个文件夹在 U 盘或网盘里，请换到本机磁盘上的文件夹。';
       });
@@ -374,6 +432,31 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     );
     _noteBackupOutcome(outcome);
     _refreshBackupStatus();
+  }
+
+  /// 「导出备份到手机文件」（§BH·六 B1c —— 裁定：v1.1 之前必须有）。
+  ///
+  /// ⚠️ file_selector 的「选保存位置」在 Android 上**官方不支持**
+  /// （能力表 ❌，真机实测：点了只转圈）⇒ 用**系统分享面板**（share_plus）：
+  /// 用户可选「保存到文件」「发微信」「发邮箱」—— 正合裁定
+  /// 「发微信 / 存网盘」的出路。桌面不注入此回调（备份在兄弟目录，直接可拷）。
+  Future<String> _exportBackupMobile() async {
+    final DataLocation? location = _location;
+    final Db? db = _db;
+    if (location == null || db == null) {
+      return '数据文件还没打开，暂时不能导出';
+    }
+    final ShareResult result = await SharePlus.instance.share(
+      ShareParams(
+        files: <XFile>[XFile(location.databasePath)],
+        subject: '神算子备份-${formatFileDate(DateTime.now())}',
+      ),
+    );
+    return switch (result.status) {
+      ShareResultStatus.success => '已唤起分享 —— 选「保存到文件」或发给微信即可保留',
+      ShareResultStatus.dismissed => '已取消分享',
+      ShareResultStatus.unavailable => '此设备暂不支持分享，请把这句话告诉技术支持',
+    };
   }
 
   /// 「立即备份」（设置页按钮 / 概览橙卡共用）。返回结果供页面弹 SnackBar。
@@ -456,6 +539,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
           _queries = null;
           _backup = null;
           _exports = null;
+          _returns = null;
           _lastBackup = null;
           _backupError = null;
           _hasDocuments = false;
@@ -473,7 +557,8 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       );
     }
 
-    return AppShell(
+    // §BH B1a：壳参数**装配一份**，桌面直接摆 / 移动端交给 MobileShell 持有。
+    final AppShell shell = AppShell(
       dataDirectory: location.directory,
       backupDirectory: location.backupDirectory,
       // 库打开成功后用真实数据格式版本；没打开时没有备份，回退标记版本
@@ -490,6 +575,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       queries: _queries,
       documents: _db == null ? null : DocumentDao(_db!),
       settlements: _settlements,
+      returns: _returns,
       engine: _engine,
       hostService: _hostService,
       uiScale: _config.uiScale,
@@ -524,6 +610,24 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
             ),
       onBackupNow: _backup == null ? null : _backupNow,
       exports: _exports,
+      // §BH·五 B1b 裁定 2：Android 私有目录用户打不开，概览显示友好文案
+      // 而非具体路径（排查用的路径在帮助页「关于」小字里）
+      dataLocationNote: _shellKind == ShellKind.mobile
+          ? '数据存在应用私有目录（由系统管理）。'
+          : null,
+      // §BH·六 B1c（真机反馈 2026-10-04）：Android 设置页 —— 私有目录路径
+      // 打不开、主机二维码不适用（Android 是客户端），均换友好文案
+      dataPathsNote: _shellKind == ShellKind.mobile
+          ? '数据存在应用私有目录（由系统管理）。卸载应用会删除全部数据，'
+              '包括备份 —— 请定期用下面的「导出备份」保留一份。'
+          : null,
+      hostSyncNote: _shellKind == ShellKind.mobile
+          ? '手机版不做「主机」—— 多设备连接这样用：\n'
+              '一、在这台手机上记好账；\n'
+              '二、到电脑上打开「设置 → 多设备同步」；\n'
+              '三、用手机扫电脑上的二维码（后续版本开放，当前手机与电脑各自记账）。'
+          : null,
+      onExportBackup: _shellKind == ShellKind.mobile ? _exportBackupMobile : null,
       // §AI-1：传**解析后**的实例（生产里 widget.configStore 是 null）
       configStore: _configStore,
       onConfigChanged: (AppConfig config) {
@@ -531,6 +635,14 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         setState(() => _config = config);
       },
     );
+
+    // §BH B1a：判断在 `shellKindFor`（纯 Dart，dart test 覆盖），这里只分支摆放。
+    // 非 Android 一律桌面壳 ⇒ Windows 行为零变化；页面装配两壳共用
+    // `appShellPage`（app_shell.dart），不存在「修桌面忘手机」的分叉面。
+    if (_shellKind == ShellKind.mobile) {
+      return MobileShell(shell: shell);
+    }
+    return shell;
   }
 }
 

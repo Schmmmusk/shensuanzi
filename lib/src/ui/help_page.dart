@@ -17,6 +17,8 @@
 ///   「系统按个记，你心里按箱想」是用户心智与系统模型之间的桥
 library;
 
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -65,6 +67,26 @@ class HelpPage extends StatelessWidget {
                 style: TextStyle(height: 1.6, color: secondary),
               ),
               const SizedBox(height: 16),
+
+              // ---- §BH·五 B1b 裁定 3（2026-10-04）：卸载即全丢，必须告知 ----
+              // Android 的数据和备份都在应用私有目录：备份只防数据库损坏，
+              // 不防设备丢失 / 卸载。文字用裁定原文（「导出备份（v1.1 开放）」
+              // —— 入口落地后由 B1c 改为直接引导到设置页）。
+              if (Platform.isAndroid)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF7ED),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFB45309)),
+                  ),
+                  child: const Text(
+                    'Android 版数据存在应用私有目录。卸载应用会删除全部数据，'
+                    '包括备份。如需保留，请在设置页导出备份（v1.1 开放）。',
+                    style: TextStyle(height: 1.6, color: Color(0xFF92400E)),
+                  ),
+                ),
 
               // ---- 完整手册入口（§AG·八：软件内看全文，软件外看网页版）----
               FilledButton.tonalIcon(

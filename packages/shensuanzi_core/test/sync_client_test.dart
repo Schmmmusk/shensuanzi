@@ -1009,4 +1009,30 @@ void main() {
       expect(c.clockOffset.offsetMs, 2000);
     });
   });
+
+  group('白名单 v3 列（§BD / §8.4）', () {
+    test('products：包装换算两列已可写（成对启用，客户端镜像需要）', () {
+      final Set<String> columns = SyncWhitelist.columns[Schema.products]!;
+      expect(columns, containsAll(<String>['package_unit', 'package_size']));
+    });
+
+    test('document_lines：让价 + 录入原文三列已可写', () {
+      final Set<String> columns = SyncWhitelist.columns[Schema.documentLines]!;
+      expect(
+        columns,
+        containsAll(<String>['discount_amount', 'entry_quantity', 'entry_unit']),
+      );
+    });
+
+    test('旧列一个没少（白名单只追加）', () {
+      expect(
+        SyncWhitelist.columns[Schema.documentLines]!,
+        containsAll(<String>['quantity', 'unit_price', 'amount']),
+      );
+      expect(
+        SyncWhitelist.columns[Schema.products]!,
+        containsAll(<String>['package_note', 'sell_price']),
+      );
+    });
+  });
 }

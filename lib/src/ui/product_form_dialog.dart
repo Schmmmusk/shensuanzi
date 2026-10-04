@@ -81,6 +81,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   late final TextEditingController _barcode;
   late final TextEditingController _safetyStock;
   late final TextEditingController _packageNote;
+  late final TextEditingController _packageUnit;
+  late final TextEditingController _packageSize;
 
   /// [其他▾] chips（§AJ·AI-6）：点了聚焦单位输入框 —— 「直接打字」的显式入口
   final FocusNode _unitFocus = FocusNode();
@@ -109,6 +111,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _barcode = TextEditingController(text: draft.barcode);
     _safetyStock = TextEditingController(text: draft.safetyStock);
     _packageNote = TextEditingController(text: draft.packageNote);
+    _packageUnit = TextEditingController(text: draft.packageUnit);
+    _packageSize = TextEditingController(text: draft.packageSize);
     // 编辑一条条码本身就已重复的商品时，一打开就该看到提示（不用等用户改动）
     _barcodeNotice = _computeBarcodeNotice();
   }
@@ -122,6 +126,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _barcode.dispose();
     _safetyStock.dispose();
     _packageNote.dispose();
+    _packageUnit.dispose();
+    _packageSize.dispose();
     _unitFocus.dispose();
     super.dispose();
   }
@@ -134,6 +140,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     barcode: _barcode.text,
     safetyStock: _safetyStock.text,
     packageNote: _packageNote.text,
+    packageUnit: _packageUnit.text,
+    packageSize: _packageSize.text,
   );
 
   /// 用户一改这个字段就把它那条错误清掉 —— 边改边消，而不是等再点一次保存
@@ -305,6 +313,45 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                   hint: '例：1 箱 = 48 瓶',
                   helper: '只是备注，不影响记账',
                 ),
+              ),
+              const SizedBox(height: 16),
+
+              // 包装换算（v3，§BD·四 #2）：两列**成对**填才启用按箱录入；
+              // 任一为空 ⇒ 与不填完全一样。与上面的「包装说明」分工：
+              // 那个是给人看的备注，这两列是给换算用的数据。
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(
+                    child: TextField(
+                      controller: _packageUnit,
+                      textInputAction: TextInputAction.next,
+                      onChanged: (_) =>
+                          _clearError(ProductField.packageUnit),
+                      decoration: _decoration(
+                        ProductField.packageUnit,
+                        label: '包装单位（可选）',
+                        hint: '例：箱',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _packageSize,
+                      keyboardType: const TextInputType.numberWithOptions(),
+                      textInputAction: TextInputAction.next,
+                      onChanged: (_) =>
+                          _clearError(ProductField.packageSize),
+                      decoration: _decoration(
+                        ProductField.packageSize,
+                        label: '1 包 = 多少（可选）',
+                        hint: '例：48',
+                        helper: '两格都填，开单就能按「箱」录入',
+                      ),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 16),
 

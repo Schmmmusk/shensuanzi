@@ -37,13 +37,14 @@
 library;
 
 import '../models/product.dart';
+import 'quantity_conversion.dart';
 import '../util/money.dart';
 
 /// 主单级字段（错误定位的键 —— 界面据此知道该标红哪一栏）
 enum DeliveryField { party, date, lines, remark }
 
 /// 明细行字段
-enum DeliveryLineField { product, quantity, unitPrice }
+enum DeliveryLineField { product, quantity, unitPrice, entryUnit, discount }
 
 /// 一行明细的草稿（与 `SaleLineDraft` 逐字段对齐）。
 ///
@@ -54,6 +55,11 @@ class DeliveryLineDraft {
     this.productName = '',
     this.quantity = '',
     this.unitPrice = '',
+    this.entryUnit = '',
+    this.discountAmount = '',
+    this.baseUnit,
+    this.packageUnit,
+    this.packageSize,
   });
 
   /// 从商品带入：**单价预填售价**（可改，改后不回写商品档），数量留空待填。
@@ -65,25 +71,54 @@ class DeliveryLineDraft {
     productName: product.name,
     quantity: quantity,
     unitPrice: Money.format(product.sellPrice),
+    baseUnit: product.unit,
+    packageUnit: product.packageUnit,
+    packageSize: product.packageSize,
   );
 
   final String productId;
   final String productName;
 
-  /// 用户敲的原文
+  /// 用户敲的原文 —— v3 语义：`quantity` 就是**录入原文数量**
+  /// （落 `entry_quantity`），`unitPrice` 就是**录入单位报价**（不落库，
+  /// 派生展示）；**换算后的最小单位数量**见 [baseQuantityValue]。
   final String quantity;
   final String unitPrice;
+
+  // ---- 换算上下文（来自商品档案；[fromProduct] 自动带入，UI 不用管换算）----
+  /// ⚠️ 三者都为 `null`（直构旧形态）⇒ 不换算，行为与 v2 完全一致。
+  final String? baseUnit;
+  final String? packageUnit;
+  final int? packageSize;
+
+  /// **录入单位原文**（§BD·三 第 2 条三态）：'' = 没切单位（落库 `null`）；
+  /// 只能是 `baseUnit` 或 `packageUnit`，取包装单位的前提 = **成对启用**。
+  final String entryUnit;
+
+  /// **让价原文**（元字符串；'' = 无让价）—— 整单议价分摊到行
+  /// （§BD·九 #3：差额超最后一行折前金额时 UI 向前分摊）。
+  final String discountAmount;
 
   DeliveryLineDraft copyWith({
     String? productId,
     String? productName,
     String? quantity,
     String? unitPrice,
+    String? entryUnit,
+    String? discountAmount,
+    String? baseUnit,
+    String? packageUnit,
+    int? packageSize,
   }) => DeliveryLineDraft(
     productId: productId ?? this.productId,
     productName: productName ?? this.productName,
     quantity: quantity ?? this.quantity,
     unitPrice: unitPrice ?? this.unitPrice,
+    entryUnit: entryUnit ?? this.entryUnit,
+    discountAmount: discountAmount ?? this.discountAmount,
+    baseUnit: baseUnit ?? this.baseUnit,
+    packageUnit: packageUnit ?? this.packageUnit,
+    packageSize: packageSize ?? this.packageSize,
   );
 
   /// 空行 = 三个字段都没填。[isEmpty] 只供服务层做防御性跳过，不参与校验。
@@ -119,24 +154,91 @@ class DeliveryLineDraft {
         errors[DeliveryLineField.unitPrice] = '单价不能是负数';
       }
     }
+
+    // ---- v3：录入单位（三态）与换算（§BD·三 第 3/4 条）----
+    final String? unit = entryUnitValue;
+    if (unit != null) {
+      final bool isBase = baseUnit != null && unit == baseUnit;
+      // ⚠️ public field 不提升 —— 先落局部变量（dartAnalyzer: non-promo-public-field）
+      final String? pkg = packageUnit;
+      final bool isPackage = pkg != null && pkg.isNotEmpty && unit == pkg;
+      if (!isBase && !isPackage) {
+        errors[DeliveryLineField.entryUnit] = conversionFailureMessage(ConversionFailureReason.unknownUnit);
+      } else {
+        final QuantityConversion c = conversion;
+        if (c is ConversionFailed) {
+          errors[DeliveryLineField.entryUnit] = conversionFailureMessage(c.reason);
+        }
+      }
+    }
+
+    // ---- v3：让价（§BD·三 第 6 条）—— [0, entry_qty × entry_price] ----
+    final String discText = discountAmount.trim();
+    if (discText.isNotEmpty) {
+      final int? disc = Money.tryParseYuan(discText);
+      if (disc == null) {
+        errors[DeliveryLineField.discount] = '让价只能填数字，最多两位小数，比如 0.50';
+      } else if (disc < 0) {
+        errors[DeliveryLineField.discount] = '让价不能是负数';
+      } else {
+        final int? qty = entryQuantityValue;
+        final int? price = entryUnitPriceCents;
+        if (qty != null && price != null && disc > qty * price) {
+          errors[DeliveryLineField.discount] =
+              '让价不能超过本行金额 ¥${Money.format(qty * price)}';
+        }
+      }
+    }
     return errors;
   }
 
-  /// 数量取值；非法时 `null`（调用方应先 `validate`）
-  int? get quantityValue {
+  /// **录入原文数量**取值；非法时 `null`（调用方应先 `validate`）
+  int? get entryQuantityValue {
     final int? qty = int.tryParse(quantity.trim());
     return (qty == null || qty <= 0) ? null : qty;
   }
 
-  /// 单价取值（分）；非法时 `null`
-  int? get unitPriceCents => Money.tryParseYuan(unitPrice.trim());
+  /// **录入原文单位**落库值：'' ⇒ `null`（没切单位）
+  String? get entryUnitValue => entryUnit.trim().isEmpty ? null : entryUnit.trim();
 
-  /// 本行小计（分）；任一字段非法 ⇒ `null`
+  /// **录入单位报价**（分）—— 用户按 [entryUnit] 报的价（不落库，
+  /// 派生展示见 §BD·三 第 5 条）；非法时 `null`
+  int? get entryUnitPriceCents => Money.tryParseYuan(unitPrice.trim());
+
+  /// 让价取值（分）：'' ⇒ 0（无让价）；解析失败 ⇒ `null`（validate 先拦）
+  int? get discountCents {
+    final String text = discountAmount.trim();
+    if (text.isEmpty) return 0;
+    final int? cents = Money.tryParseYuan(text);
+    if (cents == null || cents < 0) return null;
+    return cents;
+  }
+
+  /// 换算结果（§BD·三 第 4 条：唯一落点 = [toBaseQuantity]）。
+  /// 上下文缺失（直构旧形态）且未切单位 ⇒ 成功原样。
+  QuantityConversion get conversion => toBaseQuantity(
+    entryQuantity: entryQuantityValue ?? 0,
+    entryUnit: entryUnitValue,
+    baseUnit: baseUnit ?? '',
+    packageUnit: packageUnit,
+    packageSize: packageSize,
+  );
+
+  /// **换算后的最小单位数量**（`document_lines.quantity` 的值）；
+  /// 换算失败 ⇒ `null`（validate 会带文案拦住）
+  int? get baseQuantityValue => conversion.baseQuantityOrNull;
+
+  /// 本行小计（分）= **`entry_quantity × entry_unit_price − discount_amount`**
+  /// （v3 真相口径，§BD·三 第 6 条）；任一字段非法/让价越界 ⇒ `null`
   int? get amountCents {
-    final int? qty = quantityValue;
-    final int? price = unitPriceCents;
+    final int? qty = entryQuantityValue;
+    final int? price = entryUnitPriceCents;
     if (qty == null || price == null) return null;
-    return qty * price;
+    final int? discount = discountCents;
+    if (discount == null) return null;
+    final int gross = qty * price;
+    if (discount > gross) return null; // 越界由 validate 报文案；这里防御
+    return gross - discount;
   }
 
   @override

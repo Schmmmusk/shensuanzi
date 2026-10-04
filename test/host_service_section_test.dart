@@ -75,4 +75,34 @@ void main() {
     await tester.pumpWidget(panel());
     expect(tester.takeException(), isNull);
   });
+
+  test('PairingQrPainter.shouldRepaint：同一实例 ⇒ false（§BF·二 补强 3）', () {
+    const PairingPayload payload = PairingPayload(
+      hostId: 'h-0001',
+      ip: '192.168.1.5',
+      port: 17890,
+      token: 'dG9rZW4=',
+    );
+    final PairingQr qr = PairingQr(payload);
+
+    expect(
+      PairingQrPainter(qr).shouldRepaint(PairingQrPainter(qr)),
+      isFalse,
+      reason: '同一实例不该重绘 —— 否则 painter 会主动绕过 RepaintBoundary',
+    );
+
+    final PairingQr changed = PairingQr(
+      const PairingPayload(
+        hostId: 'h-0002',
+        ip: '192.168.1.9',
+        port: 17899,
+        token: 'other',
+      ),
+    );
+    expect(
+      PairingQrPainter(changed).shouldRepaint(PairingQrPainter(qr)),
+      isTrue,
+      reason: '载荷真的换了就该重绘 —— 否则会把旧码留在屏上',
+    );
+  });
 }

@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:io' show Directory, File, Platform;
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
@@ -30,6 +33,53 @@ import 'src/app.dart';
 /// 跟随配置文件：`%APPDATA%\神算子\日志\神算子-日志.txt`
 /// （**不放在数据目录** —— 那里是用户会拷来拷去的经营数据，见 `log.dart` 文件头）
 void main() {
+  // §BH·五 B1b（2026-10-04 裁定）：Android 的 config/log 要先定位到**应用私有
+  // 目录**（path_provider，异步）才能建，而 %APPDATA% 在 Android 上不存在 ——
+  // 走独立引导。桌面路径**一字不改**（Windows 行为零变化，§BH B1 待确认 2）。
+  if (shellKindFor(operatingSystem: Platform.operatingSystem) ==
+      ShellKind.mobile) {
+    _mainMobile();
+    return;
+  }
+  _mainDesktop();
+}
+
+Future<void> _mainMobile() async {
+  // 必须先初始化：path_provider 的平台通道与 FlutterError.onError 都依赖绑定
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 私有目录 = /data/user/0/<pkg>/files（getFilesDir，§BH·四 补正 1）。
+  // config/log 沿用桌面的相对布局：<base>/神算子/config.json + <base>/神算子/日志/。
+  final Directory support = await getApplicationSupportDirectory();
+  final AppConfigStore store = AppConfigStore(
+    File(p.join(support.path, '神算子', 'config.json')),
+  );
+  final AppLog log = AppLog.besideConfig(store);
+
+  runZonedGuarded<void>(() {
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      log.crash(details.exception, details.stack ?? StackTrace.current);
+    };
+
+    log.startup(
+      appVersion: AppVersion.value,
+      schemaVersion: '${Schema.version}',
+    );
+
+    runApp(
+      ShensuanziApp(
+        configStore: store,
+        // §AH-6：私有目录根，app.dart 据此组织 data/backup/export（B1b）
+        dataRoot: support.path,
+      ),
+    );
+  }, (Object error, StackTrace stack) {
+    log.crash(error, stack);
+  });
+}
+
+void _mainDesktop() {
   final AppEnvironment environment = AppEnvironment.detect();
   final AppLog log = AppLog.besideConfig(
     AppConfigStore.forEnvironment(environment),

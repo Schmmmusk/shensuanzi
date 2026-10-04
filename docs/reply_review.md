@@ -69,7 +69,11 @@
 > §AY **根裁定「解除」** + 找零（3甲）落地 + 采购同构（**2026-10-02**） │
 > §AZ **批次 1b 送货落地**（导航 + 开单页 + [签收]；**两处红已修，复跑全过**） │
 > §BA **三条裁定：折扣抹零移出（首发范围扩大）+ `DocumentDraft` 判据 + `import_guard` 扩查 + 守卫自检入库**（**2026-10-02**） │
-> §BB **批次 AH-A 主机接通**（host 接进根应用 + 设置页配对区 + 二维码自绘；**0 schema 改动**）（**2026-10-02**）
+> §BB **批次 AH-A 主机接通**（host 接进根应用 + 设置页配对区 + 二维码自绘；**0 schema 改动**）+ **审查意见 8 点落地**（§BB·九）+ **`delivery_page_test` 两轮红修完**（§BB·十，**2026-10-03**） │
+> §BC **裁定：不做「局部声明顺序」静态检查**（改用 **纪律 16 + 根层交付清单**；「不做」记进 §AR·三）（**2026-10-03**） │
+> §BD **v3 审查意见逐字固化 + 段 1a（Schema v3 五列 + 迁移链环级验证）+ 执行器用例补记**（**2026-10-03**） │
+> §BE **两项裁定：迁移恢复「做完整版」（删 `_restoreFrom` + 纪律 17）+ `DocumentDraft` 判据精确化**（**2026-10-03**） │
+> §BF **提案：二维码打开「未响应」根因（getter 重算 × O(n²) × 9 遍编码，实测 15.4s/帧）+ 方案对比**（🔴 待裁定，**2026-10-03**）
 >
 > 📦 **已归档的节**（`~~删除线~~` 表示已移出本文件）：§0-§7 → `reply_review_archive_v1.md`；
 > **§F / §G / §I / §J / §K 与 §H 的落地记录部分** → `reply_review_archive_v2.md`（2026-09-28）。
@@ -3459,15 +3463,20 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 |---|---|---|---|---|
 | ~~1~~ | ~~**1b 送货**~~ | ✅ **已落地**（2026-10-02）：导航入口 + 独立开单页（客户必选 / 无收款区）+ 详情页 [签收] + 拒收提示。**0 数据层改动**（规则本体早就在 core） | — | **§AZ** |
 | ~~2~~ | ~~**AH-A 主机接通**~~ | ✅ **已落地**（2026-10-02）：`shensuanzi_host` 接进根应用 + 设置页「多设备同步」区（开关默认关 / 四态状态行 / 失败怎么办 / 配对二维码**自绘**）+ 控制器（纯 Dart，56 项自检）。**§AH 遗漏 8（`api_version`）早已落地，无需做** | — | **§BB** |
-| 3 | **折扣抹零**（v3 批次之一） | `document_lines.discount_amount`（schema **v3** · `migrationStep(2)`）+ 开单页合计下方「**让价 ¥__**」+ 详情页/打印显示「让价 -¥0.20」+ 手册 + 测试。**`unit_price` 保持档价，不再被改** | **无** —— 解除约束已裁定（§AY·一）；⚠️ 与**包装换算**同属 v3，**可一次迁移做完** | **§BA·一** / §AU·3.2 |
+| 3 | **折扣抹零 + 包装换算（v3）** | 🚧 **进行中 —— 段 1a ✅ + 段 1b ✅**（1a：Schema v3 五列 + `migrationStep(2)` + **迁移链环级验证**，+6 用例 · 自检 105 项，见 **§BD·六**；1b：`data_model.md` / `rules.md` 五列语义 + 7 条交互关系成文，见 **§BD·七** —— **待你复核措辞，通过才进 2a**）。✅ **已裁定：v3 = 5 列**（`reply.md` v3 审查意见：**这是裁定漏了两列的必要补齐，报备即可、无需重裁**）—— `products.package_unit` / `package_size` + `document_lines.discount_amount` / `entry_quantity` / `entry_unit`。**5 列的交互关系已在审查意见 §二 一次定死**（7 条 —— ⚠️ **已逐字固化进 §BD**，因为 `reply.md` 每轮被覆盖）。按审查意见拆步（审查原文写「切成 6 步」，但表里是 **7 行**；⚠️ **按表执行**）：**1a** Schema + 迁移测试 ✅ · **1b** 文档先行 ✅ · **2a** 引擎口径 · **2b** 三份草稿 + `toBaseQuantity` · **2c** 白名单 + 协议 + 导出 · **3** Flutter · **4** 手册 + 台账 **§BD**。**每步做完即提交，下一步不改上一步的文件** | **无** | `reply.md` v3 审查意见 / **§BD** / §BA·一 |
 | 4 | **Android（AH-B/C）** | 客户端镜像 + **重建而非迁移**（`mirror_schema_version`） | **依赖 #2** | §AH / `schema_migration.md`「客户端镜像」 |
+
+> ⏱️ **优先级指令（2026-10-03，用户）**：**先把 v3 搞完，再说退货**（退货留在 §AR·三 候选不动）；
+> **「时间不多了，得尽快出安卓版」** —— v3 排在 Android 前的理由因此更硬：
+> 客户端镜像走「**重建而非迁移**」，schema 定在 v3 后 Android 只需实现**一个**版本
+> （若先做 Android 再升 v3，客户端要连改两次）。
 
 ### 二、待裁定 / 等时间（**裁定前不动手**）
 
 | # | 事项 | 裁定 / 现状 | 位置 |
 |---|---|---|---|
 | ~~1~~ | ~~「折扣抹零」是否移出首发范围外~~ | ✅ **已裁定：走 ①（移出）** —— 且定性为**首发范围实质扩大**（`4丙` → `A1+B2` + `discount_amount`）；5 处已清算、批次已入 §AR·一。**未开工**（v3 批次） | **§BA·一** |
-| 2 | ⚠️ **`DocumentDraft` 抽取的动手时机** —— 裁定「**开**」，但**判据加一条：1b 后 ≥1 周**，且三份 `*_draft.dart` 的公开 API 字形一致。**未到期**（1b 于 2026-10-02 落地） | 判据满足即开工。抽法 = **共享基类 + 参数化测试**（`test/support/document_draft_cases.dart`，同一套测试跑三份）—— **行为一致靠门禁守，不靠代码复用**；**行为差异各留各的**（如"保存后保留谁"是业务问题，不抽） | **§BA·二** |
+| ~~2~~ | ⚠️ **`DocumentDraft` 抽取的动手时机** —— 裁定「**开**」，但**判据精确化**（§BE·二）：不是"等一周"，是**等形状稳定** —— ① `delivery_draft.dart` **连续一周零改动**（改过一次就从最后一次重数）② 三份 `*_draft.dart` **公开 API 字形一致**（构造参数名 / `lines` / `payments` / `validate()` 返回 / 字段枚举名 —— 逐字段列表对比；**`validate()` 返回类型若漂移必须先对齐**）③ **行为差异已澄清**（预填成本/售价、送货无收款区 = 业务各留各的；**"送货保存后保留谁"是新问题，动手前必须澄清**）④ **干跑参数化测试**（`runDocumentDraftCases` 写不出来 ⇒ 时机未到）。**任何一项不过就停** | **现在不做**。抽法 = **共享基类 + 参数化测试**（`test/support/document_draft_cases.dart`）—— **行为一致靠门禁守，不靠代码复用**；**只抽结构，行为差异各留各的**。抽完后 `testing.md` §L 清单加「**覆写检查**」项（已加） | **§BA·二 / §BE·二** |
 | ~~3~~ | ~~`import_guard` 是否扩成「也查相对 import」~~ | ✅ **已裁定：扩**，但**别用正则**（注释 / 字符串 / `as` 前缀都会误报）⇒ **扩已有状态机的用法**；v1 只查无前缀导入 + 接受假阳性；**已落地**（含反向验证） | **§BA·三** |
 | ~~4~~ | ~~采购开单页是否与销售同构改成「折算 + 告知」~~ | ✅ **已裁定：同构**（2026-10-02）并**已落地**（销售 / 采购两份草稿对称） | **§AY·四** |
 | ~~5~~ | ~~是否解除 `amount = quantity × unit_price` 的整数严格约束~~ | ✅ **已裁定：解除**（2026-10-02）—— 真依赖 6 处、测试 0 处会破 | **§AY·一**（清单见 §AX·二） |
@@ -3475,10 +3484,12 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 | ~~7~~ | ~~`refreshMarker` 失败会把整个启动弄挂~~ | ✅ **已落地**（不抛版本 + 失败只记日志；含 3 条新测试） | **§AX·三** |
 | ~~8~~ | ~~离线映射盘让启动卡约 20 秒~~ | ✅ **已落地**（FFI 枚举，**6 ms**；真机 11/11 + 正向对照） | **§AT·七** |
 | ~~9~~ | ~~`sync_protocol.md` 补「请求体必须 UTF-8」~~ | ✅ **已补** | **§AW·二** |
+| ~~10~~ | ~~迁移失败的「自动恢复」并没有发生~~ | ✅ **已裁定 + 已落地**（2026-10-03，§BE）：**同意 A 但做完整版** —— ① 改文本（`database.dart` / `schema_migration.md` §三 / 台账 §AQ 两处）② **删 `_restoreFrom`**（保留 = 死代码；「待用」是伪需求，真要做是新设计需重裁）③ 改过时的测试注释 ④ 环级用例补「重试不重跑 v1→v2」的可观测断言 ⑤ **立纪律 17**（描述与实现必须一致）⑥ 用户手册补 `before-v{N}` 是什么（含 HTML 重生成） | **§BE·一** |
+| ~~11~~ | ~~二维码打开「未响应」~~ | ✅ **已裁定（方案 A）+ 已落地**（2026-10-03，§BF·二）：`PairingQr` 缓存化（`late final`，`uri` 刻意不缓存）+ **`_QrView` 改 StatefulWidget 持实例** + `RepaintBoundary` + `shouldRepaint` 同实例 false。**实测：15 408 ms → 4.38 ms**（~3500 倍）；矩阵逐 bit 一致；**+3 断言**。⚠️ 一处偏离（`shouldRepaint` 用实例相等而非恒 false）待复核 | **§BF / §BF·二**（提案文档：`docs/proposals/多设备同步-二维码打开未响应-根因与方案.md`） |
 
-> 📌 **没有「已问未答」的裁定了**。只剩**一件等时间**的事 —— **第 2 行 `DocumentDraft`**：
-> 裁定「开」，但要**等 1b 后 ≥1 周**（判据见 §BA·二），**现在不动手**。
-> 其余下一步是**开工项**（§AR·一）：AH-A 主机接通 · **折扣抹零（v3，新入列）** · Android。
+> 📌 **一条真待裁定（第 10 行：「自动恢复」的文本 vs 实现）**；另**一件等时间** ——
+> **第 2 行 `DocumentDraft`**（裁定「开」，判据 = 1b 后 ≥1 周，**未到期**）。
+> 其余下一步是**开工项**（§AR·一）：**v3 段 1b（文档先行）** · **Android**。
 
 ### 三、候选（**有触发条件**，未到期不做）
 
@@ -3489,6 +3500,7 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 | `ref_doc_id` 语义拆分（退货「原单」vs 自动收付款「来源主单」） | 出现第一个需要「双向查关联单据」的功能 | 低 | §AJ·三 |
 | 退货 UI（销售 / 采购退货） | 与送货**拒收**（RULE-007）一起**另立批次** | — | §AL·五（归档 → `archive_v3`） |
 | 归档文件**双向往返链接** | v2 优化批次 | 低 | 头部「待办（v2 优化）」 |
+| ⛔ **「局部声明顺序」静态检查工具**（**有意识不做**） | **不做** —— 理由不是"不值得"，而是**纯文本近似的假阴性比没有工具更危险**（「检查过了」会变成**假信心**，与 §AF·十一「断言是绿的 ≠ 断言有效」同一形态）。改用 **`Agents.md` 纪律 16 + `testing.md` §L 根层交付清单**。**触发条件：此类错误再出现 ≥2 次** ⇒ 重新评估；**届时另起** `tool/local_decl_guard.dart`，**不扩** `import_guard.dart`（它只做一件事、做得精确，定位值得守住）。**也不引 `package:analyzer`**（重依赖；`flutter analyze` 本来就是官方那条链） | — | **§BC** |
 
 ### 四、流程项（不是开发项）
 
@@ -3496,7 +3508,7 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 |---|---|---|
 | 1 | **提交**：Schema 批次改动（`lib` / `packages` / `test` / `docs` / `Agents.md` / `packaging`） | 1a 若已提交则忽略本条 |
 | 2 | **15 步清单**在新机器复测（新增**第 15 步：从老版本数据升级**） | `windows_build.md` §8.4；**首次发新 schema 版本的包之前必做** |
-| 3 | **复跑门禁** | ✅ **全绿**（2026-10-03，用户）—— §BB 批次两轮：第一轮 `app.dart` 实参类型 + `_QrView` 未用参数（已修，§BB·七）；第二轮 `flutter analyze` 无问题 + `flutter test` 全过。**下一个待复跑的批次见 §AR·一** |
+| 3 | **复跑门禁** | 🔁 **需复跑**（**§BD·六**：`schema.dart` 改了 `Schema.version`（2 → 3）+ 五列 + `migrationStep(2)`；`schema_test.dart` **+7 用例**（含 1 条「降级形状 == 化石 v1」前提校验）+ 改写执行器用例；`selfcheck.dart` §M **+4 条**）。⚠️ 首轮红 1 处（**执行器用例的降级构造**）—— **已修**（§BD·六 补记）。⚠️ `Schema.version` → 3 的连带面：备份文件名（`shensuanzi-schema3-…`）· 标记文件 · `startup_test` 的插值断言（**已核：无硬编码版本号**）。预期 core `dart test` **+7 条** |
 | 4 | **文档治理三处越界** | ✅ 越界 1 / 2 / 3 已处置（§AV）· `49→52` 更正 · 5 项细节查清。**`§四` 收紧已完成**：**28 / 52 条**（总长 7311 → 5780 字，均长 140.6 → 111.2，**无一条变长**）—— 见 §AW·六 |
 
 ### 五、有意识不做（首发范围外）
@@ -3766,7 +3778,7 @@ FFI 收敛到注入点后，逻辑仍是纯 Dart。
 | # | 问题 | 结论 | 一句话 |
 |---|---|---|---|
 | 1 | 最小售卖单位（进货 / 销售单位不一致） | ❌ **未解决** | 商品只有单一 `unit`；`package_note` 是**纯备注、不参与计算**；换算入账是 §AJ·三 明确的 **v1.1 候选**。用户本次要求**提前**到应用内处理 |
-| 2 | 软件更新后已有数据怎么办 | ✅ **已解决** | 迁移链 + 迁移前自动备份 + 失败自动恢复 + 旧代码拒绝新库，机制完整，**无需新设计** |
+| 2 | 软件更新后已有数据怎么办 | ✅ **已解决** | 迁移链 + 迁移前自动备份 + 旧代码拒绝新库，机制完整，**无需新设计**。⚠️ 原文写的「失败自动恢复」**与实现不符**（2026-10-03 实测那条路径走不到）—— 实际行为 = **停在最后一版已提交的版本 + `before-v{N}` 留作人工退路**，见 **§BE** |
 | 3 | 现金收付款找零（超收被拒） | ⚠️ **按旧裁定实现，但用户判定「处置不当」** | 开单页有找零辅助行、但**保存仍被拦**；核销页**连辅助都没有**、直接抛错。属对 §AJ·AI-4 的**修订请求** |
 | 4 | 议价后修改结算价 | ⚠️ **部分解决** | **逐行改单价已支持**；**整单议价 / 抹零明确不做**（§Z 遗漏 2，在「有意识不做」列）。需确认用户指的是哪一种 |
 
@@ -3791,7 +3803,7 @@ FFI 收敛到注入点后，逻辑仍是纯 Dart。
 | 版本号**单一来源** = `PRAGMA user_version` | `schema_migration.md` §一 |
 | 迁移链**逐版本、不许跳跃**（`migrationStep(N-1)`）；漏写被 `MissingMigrationException` 拦在**启动** | `schema.dart:354` / `:361` |
 | 旧代码打开新库 → `SchemaTooNewException` **拒绝**（不是崩溃） | `schema.dart:379`、`schema_migration.md` §四 |
-| 迁移前**自动备份** `before-v{N}`（**备份失败即不迁移**）+ 迁移失败**自动恢复** | §AQ·一 / `schema_migration.md` §三 |
+| 迁移前**自动备份** `before-v{N}`（**备份失败即不迁移**）；~~迁移失败**自动恢复**~~ ⚠️ **与实现不符**（2026-10-03 §BE）—— 实际 = 库停在最后一版已提交的版本、重试从断点继续，备份是**人工退路** | §AQ·一 / `schema_migration.md` §三 |
 | 迁移后刷新标记文件 + 三版本号不一致**记日志** | §AQ·二 |
 | 字段**只增不删**、语义变更视作新字段 | `Agents.md` 纪律 15 / `schema_migration.md` §五 |
 | 实际迁移样例（v1→v2：`products` 补 `package_note`） | `schema.dart:355` |
@@ -4858,7 +4870,1249 @@ cd D:\shensuanzi\shensuanzi; flutter analyze; flutter test                      
 待提交文件里**无**硬编码令牌 / 密钥（项目硬原则）；
 `build/` / `.dart_tool/` / `third_party/` 均被 `.gitignore` 正确排除；
 21 个未跟踪文件逐个确认过归属（其中 `.workbuddy/` 只含三份 AI 记忆笔记 —— **建议加进 `.gitignore`**，
-它是助手本地状态、不是项目产物）。
+### 九、§BB 审查意见（8 点）落地（2026-10-03）
+
+> 来源：`docs/reply.md` §BB 审查意见。总评是「技术落地已闭环，剩下的是产品细节与流程清理」。
+> **1–4 项处理完才正式关单** —— 本次全部处理完。
+
+| # | 审查意见 | 处置 |
+|---|---|---|
+| **1** | `pubspec.lock` 统一改 `pub.dev` + 单独提交 + §零 从「必做」降级为「可选」 | 用户已按 `pub.dev` 提交（**4 份 lock 口径一致**）。⚠️ **我先前写进 `windows_build.md` §零 的「两台机器必须设成同一个值」现在是错的**，已改成「**可选加速**，但 `pub get` 会让 lock 抖一遍 —— **别提交那个抖动**」，并给出**一句判据**：diff 里有 `url:` 行 = 环境差异（丢）；只有版本号 = 真变更（留）。README §开发与运行 也加了这条约定（审查意见说要在「提交规范」里有一句） |
+| **2** | `HostServiceController` 并发：控制器自持单飞 | ✅ 已落地。⚠️ **与审查意见给的那段实现有一处刻意的不同**：见下方「一处分叉」 |
+| **3** | `LocalIp.detect()` 接缝化 | ✅ 已落地：新增 `NetScanner` typedef + `detect({NetScanner? scan})`（默认真扫网卡）。**顺手让它永不抛**（扫网卡失败 ⇒ `null`，不再上抛 —— 上抛会把「画不出二维码」升级成「服务起不来」，同 §AT 口径）。真扫那一行隔离在 `_scanReal()` |
+| **4** | `test/delivery_page_test.dart` —— **别再挂着** | ✅ **已写**（§BB·五 第三次记它未写的欠账清掉）。3 个用例**只钉送货特有的三件事**：客户必选（没客户就没有人挂欠款）· 保存后必落「待签收」· **不需要资金账户**（与采购/销售相反） |
+| **5** | 「最近连接」不持久化要**显式说** | ✅ 已补进 `HostServiceSnapshot.lastTrafficAt` 的文档（含「用假数据把『从没连过』与『三天前连过』混在一起是欺骗」这条理由） |
+| **6** | 二维码对话框「关闭」→「收起」+ 面板常驻入口 | ✅ 已完成。⚠️ 面板的**常驻入口本来就有**（`host-service-show-qr` 只要在跑且能画码就在），审查意见看不到是因为我记 §BB·二① 时没写它；本次只把按钮文案「知道了」→「**收起**」（并写明理由：**「关闭」暗示「关掉服务」，用户会不敢点**） |
+| **7** | `.workbuddy/` 加 `.gitignore`（顺手查同类） | ✅ 用户已加。⚠️ 那行**结尾带一个空格**（`/.workbuddy `）—— git 会忽略行尾空格所以**能生效**，但那是颗雷（换工具/被编辑器"清理"就废）。已改成 `/.workbuddy/`。**同类目录查过**：本机只有 `.workbuddy/`，无 `.aider*` / `.cursor*` / `.continue*` 等；`.idea/` / `.vscode/` 早已在 `.gitignore` |
+| **8** | `resetToken` 要**二次确认** + 文案说清「所有手机会掉线」 | ⚠️ **本来就已经实现** —— 二次确认对话框在 `_regenerate()` 里（标题「重新生成配对码？」、按钮「再想想 / 生成新的」）。审查意见看不到，同样是**我记台账时没写它**（§BB·二① 只列到「地址行 + 二维码对话框」）。本次把文案从「需要重新扫码」**加强为「已经连过的手机全都掉线，要重新扫一次码」**（用「掉线」而不只是「重新扫码」：用户要先意识到**手机会连不上**才会去重扫） |
+
+#### 一处分叉：单飞没有照字面实现（**刻意的**）
+
+审查意见给的实现是「`if (_running != null) return _running!;`」——**一律复用**。
+但那样一来，**「启动中按停止」会静默丢弃那次停止**（拿回的是启动的 Future），服务照常起来。
+**这比竞态更糟**：用户按了停止、界面回到关闭，端口却还开着。
+
+改为按动作种类分开：
+
+| 情形 | 行为 | 依据 |
+|---|---|---|
+| **同一种动作**还在飞（开关连点两下） | **复用同一个 Future** | 审查意见要的就是这条 |
+| **不同动作**（启动中按停止 / 停止中按重置） | **排在它后面**执行，**不丢** | 见上 |
+
+**反向验证**：运行时脚本 19/19，含 **「启动中按停止 ⇒ 停止没被丢弃、端口真的关了」**
+与 **`.name ≠ .wire` 的反证**（顺带证明那处口径用错就红）。
+`resetToken` 内部改走 `_startRaw` / `_stopRaw`（走公开方法会撞单飞 ⇒ 自等待死锁）。
+
+#### 验证（本侧）
+
+| 项 | 结果 |
+|---|---|
+| host 自检 `selfcheck_service` | ✅ **76 / 76**（新增「detect 接缝」5 条 + 「单飞」12 条 + 文案 2 条 + 原有 57） |
+| 临时脚本（已删） | ✅ **19 / 19**（单飞 / 接缝 / 文案） |
+| `delivery_page_test` 的**核心侧镜像**（已删） | ✅ **16 / 16** —— 本侧跑不了那个 widget 测试，于是把它的**实参形状与期望数值**在纯 Dart 里过一遍。**当场抓到 2 处会编译不过的错**：`Product.sellingPrice`（真名 `sellPrice`）、`DocStatus.inTransit.name`（应为 `.wire`） |
+| 其余门禁 | ✅ 根 `import_guard` **44** 文件 0 处 · 守卫自检 12/12 · core/app/host typecheck 34/19/10 · `selfcheck_manual` 8 过 0 挂 |
+
+> **教训（比这条本身值钱）**：`delivery_page_test` 那两处错都是**字段名/口径写错**，
+> 而它们**只会被 `flutter analyze` 抓到**。用「核心侧镜像」在纯 Dart 里把同一批
+> 实参形状与期望数值跑一遍 —— **在交给用户之前就抓到了**。这与 §BB·七 的
+> 「跨包签名镜像」是同一个手法，**值得在写任何 `lib/` / `test/` 代码前先做**。
+
+### 十、复跑第二轮：`delivery_page_test` 2 处红（**同一条根因，我的错**）（2026-10-03）
+
+`flutter analyze` **无问题**（⇒ 那 3 个用例的**编译面是对的**，渲染/接线也没别的错）；
+`flutter test` 只在 `delivery_page_test` 红 2 处 —— 都是同一条：
+
+```
+第 2 例「成功保存…」: tap('点此选商品') 报「would not hit test」→ 随后 enterText(Key('picker-search')) 报 Bad state: No element
+第 3 例「欠款挂在客户名下」: 同上
+```
+
+**第 1 例（客户必选）过、2/3 例挂** ⇒ 差异在 `pickCustomer`（只有 2/3 例调它）。
+
+#### 根因：`find.text` **连 `EditableText` 一起匹配**
+
+我写的 `pickCustomer` 是「往搜索框输『王老板』→ `tap(find.text('王老板').first)`」——
+而**搜索框里此刻的内容就是「王老板」**。源码证据（`flutter_test/src/finders.dart`）：
+
+```dart
+abstract class _MatchTextFinder extends MatchFinder {
+  @override
+  bool matches(Element candidate) {
+    final Widget widget = candidate.widget;
+    if (widget is EditableText) {              // ← 输入框也算
+      return _matchesEditableText(widget);     // ← matchesText(controller.text)
+    }
+    ...
+```
+
+于是 `find.text('王老板')` 同时命中**搜索框**与**结果行**；先序遍历里搜索框在结果列表**上面**
+⇒ `.first` 点到的是搜索框 ⇒ **只是重新聚焦，弹层不关**。
+
+**后果被放大成两个看不懂的现象**（同一根因）：
+
+1. 下一次点击（`点此选商品`）打在弹层的 **ModalBarrier** 上
+   —— 与报错里的 hit-test 链完全吻合：`ColoredBox` + `MouseRegion` +
+   `ExcludeSemantics` + `BlockSemantics`（= `ModalBarrier` 的构造），
+   而 `tester.tap` 默认 `warnIfMissed` **只警告、不中断**；
+2. 这一下点击**把弹层关掉了**（遮罩可关）⇒ 紧接着的 `enterText(Key('picker-search'))`
+   才报 `Bad state: No element`（那时弹层已经不在树上了）。
+
+⇒ **两道红看着像「送货页坏了」，其实一行产品代码都没问题。**
+
+#### 修复
+
+| 动作 | 内容 |
+|---|---|
+| **改点法** | `tap(find.text('王老板').first)` → **`tap(find.widgetWithText(ListTile, '王老板'))`** —— 点**结果行本身**（页面里没有别的 `ListTile`；两个选择器各一个，同一时刻只开一个）。`pickFirstProduct` 一并改（它原来靠「搜索串 ≠ 结果名」侥幸没中） |
+| **加守卫** | 新增 `expectPickerClosed()`：选完断言 `Key('picker-search')` **findsNothing**。把「点错了地方」缩到**出错的那一行**，而不是让下游报 `No element` |
+| **根因写在代码旁** | `pickCustomer` 的文档注释里写明「为何 `.first` 会点到搜索框」+ 源码依据（本项目「把约束写在被改的那一行旁边」的纪律） |
+
+#### 影响面核查（**同类写法全仓扫过**）
+
+全仓 `find.text(...).first / .last` 共 11 处，逐条核对：
+
+- **没搜索**（弹层显示的是「最近往来 / 最近销售」列表，无 `EditableText` 含该串）：
+  `purchase_page_test:171`（王老板）· `sale_page_test:209`（李姐）· `account_page_test:59` ·
+  `settings_page_test:72` · `sale_page_test:418/420/427/429` —— **不受影响**；
+- **搜索串 ≠ 结果名**：`purchase_page_test:92` 与 `sale_page_test:116`（输「红富士」点「红富士苹果」）
+  · `opening_stock_page_test:100` 用 `.last` —— **侥幸没中，但形状相同**，属潜在同类。
+
+⇒ **只有 `delivery_page_test` 这一处踩中**（因为我输的是**完整名字**）。
+
+#### 教训（已进项目 `MEMORY.md`）
+
+**在弹层里点结果行，一律 `widgetWithText(ListTile, …)`，不要 `find.text(名).first`。**
+它与既有那条「**会随业务变的文案，测试一律按 Key 找**」是同一族：
+**`find.text` 的语义比字面看起来宽**（`Text` + `EditableText` + 可选 `RichText`），
+用它对「输入框里的内容」做定位时，会命中**用户刚打的字**。
+
+#### 验证
+
+`flutter analyze` **无问题**（用户）· 根 `import_guard` **44 文件 0 处** ·
+⚠️ **修复后的 `delivery_page_test` 本侧仍跑不了**（Flutter 层）—— **待用户复跑**。
+
+#### 补记：修的**第二版又挂了一次**（局部函数不提升）（2026-10-03）
+
+复跑回来的是**编译错**，而且是**我修 bug 时新引入的**：
+
+```
+test/delivery_page_test.dart:94:5: Error: Local variable 'expectPickerClosed'
+    can't be referenced before it is declared.
+```
+
+我把新助手 `expectPickerClosed()` 写在了**调用点后面**，而**它是 `main()` 里的局部函数 ——
+Dart 的局部声明不提升**。（`flutter analyze` 与 `flutter test` 都报，一致。）
+
+**修法不是「往后挪一行」**：把它**提到顶层**（`main()` 之外）——顶层函数无顺序约束，
+**从结构上消灭这一类错**；并在它的文档注释里写明「为何刻意放顶层」。
+顺带把 `main()` 里新助手的规矩定死：**一律排在最早调用点之前**。
+
+**核查**（本侧能做的静态验证）：顶层 `expectPickerClosed`（L33）→ `main`（L42）→
+`page`(89) / `pickFirstProduct`(107) / `pickCustomer`(134) / `fillRow`(145) / `tapSave`(153)，
+调用点全部晚于声明（115 / 142 / 146 / 178+ / 194+ / 221+）✅。
+另核 `comment_references` **未启用**（`flutter_lints 6.0.0` / `lints 6.1.0` 两套都查过），
+所以注释里的 `[pickCustomer]` 不会被判 info；仍改为纯文本更稳。
+
+> ⚠️ **这条我本侧抓不到**：根 `test/` **没有** `typecheck.dart`（它只存在于 `packages/`），
+> 而 Flutter 层本侧编译不了 ⇒ 「局部函数顺序」这类**纯 Dart 语言规则**在我这里是盲区。
+> **预防靠规矩**（助手放顶层或提前），**验证只能靠用户复跑**。
+> 详见 §BB·十一 的可选提案。
+
+### 十一、💡 可选提案：给根层补一道「局部声明顺序」静态检查（❌ **已裁定：不做** —— 见 §BC）
+
+> **裁定（2026-10-03，`reply.md` §BC）**：**不同意做** —— 理由不是"不值得"，
+> 而是**这个工具做出来会比没有更危险**：纯文本近似的**假阴性无法避免**，
+> 而「跑了工具、报 0 处、以为检查过了」= **假信心**（§AF·十一 同一形态）。
+> 改用 **`Agents.md` 纪律 16 + `docs/testing.md` §L 根层交付清单**；
+> 「不做」已显式记进 **§AR·三**（有意识不做）。**将来若真做**：另起 `tool/local_decl_guard.dart`，
+> **不扩** `import_guard.dart`。**下面的原始提案保留**（它是裁定依据，不是待办）。
+
+**动机**：本批连续两次栽在**同一类**问题上 —— 根 `test/` / `lib/` 层**没有任何本侧可跑的编译门禁**：
+
+| 次序 | 错 | 谁抓到 | 本侧能否提前抓 |
+|---|---|---|---|
+| §BB·七 | `lib/src/app.dart` 缺 `import 'delivery_page.dart'` | `flutter analyze` | ❌（当时 `import_guard` 还漏登记 host 桶） |
+| §BB·九 | 「跨包签名漂移」类的字段名/口径写错 | `flutter analyze` | ✅ **靠「核心侧镜像」提前抓到 2 处** |
+| **§BB·十 补记** | `main()` 里的局部函数**在声明前被引用** | `flutter analyze` / `flutter test` | ❌ |
+
+**提案**：在 `tool/import_guard.dart` 里加**第三类检查**（与现有两类并列，仍是纯 Dart、本侧可跑可验）：
+
+> 在**缩进 ≥ 2 的局部作用域**里声明的函数/变量，若同名标识符在**该行之前**被调用
+> ⇒ 报「引用了尚未声明的局部 X」。
+
+**收益**：把「局部声明顺序」这类**纯语言规则**从"只能靠用户复跑"变成"本侧跑得出"。
+**代价 / 风险（必须一并说清）**：
+- 真正的规则要**作用域分析**才准（块作用域、闭包捕获、同名顶层函数、`foo.bar()` 方法调用）；
+  纯文本近似**必然有假阳/假阴**，需要**显式接受**（与 §BA·三「接受假阳性」同一口径）。
+- 必须**同时**给 `tool/selfcheck_import_guard.dart` 加**正例 + 反例**用例，
+  并做**反向灵敏度**（故意把检查改坏 ⇒ 对应用例必须红），否则它就是"永远绿"的摆设。
+
+**我的倾向**：**值得做**，但**排在 v3 段 1a 之后** —— 它是工具改进，不该插在
+「解锁了一批已裁定的功能」前面。**未获裁定前不动手**（本文件只记录提案）。
+
+---
+
+## §BC 裁定落地：**不做**「局部声明顺序」静态检查（2026-10-03）
+
+> 来源：`docs/reply.md` §BC 提案审查。**结论：不同意做** ——
+> 理由不是"不值得"，而是**这个工具做出来会比没有更危险**。
+
+### 一、四条处置
+
+| # | 处置 | 落点 |
+|---|---|---|
+| 1 | **纪律 16**：局部函数 / 变量声明必须先于使用（跨序引用就放**顶层**） | `Agents.md` §二 |
+| 2 | **根层交付清单**（6 项**眼过**，本侧编译不到的部分） | `docs/testing.md` §L 新增「根层交付清单」 |
+| 3 | **「不做」显式记档**（不是"挂着"） | **§AR·三** 新增一行：有意识不做 + 触发条件「**再出现 ≥2 次**」 |
+| 4 | **提案状态改为已裁定** | §BB·十一（原文保留 —— 它是裁定依据，不是待办） |
+
+### 二、裁定要点 + 我的核对
+
+| 要点 | 我的核对 |
+|---|---|
+| **假阴性 > 假阳性** —— 假阳性人眼一扫就过；假阴性会让「检查过了」变成**假信心** | ✅ 同意。这正是 §AF·十一「断言是绿的 ≠ 断言有效」的形态。与 §BA·三 的「**接受假阳性**」是两件事：那条针对**已确认只查一类**的守卫，这条针对**纯文本近似的作用域分析** |
+| **频次被高估**：三次里只有 `§BB·十` 是本提案的目标 | ✅ 复核属实 —— §BB·七 是 `import_guard` **本该抓**（根因已修：补 `barrels`）；§BB·九 是**类型不匹配**（纯文本工具抓不到）。我原话「**连续两次**」**不准确** |
+| **不引 `package:analyzer`** —— 重依赖 + 秒级冷启动；`flutter analyze` 就是官方那条链 | ✅ **这条与我 2026-10-02 的越界直接相关**（我曾为"自己能跑 analyze"去搭进程内分析器包 `~/.ssz_analyzer`）。裁定把这条边界又钉了一遍 |
+| **不扩 `import_guard.dart`** —— 它只做一件事、做得精确；将来真做另起 `tool/local_decl_guard.dart` | ✅ 同意。`import_guard` 的**低假阴性**正是它可用的原因 |
+
+### 三、验证
+
+纪律 16 与交付清单都是**文本**（无可执行面）；本批**未新增/修改任何 `tool/` 代码** ⇒
+`import_guard` 与其自检**不受影响**（复跑见 §BD·六）。
+
+---
+
+## §BD v3 审查意见固化 + 段 1a 落地（2026-10-03）
+
+### 一、为什么要有这一节（**一个我该早就做、却没做的事**）
+
+⚠️ **`docs/reply.md` 每轮被覆盖**（`Agents.md` §六「只写不改」）。
+
+v3 那份审查意见（5 列语义 7 条 / 批次切法 / 环级验证）原本**只存在于 `reply.md`**，
+而它已被本轮 §BC 覆盖。我先前只抄了**摘要**进 §AR·一 与记忆文件 ——
+**逐字原文从未落进台账**（`toBaseQuantity` 在台账里 **0 命中**，此前只活在被 `.gitignore` 的
+AI 记忆文件里）。**用户发现后把 `reply.md` 的记录补回来了**，我趁此**逐字固化**。
+⇒ 与 §AU 顶部抄录**同一条理由**：**要反映当前状态的是台账，不是 `reply.md`。**
+
+### 二、核心裁定（要点逐字）
+
+**选 A（5 列）** —— 「不是让用户选一个方向，是**裁定本身漏了两列**」：
+`§AX·五` 里 `discount_amount` / `entry_*` 是**为"让价 + 录入原文"设计的**；
+`package_*` 是**为"换算"设计的**。**两组字段服务两个目标，裁定只写了一个目标。**
+⇒ **A = 裁定的必要补齐**，报备即可、无需重裁。
+
+**为什么 B（严格 3 列）更坏**：用户输「3 箱」时——不认「箱」⇒「那我填什么？」／认但不换算 ⇒
+「我填 3，它记 3 个？」／靠 `package_note` 手算 ⇒「这软件不是号称能按箱录吗？」
+**「这比完全没有包装功能更坏」**（用户对"能按箱录"有预期，B 让他碰到一半就撞墙）。
+**且 B 要跳两次 schema 版本**（v3 三列 → v4 五列）= 两倍发布成本。
+
+### 三、5 列的交互关系（**7 条，逐字**）
+
+| # | 规则 | 要点 |
+|---|---|---|
+| **1** | **三对字段的分工** | `products.unit` = **最小销售单位**｜`package_unit` = **包装单位名**（如「箱」）｜`package_size` = **1 个包装 = 多少个最小单位**（正整数）｜`document_lines.quantity` = **永远是最小单位数量**｜`entry_quantity` = **录入原文数量**（用户当时输的）｜`entry_unit` = **录入原文单位**（用户当时选的，可为 null） |
+| **2** | **`entry_unit` 允许 `null`** | **必须允许**（散客买 3 个，强制填单位是摩擦）。`null` ⇒ 只表示"没在两种单位间切换"，`entry_quantity == quantity`；`= '瓶'`（最小单位）⇒ 同上；`= '箱'` ⇒ `entry_quantity × package_size == quantity`。**规则统一**：`entry_quantity` **永远等于用户输入框里那个数字**；`quantity` **永远是换算后的值** |
+| **3** | **两个不同的名字空间** | 档案写 `package_unit = '箱'` **不代表**这次必须按箱录（可能输「5 瓶」）。**`entry_unit` 只能取两个值**：`products.unit` 或 `products.package_unit`（后者为 null 时只有前者可选）。**不是这两个值 ⇒ 校验拒绝**（把"用户输入 '打' 是什么鬼"挡在门外） |
+| **4** | **换算的唯一落点 = core 草稿层** | **不能在 UI 里做**：三份草稿（采购/销售/送货）共用同一换算 · UI 不懂业务 · `dart test` 要能覆盖。建议新增纯函数 `packages/shensuanzi_core/lib/src/documents/quantity_conversion.dart`：`int? toBaseQuantity({required int entryQuantity, required String? entryUnit, required String baseUnit, required String? packageUnit, required int? packageSize})`，**失败返回 `null`**（UI 据此报错） |
+| **5** | **`unit_price` / `amount` 的关系（最容易搞错）** | 输入「3 箱 × ¥250/箱」：`amount` = 75000（**真相**，用户填的）· `quantity` = 36（**真相**，换算后）· `unit_price` = `round(amount / quantity)` = 2083 分（**派生**）。**用户输的「¥250/箱」存哪？** ⇒ **存在 `entry_unit` + `amount` 的组合里**（展示时 `amount / entry_quantity` = ¥250/箱）。**不需要 `entry_unit_price` 字段** ⇒ **不加第六列**（这条要写进 `data_model.md`，否则实现者容易加） |
+| **6** | **`discount_amount` 与单位无关** | 让价是**整单金额**的减项：`amount = entry_quantity × entry_unit_price − discount_amount`（其中 `entry_unit_price = amount_before_discount / entry_quantity` 是派生的）。**永远是分、正值**，范围 `[0, entry_quantity × entry_unit_price]` |
+| **7** | **`entry_*` 不因商品档案变化而重解释** | 录入时 `package_size = 12`，历史行 `entry_quantity = 3 / entry_unit = '箱'`；**三个月后**档案改成 24 ⇒ 历史行 `quantity` **不变**（仍 36）。理由：`quantity` 是**录入当时的真相**，`entry_*` 是**录入原文的记录**；**改档案改的是「将来」怎么换算，不改历史** —— 与「业务数据不可变」同一哲学 |
+
+#### `toBaseQuantity` 的失败场景（逐字）
+
+| 情形 | 返回值 |
+|---|---|
+| `entryUnit == null` 或 `== baseUnit` | `entryQuantity` |
+| `entryUnit == packageUnit` 且 `packageSize != null` | `entryQuantity × packageSize` |
+| `entryUnit == packageUnit` 但 `packageSize == null` | `null`（UI 报「这个商品没设包装换算」） |
+| `entryUnit` 是第三种值 | `null`（UI 报「单位填错了」，**理论上不该发生** —— UI 只给两个选项） |
+
+### 四、受影响面的 **3 项补充**（审查意见 §三；原 §AX·二 的 6 项之外）
+
+| # | 项 | 说明 |
+|---|---|---|
+| 1 | `document_line.dart` 的 `linesAmountMatchesTotal` | **不用改**（守 `Σ amount`，不守每行乘积）—— 但**注释里要明确解除**「行级 `amount = qty × price`」这层隐含约定 |
+| 2 | `ProductDraft` | 加 `packageUnit` / `packageSize` 校验（`packageSize > 0`；`packageUnit` 非空才能有 `packageSize`）—— 建档页据此 |
+| 3 | `export_tables.dart` | **取 `amount` 不取 `unit_price`**（这就是「取 `unit_price` 会算错总额」的根因）；**加断言**：导出表里**不出现 `unit_price` 列** |
+
+### 五、批次切法（审查意见 §四，**7 行表**）
+
+| 步 | 内容 | 本侧可验 | 完成标志 |
+|---|---|---|---|
+| **1a** | Schema v3 + `migrationStep(2)` + **立即跑迁移测试** | ✅ | **迁移链 3 环全过** |
+| **1b** | `data_model.md` / `rules.md` 的字段语义（**先写文档再写代码**） | ✅ | 文档评审通过 |
+| **2a** | `CostPolicy` + `RuleEngine` 各规则的 `amount` 口径（**引擎层**） | ✅ | 全套 core 测试过 |
+| **2b** | 三份草稿的 `amount` / `entry_*` / `toBaseQuantity`（**接口层**） | ✅ | 三份草稿测试过 |
+| **2c** | `whitelist.dart` + `sync_protocol.md §8.4` + `export_tables.dart` | ✅ | 自检 + 导出断言过 |
+| **3** | Flutter 层（建档页 + 开单页 + 详情页） | ❌ | 用户 `flutter analyze` |
+| **4** | 手册 + 台账 + `data_model.md` 收尾 | ✅ 部分 | `selfcheck_manual` 过 |
+
+**加 1b 的理由**：5 列的**交互关系**是这次的核心难点（§三 那 7 条），**文档先行**
+能让 2a / 2b 有依据，也让用户在写代码前**再挑一次毛病**。
+**可停性**：每步做完即提交，**下一步不改上一步的文件**（除非发现缺陷 —— 那也单独提交）。
+
+**⚠️ 环级验证（审查意见 §五）**：迁移链是**链**，写完一环就验证一环 ——
+写完 `migrationStep(2)` ⇒ **立即跑「v1 化石 → v2 → v3」**（v1→v2 的化石测试不用改，
+`migrationStep(1)` 没动；**不需要造 v2 化石**）。**这一步在 1a 内做，不留到第 4 步**——
+「迁移链的 bug 越早暴露越便宜，一旦写下去，后面所有测试都跑在不稳定的链上」。
+
+### 六、段 1a 落地：Schema v3 + 迁移链环级验证（2026-10-03）
+
+**改动文件（3 个）**
+
+| 文件 | 改动 |
+|---|---|
+| `packages/shensuanzi_core/lib/src/db/schema.dart` | `version = 3`；`products` DDL 加 `package_unit` / `package_size`；`document_lines` DDL 加 `discount_amount` / `entry_quantity` / `entry_unit`；**`migrationStep(2)` 五条 `ALTER`**（+ 两处文档：版本说明、迁移步说明含 5 列语义表） |
+| `packages/shensuanzi_core/test/schema_test.dart` | **+7 用例**；另**改写**「执行器单元测试」 |
+| `packages/shensuanzi_core/tool/selfcheck.dart` | §M 扩 **4 条**断言（§M 从 16 → 20 条；自检总数 105 项） |
+
+**新增用例（7 条）**
+
+| 用例 | 钉住什么 |
+|---|---|
+| `migrationStep(2)` 恰好五条 ALTER | 五条、两张表、五列、`discount_amount` **带 `NOT NULL DEFAULT 0`**（ALTER 的硬要求） |
+| 改 v3 不许回头改 v2 那一步 | **迁移链只追加**（逐版本） |
+| 新库直接含 v3 五列 | v0 建表路径与迁移路径**都**要产出五列 |
+| `document_lines` 新列默认值 | 让价 **0**（不是 NULL）· `entry_*` NULL · **`quantity` 仍是 36**（本步不动口径） |
+| 化石升至 v3：**两环都跑** | 不只查「到了 v3」，还查 **v2 那一环的产物在** —— 只查最终结构会漏掉「链跳环」 |
+| **环级**：v2→v3 失败 ⇒ 停在 v2 | 「每版一个事务」的**可观测证据**（见下方发现） |
+| **降级构造的形状 == 化石 v1 形状**（逐表逐列 + 索引） | [downgradeToV1] 的**前提校验** —— 见下方补记 |
+
+**验证（本侧）**
+
+| 项 | 结果 |
+|---|---|
+| 临时脚本 `dart run`（已删） | ✅ **33 / 33**（A 迁移步 / B 新库五列+默认值 / C 化石 v1→v2→v3 端到端 / **D 环级**） |
+| `selfcheck.dart` | ✅ **105 项全过** |
+| 三个包 typecheck | ✅ core **34** · app **19** · host **10** 入口 |
+| 根 `import_guard` · 守卫自检 · host 自检 · 手册自检 | ✅ 44 文件 0 处 · 12/12 · 76/76 · 8 过 0 挂 |
+| **连带影响面**（加列会不会打破别处） | ✅ `fromRow` 全是**命名取列**（`SELECT *` 安全）· `backup.dart` 用 `db.schemaVersion` 且 `startup_test` 用 `Schema.version` 插值 ⇒ **无硬编码版本号** · 无人在别处断言列集合 |
+
+**⚠️ 有意未做（按裁定的步序）**：`data_model.md` / `rules.md` 的字段语义 = **段 1b**。
+⇒ **此刻 `schema.dart` 与 `data_model.md` 短暂不一致**（而 `schema.dart` 头部写着"改动这里必须同步"）——
+这是**裁定自己排的步序**（1b = 文档先行），**1b 会关上它**，我不擅自提前。
+
+#### 补记：复跑回来 **1 处红**（`执行器单元测试`）—— 我的**扫描漏了一个方向**（2026-10-03）
+
+```
+test/schema_test.dart: 迁移框架 执行器单元测试：降级构造的 v1 库也走完整迁移
+SqliteException(1): duplicate column name: package_unit
+```
+
+**根因**：那条用例**不是**读化石，而是「**用当前 DDL 建表 + `DROP COLUMN` 降级**」造 v1 形状 ——
+它当时只写了 `DROP COLUMN package_note`。v3 给 `products` 加了 `package_unit` / `package_size`，
+于是「降级」造出来的其实是 **v2 形状**，v2→v3 再 `ADD COLUMN` 就撞了。
+
+**我漏在哪（比这个 bug 值钱）**：我为 1a 做的「连带影响面」扫描**只扫了正向依赖** ——
+
+| 方向 | 我扫了吗 | 例子 |
+|---|---|---|
+| **正向**：谁**消费** schema 的版本/列 | ✅ 扫了 | `Schema.version` 引用点 · `table_info` 断言 · 无硬编码版本号 |
+| **反向**：谁把**当前形状当成历史形状** | ❌ **漏了** | 「当前 DDL + `DROP COLUMN` 降级」的夹具 —— 我这批**读过它的开头**（用例名 + 前 12 行）就往下走了，**没读函数体** |
+
+⇒ **新规矩**：改 schema / 加列时，扫描要**正反两个方向**都做，且**必须读函数体**，
+不能凭用例名判断它依赖什么。已写进 `MEMORY.md`。
+
+**修法（不是补一行 `DROP COLUMN`）**：新增顶层助手 **`downgradeToV1(Database raw)`** ——
+它**逐条读 `migrationStep`**、把每一版 `ADD COLUMN` 加的列都摘掉。
+⇒ **将来加 v4 时不必回来改它**（跟着迁移链走），根除这类漂移。
+
+**并加了一条前提校验用例**（本轮第 7 条）：
+**「降级构造出来的形状 == 化石的 v1 形状」**（12 张表**逐列含顺序** + 26 个索引）。
+它是这条修复的**结构性保障**：若哪天「当前 DDL 减去迁移链加过的列」不再等于真 v1，
+这条会直接拦下 —— 而不是让「执行器单元测试」去测一个**臆造的形状**（那种情况它会**照样绿**）。
+
+**验证**：临时脚本实测 —— 摘掉 **6** 列（1 + 5）后与化石 **12 张表逐列（含顺序）完全一致**、
+**26 个索引一致** ✅。执行器用例另加两条断言（v3 列存在 + 老行取 NULL），**两环都断言**。
+
+#### ⚠️ 发现一处「文本与实现不一致」：**迁移失败的「自动恢复」并没有发生**（🔴 待裁定，未动代码）
+
+**事实（代码）**：`database.dart` 的 `Db.open` 是
+
+```dart
+String? backupPath;
+try {
+  ...
+  backupPath = _migrate(db, path);   // ← 抛异常时，这一行**没有机会赋值**
+  return Db._(db, foreignKeys: foreignKeys);
+} catch (_) {
+  db.dispose();
+  if (backupPath != null) _restoreFrom(backupPath, path);   // ← 于是 backupPath 恒为 null
+  rethrow;
+}
+```
+
+`_migrate` **只在成功时** `return backupPath` ⇒ 一旦抛异常，`backupPath` 仍是 `null`
+⇒ **`_restoreFrom` 走不到**（`Db._(...)` 是平凡构造，它之后没有别的可抛点）。
+
+**文本怎么说**：
+
+| 位置 | 原文 |
+|---|---|
+| `database.dart:36`（`open` 的文档） | 「**迁移失败 → 从迁移前备份恢复**（`<db>.before-v{N}`）」 |
+| `database.dart:180`（`_restoreFrom` 文档） | 「从迁移前备份恢复（**失败路径**）」 |
+| `docs/reply_review.md:3772` | 「迁移链 + 迁移前自动备份 + **失败自动恢复** + 旧代码拒绝新库，机制完整」 |
+| `docs/reply_review.md:3797`（§AQ 表） | 「迁移失败**自动恢复**」 |
+| `database.dart:129`（`_migrate` 文档） | 「失败只影响那一版，**重试从断点继续**」 ← 这条**与代码一致** |
+
+**实际行为**（本次已实测 · 见上表「环级」用例）：v1→v2 成功、v2→v3 失败 ⇒
+库**停在 v2**（v1→v2 已提交保留、v2→v3 整条回滚），`before-v1` 留在盘上供**人工**退路。
+
+**为什么这件事**现在**才**暴露：**只有一步链时，"恢复"与"没有半升级状态"看不出区别** ——
+v1→v2 失败时什么都没提交，库"看起来就是被恢复了"。
+**v3 是第一条两环链**，于是两者第一次分叉。既有测试的注释其实已经预感到这点
+（「⚠️「恢复」的完整验证需要两版迁移（部分成功后再失败）—— 当前只有 v1→v2 一版」）。
+
+**两条路（我的倾向：A）**
+
+| | 做法 | 代价 / 后果 |
+|---|---|---|
+| **A（倾向）** | **改文本**：把 `open` / `_restoreFrom` 的文档与台账 §AQ 那两处的「自动恢复」改成「**失败后库停在最后一版已提交的版本**，`before-v{N}` 留作**人工**退路」，并说明「重试会从断点继续」。顺手把 `_restoreFrom` 标成**当前不可达**（保留待用，或删） | 只动文本；保留「断点续跑」这一**更有用**的行为（自动回滚会让下一次启动从头再跑一遍、重蹈同一失败） |
+| **B** | **实现恢复**：把 `backupPath` 改到 `_migrate` 内部赋值（或用 out 参数）⇒ 失败时真回滚到迁移前 | 动生产代码；**与「重试从断点继续」冲突**（回滚到 v1 意味着下一轮要重跑 v1→v2）；需要新测试 |
+
+**未动任何代码** —— 这是行为语义，等裁定。
 
 
 
+
+---
+
+
+### 八、复核修正落地（段 1b 的 4 个实质问题 + 2 处跨文件，2026-10-03）
+
+| # | 问题 | 修正 |
+|---|---|---|
+| **A** | `amount` 字段表写成 `quantity × unit_price − discount_amount` —— 与 `unit_price = round(amount / quantity)` **循环**，且舍入不恒等（36 × 2083 = 74988 ≠ 75000） | 字段表改为 **`entry_quantity × entry_unit_price − discount_amount`**（`entry_unit_price` = **录入单位报价**，**不落库**），并当场写明为什么不能拿派生值反算 |
+| **B** | `discount_amount` 行末「`unit_price` 保持档价」是**旧口径残留** | 改为「`unit_price` 是派生展示（= `round(amount / quantity)`），档价只是预填默认值」 |
+| **C** | 第 5 条「¥250/箱 由 `amount / entry_quantity` 反推」**漏了让价**（有让价时得到的是折后价） | 改为「**原始**报价 = `(amount + discount_amount) / entry_quantity`；**折后**单价 = `amount / entry_quantity`」—— 与第 6 条 `amount_before_discount` 对齐；`rules.md` 零·乙 第 3 条同步 |
+| **D** | 两种失败共用一句「没设包装换算」 | **拆开**：选了 `package_unit` 但没设 `package_size` ⇒「这个商品没设包装换算」；**第三种单位 ⇒「单位不合法」（校验拒绝）**。`data_model` 第 4 条 + `rules` 零·乙 都改 |
+| **+** | `entry_unit` 可选「箱」的条件没与「成对启用」对齐（会出现"能选箱但报没设换算"的半配置状态） | 字段表 `entry_unit` 行 + 第 3 条 + `rules` 零·乙 都写明：**`package_unit` 与 `package_size` 都非空才能选** |
+| 跨 1 | `Agents.md` §4.1 仍写「换算入账是候选」（违反**纪律 17**） | 改为「**包装换算 v3 已落地**：`package_unit` / `package_size` 成对启用 + `toBaseQuantity`；`package_note` 仍是纯备注」 |
+| 跨 2 | `README.md` 写 `schema v2` | 改 `schema v3`（v1 / v2 逐版自动迁移，升级前自动备份） |
+| **+** | `data_model` §2.1 `unit` 行同一残留 | 补「需要按箱录入自动换算的商品另填 `package_unit` / `package_size`」 |
+
+**⭐ 由此产生一个 2b 的实现要求（提前记下）**：问题 D 要求两种失败**文案分开**，
+而「返回 `null`」**不足以区分原因** ⇒ 2b 的 `toBaseQuantity` 必须**带回失败原因**
+（sealed result 或异常类型），UI 才能分开报。实现时落实。
+
+### 九、段 1b 第二轮复核修正（2 处必须改 + 4 处补写 + 3 处跨文件，2026-10-03）
+
+> 来源：`docs/reply.md` 第二轮复核。**核心公式已确认正确**；本轮是措辞与边界的收口。
+
+| # | 问题 | 修正 |
+|---|---|---|
+| **1**【必须改】 | 「`entry_*` **纯记录，不参与任何计算**」与第 4 条（`toBaseQuantity` 用 `entry_unit`）、第 6 条（`amount` 用 `entry_quantity`）矛盾 | 字段表两行 + `rules` 零·乙 第 1 条改为：**落库之后**不参与库存/成本/往来余额等**派生**计算；**落库当时** `entry_unit` 是换算的输入、`entry_quantity` 是 `amount` 公式原文与展示反推来源 |
+| **2**【必须改】 | 第 3 条「**只能取两值**」与字段表/第 2 条允许 `null` 矛盾 —— 实际是**三态** | 字段表 + 第 3 条改为「**三态**：`null` / `products.unit` / `products.package_unit`；取 `package_unit` 前提 = 成对非空；**其余值 ⇒ 校验拒绝**」 |
+| **3**【需写清】 | 单行上限 `[0, entry_quantity × entry_unit_price]` vs「整单议价记在某一行」—— 差额超过最后一行折前金额时记不下 | **补写**：超出时**由 UI 从最后一行向前分摊到多行**（每行各守各自上限；整单差额恒 ≤ 整单折前金额 ⇒ 分摊**总有解**，不会摊不完）。⚠️ **这是我在「分摊 / 拒绝」二选一里选的分摊**（拒绝会制造用户解不了的死局）—— 等你复核。`data_model` 第 6 条 + `rules` 零·乙 都改 |
+| **4**【建议补】 | `packageSize <= 0` 未覆盖 | 第 4 条补：`packageSize == null` ⇒「**这个商品没设包装换算**」；`<= 0` ⇒「**包装换算无效**」（档案校验本应挡住，纯函数兜底防数据被外部改坏）。⇒ **2b 的失败原因从两种变三种**（§BD·八 的实现要求随之更新） |
+| **5**【建议改】 | 「适用于**所有带明细的单据**」与 RULE-009（盘点也带明细）自相矛盾 | 改为「适用于**有金额/交易明细**的单据：RULE-001/002/003/007/008；**盘点 RULE-009 不适用** —— `quantity` 是盘点后实际数量，语义见 RULE-009」（`rules.md` 无 §八，指针指向 RULE-009 本节） |
+| **6**【建议改】 | 连带校验「校验 `packageSize > 0` 且 `packageUnit` 非空才能有 `packageSize`」读起来循环 | 改为「有 `packageSize` 时必须 `packageSize > 0` 且 `packageUnit` 非空；两列**成对**，不允许半配置」 |
+| 跨 1 | README 两处章数不一（「15 章」vs「18 章」） | 统一 **18 章**（实测：`manual_content.dart` 18 个 `id:`、HTML 18 个 `<h2>`） |
+| 跨 2 | README / `Agents.md` 未体现 v3 新能力 | ⚠️ **此处我做了与建议不同的判断**：v3 的**数据层**（1a/1b）落地了，但**建档 UI（段 3）未落地** —— 当前建档页确实只有 6 个字段，README 直接写包装换算 = **描述不存在的功能**（纪律 17）。⇒ **README 不动**（现状准确）；`Agents.md` §4.1 加指针「schema v3 已加两列 / 建档 UI 在段 3 跟上 / 跟上之前不宣称」。**若你认可段 3 完成后再补 README，这就是正确顺序** |
+| 跨 3 | `package_size` 未标 schema v3 | §2.1 补「与 `package_unit` 成对，schema v3 新增（`migrationStep(2)`）」—— 与 `package_unit` 行对齐 |
+
+**校验**：「纯记录，不参与任何计算」/「只能取两值」/「所有带明细的单据」**全仓 0 残留** ✅；
+三种失败文案（没设包装换算 / 包装换算无效 / 单位不合法）与分摊语义两处就位 ✅；
+`data_model` 21 块 / `rules` 4 块 / `Agents` 6 块 / `README` 3 块，表格 **0 异常** ✅。
+**本批零代码改动**，门禁不受影响。
+
+**⭐ 2b 实现要求（更新）**：`toBaseQuantity` 失败**三种原因**（`package_size` 未设置 / `<= 0` / 单位不合法）
+必须可区分（sealed result 或异常类型）⇒ UI 三句文案分开。
+
+
+### 十、段 2a 落地：引擎口径（CostPolicy + RuleEngine 改用 `amount`）（2026-10-03）
+
+> 依据 §BD·五：**引擎层**。`rules.md` 零·乙 的三种失败文案摘要补齐（§BF 复核的"唯一残留"顺手改）。
+> **口径冻结前提**：用户第二轮复核通过（`reply.md`「可以收工了」）。
+
+| # | 文件 | 改动 |
+|---|---|---|
+| 1 | `rules/cost_policy.dart` | **`inboundCost` 改收整个 [`DocumentLine`]、返回 `line.amount`** —— 让签名本身挡住「`qty × unit_price` 重算一遍」的旧写法回流；类文档写明 v2/v3 口径差别 |
+| 2 | `rules/rule_engine.dart` | 调用点 `totalCost: _cost.inboundCost(line)`；`_purchaseInbound` 文档注释改「`total_cost = line.amount`（v3 口径，含让价）」 |
+| 3 | `models/document_line.dart` | **`linesAmountMatchesTotal` 注释明确解除行级隐含约定**（§BD·四 #1：只守列级 Σ，不守行级乘积，消费端不许用 `unit_price` 重算）；`DocumentLine.create` 注释标明**过渡形态**（仍按 v2 派生，**2b 改为显式传入 amount** 后删除） |
+| 4 | `test/rule_engine_test.dart` | **+1 用例**：让价行（直构 `amount=4900 / qty=10 / unitPrice=500`）⇒ `total_cost = 4900`（**反向灵敏度：旧口径得 5000**）+ `unit_cost = 490` |
+
+**改动面盘点（为什么只有这些）**：全仓算 `qty × unit_price` 的只有两处 ——
+`document_line.dart:37`（**2b 的接口层**，本批只改注释）与 `cost_policy.dart:19`（本批）。
+出库（RULE-002/003）/ 盘盈亏 / 退货成本**本就基于加权均价或流水聚合**，天然兼容 `amount` 口径，**零改动**。
+
+**验证**：
+
+| 项 | 结果 |
+|---|---|
+| core typecheck | ✅ 34 入口 |
+| 临时脚本运行时（已删） | ✅ **10/10** —— A 让价行 4900/490 · B 无让价等价 1000 · **C 让价沿退货分摊链传播（退 5 件 = -2450，旧口径 -2500）** · D `create` 过渡形态仍等价 |
+| selfcheck | ✅ 105 项 |
+| 根 `import_guard` · 守卫自检 | ✅ 44 文件 0 处 · 12/12 |
+
+**C 段的意义**：`returnCost` 的分子分母取自**流水聚合**（原单 `total_cost`），
+不重算单价 —— 所以让价自动进入退货分摊基数，**引擎的退货路径零改动就兼容了 v3**。
+脚本 C 段第一版曾被 B5 拦（退货明细 `amount=0` vs `totalAmount=2450`）——
+**这不是脚本写错，是不变量在正确地工作**；修脚本后作为 B5 活性的旁证记下。
+
+**待复跑**：core `dart test`（rule_engine_test **+1** 条，预期全过 —— 既有夹具都满足
+`amount == qty × price`，等价性保证不破旧用例）。
+**下一步 = 段 2b**：三份草稿的 `amount` / `entry_*` / **`toBaseQuantity`（三种失败原因可区分）**。
+
+
+### 十一、段 2b 落地：接口层（`toBaseQuantity` + 三份草稿 + `entry_*` / 让价）（2026-10-03）
+
+> 依据 §BD·五：**接口层**。口径已冻结（§BD·九/十），本段实现"三种失败可区分"等全部裁定要求。
+
+| # | 文件 | 改动 |
+|---|---|---|
+| 1 | **新增** `documents/quantity_conversion.dart` | `toBaseQuantity` —— **sealed result**（`ConversionSuccess` / `ConversionFailed(reason)`）：三种失败原因（`packageSizeMissing` / `packageSizeInvalid` / `unknownUnit`）**可区分**，`conversionFailureMessage` 给**逐字文案**（§BD·九 的实现要求）。换算唯一落点，UI 不造句 |
+| 2 | `models/product.dart` | **+`packageUnit` / `packageSize`**（fromRow / toRow / copyWith）—— 1a 只建了列，模型没跟上 |
+| 3 | `master_data/product_draft.dart` | +两字段原文 + **成对校验**（§BD·四 #2：缺一报缺一 · `>0` · **包装单位 ≠ 最小单位**——同名会让选箱走最小单位分支、`package_size` 被静默忽略）+ normalized（空白归 `NULL`，不存 `''`——半配置防线） |
+| 4 | `master_data/product_service.dart` | create / update 两处写入补列 |
+| 5 | `models/document_line.dart` | **+`discountAmount` / `entryQuantity` / `entryUnit`**（fromRow 旧行 `NULL` ⇒ 0/null）；**`create` 改多形态**：`amount` 真相必填或由 `qty × price` 等价派生（既有 15 处测试调用零改动）、`unitPrice` 缺省派生 `round(amount/quantity)`、`entryQuantity` 缺省 = quantity |
+| 6 | 三份草稿行（sale/purchase/delivery，**同构改动各 7 处**） | +`entryUnit` / `discountAmount` / 换算上下文（`fromProduct` 自动带入，UI 不用管）；getter 改名：`quantityValue`→**`entryQuantityValue`**（原文）、`unitPriceCents`→**`entryUnitPriceCents`**（不落库的录入报价）；新增 **`baseQuantityValue`**（换算后）· `entryUnitValue` · `discountCents` · `conversion`；**`amountCents` = entry_qty × entry_price − discount**（越界 ⇒ null，validate 报文案）；`totalCents` = Σ（B5 草稿侧） |
+| 7 | 三份 service | 落库改显式：`quantity: baseQuantityValue` · `amount: amountCents` · `entryQuantity` / `entryUnit` / `discountAmount` |
+| 8 | 测试 | **新增** `quantity_conversion_test.dart`（**7**）· sale_draft **+6** · purchase_draft **+3** · delivery_draft **+2** · product_service **+6**（成对/≤0/同名/落库读回/不启用=NULL）· typecheck 登记（**35 入口**） |
+
+**向后兼容（关键设计）**：草稿新参数**全部可选** —— 直构旧形态（不传上下文）⇒ 不换算、
+`amount = qty × price`，**与 v2 行为逐位一致** ⇒ **现有 UI（三页）零改动可编译**（`flutter analyze`
+预期不破；UI 侧的 `amountCents` 全是页面自己 `_RowCtl` 的，不依赖草稿 getter）。段 3 只加控件。
+
+**验证**：
+
+| 项 | 结果 |
+|---|---|
+| core typecheck | ✅ **35** 入口（+1 新测试文件） |
+| 临时脚本运行时（已删） | ✅ **34/34** —— 换算全分支 + 三种文案逐字 · ProductDraft 成对校验 4 种 · **端到端**：建档（箱=12）→ 采购 10 箱入库（库存 120 / 成本 25000）→ 销售 3 箱让价 ¥1 ⇒ 明细 `quantity=36 / amount=74900 / entry_quantity=3 / entry_unit=箱 / discount=100 / unit_price=2081（派生）`、`documents.total_amount=74900`（B5）、出库后库存 84、出库成本 7500（加权均价）· 兼容：旧构造行为不变 |
+| selfcheck · 根 `import_guard` · 守卫自检 | ✅ 105 项 · 44 文件 0 处 · 12/12 |
+
+**待复跑**：core `dart test`（预期 **+24 条**：7+6+3+2+6）。
+**下一步 = 段 2c**：`whitelist.dart` + `sync_protocol.md §8.4` + `export_tables.dart`（取 amount 不取 unit_price + 断言）。
+
+
+### 十二、段 2b 复跑修正（5 个 lint + 4 处测试红 —— 全是我的，同一族根因）（2026-10-03）
+
+| # | 问题 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | `product_draft.dart:134` **5 个 lint**（dead_code / dead_null_aware / unnecessary_this ×2） | **copyWith 签名漏了 `packageUnit` / `packageSize` 参数** —— 体内引用解析到字段本身 ⇒ `packageUnit ?? this.packageUnit` 左操作数恒非空 | 签名补两参数（134 行现在是正确的 `packageUnit: packageUnit ?? this.packageUnit`） |
+| 2 | 三份草稿测试「三种失败文案」红：期望「没设包装换算」实得「单位不合法」 | **测试助手写错**：`packageUnit: packageSize == null ? null : '箱'` 把「没设 size」实现成了「整个包装不启用」⇒ `packageUnit=null` ⇒ unknownUnit | 助手改 `packageUnit: '箱'` 恒定 —— 「没设 size」是档案缺列，不是包装不启用 |
+| 3 | 让价越界文案红：实得字面 `¥{Money.format(qty * price)}` | **python 生成时丢了 `$`** —— dart 插值应为 `¥${...}`，写入的是字面量 | 三份 draft 补 `$`；全仓 grep `¥{Money` **0 残留** |
+
+**三条根因同族：python 批量改代码的静默失败** —— ① 是锚 0 命中无断言、③ 是转义/占位符笔误。
+**⇒ 规矩升级（已记 MEMORY）**：批量改代码**只允许带断言的脚本**（每处替换 assert count==1），
+且**生成含插值的代码时优先手写**（脚本最容易弄丢 `$`）。
+
+**验证**：编译 ✅ 35 入口 · 运行时 **9/9**（三种文案逐字 / 越界文案带数值 ¥50.00 / 越界 amountCents null /
+正常让价 4950 / ProductDraft 成对 2 种 / **copyWith 参数语义生效**）· selfcheck 105 · import_guard 44 文件 0 处。
+**待复跑**：`flutter analyze`（预期 **0 issues**）+ core `dart test`（预期 4 处红全绿）。
+
+
+### 十三、段 2c 落地：同步白名单 + 协议文档 + 导出口径守卫（2026-10-03）
+
+| # | 文件 | 改动 |
+|---|---|---|
+| 1 | `sync/whitelist.dart` | products +`package_unit`/`package_size` · documentLines +`discount_amount`/`entry_quantity`/`entry_unit`（**只追加，旧列没少** —— 有测试钉住） |
+| 2 | `docs/sync_protocol.md` §8.4 | 两行列清单同步（与白名单逐字一致） |
+| 3 | `app/src/export.dart` | **导出口径守卫**：`ExportSink.write` 执行路径上拦「单价」列 ⇒ `ExportFailed`（文案点名 unit_price 派生展示）。**设计变更一次**：原想放 `ExportTable` 构造的 initializer assert，但 **const 构造不允许方法调用/闭包**（编译当场抓）⇒ 移到真实写盘路径 —— 比构造 assert 更有牙（导出真实路径必经） |
+| 4 | `test/sync_client_test.dart` | **+1 组（3 条）**：v3 列就位 ×2 + **旧列没少（白名单只追加）** |
+
+**一个预估修正（§AX·二 的又一处）**：预估「导出取 `unit_price` 会算错总额」—— **实测 `export_tables.dart` 根本没有明细行导出**（只有单据级 `total_amount` 与流水 `amount`，grep 实证）⇒ 现状本来就安全；守卫做在**执行路径**上防的是"将来加明细导出"。
+
+**验证**：core/app typecheck **35/19** · 运行时 **7/7**（白名单 5 列 + 旧列没少 · 「单价」列 ⇒ `ExportFailed` 且不写盘 + 文案点名 · 正常表 `ExportSuccess` 且文件生成）· selfcheck 105 · import_guard 44 文件 0 处 · 守卫自检 12/12。
+
+**待复跑**：core `dart test`（sync_client_test **+3**）· app `dart test` · `flutter analyze`。
+**下一步 = 段 3（Flutter）**：建档页加包装两列 + 开单页单位切换与让价 + 详情页显示 —— **本侧编译不到**，逐段交付。
+
+
+### 十四、段 3 落地：Flutter 层（建档 / 开单 / 详情 —— 五文件）（2026-10-03）
+
+> ⚠️ **本侧编译不到 Flutter 层** —— 全部改动用「核心侧镜像」预验实参与期望值（17/17），首次 `flutter analyze` 可能仍有残留，**由你复跑确认**。
+
+| # | 文件 | 改动 |
+|---|---|---|
+| **core**（可编译可验证） | |
+| 1 | **新增** `documents/discount_spread.dart` | `spreadDiscount` —— 整单让价**分摊唯一实现**（§BD·九 #3：从最后一行向前、每行钳折前金额；`discount > Σ gross` ⇒ ArgumentError——上游合计栏先拦）。**+6 测试**（typecheck 登记 36 入口） |
+| 2 | `product_draft.dart` | `ProductDraft.of` 回填 +packageUnit/packageSize（编辑建档回显） |
+| **Flutter**（本侧编译不到） | |
+| 3 | `product_form_dialog.dart` | 建档表单 +**包装换算两列**（可选、成对启用；helper「两格都填，开单就能按箱录入」）—— 与「包装说明」分工的注释就地写明 |
+| 4 | `sale_page.dart`（10 处） | `_RowCtl` +换算上下文（`attachProduct` 选商品带入、**换商品重置单位**）+ `entryUnit` + `baseQuantityValue` + `amountCents` 改折后（拆 `grossCents`）；行卡 +**单位切换 ChoiceChip**（成对启用才显示，chip 用文字 = UI 基线）+ 单位错误内联；合计栏 +**「整单让价」输入框**（`_syncSpread` 实时分摊，行卡小计联动；超整单 ⇒ 内联橙字 + `_save` 阻断）；`_draft` 带 entry_*/discount/上下文 |
+| 5 | `purchase_page.dart` / `delivery_page.dart`（各 5 处，同构） | 单位切换同构（**无让价** —— 议价是销售场景；采购按箱报价正是 §AU·3.3 的原始场景） |
+| 6 | `document_detail_page.dart` | 明细行 `discountAmount > 0` ⇒ 行下小字「让价 -¥1.00（折前 ¥750.00）」—— 原始报价与让价额都可追溯 |
+
+**设计选择（3 处，可推翻）**：① **整单让价一个框**（不是每行）—— 用户心智是「一共便宜 2 块」，分摊在 core（`spreadDiscount`）可测；② chips 只在**成对启用**时出现（不启用不给切，而不是切了再报错）；③ 数量框 label 动态带单位「数量（箱）*」，切单位即换 label。
+
+**验证**：core/app typecheck **36/19** · **核心侧镜像 17/17**（Money round trip / 分摊跳过 0 行 / 按箱 36 / chips selected 逻辑 / `of` 回填 / 三份草稿形状）· selfcheck 105 · import_guard 44 文件 0 处 · 守卫自检 12/12。
+
+**真机验收清单**：① 建档填包装两列 → 编辑回显 ② 开单选该商品 → 出现「个/箱」chips → 切「箱」数量 label 变 → 填 3 × ¥250 合计 750 ③ 让价填 2 → 合计 748、最后一行小计 748 ④ 保存 → 详情页明细行显示「让价 -¥2.00（折前 ¥750.00）」⑤ 无包装商品 → 不出现 chips、行为与旧版一致。
+**下一步 = 段 4（手册 + 收尾）**：手册补包装换算/让价 + 台账收尾 —— v3 闭环。
+
+
+### 十五、段 3 复跑修正（2 处红 —— 同一连带：让价框把页面推高，测试没跟上）（2026-10-03）
+
+| # | 位置 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | `sale_page_test` 快捷键 [收 100]（tap miss + 收款框没填，两道红同一处） | **「整单让价」框把页面推高** ⇒「收 100」按钮在 800×600 测试视口外（offset y=664）⇒ `tap` 直接 miss ⇒ 收款框没被填。**产品无错**（页面本来就可滚，真机用户滚一下就看到） | `tap` → **`tapFinder`**（先滚到可见再点 —— §AY·六 已建的同名助手） |
+| 2 | `非现金账户不显示找零辅助行`（**框架断言** menuLimits） | Dropdown 按钮位置更低 ⇒ 弹出菜单在 800×600 里**放不下**（框架断言 `menuLimits.top + height <= size.height`） | 该用例**临时加高视口**（`tester.view.physicalSize = 800×1600` + `addTearDown(tester.view.reset)`），不影响别的用例 |
+
+**两处都不是产品错**（`flutter analyze` 无问题为证）—— 测试的 tap/视口假设没跟上页面变高。
+**验证**：本侧编译过；**待复跑**：`flutter test`（两处全绿）。
+
+### 十六、真机验收 5 步（**详解版** —— 每步：在哪 / 点什么 / 填什么 / 看到什么 / 为什么）
+
+> 前置：库里至少有一个商品。最好先**重新建档一个带包装的商品**（第 1 步就是建它），
+> 别拿老商品测 —— 老商品没填包装两列，**不会**出现切换 chips（那是第 5 步的反向验证）。
+
+**第 1 步：建档，给它包装换算**
+
+1. 左侧导航 → **商品** → 点「＋新建商品」（或编辑一个现有商品）。
+2. 正常填：名称（如「牛奶」）、**单位填「个」**（最小单位 —— 库存按它记）、售价随便。
+3. 往下找到新增的**「包装单位（可选）」**和**「1 包 = 多少（可选）」**两格：
+   第一格填 `箱`，第二格填 `12`。含义：**1 箱 = 12 个**。
+4. 保存。再点开这个商品**编辑** —— 两格应该还显示 `箱` / `12`（回显正常 = 第 1 步过）。
+
+**第 2 步：开单，按箱录入**
+
+1. 左侧导航 → **销售开单** → 选刚才那个商品。
+2. 数量输入框下方出现**两枚 chip：「个」「箱」**（没有包装的商品不会出现 —— 这本身是个验证点）。
+3. 点 **「箱」** chip ⇒ 数量框的标签从「数量（个）*」变成 **「数量（箱）*」**。
+4. 数量填 **3**，单价填 **250.00**（¥250/箱）。
+5. 看这一行右侧的小计：应该是 **¥750.00**（= 3 箱 × ¥250/箱；不是 36 × 250 = 9000 ——
+   **金额按你填的箱价算**）。合计也是 750。
+
+**第 3 步：整单让价**
+
+1. 合计下方新增的**「整单让价（可选）」**框里填 **2.00**。
+2. 看三处联动：**合计变成 ¥748.00**；这一行右侧小计变 **¥748.00**（让价全摊在这行 ——
+   只有一行时它就是最后一行）；没有红色报错。
+3. 边界试一下：让价填 **800**（超过合计）⇒ 框下出现**橙色**提示「让价不能超过合计 ¥750.00」，
+   合计**不变**（还是 750）—— 橙色不是红色，因为这不是你填错了格式，是需要改小。
+4. 把让价改回 **2.00** 再继续。
+
+**第 4 步：保存并核对账**
+
+1. 选客户（赊账）或配收款（当场结清都行），点 **保存**。
+2. 去左侧 **单据** → 点开刚那张销售单，看明细行：
+   - 主行：`牛奶 × 36`、金额 **¥748.00** —— **×36 是核心**：你填的是 3 箱，库存按 **36 个**扣；
+   - 行下多一行小字：**「让价 -¥2.00（折前 ¥750.00）」**（让价 ¥2 的追溯）。
+3. 回 **商品/库存** 页看「牛奶」的库存：**少了 36**（不是 3）—— 按「个」扣，这就是
+   「单位 = 最小销售单位」+ 按箱录入换算的组合效果。
+
+**第 5 步：反向验证 —— 没填包装的商品行为不变**
+
+1. 选一个**没填包装两列**的老商品开单。
+2. 数量下方**不出现**「个/箱」chips，数量标签就是「数量 *」，行为与升级前**完全一样**。
+3. （可选）建档里只填「包装单位 = 箱」不填数量（或只填数量不填单位）⇒ 保存时报
+   「就要给包装起个名字 / 就要填 1 包 = 多少个」—— **成对启用**防半配置。
+
+**哪一步不对就停下来把现象发我** —— 特别是第 2 步的 chips 是否出现（它依赖第 1 步的两列真的落库了）。
+
+## §BE 两项裁定：迁移恢复「做完整版」+ `DocumentDraft` 判据精确化（2026-10-03）
+
+> 来源：`docs/reply.md`「两项审查」。**分工**：`database.dart` 的代码与两处文档、
+> 以及那条失败用例的改名与注释，由**用户亲手改**（注释里已引用「纪律 17」「§BE」）；
+> 其余由 AI 落地，见下表。
+
+### 一、迁移恢复 —— 同意 A，但做完整版
+
+| # | 动作 | 谁 | 落点 |
+|---|---|---|---|
+| 1 | 改文本：拆成「**停在最后一版已提交的版本**」+「**`before-v{N}` 是人工退路，不是自动回滚点**」 | **用户** | `database.dart` `open` / `_migrate` 文档 |
+| 2 | **删 `_restoreFrom`**（`_migrate` 改 `void`、不再返回备份路径）——「保留 = 死代码，后来人会以为它被调用；『待用』是伪需求，真要做是新设计需重裁」 | **用户** | `database.dart` |
+| 3 | `schema_migration.md` §三：措辞改实际行为 + 「为什么不做自动回滚」+ 指向帮助页「备份与恢复」 | AI | `docs/schema_migration.md` §三 |
+| 4 | 台账 §AQ 两处「自动恢复」加不符标记（原句保留 + 指针） | AI | 本文件 §AQ·二 / 备份表 |
+| 5 | 过时测试注释（「『恢复』的完整验证需要两版迁移」→「v3 就是两版」）+ 用例改名 | **用户** | `schema_test.dart`（新名：「**第一环就失败** ⇒ 仍是 v1、没有半升级状态；备份留给人工」—— 名字现在说的就是**实际行为**） |
+| 6 | 环级用例补「重试**不重跑 v1→v2**」的可观测断言理由 | AI | `schema_test.dart`：**重试能成功本身就证明没重跑** —— `package_note` 已在上一步提交，若重跑 v1→v2 会报 duplicate |
+| 7 | **纪律 17**：描述与实现必须一致 | AI | `Agents.md` §二 |
+| 8 | 用户手册补「`before-v{N}` 是什么」 | AI | `manual_content.dart`「备份与恢复」章 + **HTML 重生成**（18 章） |
+
+**回归守卫（审查意见点名的那条）**：§BD·六 的环级用例已覆盖其三条 ——
+`PRAGMA user_version == 2` ✅ · `before-v1` 仍在盘上 ✅ · 重开 ⇒ 从 v2→v3 继续 ✅
+（本次补了「不重跑 v1→v2」的**理由**）。**这条同时钉住三件事**：
+行为对不对 · 文档描述准不准 · 下次改动是否破坏。
+
+**定性：第三次同类型问题** ⇒ 立纪律 17：
+
+| # | 位置 | 形态 |
+|---|---|---|
+| 1 | §AY·一「折扣抹零」 | 裁定间冲突（5 处旧表述没跟着改） |
+| 2 | §BB·八 `pubspec.lock` | 记在台账但没进交付清单 |
+| 3 | **本次** | **文档描述了不存在的功能** |
+
+### 二、`DocumentDraft` 抽取：**现在不做**，判据精确化
+
+**「一周」是代理指标，不是真信号** —— 真信号是 **`delivery_draft.dart` 的 API 形状已经稳定**
+（看它被改过几次：零改动 ✅ 抽；改 1 次从最后一次重数；改 2+ 次继续等）。
+四项判据与三项前置检查已更新进 **§AR·二 第 2 行**（字形对比表 / 行为差异澄清 /
+干跑 `runDocumentDraftCases`）。
+
+两个要点：① 三份行为差异里 **「送货保存后保留谁」是新问题**（不是抽象问题），动手前必须澄清；
+② **`validate()` 返回类型若漂移必须先对齐**，否则基类会带一个"三选一"兼容层。
+
+**顺手**：`testing.md` §L 交付清单加第 **7** 项「**覆写检查**」—— 抽取引入继承层后，
+漏 `@override` 时**父类默认实现静默接管**，`import_guard` 抓不到（它只覆盖导入面）。
+
+### 三、验证
+
+| 项 | 结果 |
+|---|---|
+| core typecheck | ✅ **34** 入口（`database.dart` / `schema_test.dart` 改后） |
+| `selfcheck.dart` | ✅ **105 项全过**（§M 迁移链 20 条，含环级三段） |
+| 根 `import_guard` · 守卫自检 | ✅ 44 文件 0 处 · 12/12 |
+| host 自检 · 手册自检 | ✅ 76/76 · **8 过 0 挂**（新增手册文本**过了黑名单**） |
+| 手册 HTML | ✅ 重生成（`packaging/用户手册.html`，18 章 / 21606 字节 / v0.1.0） |
+| `_restoreFrom` 残留 | ✅ 除 §BE 本节的记录性引用外 **0 命中** |
+
+### 四、下一步
+
+**v3 段 1b（文档先行）**：把 5 列语义与 7 条交互关系写进 `data_model.md` / `rules.md`
+（同时关上 1a 遗留的「`schema.dart` 与 `data_model.md` 短暂不一致」）。
+
+---
+
+## §BF 提案：二维码打开「未响应」—— 根因与方案（🔴 待裁定，**未动代码**）（2026-10-03）
+
+> 来源：用户真机反馈（设置 → 多设备同步 → 打开二维码 ⇒ 窗口「未响应」）。
+> 应要求**文档先行** —— 完整提案见 **`docs/proposals/多设备同步-二维码打开未响应-根因与方案.md`**。
+
+**根因（一句话）**：每绘制一次二维码，都在 UI 线程上重新做**约两万次**完整的二维码编码。
+
+证据链（全部可复核）：
+
+| # | 证据 |
+|---|---|
+| 1 | `paint()` 里构造 `PairingQr(payload)` —— 编码发生在**绘制阶段**（`host_service_section.dart:371`） |
+| 2 | `PairingQr` 的 `code` / `image` / `moduleCount` / `matrix` **全是 getter，每次访问全量重算**（`pairing.dart:87-105`） |
+| 3 | `matrix` 双重循环里 `image` / `moduleCount` 被 **O(n²) 次调用**（n = 49 ⇒ ~4900 次 getter） |
+| 4 | `qr` 包的 `QrImage(QrCode)` 构造 = **8 次掩码试算 + 1 次终绘 = 9 次全量编码**（`qr_image.dart:17-32`，正常成本非 bug） |
+| 5 | **实测**：`matrix` 访问一次 = **15.4 秒**；修复后形态（编码一次）= **3.1 ms**（**5000 倍**） |
+| 6 | 无 `RepaintBoundary` ⇒ 对话框动画期间**每帧重 paint** |
+
+⇒ 一次 `paint` ≈ **15 秒**同步计算堵死 UI 线程 ⇒ Windows 判定「未响应」。
+**不是机器慢，是 O(n² × 9) 对 O(1) 的结构性差距** —— 任何机器都卡，真机性能越差越明显。
+
+**三个方案**：
+
+| 方案 | 一句话 | 判定 |
+|---|---|---|
+| **A `PairingQr` 缓存化** | getter → `late final`（语义不变）；UI 侧 `RepaintBoundary` + 持缓存矩阵 | **推荐** —— 治本 / 零新依赖 / 纯 Dart 可测 / 矩阵逐 bit 不变 |
+| B 换 `qr_flutter` | 底层同一个 `qr` 包，只是它自己缓存 —— A 在库层做的正是这件事 | 治标 + 推翻「零依赖」裁定；**A 落地后无必要** |
+| C 只在 UI 层算一次 | dialog state 里缓存 | 保底；**库的陷阱还在**，Android 端会再踩 |
+
+**修复清单（若采纳 A）**：`pairing.dart` 缓存化（+ `@visibleForTesting int encodeCount`）·
+`host_service_section.dart` 加 `RepaintBoundary` 并持缓存矩阵 · `pairing_test` **+2 断言**
+（矩阵与旧实现**逐 bit 一致** / 重复访问 `encodeCount` 不增长）· 真机复测（预期 < 100ms）。
+**不做**：isolate（3.1ms 无必要）· 换渲染方案 · 改 QR 内容/纠错等级。
+
+### §BF·二 审查意见落地 —— 方案 A **实施完成**（2026-10-03）
+
+> 来源：`docs/reply.md` §BF 审查意见（根因接受 · 方案 A 采纳 · 三处补强）。**已全部落地。**
+
+| # | 补强 | 落地 |
+|---|---|---|
+| **2.1** | UI **持 `PairingQr` 实例**（不是"持缓存矩阵"）—— 否则哪怕库层缓存了，每帧 paint 构造**新实例**仍要重新编码 | `_QrView` 改 **StatefulWidget**：`late PairingQr _qr` 只在 `initState` / `didUpdateWidget` 构造；**`paint()` 不再构造** ✅ |
+| **2.2** | **三处修复缺一不可**：库内缓存（O(n²)→O(1)）· UI 持实例（跨 paint 不重编码）· `RepaintBoundary`（动画期不重 paint） | 三处都做了 ✅ |
+| **三** | **`encodeCount` 语义定死** = 底层 `QrImage` 构造次数；断言从"不增长"精确为**三段**（构造 **0** → 首次访问后**恰好 1** → 重复/跨字段**仍 1**）——「恰好 1」能同时区分：每次重编码（>1）/ 构造即编码（≠0）/ 惰性缓存（=1） | `pairing_test.dart` **+1** ✅ |
+| **5.1** | **`uri` 刻意不缓存**（纯字符串拼接，与编码无关）—— 避免实施者图省事把所有 getter 都 `late final` | ✅（类文档写明理由） |
+| **5.2** | `shouldRepaint` —— **同一实例 ⇒ false**（`RepaintBoundary` 不被 painter 自己绕过）；**+1 断言** | `host_service_section_test.dart` **+1** ✅；⚠️ **一处偏离**见下 |
+| **四** | isolate 补「**未来的尺度**」：内容变长 / 批量生成时 3.1ms × N 线性增长，**届时再评估** —— 是"当前规模不需要"，不是"结构上不需要" | 提案文档 §五 ✅ |
+
+**一处偏离（已标注理由，等复核）**：5.2 要求 `shouldRepaint` "**必须 `=> false`**"；
+我实现为 **`qr != oldDelegate.qr`** —— 同一实例 ⇒ **false**（审查的那条断言照过），
+**实例不同 ⇒ true**。理由：`CustomPaint` 换 painter 时靠它决定重画与否，
+**无条件 false 会把旧码留在屏上**（载荷换了却不重绘）。若坚持字面恒 false，
+需同时删掉 `_QrViewState.didUpdateWidget` 的换实例逻辑（等于承诺一个 `_QrView` 永远一个载荷）。
+
+**另外**：`_QrPainter` 改**公开** `PairingQrPainter` —— 私有类在根层测试里**够不着**，
+而 5.2 的断言需要直接构造 painter。
+
+**实测（修复后，本机 JIT）**：`matrix` 一次 = **4.38 ms**（修复前 **15 408 ms**，约 3500 倍）；
+`encodeCount` 三段全过；矩阵与直接现算**逐 bit 一致**；运行时 **6/6**。
+
+**改动文件**：`packages/shensuanzi_host/lib/src/pairing.dart` ·
+`lib/src/ui/host_service_section.dart` ·
+`packages/shensuanzi_host/test/pairing_test.dart`（**+2**）·
+`test/host_service_section_test.dart`（**+1**）· 提案文档（修复清单按审查意见更新）。
+
+**待复跑**：host `dart test`（pairing **+2**）· 根 `flutter analyze` / `flutter test`
+（`host_service_section.dart` 重写 + host_service_section_test **+1**）· **真机复测**：打开二维码应 < 100ms。
+
+### §BD·七 段 1b 落地：文档先行（2026-10-03）
+
+**产出（就是给你挑毛病的 —— 复核通过才进 2a）**：
+
+| 文件 | 改动 |
+|---|---|
+| `docs/data_model.md` §2.1 | `products` 加 `package_unit` / `package_size` 两行（含与 `package_note` 的分工：**那个是备注，这两列是给换算用的数据**） |
+| `docs/data_model.md` §3.2 | 字段表加 `discount_amount` / `entry_quantity` / `entry_unit` 三行；`unit_price` 行改「v3 起 = `round(amount / quantity)`」；`amount` 行改「`quantity × unit_price − discount_amount`」；**原「🔜 v3 预留（未实现）」块升级为「v3 五列：包装换算与让价（已落地）」—— 7 条交互关系逐条成文**（含 `toBaseQuantity` 四种情形 · 禁止加第六列 · B5 不变） |
+| `docs/rules.md` | 新增「**零·乙、数量与让价口径（v3）**」—— 显式声明适用于 RULE-001 / 002 / 003 / 007 / 008 的六条口径 |
+
+**1a 遗留的「`schema.dart` 与 `data_model.md` 短暂不一致」就此关上**
+（`schema.dart` 头部要求"改动这里必须同步 data_model.md"）。
+
+**⚠️ 本批零代码改动**（文档先行 —— 2a 才动引擎）⇒ 门禁不受影响、无需复跑。
+**待你复核**：7 条的措辞 · `toBaseQuantity` 的失败场景 · `entry_unit` 的取值口径。
+**复核通过 ⇒ 段 2a（引擎口径）**：`CostPolicy` 改用 `amount`（B2）+ `RuleEngine` 各规则。
+---
+
+## §BG 真机反馈两修：单位切换换预填价（方案 A）+ 单据时间只到日（方案甲）（2026-10-03）
+
+> 来源：真机验收反馈（采购 1 箱 × ¥2.50 合计 ¥2.50；详情页「2026-10-03 00:00」）。
+> 裁定（`docs/reply.md`）：**A + 甲 + 三页同修 + ¥2.50 那张单作废重开（用户自办）**。
+
+**根因（复核确认）**：① 单价语义 = 按录入单位报价（§BD·三），切到「箱」后预填的**瓶价**被解释成箱价 —— 机制没错，UI 没标注也没换算；② `occurred_at` 是业务日期（`DateTime.parse('yyyy-MM-dd')` = 当天 00:00，三份 draft 同构），详情页套了带时分的 `formatDateTime`。
+
+### 落地清单
+
+| 文件 | 改动 |
+|---|---|
+| `packages/shensuanzi_core/lib/src/documents/quantity_conversion.dart` | **+3 个纯函数**：`convertEntryPriceCents`（切单位换价；除不尽/上下文无效 ⇒ `null`，`int?` 而非 sealed —— UI 处置单一）· `packageEntryHint`（「1 箱 = 12 瓶，入库按 12 瓶记。」）· `entryPriceKeptHint`（「单价折算除不尽：这个数现在按「瓶」计；想按「箱」计请重新输入单价。」）—— 文案单一出处，UI 不造句 |
+| `packages/shensuanzi_core/lib/shensuanzi_core.dart` | 桶 export `show` 补 3 个符号 |
+| `lib/src/ui/entry_unit_hints.dart`（**新**） | 三页共用的辅助说明行（`entryUnitHints`）：箱说明**只在切到包装时显示**（裁定 ③ 不常驻）；除不尽 = 橙色 `0xFFB45309` 告知（不拦提交） |
+| `lib/src/ui/sale_page.dart` · `purchase_page.dart` · `delivery_page.dart` | `_RowCtl` **逐字段同构** +4：`priceTouched`（裁定 ①：显式布尔，编辑非空=true/清空=false/程序换算不算手改）· `entryPriceKept` · `switchEntryUnit`（判断在 core，这里只改状态）· `priceLabel`（单价框动态标注「单价（元/箱）」）；两个 ChoiceChip 改走 `switchEntryUnit`；价格框 `onChanged` 记 touched |
+| `lib/src/ui/document_detail_page.dart` | **方案甲**：业务日期 `formatDate(occurredAt)`（只到日）+ 另起一行「录入于 `formatDateTime(createdAt)`」—— 真实时刻本来就在 `created_at`，零口径变更 |
+| `packages/shensuanzi_app/lib/src/export_tables.dart` | **裁定「顺带检查」命中**：单据导出「日期」列 `formatDateTime(occurredAt)` → `formatDate`（否则整列 00:00）；**往来流水保留 `formatDateTime`** —— 那边是真实时刻，才是 §AF 遗漏 6「带时分排序稳」的适用面 |
+| `packages/shensuanzi_app/lib/src/format.dart` | `formatDateTime` 文档注释补**适用面**（纪律 17：真实时刻用带时分；`occurred_at` 用 `formatDate`） |
+
+### 断言面清扫（行为变更三扫的战果）
+
+| 面 | 命中 |
+|---|---|
+| 旧文案 | 「单价（元）*」改为动态 —— grep 全仓，测试无按此文案查找的用例 ✅ |
+| 依赖旧格式的断言 | `export_test.dart`（`'2026-09-28 10:00'` → `'2026-09-28'`，用例名同步）· `selfcheck_export.dart`（同，**29 过 1 挂 → 30/30**） |
+| 范围外顺手修（**显式标注**） | `selfcheck_app.dart` **两处陈旧断言**（「高频动作」「沉浸模式」仍期望 `'sale,purchase'`）—— `navigation.dart` **零 diff** 证明是 §AP 送货进高频区时就漏更、与本次无关；按 §AP 注释修正为 `'sale,delivery,purchase'`（**129 过 2 挂 → 131/131**）。若认为该修 navigation 而不是自检，请回退并裁定 |
+
+### 测试
+
+| 文件 | +什么 |
+|---|---|
+| `packages/shensuanzi_core/test/quantity_conversion_test.dart` | +2 组：`convertEntryPriceCents` 6 用例（×12 / ÷12 整除 / ÷不尽 / 同单位 / 上下文无效 / 第三单位）+ 两句文案逐字钉住 |
+| `test/sale_page_test.dart` · `purchase_page_test.dart` · `delivery_page_test.dart` | 各 **+1**（裁定三·3）：选带包装的商品 → 预填瓶价 → 切「箱」断言价格 ×12、label「单价（元/箱）」、说明行出现 → 切回断言还原、说明行消失（结果行一律 `widgetWithText(ListTile, …)`） |
+
+### 验证（本侧能跑的全绿）
+
+core typecheck **36** 入口 · core selfcheck **105** 全过 · app typecheck **19** ·
+selfcheck_app **131/131** · selfcheck_export **30/30** · selfcheck_manual **8/8** ·
+import_guard **45 文件 0 处** · 守卫自检 **12/12** · 新纯函数临时脚本运行时验证 **8/8**（用完即删）。
+
+### 待复跑（用户）
+
+core / app / host `dart test`（core +8、app export_test 改 1）· 根 `flutter analyze` / `flutter test`（三页 +1、detail 页文本变更）· **真机验收**：① 选带包装商品切「箱」看价格变 12 倍 + 单价标注；② 详情页看「日期 + 录入于」两行；③ ¥2.50 那张采购单**作废重开**。
+
+### §BG·补 1 复跑修正：documents_page_test 的旧「带时分」断言（2026-10-03）
+
+复跑挂 1：`test/documents_page_test.dart:304` 仍断言单据导出日期 `row[6].contains(' ')`（带时分）
+—— §BG 断言面清扫时 grep 的是「formatDateTime / 00:00 / 单价（元」**没扫「带时分」这个措辞本身**，
+漏了这一处（教训：旧措辞的**同义表述**也要进 grep 清单）。
+已改为断言 `^\d{4}-\d{2}-\d{2}$`（只到日，§BG 方案甲口径），reason 写明适用面分工。
+全仓再扫「带时分 / contains(' ') / 10:00」：其余命中只有 `csv_test.dart`（测的是
+`formatDateTime` **函数本身** —— 函数未变、往来流水/「录入于」仍在用）⇒ 无需改。
+
+**用户复跑反馈**：真机验收**全过**。¥2.50 那张采购单暂无法作废（无作废入口），用户裁定**先放着** ——
+已知影响：蒙牛均价成本被拉低（≈¥0.21/瓶 那笔入库），待后续有单据作废/调整能力时再清算。
+
+### §BG·补 2 段 4 落地：手册补「包装与让价」章 —— **v3 批次七步闭环**（2026-10-03）
+
+| 文件 | 改动 |
+|---|---|
+| `packages/shensuanzi_app/lib/src/manual_content.dart` | **+1 章** `packages`「按箱进货、按瓶卖（包装与让价）」（建档两格 / 开单切单位与单价标注 / 预填价自动换算与「改过不碰」/ 换算说明 / 除不尽橙色提醒（warning）/ 整单让价与详情留痕 / 采购送货无让价）＝ **19 章**；指路 3 处（`prepare` 建商品步 · `purchase` 段 · `sale` 让价段）；`documents` 章 +「业务日期 vs 录入于」提示（§BG 方案甲的用户面）；FAQ +1（「一箱 12 瓶的牛奶，库存按什么记？」） |
+| `packaging/用户手册.html` | 重生成：**18 章 21 606 字节 → 19 章 25 311 字节**（单一来源同步，软件内帮助页同源生效） |
+
+**门禁**：黑名单扫描干净（`selfcheck_manual` **8/8**，新增文本无开发词汇）· app typecheck **19** 入口 ·
+`manual_test` 只钉「≥14 章」不钉死数量（已核）· `help_page_test` 无章节钉死（已核）。
+README 无逐功能清单，「当前状态」的 schema v3 行已如实覆盖，不动（无 stale 声明）。
+
+**v3 批次就此闭环**：1a schema ✅ → 1b 文档 ✅ → 2a 引擎 ✅ → 2b 草稿 ✅ → 2c 白名单/协议/导出 ✅ →
+3 Flutter ✅（含 §BG 两修）→ **4 手册 ✅**。开放项带走到下一批：¥2.50 采购单清算（等作废/调整入口）、
+Android（AH-B，用户要求尽快）。
+
+---
+
+## §BH 提案：AH-B（Android 最小可用）拆段（🟡 待裁定，未动代码）（2026-10-04）
+
+> 前置已满足：AH-A 已落地（二维码 < 100ms）· 用户侧 Android 工具链就绪（flutter doctor 绿，2026-10-04）。
+> 现状证据：`android/` 工程已随 create 存在但 `applicationId` = 模板默认 `com.example.shensuanzi`（§AH-1 裁定改 `com.shensuanzi.app`）；`lib/src/app.dart:476` 是唯一的壳挂载点；core 同步五件套纯 Dart 就绪；**客户端镜像重建未开工**（`schema_migration.md`「重建而非迁移」随 B2 落地）。
+
+| 段 | 内容 | 关键裁定依据 | 验收 |
+|---|---|---|---|
+| **B1 平台接入与壳** | android 工程配置（applicationId/namespace、应用名「神算子」、minSdk 24）+ `ShellKind` 判断放纯 Dart（`dart test` 可测）+ `MobileShell` 底部导航骨架（5 入口，复用现有页面）+ app.dart 按 ShellKind 分支 | §AH-1/2/5 | `flutter analyze`/`test` 绿 + 真机安装后看到底部导航主界面 |
+| **B2 扫码配对 + 首拉镜像** | `mobile_scanner`（+CAMERA 权限与理由文案）→ 扫设置页二维码 → HttpTransport（显式 utf8）→ SyncClient 首拉 → **客户端镜像库**（重建而非迁移 · `foreignKeys: false` · 主数据在前按依赖顺序落库） | §AH-4 / schema_migration.md「客户端镜像」 | 真机扫码后能在手机上看到商品/往来方/账户 |
+| **B3 开单 + 推队列 + 三态** | 手机端开采购/销售单 → 进 `sync_queue` → 推送 → 全局三态条（已同步/待同步 N 条/失败）。⚠️ 设计问题届时提案：现有开单页直连本地 `PurchaseService`，手机端应「Draft 校验复用 + 只进队列」，**UI 复用还是另写**要出方案再动 | §AH-8 / sync_protocol §一「客户端不跑规则」 | 真机开一张销售单 → 主机收到 → 三态正确 |
+| **B4 只读看板** | 库存 / 往来余额读镜像 + 未同步影响叠加（`显示 = 权威镜像 + 未同步影响`） | data_model.md §七 | 真机数字与主机一致 |
+
+**B1 待确认（2 条，均可推翻）**：
+1. 「我的」入口内容 = 设置 + 帮助 + 版本/反馈（§AH 只定了 5 个入口名，没定内容）——我按此实现，不对就改；
+2. B1 阶段桌面端行为**零变化**（`ShellKind` 非 Android 一律走现有 AppShell）——保证 Windows 回归风险为零。
+
+**执行纪律**：每段做完即提交、门禁（本侧能跑的全跑 + 用户复跑 analyze/test）过了再进下一段；B2/B3 动工前各出一次细化提案（依赖与 UI 结构是 hard-to-reverse 决策）。
+
+### §BH·三 B1a 落地：Android 工程配置 + 移动壳 + 两壳共用装配（2026-10-04）
+
+| 文件 | 改动 |
+|---|---|
+| `android/app/build.gradle.kts` | `applicationId`/`namespace` → **`com.shensuanzi.app`**（§AH-1）；`minSdk = 24`（§AH-2；compile/target 仍取最新） |
+| `android/…/kotlin/com/shensuanzi/app/MainActivity.kt` | 从 `com/example/shensuanzi/` **搬移** + package 声明同步（namespace 变更的必做项） |
+| `android/…/AndroidManifest.xml` | `android:label` → **神算子**（桌面图标下的应用名） |
+| `packages/shensuanzi_app/lib/src/shell_kind.dart`（**新**） | `ShellKind` + `shellKindFor(operatingSystem:)` —— **判断放纯 Dart**（§AH-5），传字符串不碰 `dart:io`；非 Android 一律桌面（含未支持平台 = 明确的「未适配」）。**+测试** `shell_kind_test.dart`（2 组 7 断言），登记 typecheck（**20 入口**） |
+| `lib/src/ui/app_shell.dart` | 页面装配从 `_content()` 抽出为**顶层函数 `appShellPage(shell, destination)`** —— AppShell 与 MobileShell **共用唯一装配**（两套壳各写一份必然漂移）；`_content()` 只剩桌面摆设（面包屑/工具栏） |
+| `lib/src/ui/mobile_shell.dart`（**新**） | 底部导航 5 入口（§AH-5：概览/开单/库存/往来/我的，纯摆放）；「开单」tab = 销售/采购/送货三入口推整屏（B3 细化前的过渡形态）；「我的」= 设置/帮助/版本与反馈；**推入页面套 AppBar（带返回键）** |
+| `lib/src/app.dart` | +`shellKind` 注入参数（默认按 `Platform.operatingSystem` 判）+ 壳分支；壳参数装配一份两壳共享；桌面路径**零逻辑变化** |
+| `test/mobile_shell_test.dart`（**新**） | 3 用例：5 标签齐 / 开单三入口 + 推整屏有返回键 / 我的三行。服务全部缺省走 `_PendingPage` —— 摆放层零依赖 |
+
+**字体栈**：核对 `typography.dart` —— 非 Windows 本来就是空栈（Roboto 默认），符合「Android 不指定」裁定，零改动。
+**依赖**：本段**零新依赖**（`mobile_scanner`/`path_provider` 属 B2/B1b，动工前出提案）。
+
+**本侧门禁**：import_guard **47 文件 0 处**（+2 新文件）· 守卫自检 12/12 · app typecheck **20 入口**。
+
+**待复跑 + B1a 验收（用户）**：`flutter analyze` / `flutter test` / `flutter build apk --debug`（预期全绿 + 产出 APK）。
+**真机（B1b 之前 Android 只能到这一步）**：安装 debug APK —— 预期：图标「神算子」、启动后停在
+「选择数据存放位置」页（**这是诚实状态**：Android 私有目录启动路径 = **B1b**，动工前我出提案 ——
+config/log/数据目录落位是 hard-to-reverse 决策，含 `path_provider` 依赖）。
+
+### §BH·三·补 1 复跑修正：app_shell.dart 编译错（我的错）+ Gradle/Java 25 适配（2026-10-04）
+
+**① 编译错（根因在我）**：python 搬链时把 `final Widget page;` 声明**删了没补**、又漏了 `return page;`、
+`_content` 调用还传了 `current.id`（String）而签名要 `NavDestination` —— 三处全是同一个抽取动作的疏漏，
+`flutter analyze` 一次抓全。⇒ 已修：补声明 + 补 return + 传 `current`；并用脚本做了**结构自检**
+（函数体内无 `widget.`/`current.` 残留、括号配平、声明与 return 在位）—— 本侧编译不到 Flutter 层，
+这是当前能做到的最后一道自查，教训是**搬代码后必须跑 analyze 再交付**（那就让用户先跑）。
+
+**② `What went wrong: 25.0.3` = Java 25 与 Gradle 8.14 不兼容**（Flutter 3.44.2 的 gradle_utils
+兼容表：Java 25 ⇒ Gradle ≥ 9.1.0；本项目 wrapper = 8.14）。两条路：
+
+| 方案 | 动作 | 判定 |
+|---|---|---|
+| **A（推荐）** | 装 JDK 21（LTS，Temurin）→ `flutter config --jdk-dir="…jdk-21…"` | **零项目改动**：Java 21 只需 Gradle ≥ 8.4（现有 8.14 ✅）；可逆；与桌面端无冲突 |
+| B | `gradle-wrapper.properties` 升 9.1.0+ | 改项目构建基线（AGP/Kotlin 兼容性需连带验证）= **依赖硬决策，须先裁定**，暂不推荐 |
+
+⇒ 先走 A；B 留作以后统一升构建基线时的选项。
+
+### §BH·五 B1b 落地：Android 私有目录启动路径（2026-10-04，裁定补强全采纳）
+
+| 文件 | 改动 |
+|---|---|
+| `pubspec.yaml` | +**`path_provider: ^2.1.5`**（裁定批准；`getApplicationSupportDirectory()` = `/data/user/0/<pkg>/files` —— 补正 1 的正确路径，data/backup/export 全收其下） |
+| `lib/main.dart` | **移动独立引导** `mainMobile()`：`ensureInitialized` → await 私有目录 → `AppConfigStore(<support>/神算子/config.json)` + `AppLog.besideConfig`（**沿用桌面相对布局，AppLog 零改动**）→ runZonedGuarded → `runApp(ShensuanziApp(configStore:, dataRoot:))`；桌面路径一字不改 |
+| `lib/src/app.dart` | +`dataRoot` 注入参数；`_prepare` 移动分支：`existing()` 命中直接开库，未命中 → **`ensureInitialized(<root>/data')` 直接开库**（`inspect` 在 Android 路径上逐条核对过：盘符保护/网盘/可移动盘逻辑全部不命中 ⇒ `ok`）；`DataDirectoryRejected` 诚实落到 `_dbFailure`。**跳过选目录对话框** |
+| `lib/src/ui/app_shell.dart` + `overview_page.dart` | +`dataLocationNote`/`locationNote`（补强 2）：Android 概览显示「数据存在应用私有目录（由系统管理）。」而非路径；`null` = 桌面显示路径（零变化） |
+| `lib/src/ui/help_page.dart` | +Android 顶部橙色横幅（补强 3 / 裁定原文）：「Android 版数据存在应用私有目录。卸载应用会删除全部数据，包括备份。如需保留，请在设置页导出备份（v1.1 开放）。」—— B1c 落地后去掉「（v1.1 开放）」 |
+| `lib/src/ui/mobile_shell.dart` | 「开单」tab 与「我的」tab 两句与 B2/B3 未落地状态不符的文案改为诚实版（纪律 17） |
+
+**备份定位（裁定补强 3，已写死在这里）**：Android v1 备份 = **只防数据库损坏，不防设备丢失/卸载**
+（同私有目录，卸载连备份一起删）；防丢失靠 B1c「导出备份」+ v1.1 显式分享。
+
+**随本批排定**：
+- **B1c（紧随 B1b）**：设置页「导出备份」——`file_selector` **已在依赖**，走 `getSaveLocation`（SAF）
+  拷贝 db 文件，**零新依赖**；落地后同步手册「备份与恢复」章的 Android 段落 + 横幅文字。
+- **README 平台能力对照表**：v1.0 发布前任务（裁定：两端的实际能力边界都要写）。
+- 退货 v1.1 备忘（来自 reply.md 旧半段的细化，不悬空）：客户端可做退货开单 UI（选原单 → 输行 →
+  推队列），**不做成本分摊 / 超额校验**（主机拒，UI 处理失败回执）；拒收 = `sale_return.ref_doc_id = delivery`。
+
+**本侧门禁**：app typecheck **20** · selfcheck_app **131** · 守卫自检 12/12。
+⚠️ **根 `dart run` 从本批起在沙箱被卡**（`path_provider` 带入的 `objective_c` 原生钩子要编译，
+`CreateFile 231` = 与 flutter test 同款沙箱限制）—— **import_guard 自本批起列入你的复跑清单**。
+
+**待复跑 + B1b 验收（用户）**：
+
+```powershell
+cd D:\shensuanzi\shensuanzi; flutter pub get
+cd D:\shensuanzi\shensuanzi; flutter analyze
+cd D:\shensuanzi\shensuanzi; dart run tool/import_guard.dart
+cd D:\shensuanzi\shensuanzi; flutter test
+cd D:\shensuanzi\shensuanzi; flutter build apk --debug
+cd D:\shensuanzi\shensuanzi; flutter install
+```
+
+**真机验收**：① 首启**直达主界面**（无选目录对话框）② 杀进程重开直达 ③ 概览显示「数据存在应用
+私有目录（由系统管理）。」④ 帮助页顶部橙色警示 ⑤ **首启到主界面的时间不明显慢于第二次启动**
+（裁定验收项）⑥「我的」tab 两句新文案。
+
+### §BH·六 B1b 验收 + B1c 落地：设置页 Android 适配 + 导出备份（2026-10-04）
+
+**B1b 真机验收（用户）**：构建 ✅ · 覆盖安装 ✅ · **强行终止后重启直达主界面** ✅ —— 核心目标达成。
+反馈 4 条：全面屏留白缺失 / 设置数据区不可用 / **多设备区显示 Windows 同款二维码** / 卡顿掉帧。
+
+| # | 反馈 | 处置 |
+|---|---|---|
+| 1 | 概览、开单被状态栏压住 | MobileShell body 包 **SafeArea(bottom: false)** —— 桌面页没有 AppBar，统一让出顶部；bottom 交给 NavigationBar（避免双重内边距） |
+| 2 | 设置数据区除备份外不可用 | SettingsPage +`dataPathsNote`（Android 显示友好文案 + 卸载警示，**隐藏两行路径与无效的「打开」按钮**）—— 真因：私有目录用户打不开，路径行与打开按钮本来就是桌面功能 |
+| 3 | 多设备区显示 Windows 二维码 | 真因：`_openDatabase` 无平台分支，Android 也建了 `HostServiceController`。修 = **Android 不建主机服务**（§AH 定位：Android 是客户端）+ SettingsPage +`hostSyncNote` 引导文案（到电脑开主机、手机扫码——B2 开放前如实说明「当前手机与电脑各自记账」） |
+| 4 | 卡顿掉帧 | debug 包正常现象（与冷启动同源）；**release 出包后再实测**，立项与否到时裁定。列入优化备查 |
+
+**B1c（导出备份，裁定「v1.1 之前必须有」）**：
+
+| 文件 | 改动 |
+|---|---|
+| `lib/src/app.dart` | `_exportBackupMobile()`：`getSaveLocation`（file_selector **已在依赖，走 SAF，零新依赖**）→ 建议名 `神算子备份-<日期>.db` → 整库拷贝 → 文案进 SnackBar；**Android 不建 `HostServiceController`**；壳装配注入 `dataPathsNote` / `hostSyncNote` / `onExportBackup`（仅移动端非空，桌面零变化） |
+| `lib/src/ui/app_shell.dart` | 三参数透传（`dataPathsNote` / `hostSyncNote` / `onExportBackup`）→ `appShellPage` → SettingsPage |
+| `lib/src/ui/settings_page.dart` | +三可选参数：数据区 `dataPathsNote` 替代两行路径；多设备区 `hostSyncNote` 替代主机面板（**优先于** hostService 判空，真机不会再见二维码）；备份区 +「导出备份到手机文件」ListTile（进行中禁用 +「导出中…」，遗漏 11 同款） |
+
+**门禁**：app typecheck **20** · selfcheck_app **131/131**。⚠️ import_guard 沙箱仍被 objective_c
+钩子卡（已列入你的复跑清单）。
+
+**待复跑 + 真机验收（用户）**：`flutter analyze` / `flutter test` / `flutter build apk --debug` / `flutter install`。
+真机看四处：① 概览、开单、库存、往来不再被状态栏压住 ② 设置 → 数据区显示卸载警示、无「打开」按钮、
+多设备区是引导文案（**不再有二维码**）③「导出备份到手机文件」→ 选位置 → SnackBar 报路径 → 文件管理器能看到该 .db ④ 库存/往来/开单功能回归正常（本轮动了设置页与壳，其他页零改动）。
+
+### §BH·六·补 1 真机二轮反馈：导出机制换 share_plus + 页头自适应换行（2026-10-04）
+
+4 步门禁全过；新反馈 2 条 + 处置：
+
+| # | 反馈 | 根因 | 处置 |
+|---|---|---|---|
+| 1 | 超大字号下库存/往来等页头标题被挤成竖排 | 页头 `Row[Expanded(标题), 按钮…]` —— 按钮占死宽度，标题被挤到逐字竖排（SC-1 最大档 + 窄屏） | 四页页头（`stock` / `parties` / `account` / `documents`）改 **`Wrap(spaceBetween, runSpacing: 8)`**：宽屏 spaceBetween 与原右对齐**一致**（桌面零视觉变化），窄屏按钮自动换行。✅ 全库同款模式扫净（grep Expanded+titleLarge） |
+| 2 | 「导出备份」点了只剩转圈 | **file_selector 的「选保存位置」在 Android 官方不支持**（pub.dev 能力表 ❌）⇒ `getSaveLocation` 抛出，回调未兜异常 ⇒ `_exporting` 永远 true | 双修：① 机制换 **`share_plus` ^11**（系统分享面板：存到文件 / 发微信 / 发邮箱，正合裁定出路；**+1 依赖**，Flutter 官方插件，随本批落地可否决）② `_exportBackup` **兜住一切异常**（失败文案进 SnackBar，转圈永不卡死） |
+
+其余待办不变：发布段（release + split-per-abi + 改名 + 图标）· README 平台能力对照 · 性能优化（release 后再测）· 退货 v1.1。
+
+---
+
+## §BI 提案：退货功能（Windows 生产落地前置；🟡 待裁定，未动代码）（2026-10-04）
+
+> 用户指令：退货现在做，做完 Windows 即可落地现实生产（排期由「v1.1 第一项」**提前至当前主线**）。
+> **Core 现状（证据）**：RULE-007/008 已实现（`rule_engine.dart:356-436`，共用 `_return`）·
+> `returnOriginalTypes`：`sale_return` ← `sale|delivery`（拒收）、`purchase_return` ← `purchase` ·
+> 成本按 **R-11 原单比例精确回退**（`cost_policy.dart:79-119`）· **超额退货守卫已内建**
+> （`return_exceeds_original`，累计退货 > 原单量即抛）。缺的只有：**core 退货草稿/服务封装 + UI**。
+
+### 段 R1（core —— dart test 全覆盖）
+
+| 件 | 内容 |
+|---|---|
+| `ReturnDraft` + `ReturnService` | 仿 `SaleDraft`/`SaleService` 同构：原单 id（**类型自动判定**：sale/delivery ⇒ `sale_return`，purchase ⇒ `purchase_return`）· 行（productId + 本次退货数量，>0 才退）· 立即退款（账户 + 金额，可选）· 备注。`create()` 走 engine，返回 `ReturnSaved(docNo, …)` |
+| 可退量查询 | `ReturnService.returnedQuantities(refDocId)` —— 从 stock_ledger 聚合「原单量 / 已退 / 可退」，**把 `return_exceeds_original` 的拦截提前到表单层**（带文案，而不是保存才炸） |
+| 测试 | 草稿校验（超额/零数量/原单类型不符）· service 落库端到端（库存回退、往来冲减、立即退款生成 payment/receipt）· 与既有 RULE-007/008 测试互补 |
+
+### 段 R2（Windows UI）
+
+| 件 | 内容 |
+|---|---|
+| 入口 | **单据详情页**：`sale` / `delivery` / `purchase` 详情显示「退货」按钮（推荐形态 —— 原单信息自然预填）；**送货单额外显示「客户拒收（整单退回）」**（= 全量 `sale_return` ref delivery，兑现手册承诺） |
+| 退货页 | 预填原单行（商品 / 原量 / 已退 / **可退**），每行填本次退货数量；立即退款区（可选账户，与开单付款区同构）；备注。保存后 SnackBar 报单号 |
+
+### 待裁定 4 项（均有推荐默认，回「按推荐开工」即可）
+
+| # | 问题 | 推荐 |
+|---|---|---|
+| 1 | 入口形态 | 详情页按钮（原单上下文预填自然），不做独立导航入口 |
+| 2 | 范围 | R1/R2 **销售退货 + 拒收 + 采购退货一次做齐**（core 共用实现，边际成本低） |
+| 3 | 金额口径 | 退货金额默认 = 原单行派生单价 × 退货数量，**允许改价**（v3 口径：amount 是真相）；冲减欠款 / 退款按单据金额 |
+| 4 | 退款方式 | 立即退款（选账户）与挂账冲减**并存**（与开单页立即付款/赊账同构） |
+
+**Android**：R1 的 core 件天然可复用；移动退货 UI 随 B3 之后的段排（不阻塞 Windows 落地）。
+
+### §BI·一 R1 落地：退货 core（草稿 + 服务 + 拒收收口）（2026-10-04）
+
+裁定五处补强**全部采纳并落地**：
+
+| 文件 | 改动 |
+|---|---|
+| `packages/shensuanzi_core/lib/src/documents/return_draft.dart`（**新**） | `ReturnLineDraft`（**entry_\* 沿用原单行，不允许切换单位**（裁定 3）；`quantityValue` 走 `toBaseQuantity`；**累计比例法默认金额** `defaultAmountCents = round_half_up(原单行金额 × (已退量+本次量)/原单行量) − 已退金额`（裁定 1：与 R-11 同哲学，天然回退让价、无舍入差）；上限 = 原单行金额 − 已退金额）· `ReturnRefundDraft` · `ReturnDraft`（**退款封顶** `recordedRefundCents = Overpay.clamp`（裁定 5）） |
+| `packages/shensuanzi_core/lib/src/documents/return_service.dart`（**新**） | `ReturnService`：**`quotasFor`**（原量/已退/可退 —— 已退数量走 `StockLedgerDao.returnedFlow`（与成本分摊同源）、已退**金额**走新增 `LedgerDao.returnedAmountsByProduct`（Σ 退货单行 amount，与数量**不同源**，文件内写明））· `create()`（原单以库为准、类型自动判定、组装 document/lines/refunds → `dispatch`）· `ReturnSaved` |
+| `packages/shensuanzi_core/lib/src/dao/ledger_dao.dart` | +`returnedAmountsByProduct({refDocId, returnType})`（Σ 退货单行 amount，按商品） |
+| `packages/shensuanzi_core/lib/src/rules/rule_engine.dart` | **拒收收口（裁定 2）**：`_return` 末尾 —— 原单 `delivery` 且 `status == in_transit` ⇒ 同一事务 `updateStatusAndPaid(cancelled)`；**已签收（delivered）不在此列**（货确实送到过，状态机不允许 delivered → cancelled） |
+| `packages/shensuanzi_core/lib/shensuanzi_core.dart` | 桶 export 两文件 |
+| `packages/shensuanzi_core/test/return_service_test.dart`（**新**，登记 typecheck **37 入口**） | 11 用例：额度三段/原单不存在空 map · **裁定 3 舍入例证逐字复现**（¥750/36 瓶退 3 瓶 ⇒ 6250，派生单价法 6249）· 12 次分退之和精确 75000 · 端到端（sale_return 挂账/立即退款/封顶）· purchase_return · **拒收收口**（cancelled + 库存回退）· 超额/超金额校验 |
+
+**一处实现口径偏离（已标注）**：裁定「`discount_amount` 默认 0，允许手动填（退货让价 = 退少一点）」
+—— 我落为 **`discount_amount` 恒 0，「退货让价」= 直接把金额改小**（amount 是真相，v3 口径；
+两处金额会打架）。语义等价；若你要单独记录让价额，裁定后我加列级输入。
+
+**连带文档（纪律 17）**：`docs/rules.md` RULE-003 状态机补拒收 → `cancelled` 转变 ·
+`docs/data_model.md` §3.1 通用公式节补拒收路径 · `AGENTS.md` 4.1 +「退货入口」行。
+README「退货行改已实现」随 R2（UI）落地后改。既有 `return_test.dart` 的拒收用例
+用 `confirmed` 状态夹具 ⇒ 引擎收口（只动 `in_transit`）不触发，无回归。
+
+**本侧门禁**：core typecheck **37 入口**（16 测试文件，+1）· selfcheck **105 全过**。
+
+**待复跑（用户）**：
+
+```powershell
+cd D:\shensuanzi\shensuanzi\packages\shensuanzi_core; dart test
+```
+
+预期：既有测试零回归 + `return_service_test` **11 用例全绿**。过了 ⇒ **R2（Windows UI：详情页退货入口 + 退货页 + 确认对话框）**。
+
+### §BI·二 R1 测试通过 + R2 落地：退货 UI（Windows）（2026-10-04）
+
+**R1 复跑**：core `dart test` 全绿（226+ 通过；3 红均为我新测试的断言符号/方向搞反——销售出库为负、
+采购侧 party 负 = 我欠、拒收回库 +12 回到 0——已修正，产品零改动）。
+
+**R2 落地清单**：
+
+| 文件 | 改动 |
+|---|---|
+| `packages/shensuanzi_core/lib/src/documents/return_service.dart` | `ReturnQuota` +**单位上下文**（entryUnit/baseUnit/packageUnit/packageSize —— 退货行沿用原单行的构造材料）；+`activeAccounts()`（与其他服务同款一行） |
+| `lib/src/ui/return_page.dart`（**新**） | 退货页：每行「原量/已退/可退」+ 数量输入（**金额自动带出累计比例法**，`amountTouched` 手改不覆盖 —— §BG 同款显式布尔）· 超额**实时橙色提示不拦人**（保存校验兜底，裁定 R2 细节 2）· 立即退款区（账户下拉 + 金额，无账户 = 挂账冲减）· **确认对话框**（裁定 4：退 N 行 / ¥X / 退款去向，确认才提交）· 保存后 SnackBar 报单号 + 原单号 |
+| `lib/src/ui/document_detail_page.dart` | +`returnService` 参数；`sale`/`purchase`/已签收 `delivery` → **[退货]**；`delivery` `in_transit` → **[客户拒收（整单退回）]**（预填全部可退量）；原来的「退货功能开发中」橙字退场；文件头按钮表同步 |
+| `lib/src/ui/documents_page.dart` | +`returnService` 透传 → 详情页 |
+| `lib/src/ui/app_shell.dart` + `lib/src/app.dart` | AppShell +`returns`；`_openDatabase` 建 `_returns`（engine 复用 `_engine`）；失败/重选分支同步清空 |
+| `packages/shensuanzi_app/lib/src/manual_content.dart` | **+「退货」章**（5 步流程 + 不可撤销警示 + 负库存说明 + 拒收指引）；送货章「退货功能开发中」占位退场 → 拒收按钮指引 = **20 章 26 802 字节** |
+| `test/return_page_test.dart`（**新**） | 2 用例：挂账退货 e2e（金额自动带出 250.00 → 确认框 → 库存 −24 / 往来 50000）· 拒收 fullReturn 预填 → 保存 → 原送货单 **cancelled** + 库存归 0 |
+
+**本侧门禁**：core typecheck **37** · selfcheck **105** · app typecheck **20** · selfcheck_app **131/131** ·
+selfcheck_manual **8/8** · 手册 HTML 重生成（黑名单干净）。
+
+**待复跑 + 真机/桌面验收（用户）**：
+
+```powershell
+cd D:\shensuanzi\shensuanzi; flutter analyze
+cd D:\shensuanzi\shensuanzi; flutter test
+cd D:\shensuanzi\shensuanzi; flutter run -d windows
+```
+
+**桌面验收**：① 卖 3 箱 → 单据详情点「退货」→ 填数量 1 箱 → 金额自动 250.00 → 确认 → 库存 +12 回来、
+客户欠款减 250 ② 送货单未签收 →「客户拒收（整单退回）」→ 原单变「已作废」、货回库 ③ 采购单同理 ④
+大字号 + 手机版页头换行正常（§BH·六·补 1 同批验收）。README「退货已实现」一行随验收通过后改。
+
+### §BH·三·补 2 B1a 验收通过（2026-10-04）
+
+- `flutter test` **全绿**（含 mobile_shell 3 用例；此前一处断言错在我：推入整屏的内容是
+  `_PendingPage` 占位页，没有第二个「销售开单」文本 —— 改为断言 AppBar 标题 + BackButton）。
+- **`flutter build apk --debug` 成功出包** —— Gradle/许可/壳分支全部实锤。
+- JDK：`flutter config --jdk-dir="D:\Java\jdk-21"` 生效（doctor 显示 Java 21 LTS）；
+  JAVA_HOME 曾误指 `…\bin`（应指 JDK 根目录），已绕开（config 优先级更高）。
+- doctor 的「license status unknown」在换 JDK 后复现 = 显示层老毛病（构建成功 = 许可实锤）；
+  可选：重跑一次 `flutter doctor --android-licenses` 让它重新校验转绿。
+- **真机验收待办**：安装 debug APK，预期停在「选择数据存放位置」页 ⇒ 下一步 **B1b 提案**
+  （Android 私有目录启动路径 + `path_provider` 依赖，动工前裁定）。
+
+### §BH·四 真机首装反馈：6 条回应 + B1b 提案（2026-10-04，🟡 B1b 待裁定）
+
+**真机事实**（小米/Android 14，MT 管理器）：包名 `com.shensuanzi.app` ✅ · minSdk 24 ✅ ·
+targetSdk 36（API 36）· debug 包 144.24 MB · 能启动、停在「选择数据存放位置」页；
+对话框在 Android 上**必失败**：建议路径 `/storage/emulated/0/神算子数据` 写不进
+（scoped storage，Operation not permitted），另一截图甚至建议 `C:\神算子数据`（Windows 默认值照搬）。
+
+| # | 反馈 | 回应 |
+|---|---|---|
+| 1 | 图标是 Flutter 默认图标 | 属实 —— 图标资产从未制作。**列入发行前任务**（需先裁定图标方案：可用图像生成出几版候选再挑） |
+| 2 | 目标系统 Android 16，担心兼容性 | **无需降低**：兼容的下限由 `minSdk 24`（Android 7）决定，你的 Android 14 真机装上能跑就是证明；`targetSdk 36` 只是声明「按 Android 16 的规则适配」，不影响旧机安装运行，降低反而有害（平台会按旧规则放行不安全行为）。**不动** |
+| 3 | 默认路径应跟随平台 | **正确，这就是 B1b**（提案见下）—— Android 上不再弹选目录对话框，直接用应用私有目录（§AH-6 已裁定） |
+| 4 | 安装包 144 MB 不合理 | 这是 **debug 包的正常体积**（未 AOT、含调试信息、全 ABI）。发行版 = `flutter build apk --release --split-per-abi`（单 ABI 约 20–30 MB）+ 按 §AH-3 改名 `神算子-v0.1.0.apk` —— 列入发行段任务，现在不动 |
+| 5 | 冷启动约 3 秒 | debug 包冷启动慢是正常现象（JIT + 调试断言）；**release 再测**后再定是否立项优化（启动主题已有占位）。记入优化备查 |
+| 6 | 退货何时开始 | 见下方「退货排期」 |
+
+**B1b 提案（Android 启动路径 —— 动工前待裁定）**：
+
+| 项 | 方案 |
+|---|---|
+| 新依赖 | **`path_provider`**（Flutter 官方插件；`getApplicationSupportDirectory()` = `/data/user/0/com.shensuanzi.app/…`，§AH-6 裁定的私有目录就是它）—— ⚠️ 依赖硬决策，本提案即裁定请求 |
+| 目录布局 | 全部收在私有目录下：`数据 = <support>/data`（库 + 标记 + host.json）· `备份 = <support>/backup`（自动备份照常跑）· `导出 = <support>/export` · `配置/日志 = <support>/config|logs`（AppConfigStore / AppLog 的 Android 分支） |
+| 首启流程 | Android 上**跳过选目录对话框**：`_prepare` 按平台分支 —— 直接定位/创建上述目录 → 开库 → 主界面；概览页照常显示数据位置（AH-6：用户看不到这个目录，v1.1 做「显式导出备份」） |
+| 显式改动 | `main.dart`（Android 分支先 `ensureInitialized` → await 私有目录 → 再建 config/log → runApp）· `app.dart` `_prepare` 平台分支 · `AppConfigStore`/`AppLog` 不改（直接以 file 构造） |
+| 验收 | 真机首启**直接进主界面**（无对话框）· 杀进程重开直接进入 · 概览页显示私有目录路径 |
+| 明确不做 | 选目录对话框在 Android 的修复（整个跳过）· 备份分享/导出到微信（v1.1）· SAF |
+
+**退货排期（回应 #6）**：core 侧成本规则已在（R-11 原单比例回退 / RULE-007），缺的是 **UI + 流程**，
+且 **Windows 端同样没有退货入口**（手册里「开发中」的描述两边都成立）。当前队列 =
+**B1b → B2 → B3 → B4 → B5（→B6 可选）**；我建议退货作为 **v1.1 第一项**（Android 主线打通后，
+一套退货 UI 两端受益）。若你裁定「退货优先于 B4/B5」，可以插队 —— 这是排期裁定，等你定。
+
+### §BH·二 裁定落地：B4 重定位 + B5/B6 新增 + 4 处文档修正（2026-10-04）
+
+裁定（`docs/reply.md`）：**B1/B2 保持；B3 扩展为销售/采购/送货三类开单；B4 由「只读看板」改为
+「库存/往来视图 + 未同步影响标记（估算）」；新增 B5 送货签收（`mark_delivered`，R-3 已裁定）、
+B6 收款/付款核销（可选，v1.1 候选）；盘点 v1 不做（客户端算不出账面数量）、退货 v1.1 候选（依赖原单）**。
+底线不变：客户端不跑 RuleEngine、只 ±quantity delta、不算成本/往来余额、离线显示必须诚实标注估算。
+
+**文档修正 4+1 处（纪律 17）**：
+
+| 文件 | 改动 |
+|---|---|
+| `AGENTS.md` §一 | 「瘦客户端，只做扫码、查询和离线操作队列」→「移动开单终端（开发中，随 AH-B 落地）：销售/采购/送货开单、扫码、查询、送货签收与离线操作队列；不实现 RuleEngine；离线显示标注估算；盘点 v1 不做、退货 v1.1 候选」 |
+| `AGENTS.md` 4.2「客户端不跑规则」行 | 补「**开单 UI 不受此限** —— 开单只推 `Document`，不跑规则；离线状态显示必须标注为估算」 |
+| `README.md` 设计立场 2 | 「Android 是瘦客户端」→「Android 是移动开单终端（不跑规则，权威状态由主机派生）」（瘦客户端同义词扫出的连带处） |
+| `README.md` 当前状态「手机端连过来」 | 「手机端还没开始做」→「开发中（AH-B），目标能力：扫码配对、销售/采购/送货开单、库存/往来视图（含估算标记）、送货签收」 |
+| `docs/sync_protocol.md` §一 | 「客户端只做数量累加」后补「开单 UI 不受此限 —— 开单只推 `Document`，不跑规则；派生的离线显示必须标注估算」 |
+
+⚠️ **一处措辞偏离（已标注）**：裁定给的 AGENTS.md §一 新句是「支持…」（直陈式）；我落地为
+「移动开单终端（**开发中，随 AH-B 落地**）：…」—— B1–B6 尚未实现，按纪律 17「描述不存在的功能 =
+撒谎」加了开发中限定，与裁定自己给 README 的「开发中，目标能力」句式一致。若要直陈式，裁定后我改回。
+
+
+### §BI·二·补 1 复跑修正：六处 lint/编译错（2026-10-04）
+
+| # | 位置 | 问题 → 处置 |
+|---|---|---|
+| ① | `lib/src/app.dart` import | `cross_file` 多余（share_plus 11.1.0 **直接转出** `XFile`，分析器确认）→ 删 import；pubspec 显式声明连带删除（注释同步更正） |
+| ② | `lib/src/app.dart:342` | `ReturnService(engine: _engine, …)` —— **State 的实例字段不做类型提升**，上一行刚赋值也仍是 `RuleEngine?` → 改局部变量 `engine` 落地后再传（与 `_settlements` 同区、两处共享同实例更明确） |
+| ③ | `return_draft.dart:150` | 字符串插值多余花括号（`${entryUnitDisplay}` → `$entryUnitDisplay`） |
+| ④⑤ | `return_service_test.dart` | 未用 import（sqlite3）/ 未用变量（`bookAfterDelivery`，「回到 −12」断言修正后的残留）→ 删 |
+| ⑥ | `return_page_test.dart` | 未用 `products` + 臆造 `now()` 助手（undefined）→ 删 + 改 `DateTime.now().millisecondsSinceEpoch` |
+
+**本侧门禁复核全绿**：core typecheck **37** · selfcheck **105** · app typecheck **20** · selfcheck_app **131/131** · selfcheck_manual **8/8**。
+
+
+### §BI·二·补 2 真机验收修正：退货页账户下拉炸页（2026-10-04）
+
+| 项 | 内容 |
+|---|---|
+| 症状 | 详情页 → 退货 → 点账户下拉选中后，断言炸、整页卡死（只能强杀） |
+| 根因 | `_refundSection` **在 build 里调 `activeAccounts()`** —— 每次重建查库产出**新 `Account` 实例**；用户选中的 `_refundAccount` 是上一轮列表的旧实例，`DropdownButton` 按 `==`（对象同一性）匹配 value↔items ⇒ **永远匹配不上** ⇒ 断言炸 |
+| 修复 | 账户列表改 `initState` 查一次缓存 `_accounts`，build 只读缓存 —— 与其余三处下拉**同款套路**（`settlement_dialog` `late final`、采购/销售页 initState 缓存；全仓扫过，仅退货页踩坑） |
+| 回归测试 | `return_page_test` **+1**：展开下拉选「现金」→ `value` 在 items 里**恰好匹配 1 次**（对象同一性）+ `takeException` 为 null —— 旧代码此场景必炸，测试精准抓住 |
+| 本侧验证 | 结构自检（唯一调用在 initState、`_refundSection` 只读缓存）；⚠️ Flutter 层本侧编译不到，待用户复跑 |
+
+**请复跑**：`flutter pub get`（若上轮未跑）→ `flutter analyze` → `flutter test`（return_page_test **3 用例**）→ 真机/桌面重验退货四件事。
+
+
+### §BI·二·补 3 真机反馈：退货页单位显示误导（2026-10-04）
+
+| 项 | 内容 |
+|---|---|
+| 反馈 | 「原量 120 箱 / 可退 120」误导用户填 120（实际只能填 10 箱）；没有按哪种单位算的选择；金额似乎没自动算 |
+| 根因 | quota 的 原量/已退/可退 三数全是**最小单位（瓶）**，页面与 core 超额文案却缀**录入单位（箱）**——瓶数箱标，必然误导 |
+| 金额澄清 | **自动计算本来就有且是对的**：截图里 ¥10000.00 = 10 箱 = 120 瓶整单全退（累计比例法，`toBaseQuantity` 先换算再按比例）——是单位显示误导了判断 |
+| core 修复 | `return_draft` 超额文案：数字改缀**基本单位**（「原量 36 瓶」），录入单位是包装且整除时附「= 3 箱」；删死 getter `entryUnitDisplay`（注释留教训） |
+| 页面修复 | `return_page`：① 配额行按瓶；② **新增换算提示行**「退货数量按「箱」填写：1 箱 = 12 瓶，最多可退 10 箱。」（有余数时「余 X 瓶不足一箱」）；③ 填写时实时亮「填 10 箱 = 120 瓶」；④ 橙色超额文案改按瓶 |
+| 单位选择 | **不给选择是裁定 3**（退货行沿用原单 `entry_unit`，不允许切换）——维持；要选择器请裁定 |
+| 测试 | core `return_service_test` **+1**（新文案逐字 ×2 场景：箱录附换算 / 瓶录不附）；`return_page_test` **+3 断言**（配额行 / 提示行 / 实时换算） |
+| 门禁 | core typecheck **37** · selfcheck **105** · app typecheck **20** · selfcheck_app **131/131** · selfcheck_manual **8/8** |
+
+
+### §BI·二·补 4 真机反馈：退款金额自动合计（2026-10-04）
+
+| 项 | 内容 |
+|---|---|
+| 反馈 | 换算显示全对；但「立即退款」的退款金额要手填，不方便 |
+| 修复 | `_refundAmountTouched`（§BG 同款显式布尔：编辑非空 = true / 清空 = false 恢复自动）+ `_syncRefundAmount()`（合计各行**合法**金额、合计 0 ⇒ 清空）；接线三处：initState（fullReturn 预填后）· `_onQtyChanged`（金额带出后）· `_onAmountChanged`；退款框 +`helperText`「不填 = 挂账；自动按退货金额合计填入」 |
+| 测试 | `return_page_test` **+1 断言**：填 1 箱后退款金额自动 = 250.00 |
+| 门禁 | app typecheck **20** · selfcheck_app **131/131** · selfcheck_manual **8/8**（core 零改动） |
+
+
+### §BI·二·补 5 复跑修正：页面测试断言漏单位（2026-10-04）
+
+`return_page_test:143` 挂 1：断言写「已退 0 /」漏了单位——实现是三个数**统一缀最小单位**（「已退 0 瓶」，
+口径一致），断言改同口径。产品零改动（用户确认真机自动填金额已生效）。
+
+
+### §BI·二·补 6 复跑修正：e2e 夹具 pop 掉唯一路由（测试病，产品无恙）（2026-10-04）
+
+补 5 修好后暴露更深的旧账（此前每次都先挂在更早的断言上，从没跑到这）：
+保存成功 ⇒ SnackBar ⇒ `Navigator.pop()` —— 而夹具里 ReturnPage 是 **home（唯一路由）**，
+pop 完连承载 SnackBar 的底层 Scaffold 都没了 ⇒ `find.textContaining('退货单')` 落空。
+真实 App 里退货页下面永远垫着单据页（SnackBar 由 ScaffoldMessenger 持久化跨页显示），产品无恙。
+**修夹具**：`routes {'/' 占位页, '/return'}` + `initialRoute: '/return'` —— 与真实
+「详情页 → 退货页」结构一致。教训：**推入页的 widget 测试必须垫底层页面**，别拿被测页当 home。
+
+
+### §BI·二·补 7 复跑修正：e2e 往来余额断言算术错（2026-10-04）
+
+SnackBar 断言已过（补 6 生效）；挂最后一行 `return_page_test:200`：余额断言写 `75000 − 25000 = 50000`
+——忘了夹具里销售**已全款收清**（+750 应收 − 750 收款 = 0），退货挂账冲减 −250 ⇒ 余额 **−25000**
+（负 = 我欠客户）。断言改 −25000 + 注释写明推导。产品零改动（RULE-007 符号与引擎自洽）。
+
+
+### §BI·三 退货 R1 + R2 全绿收官 —— Windows 可落地生产（2026-10-04）
+
+`flutter test` 全绿（`return_page_test` 3 用例；e2e 经补 5/6/7 三处我方断言修正后闭环，产品代码零改动）。
+
+**收尾**：
+
+| 项 | 内容 |
+|---|---|
+| `README.md` | 退货行「数据层已完成，界面还没有」→「**已实现**：销售退货 / 客户拒收（送货单整单退回）/ 采购退货；金额按原单累计比例回退，支持立即退款或挂账冲减」 |
+| 手册「退货」章 | 对齐最终交互：步骤 2 补单位说明（按最小单位记 + 「1 箱 = 12 瓶，最多可退几箱」提示行）；步骤 4 补「退款金额自动按退货金额合计填入，可改」 |
+| HTML 重生成 | `packaging/用户手册.html` 20 章 **26 983 字节**，`selfcheck_manual` **8/8**（黑名单干净） |
+
+**退货批次闭环**：R1 core（draft/service/配额/拒收收口/11 用例）→ R2 UI（详情页退货与拒收入口/退货页/
+确认对话框/退款自动合计）→ 文档（rules/data_model/AGENTS/README/手册）。开放项带走到 v1.1：移动端退货 UI（随 B3 后段）。
+
+**下一站：Android B2（扫码配对 + 主数据镜像）** —— 动工前出细化提案（镜像库方案与落库顺序是
+hard-to-reverse 决策，须裁定）。

@@ -363,7 +363,7 @@ void main() {
       expect(export.rows[2].sublist(4), <String>['0.00', '0.00', '启用']);
     });
 
-    test('单据：类型 / 状态中文、对方散客、日期带时分（AF-9 + 遗漏 6）', () {
+    test('单据：类型 / 状态中文、对方散客、日期只到日（AF-9 + §BG 方案甲）', () {
       final ExportTable export = documentExportTable(<DocumentSummary>[
         DocumentSummary(
           document: document(status: DocStatus.settled),
@@ -411,8 +411,15 @@ void main() {
         '12.50',
         '5.00',
         '已结清',
-        '2026-09-28 10:00',
+        '2026-09-28',
       ]);
+      expect(
+        export.rows.first.last,
+        '2026-09-28',
+        reason: '单据「日期」列只到日 —— occurred_at 是业务日期（天粒度），'
+            '带时分会整列印「00:00」（§BG 方案甲顺带检查）；'
+            '往来流水的日期是真实时刻，仍带时分（§AF 遗漏 6 的适用面在那边）',
+      );
       expect(export.rows[1][2], '散客', reason: '不留空白（AF-9）');
       expect(export.rows[1][1], '店内销售');
       expect(

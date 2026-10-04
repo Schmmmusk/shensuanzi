@@ -66,7 +66,13 @@ class HostServiceSnapshot {
   /// 本次启动后**通过鉴权**的请求次数（有人真的在用，不是被扫端口）
   final int trafficCount;
 
-  /// 最近一次通过鉴权的时间
+  /// 最近一次通过鉴权的时间。
+  ///
+  /// ⚠️ **不持久化** —— 重启后回到「还没有手机连接过」。这是**设计选择，不是缺陷**：
+  /// ① 这信息不值得进 schema（v1 的「不新增表」原则）；
+  /// ② 「从来没人连过」与「三天前连过」对用户是**不同的信息**，
+  /// 用假数据把两者混在一起是**欺骗**（同 §AE「`needsBackupAttention` 宁可用假数据
+  /// 天天喊」那条哲学的**反面**用法）。
   final int? lastTrafficAt;
 
   bool get isRunning => state == HostServiceState.running;
@@ -80,7 +86,11 @@ class HostServiceSnapshot {
   static const String qrHint = '用手机上的神算子扫这个码';
 
   /// 重置按钮的后果（§AH 遗漏 4 的空白处 —— 见 [needsReset]）
-  static const String resetWarning = '重新生成后，已经连过的手机需要重新扫码';
+  ///
+  /// 用「**掉线**」而不只是「需要重新扫码」：用户要先意识到**手机会连不上**，
+  /// 才会去重扫；只说「重新扫码」容易被读成「可选的一次操作」
+  /// （`docs/reply_review.md` §BB 审查意见 · 八）。
+  static const String resetWarning = '重新生成后，已经连过的手机全都掉线，要重新扫一次码';
 
   /// 状态行主文案
   String get headline {
@@ -218,8 +228,77 @@ class HostServiceController {
     );
   }
 
+  /// 在飞的那个启停动作（`null` = 空闲）。见 [_single]。
+  Future<HostServiceSnapshot>? _flight;
+  _Op? _flightOp;
+
+  /// **单飞**：同一时刻只跑一个启停动作。
+  ///
+  /// 与 §AE 的 `BackupService` **同一条纪律**：**单飞是服务自己的职责，不是面板的**。
+  /// 面板的 `_busy` 只能管住那一排按钮 —— 将来的托盘快捷操作、CLI、
+  /// 乃至测试自己并发调用，都绕不过这里。
+  ///
+  /// ## ⚠️ 与 §BB 审查意见给的那段实现**有一处不同，是刻意的**
+  ///
+  /// 审查意见写的是「`if (_running != null) return _running!;`」——**一律复用**。
+  /// 但那样一来，「**启动中按停止**」会**静默丢弃那次停止**（拿回的是启动的
+  /// Future），服务照常起来。**这比竞态更糟**：用户按了停止、界面也回到关闭，
+  /// 端口却还开着。
+  ///
+  /// 所以这里分开处理：
+  ///
+  /// | 情形 | 行为 |
+  /// |---|---|
+  /// | **同一种动作**还在飞（开关连点两下） | **复用同一个 Future**（审查意见要的就是这条） |
+  /// | **不同动作**（启动中按停止 / 停止中按重置） | **排在它后面**执行，不丢 |
+  ///
+  /// ⚠️ **`whenComplete` 的回调必须写块体**：写成 `() => _flight = null` 会返回
+  /// 被赋的值、在 `whenComplete` 里形成**自等待死锁**（§AF·三 踩过一次）。
+  Future<HostServiceSnapshot> _single(
+    _Op op,
+    Future<HostServiceSnapshot> Function() action,
+  ) {
+    final Future<HostServiceSnapshot>? inFlight = _flight;
+    if (inFlight != null && _flightOp == op) return inFlight;
+
+    final Future<HostServiceSnapshot> queued = inFlight == null
+        ? action()
+        : inFlight
+              .then((_) => action())
+              .catchError((Object _) => action());
+    final Future<HostServiceSnapshot> guarded = queued.whenComplete(() {
+      _flight = null;
+      _flightOp = null;
+    });
+    _flight = guarded;
+    _flightOp = op;
+    return guarded;
+  }
+
   /// 启动。已经开着就是 no-op（**幂等**：用户多点一次不该看到报错）。
-  Future<HostServiceSnapshot> start() async {
+  Future<HostServiceSnapshot> start() => _single(_Op.start, _startRaw);
+
+  /// 关闭。没开着就是 no-op。
+  Future<HostServiceSnapshot> stop() => _single(_Op.stop, _stopRaw);
+
+  /// 重新生成配对码 —— **作废所有已配对的手机**（§9.3「一键重置」）。
+  ///
+  /// 两种时机：① 用户换了手机 / 想收回旧手机；② **重启应用后想再显示二维码**
+  /// （明文不落盘，重启后哈希画不出码）。
+  ///
+  /// ⚠️ 中间**必须调 `_startRaw` / `_stopRaw`**（而不是 `start` / `stop`）——
+  /// 走公开方法会撞上单飞、**拿回自己那个还没完成的 Future** ⇒ 自等待死锁。
+  Future<HostServiceSnapshot> resetToken() => _single(_Op.reset, () async {
+    final bool wasRunning = _state == HostServiceState.running;
+    if (wasRunning) await _stopRaw();
+    // 重新生成后 `_identity` 带着明文 ⇒ [_startRaw] 里 `??=` 会直接用它，不会覆盖
+    _identity = _identities.reset(now: _clock());
+    if (wasRunning) return _startRaw();
+    return snapshot;
+  });
+
+  /// 真正的启动逻辑（**不设单飞**，只给 [start] 与 [resetToken] 用）。
+  Future<HostServiceSnapshot> _startRaw() async {
     if (_state == HostServiceState.running ||
         _state == HostServiceState.starting) {
       return snapshot;
@@ -257,8 +336,8 @@ class HostServiceController {
     return snapshot;
   }
 
-  /// 关闭。没开着就是 no-op。
-  Future<HostServiceSnapshot> stop() async {
+  /// 真正的关闭逻辑（**不设单飞**，只给 [stop] 与 [resetToken] 用）。
+  Future<HostServiceSnapshot> _stopRaw() async {
     final HostHttpServer? server = _server;
     _server = null;
     if (server != null) await server.close(force: true);
@@ -268,19 +347,6 @@ class HostServiceController {
     _addressHint = null;
     _trafficCount = 0;
     _lastTrafficAt = null;
-    return snapshot;
-  }
-
-  /// 重新生成配对码 —— **作废所有已配对的手机**（§9.3「一键重置」）。
-  ///
-  /// 两种时机：① 用户换了手机 / 想收回旧手机；② **重启应用后想再显示二维码**
-  /// （明文不落盘，重启后哈希画不出码）。
-  Future<HostServiceSnapshot> resetToken() async {
-    final bool wasRunning = _state == HostServiceState.running;
-    if (wasRunning) await stop();
-    // 重新生成后 `_identity` 带着明文 ⇒ [start] 里 `??=` 会直接用它，不会覆盖
-    _identity = _identities.reset(now: _clock());
-    if (wasRunning) return start();
     return snapshot;
   }
 
@@ -307,3 +373,7 @@ File hostIdentityFile(String dataDirectory) => File(
 /// `host.json` 的文件名（`HostIdentityStore` 只接受一个 `File`，
 /// 名字散在各调用点早晚会漂移 —— 收在这里一处）。
 const String hostIdentityFileName = 'host.json';
+
+/// 启停动作的种类 —— 只给 [HostServiceController] 的 `_single` 判
+/// 「是不是**同一种**动作」用（同种去重、异种排队，见那里的说明）。
+enum _Op { start, stop, reset }

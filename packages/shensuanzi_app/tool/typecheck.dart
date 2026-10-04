@@ -21,6 +21,7 @@ import '../test/export_test.dart' as export_test;
 import '../test/log_test.dart' as log_test;
 import '../test/manual_test.dart' as manual_test;
 import '../test/navigation_test.dart' as navigation_test;
+import '../test/shell_kind_test.dart' as shell_kind_test;
 import '../test/typography_test.dart' as typography_test;
 import 'make_manual_html.dart' as make_manual_html;
 import 'selfcheck_app.dart' as selfcheck_app;
@@ -45,6 +46,7 @@ void main() {
     log_test.main,
     manual_test.main,
     navigation_test.main,
+    shell_kind_test.main,
     typography_test.main,
     // tool/
     make_manual_html.main,
@@ -55,7 +57,7 @@ void main() {
     selfcheck_manual.main,
   ];
   print(
-    '编译通过：13 个测试文件 + 5 个自检脚本 + 1 个生成脚本已通过类型检查（未执行）。'
+    '编译通过：14 个测试文件 + 5 个自检脚本 + 1 个生成脚本已通过类型检查（未执行）。'
     '（共 ${entries.length} 个入口）',
   );
 }

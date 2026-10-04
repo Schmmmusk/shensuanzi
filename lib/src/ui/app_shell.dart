@@ -42,6 +42,7 @@ class AppShell extends StatefulWidget {
     this.purchases,
     this.sales,
     this.deliveries,
+    this.returns,
     this.accounts,
     this.parties,
     this.queries,
@@ -50,6 +51,10 @@ class AppShell extends StatefulWidget {
     this.engine,
     this.uiScale = UiScale.standard,
     this.shopName,
+    this.dataLocationNote,
+    this.dataPathsNote,
+    this.hostSyncNote,
+    this.onExportBackup,
     this.backupStatusLine,
     this.backupNeedsAttention = false,
     this.backupReminder,
@@ -79,6 +84,9 @@ class AppShell extends StatefulWidget {
   /// 批次 1b —— 规则早就在 core 里（RULE-003），本批次只补入口。
   final DeliveryService? deliveries;
 
+  /// 退货服务（§BI R2：单据详情页的退货 / 拒收入口；`null` = 入口不可用）
+  final ReturnService? returns;
+
   /// 账户建档服务（同一数据库；为 `null` 时账户页显示「数据文件还没就绪」）
   final AccountService? accounts;
 
@@ -107,6 +115,23 @@ class AppShell extends StatefulWidget {
 
   /// 店名（概览页顶部显示；可空）
   final String? shopName;
+
+  /// 概览页「你的数据在」的显示文案（§BH·五 B1b 裁定 2：Android 私有目录
+  /// 用户打不开，显示友好文案而非具体路径；路径挪到帮助页「关于」小字）。
+  /// `null` = 显示真实路径（桌面行为，零变化）。
+  final String? dataLocationNote;
+
+  /// 设置页数据区的替代文案（§BH·六 B1c：Android 隐藏两行路径与无效的
+  /// 「打开」按钮）。`null` = 桌面（零变化）。
+  final String? dataPathsNote;
+
+  /// 设置页多设备同步区的替代文案（§BH·六 B1c：Android 是客户端，不做
+  /// 主机 —— 真机反馈 2026-10-04）。`null` = 桌面（hostService 面板）。
+  final String? hostSyncNote;
+
+  /// 设置页「导出备份到手机文件」（§BH·六 B1c；仅移动端注入）。
+  /// `null` = 不显示入口（桌面零变化）。
+  final Future<String> Function()? onExportBackup;
 
   /// 「上次备份：时间（来源）」文案（§AE-5）。
   ///
@@ -143,6 +168,113 @@ class AppShell extends StatefulWidget {
 
   @override
   State<AppShell> createState() => _AppShellState();
+}
+
+/// 按 destination 构建页面 —— **AppShell 与 MobileShell 共用的唯一装配**
+/// （§BH B1a：两套壳各写一份必然漂移；摆放差异 —— 面包屑 / 底部导航 ——
+/// 留在各自的壳里，这里只管「id → 页面」）。服务的可空兜底（`_PendingPage`）
+/// 也在这里：调用方不必重复判空。
+Widget appShellPage(AppShell shell, NavDestination destination) {
+  final Widget page;
+  if (destination.id == 'overview') {
+    page = OverviewPage(
+      shopName: shell.shopName,
+      dataDirectory: shell.dataDirectory,
+      backupDirectory: shell.backupDirectory,
+      schemaVersion: shell.schemaVersion,
+      databaseReady: shell.databaseReady,
+      backupReminder: shell.backupReminder,
+      onBackupNow: shell.onBackupNow,
+      locationNote: shell.dataLocationNote,
+    );
+    } else if (destination.id == 'products') {
+      // 商品是核心闭环的第一块 —— 已实现，不再是占位页
+      page = ProductsPage(service: shell.products, exports: shell.exports);
+    } else if (destination.id == 'sale') {
+      // 店内销售是核心闭环的第三块（RULE-002）；客户「新建」共用 PartyService
+      page = shell.sales == null || shell.products == null || shell.parties == null
+          ? _PendingPage(destination: destination)
+          : SalePage(
+              service: shell.sales!,
+              productService: shell.products!,
+              partyService: shell.parties!,
+            );
+    } else if (destination.id == 'delivery') {
+      // 送货（批次 1b / RULE-003）：创建即扣库存、状态强制 in_transit，
+      // 客户必选。**不能从销售单转** —— 转了会双扣（§AP）。
+      page =
+          shell.deliveries == null ||
+              shell.products == null ||
+              shell.parties == null
+          ? _PendingPage(destination: destination)
+          : DeliveryPage(
+              service: shell.deliveries!,
+              productService: shell.products!,
+              partyService: shell.parties!,
+            );
+    } else if (destination.id == 'stock') {
+      // 库存查询是 RULE-006 的纯聚合读；期初录入入口（§AD）还要引擎
+      page = shell.engine == null || shell.products == null || shell.queries == null
+          ? _PendingPage(destination: destination)
+          : StockPage(
+              engine: shell.engine!,
+              products: shell.products!,
+              queries: shell.queries!,
+              exports: shell.exports,
+            );
+    } else if (destination.id == 'parties') {
+      page = shell.parties == null
+          ? _PendingPage(destination: destination)
+          : PartiesPage(service: shell.parties!, exports: shell.exports);
+    } else if (destination.id == 'documents') {
+      page = shell.documents == null
+          ? _PendingPage(destination: destination)
+          : DocumentsPage(
+              dao: shell.documents!,
+              exports: shell.exports,
+              settlements: shell.settlements,
+              deliveries: shell.deliveries,
+              products: shell.products,
+              returnService: shell.returns,
+            );
+    } else if (destination.id == 'settings') {
+      // §AI-1：configStore / onConfigChanged 已是 required —— 设置页是常驻
+      // 入口（ui_principles），「占位页」分支整体删除（它曾把生产真机挡在外面）
+    page = SettingsPage(
+      config: shell.configStore.load(),
+      configStore: shell.configStore,
+      backupDirectory: shell.backupDirectory,
+      backupStatusLine: shell.backupStatusLine,
+      backupNeedsAttention: shell.backupNeedsAttention,
+      onBackupNow: shell.onBackupNow,
+      hostService: shell.hostService,
+      dataPathsNote: shell.dataPathsNote,
+      hostSyncNote: shell.hostSyncNote,
+      onExportBackup: shell.onExportBackup,
+      onChanged: shell.onConfigChanged,
+    );
+    } else if (destination.id == 'help') {
+      // AE-6：恢复步骤要带**用户真实的两个文件夹**，否则他照做不下去
+      page = HelpPage(
+        dataDirectory: shell.dataDirectory,
+        backupDirectory: shell.backupDirectory,
+      );
+    } else if (destination.id == 'accounts') {
+      page = shell.accounts == null
+          ? _PendingPage(destination: destination)
+          : AccountsPage(service: shell.accounts!);
+    } else if (destination.id == 'purchase') {
+      // 采购入库是核心闭环的第二块 —— 库存与规则早就在 core 里（RULE-001）
+      page = shell.purchases == null || shell.products == null
+          ? _PendingPage(destination: destination)
+          : PurchasePage(
+              service: shell.purchases!,
+              productService: shell.products!,
+            );
+    } else {
+      page = _PendingPage(destination: destination);
+    }
+  return page;
 }
 
 class _AppShellState extends State<AppShell> {
@@ -182,101 +314,9 @@ class _AppShellState extends State<AppShell> {
   Widget _content() {
     final NavDestination current = _current;
 
-    final Widget page;
-    if (current.id == 'overview') {
-      page = OverviewPage(
-        shopName: widget.shopName,
-        dataDirectory: widget.dataDirectory,
-        backupDirectory: widget.backupDirectory,
-        schemaVersion: widget.schemaVersion,
-        databaseReady: widget.databaseReady,
-        backupReminder: widget.backupReminder,
-        onBackupNow: widget.onBackupNow,
-      );
-    } else if (current.id == 'products') {
-      // 商品是核心闭环的第一块 —— 已实现，不再是占位页
-      page = ProductsPage(service: widget.products, exports: widget.exports);
-    } else if (current.id == 'sale') {
-      // 店内销售是核心闭环的第三块（RULE-002）；客户「新建」共用 PartyService
-      page = widget.sales == null || widget.products == null || widget.parties == null
-          ? _PendingPage(destination: current)
-          : SalePage(
-              service: widget.sales!,
-              productService: widget.products!,
-              partyService: widget.parties!,
-            );
-    } else if (current.id == 'delivery') {
-      // 送货（批次 1b / RULE-003）：创建即扣库存、状态强制 in_transit，
-      // 客户必选。**不能从销售单转** —— 转了会双扣（§AP）。
-      page =
-          widget.deliveries == null ||
-              widget.products == null ||
-              widget.parties == null
-          ? _PendingPage(destination: current)
-          : DeliveryPage(
-              service: widget.deliveries!,
-              productService: widget.products!,
-              partyService: widget.parties!,
-            );
-    } else if (current.id == 'stock') {
-      // 库存查询是 RULE-006 的纯聚合读；期初录入入口（§AD）还要引擎
-      page = widget.engine == null || widget.products == null || widget.queries == null
-          ? _PendingPage(destination: current)
-          : StockPage(
-              engine: widget.engine!,
-              products: widget.products!,
-              queries: widget.queries!,
-              exports: widget.exports,
-            );
-    } else if (current.id == 'parties') {
-      page = widget.parties == null
-          ? _PendingPage(destination: current)
-          : PartiesPage(service: widget.parties!, exports: widget.exports);
-    } else if (current.id == 'documents') {
-      page = widget.documents == null
-          ? _PendingPage(destination: current)
-          : DocumentsPage(
-              dao: widget.documents!,
-              exports: widget.exports,
-              settlements: widget.settlements,
-              deliveries: widget.deliveries,
-              products: widget.products,
-            );
-    } else if (current.id == 'settings') {
-      // §AI-1：configStore / onConfigChanged 已是 required —— 设置页是常驻
-      // 入口（ui_principles），「占位页」分支整体删除（它曾把生产真机挡在外面）
-      page = SettingsPage(
-        config: widget.configStore.load(),
-        configStore: widget.configStore,
-        backupDirectory: widget.backupDirectory,
-        backupStatusLine: widget.backupStatusLine,
-        backupNeedsAttention: widget.backupNeedsAttention,
-        onBackupNow: widget.onBackupNow,
-        hostService: widget.hostService,
-        onChanged: widget.onConfigChanged,
-      );
-    } else if (current.id == 'help') {
-      // AE-6：恢复步骤要带**用户真实的两个文件夹**，否则他照做不下去
-      page = HelpPage(
-        dataDirectory: widget.dataDirectory,
-        backupDirectory: widget.backupDirectory,
-      );
-    } else if (current.id == 'accounts') {
-      page = widget.accounts == null
-          ? _PendingPage(destination: current)
-          : AccountsPage(service: widget.accounts!);
-    } else if (current.id == 'purchase') {
-      // 采购入库是核心闭环的第二块 —— 库存与规则早就在 core 里（RULE-001）
-      page = widget.purchases == null || widget.products == null
-          ? _PendingPage(destination: current)
-          : PurchasePage(
-              service: widget.purchases!,
-              productService: widget.products!,
-            );
-    } else {
-      page = _PendingPage(destination: current);
-    }
-
+    // 页面装配在 [appShellPage] —— 与 MobileShell **共用同一份**（§BH B1a），
+    // 两套壳各写一份必然漂移；本方法只管「面包屑 / 工具栏」这层桌面摆设。
+    final Widget page = appShellPage(widget, current);
     // 沉浸模式：开单是**连续的动作流程**，不显示面包屑与工具栏
     // （`docs/reply.md` §三）。左侧导航仍在 —— 用户可以随时跳去建商品。
     if (current.immersive) return page;

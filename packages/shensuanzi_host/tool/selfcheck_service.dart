@@ -97,6 +97,93 @@ Future<void> main() async {
   );
   check('一块网卡都没有 ⇒ null', LocalIp.choose(<NetCandidate>[]) == null);
 
+  section('LocalIp.detect 的接缝（扫网卡可注入 ⇒ 兜底分支可断言）');
+  check('扫到空 ⇒ null', await LocalIp.detect(scan: () async => <NetCandidate>[]) == null);
+  check(
+    '扫到一堆 loopback ⇒ 全被过滤 ⇒ null',
+    await LocalIp.detect(
+          scan: () async => <NetCandidate>[
+            const NetCandidate('lo', <String>['127.0.0.1']),
+            const NetCandidate('lo', <String>['127.0.0.9']),
+          ],
+        ) ==
+        null,
+  );
+  check(
+    '扫到全是 link-local ⇒ null',
+    await LocalIp.detect(
+          scan: () async => <NetCandidate>[
+            const NetCandidate('eth0', <String>['169.254.1.1']),
+          ],
+        ) ==
+        null,
+  );
+  check(
+    '扫到真网卡 ⇒ 挑出私有地址（虚拟网卡不抢）',
+    await LocalIp.detect(
+          scan: () async => <NetCandidate>[
+            const NetCandidate('vEthernet (WSL)', <String>['172.20.0.1']),
+            const NetCandidate('Wi-Fi', <String>['192.168.1.7']),
+          ],
+        ) ==
+        '192.168.1.7',
+  );
+  check(
+    '扫网卡本身抛异常 ⇒ 返回 null，**不上抛**（否则整个服务起不来）',
+    await LocalIp.detect(scan: () async => throw const SocketException('no nic')) ==
+        null,
+  );
+
+  section('单飞：并发防御是服务自己的职责（不靠面板的 _busy）');
+  final HostServiceController cA = build(db, HostIdentityStore.inMemory());
+  final Future<HostServiceSnapshot> a1 = cA.start();
+  final Future<HostServiceSnapshot> a2 = cA.start();
+  check('连点两下 start ⇒ identical', identical(a1, a2));
+  check('start 完成 ⇒ running', (await a1).state == HostServiceState.running);
+  final Future<HostServiceSnapshot> a3 = cA.start();
+  check('跑完再调 ⇒ 新一轮（不是永远复用）', !identical(a1, a3));
+  await a3;
+  await cA.stop();
+
+  final HostServiceController cB = build(db, HostIdentityStore.inMemory());
+  final Future<HostServiceSnapshot> starting = cB.start();
+  final Future<HostServiceSnapshot> stopping = cB.stop();
+  check(
+    '启动中按停止 ⇒ 不是同一个 Future（要排队，不能复用）',
+    !identical(starting, stopping),
+    'identical 说明那次「停止」被吞了',
+  );
+  final HostServiceSnapshot afterStop = await stopping;
+  check('**停止没被丢弃**：最终 stopped', afterStop.state == HostServiceState.stopped);
+  check('端口真的关了', afterStop.port == null && afterStop.address == null);
+  check('排队在前的 start 自己也算跑完（running）',
+      (await starting).state == HostServiceState.running);
+  check('再次 start 能起来（状态机没卡死）',
+      (await cB.start()).state == HostServiceState.running);
+  final Future<HostServiceSnapshot> b1 = cB.stop();
+  final Future<HostServiceSnapshot> b2 = cB.stop();
+  check('连点两下 stop ⇒ identical', identical(b1, b2));
+  await b1;
+
+  await cB.start();
+  final HostServiceSnapshot resetFlight = await cB
+      .resetToken()
+      .timeout(const Duration(seconds: 10), onTimeout: () => cB.snapshot);
+  check('resetToken 不自等待、跑得完', resetFlight.state == HostServiceState.running);
+  check('resetToken 后仍拿到可扫的码', resetFlight.qrAvailable);
+  await cB.stop();
+
+  final HostServiceController cC = build(db, HostIdentityStore.inMemory());
+  final Future<HostServiceSnapshot> r1 = cC.resetToken();
+  final Future<HostServiceSnapshot> r2 = cC.resetToken();
+  check('reset 在飞时再调 reset ⇒ identical', identical(r1, r2));
+  await r1;
+  await cC.stop();
+
+  section('文案：resetWarning 要说清「掉线」');
+  check('含「掉线」', HostServiceSnapshot.resetWarning.contains('掉线'));
+  check('含「重新扫」', HostServiceSnapshot.resetWarning.contains('重新扫'));
+
   section('起始态：恒为 stopped（开关不持久化，§AH 遗漏 5）');
   final HostIdentityStore store = HostIdentityStore.inMemory();
   final HostServiceController controller = build(db, store);

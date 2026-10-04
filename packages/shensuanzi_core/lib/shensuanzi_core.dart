@@ -94,7 +94,19 @@ export 'src/documents/delivery_draft.dart'
     show DeliveryDraft, DeliveryField, DeliveryLineDraft, DeliveryLineField;
 export 'src/documents/delivery_service.dart'
     show DeliveryDraftInvalid, DeliverySaved, DeliveryService, DeliverySigned;
+export 'src/documents/discount_spread.dart' show spreadDiscount;
 export 'src/documents/overpay.dart' show Overpay;
+export 'src/documents/quantity_conversion.dart'
+    show
+        ConversionFailed,
+        ConversionFailureReason,
+        ConversionSuccess,
+        QuantityConversion,
+        conversionFailureMessage,
+        convertEntryPriceCents,
+        entryPriceKeptHint,
+        packageEntryHint,
+        toBaseQuantity;
 export 'src/documents/purchase_service.dart'
     show PurchaseDraftInvalid, PurchaseSaved, PurchaseService;
 export 'src/documents/sale_draft.dart'
@@ -107,6 +119,16 @@ export 'src/documents/sale_draft.dart'
         SalePaymentField;
 export 'src/documents/sale_service.dart'
     show SaleDraftInvalid, SaleSaved, SaleService;
+export 'src/documents/return_draft.dart'
+    show
+        ReturnDraft,
+        ReturnField,
+        ReturnLineDraft,
+        ReturnLineField,
+        ReturnRefundDraft,
+        ReturnRefundField;
+export 'src/documents/return_service.dart'
+    show ReturnDraftInvalid, ReturnQuota, ReturnSaved, ReturnService;
 export 'src/documents/settlement_service.dart'
     show SettlementInvalid, SettlementSaved, SettlementService;
 export 'src/documents/stocktake_draft.dart'

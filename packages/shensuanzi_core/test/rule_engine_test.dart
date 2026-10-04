@@ -127,6 +127,42 @@ void main() {
       expect(entry.seqNo, 1);
     });
 
+    test('v3 口径：入库成本 = 该行 amount（让价不丢），不再 qty × unit_price', () {
+      // 让价 100 分：10 × ¥5.00 = ¥50.00 折前，实付 ¥49.00。
+      // 直构 DocumentLine（amount ≠ qty × unitPrice）—— 这正是 v3 解除
+      // 行级严格约束后才会出现的形状（§BD·六 / data_model §3.2 第 5 条）。
+      final String productId = createProduct();
+      final String partyId = createParty();
+      final Document doc = pendingDoc(
+        type: DocType.purchase,
+        partyId: partyId,
+        totalAmount: 4900, // B5：Σ amount == total_amount
+      );
+      final List<DocumentLine> lines = <DocumentLine>[
+        DocumentLine(
+          id: newId(),
+          documentId: doc.id,
+          productId: productId,
+          quantity: 10,
+          unitPrice: 500, // 故意填折前价 —— 证明引擎**不读**它算成本
+          amount: 4900, // 真相（含让价 100）
+        ),
+      ];
+
+      final RuleOutcome outcome = engine.dispatch(
+        document: doc,
+        lines: lines,
+        now: now(),
+      );
+
+      expect(outcome.status, RuleStatus.applied);
+      final StockLedger entry = stock.ofProduct(productId).single;
+      // 反向灵敏度：旧口径（qty × unit_price）会得 5000 —— 本断言钉住 2a 的口径切换
+      expect(entry.totalCost, 4900, reason: '成本跟 amount（含让价 100），不是 5000');
+      expect(entry.unitCostValue, 490, reason: '4900 / 10，派生展示');
+      expect(stock.stockOf(productId), 10);
+    });
+
     test('往来 -total_amount（我欠供应商），且不生成资金流水', () {
       final String productId = createProduct();
       final String partyId = createParty();

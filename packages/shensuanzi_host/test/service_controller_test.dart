@@ -105,6 +105,50 @@ void main() {
     });
   });
 
+  group('LocalIp.detect（接缝：扫网卡可注入）', () {
+    test('扫到空 / 全 loopback / 全 link-local ⇒ null', () async {
+      expect(await LocalIp.detect(scan: () async => <NetCandidate>[]), isNull);
+      expect(
+        await LocalIp.detect(
+          scan: () async => <NetCandidate>[
+            const NetCandidate('lo', <String>['127.0.0.1']),
+          ],
+        ),
+        isNull,
+      );
+      expect(
+        await LocalIp.detect(
+          scan: () async => <NetCandidate>[
+            const NetCandidate('eth0', <String>['169.254.1.1']),
+          ],
+        ),
+        isNull,
+      );
+    });
+
+    test('扫到真网卡 ⇒ 挑出私有地址（虚拟网卡不抢）', () async {
+      expect(
+        await LocalIp.detect(
+          scan: () async => <NetCandidate>[
+            const NetCandidate('vEthernet (WSL)', <String>['172.20.0.1']),
+            const NetCandidate('Wi-Fi', <String>['192.168.1.7']),
+          ],
+        ),
+        '192.168.1.7',
+      );
+    });
+
+    test('扫网卡本身抛异常 ⇒ 返回 null，**不上抛**', () async {
+      // 上抛会把「找不到地址」升级成「同步服务起不来」——两件事差一个量级（同 §AT 口径）
+      expect(
+        await LocalIp.detect(
+          scan: () async => throw const SocketException('no nic'),
+        ),
+        isNull,
+      );
+    });
+  });
+
   group('起始态', () {
     test('恒为 stopped —— 开关不持久化（§AH 遗漏 5）', () {
       final HostServiceSnapshot snapshot = controller.snapshot;
@@ -286,6 +330,65 @@ void main() {
 
     test('幂等：没开也能调', () async {
       expect((await controller.stop()).state, HostServiceState.stopped);
+    });
+  });
+
+  group('单飞：并发防御是服务自己的职责，不靠面板的 _busy', () {
+    test('连点两下 start ⇒ 复用同一个 Future；跑完再调是新一轮', () async {
+      final Future<HostServiceSnapshot> a = controller.start();
+      final Future<HostServiceSnapshot> b = controller.start();
+      expect(identical(a, b), isTrue);
+      expect((await a).state, HostServiceState.running);
+
+      final Future<HostServiceSnapshot> next = controller.start();
+      expect(identical(a, next), isFalse);
+      await next;
+    });
+
+    test('**启动中按停止不会被丢弃**（异种动作排队，不复用 Future）', () async {
+      final Future<HostServiceSnapshot> starting = controller.start();
+      final Future<HostServiceSnapshot> stopping = controller.stop();
+      expect(
+        identical(starting, stopping),
+        isFalse,
+        reason: '复用会让这次「停止」被静默吞掉、服务照起 —— 比竞态更糟',
+      );
+
+      final HostServiceSnapshot after = await stopping;
+      expect(after.state, HostServiceState.stopped);
+      expect(after.port, isNull, reason: '端口要真的关掉');
+      await starting; // 收尾，别把在飞的 Future 留在 tearDown 后面
+    });
+
+    test('连点两下 stop ⇒ 复用同一个 Future', () async {
+      await controller.start();
+      final Future<HostServiceSnapshot> a = controller.stop();
+      final Future<HostServiceSnapshot> b = controller.stop();
+      expect(identical(a, b), isTrue);
+      await a;
+    });
+
+    test('resetToken 不自等待（内部走 _startRaw / _stopRaw）', () async {
+      await controller.start();
+      final HostServiceSnapshot after = await controller
+          .resetToken()
+          .timeout(const Duration(seconds: 10));
+      expect(after.state, HostServiceState.running);
+      expect(after.qrAvailable, isTrue, reason: '重置后应拿到可扫的新码');
+    });
+
+    test('reset 在飞时再调 reset ⇒ 复用同一个 Future', () async {
+      final Future<HostServiceSnapshot> a = controller.resetToken();
+      final Future<HostServiceSnapshot> b = controller.resetToken();
+      expect(identical(a, b), isTrue);
+      await a;
+    });
+  });
+
+  group('文案', () {
+    test('resetWarning 说清「掉线」（不只是「重新扫码」）', () {
+      expect(HostServiceSnapshot.resetWarning, contains('掉线'));
+      expect(HostServiceSnapshot.resetWarning, contains('重新扫'));
     });
   });
 

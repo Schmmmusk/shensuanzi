@@ -154,7 +154,10 @@ ExportTable documentExportTable(List<DocumentSummary> summaries) => ExportTable(
         Money.format(summary.document.totalAmount),
         Money.format(summary.document.paidAmount),
         docStatusLabel(summary.document.status),
-        formatDateTime(summary.document.occurredAt),
+        // §BG 方案甲顺带检查：`occurred_at` 是业务日期（开单页只让选到日），
+        // 套带时分的格式会让整列印出「00:00」。往来流水（下方）是真实时刻，
+        // 保持 `formatDateTime` —— 那才是 §AF 遗漏 6「带时分排序稳」的适用面。
+        formatDate(summary.document.occurredAt),
       ],
   ],
 );

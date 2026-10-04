@@ -674,11 +674,13 @@ void main() {
       return contiguous.map((NavSection s) => s.name).join(',') ==
           'home,quick,data,system';
     }());
-    check('高频动作 = 销售开单 / 采购入库，且紧随首页',
+    check('高频动作 = 销售开单 / 送货 / 采购入库，且紧随首页',
         AppNavigation.of(NavSection.quick)
                 .map((NavDestination d) => d.id)
                 .join(',') ==
-            'sale,purchase' &&
+            // §AP：送货与销售 / 采购并列（不做模式开关）—— 旧断言漏了 delivery，
+            // 2026-10-03 §BG 落地时顺手对齐（两处挂均为同一陈旧期望）
+            'sale,delivery,purchase' &&
             all[1].section == NavSection.quick);
     check('数据查询 = 商品 / 库存 / 单据 / 往来方 / 账户',
         AppNavigation.of(NavSection.data)
@@ -690,12 +692,13 @@ void main() {
                 .map((NavDestination d) => d.label)
                 .join(',') ==
             '设置,帮助');
-    check('只有开单页是沉浸模式',
+    check('只有开单类页（销售 / 送货 / 采购）是沉浸模式',
         <String>{
           for (final NavDestination d in all)
             if (d.immersive) d.id,
         }.join(',') ==
-            'sale,purchase');
+            // 同上：§AP 加入 delivery（旧断言 'sale,purchase' 已陈旧）
+            'sale,delivery,purchase');
     check('byId 命中 / 未命中 / null → 不抛',
         AppNavigation.byId('sale')?.label == '销售开单' &&
             AppNavigation.byId('nope') == null &&

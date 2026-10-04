@@ -302,9 +302,13 @@ void main() {
       reason: '散客不留空白（AF-9）',
     );
     expect(
-      table.rows.every((List<String> row) => row[6].contains(' ')),
+      table.rows.every(
+        (List<String> row) =>
+            RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(row[6]),
+      ),
       isTrue,
-      reason: '日期带时分（遗漏 6：同日多单排序才稳）',
+      reason: '单据日期只到日（§BG 方案甲：occurred_at 是业务日期，'
+          '带时分会整列印 00:00；往来流水导出才是带时分的适用面）',
     );
     // AF-5：导出走独立查询，**不是**列表用的 limit 200。
     // 这里是「同一批筛选」的间接证据：行数 = 库里的全部（示例里 4 张单）

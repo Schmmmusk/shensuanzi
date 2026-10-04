@@ -33,6 +33,8 @@ void main() {
     String barcode = '6901234567890',
     String safetyStock = '10',
     String packageNote = '',
+    String packageUnit = '',
+    String packageSize = '',
   }) => ProductDraft(
     name: name,
     unit: unit,
@@ -41,6 +43,8 @@ void main() {
     barcode: barcode,
     safetyStock: safetyStock,
     packageNote: packageNote,
+    packageUnit: packageUnit,
+    packageSize: packageSize,
   );
 
   /// 直接把一条商品塞进库里（用于构造编码边界等前置状态）
@@ -674,6 +678,61 @@ void main() {
         ProductDraft.barcodeNotice(service.barcodeOwners('6901234567890')),
         contains('11条商品'),
       );
+    });
+  });
+
+  group('v3 包装换算两列（成对启用，§BD·四 #2）', () {
+    test('只填数量不填单位名 ⇒ packageUnit 报', () {
+      final ProductDraft draft = goodDraft(packageSize: '12');
+      expect(
+        draft.validate()[ProductField.packageUnit],
+        contains('就要给包装起个名字'),
+      );
+    });
+
+    test('只填单位名不填数量 ⇒ packageSize 报', () {
+      final ProductDraft draft = goodDraft(packageUnit: '箱');
+      expect(
+        draft.validate()[ProductField.packageSize],
+        contains('就要填 1 包 = 多少个'),
+      );
+    });
+
+    test('数量 ≤ 0 ⇒ 报正整数', () {
+      expect(
+        goodDraft(packageUnit: '箱', packageSize: '0')
+            .validate()[ProductField.packageSize],
+        contains('正整数'),
+      );
+      expect(
+        goodDraft(packageUnit: '箱', packageSize: '-3')
+            .validate()[ProductField.packageSize],
+        contains('正整数'),
+      );
+    });
+
+    test('包装单位与最小单位相同 ⇒ 报（否则换算语义错乱）', () {
+      expect(
+        goodDraft(unit: '箱', packageUnit: '箱', packageSize: '12')
+            .validate()[ProductField.packageUnit],
+        contains('不能和最小单位'),
+      );
+    });
+
+    test('成对启用 ⇒ 校验通过且落库（create 后读回）', () {
+      final Product product = service.create(
+        goodDraft(unit: '个', packageUnit: '箱', packageSize: '12'),
+      );
+      final Product? read = ProductDao(db).findById(product.id);
+      expect(read?.packageUnit, '箱');
+      expect(read?.packageSize, 12);
+    });
+
+    test('都不填 ⇒ 不启用（两列 NULL，行为与 v2 一致）', () {
+      final Product product = service.create(goodDraft());
+      final Product? read = ProductDao(db).findById(product.id);
+      expect(read?.packageUnit, isNull);
+      expect(read?.packageSize, isNull);
     });
   });
 }

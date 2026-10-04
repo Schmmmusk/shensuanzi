@@ -32,6 +32,7 @@ class OverviewPage extends StatefulWidget {
     this.shopName,
     this.backupReminder,
     this.onBackupNow,
+    this.locationNote,
   });
 
   /// 数据目录（用户选的，数据库就放在这里）
@@ -54,6 +55,11 @@ class OverviewPage extends StatefulWidget {
 
   /// 「立即备份」；`null` = 备份不可用（库还没打开）→ 不显示按钮
   final Future<BackupOutcome> Function()? onBackupNow;
+
+  /// 「你的数据在」的显示文案（§BH·五 B1b 裁定 2：Android 私有目录用户
+  /// 打不开，显示友好文案而非具体路径；路径挪到帮助页「关于」小字）。
+  /// `null` = 显示真实路径（桌面行为，零变化）。
+  final String? locationNote;
 
   @override
   State<OverviewPage> createState() => _OverviewPageState();
@@ -149,18 +155,25 @@ class _OverviewPageState extends State<OverviewPage> {
               children: <Widget>[
                 Text('你的数据在', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 8),
-                SelectableText(
-                  widget.dataDirectory,
-                  style: const TextStyle(height: 1.6),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '备份会放在旁边：${widget.backupDirectory}',
-                  style: TextStyle(
-                    height: 1.6,
-                    color: theme.textTheme.bodySmall?.color,
+                if (widget.locationNote != null)
+                  Text(
+                    widget.locationNote!,
+                    style: const TextStyle(height: 1.6),
+                  )
+                else ...<Widget>[
+                  SelectableText(
+                    widget.dataDirectory,
+                    style: const TextStyle(height: 1.6),
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '备份会放在旁边：${widget.backupDirectory}',
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 Row(
                   children: <Widget>[

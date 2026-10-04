@@ -61,6 +61,7 @@ export 'src/backup.dart'
         weekKeyOf;
 export 'src/typography.dart' show AppTypography;
 export 'src/version.dart' show AppVersion;
+export 'src/shell_kind.dart' show ShellKind, shellKindFor;
 export 'src/manual_content.dart' show
     ManualBlock,
     ManualNote,

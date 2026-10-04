@@ -121,32 +121,38 @@ class _StockPageState extends State<StockPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-          // §AD 遗漏 2：入口按钮（文案按首次 / 再次区分）
-          Row(
+          // §BH·六 B1c·补（2026-10-04 真机反馈：超大字号下标题被按钮挤成竖排）：
+          // 换 Wrap —— 宽屏 spaceBetween 与原右对齐一致，窄屏自动换行
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: <Widget>[
-              Expanded(child: Text('库存', style: theme.textTheme.titleLarge)),
-              if (widget.exports != null)
-                ExportButton(
-                  key: const Key('export-stock'),
-                  // AF-2：说清导的是「有流水或有库存」的那批
-                  label: '导出库存',
-                  export: () => widget.exports!.write(
-                    stockExportTable(
-                      // AF-12：**含停用** —— 停用但有库存的商品也要能对账
-                      //（页面上看不到它们，但导出的账里不能少）
-                      products: widget.products.listForExport(),
-                      book: book,
-                      inTransit: inTransit,
-                      cost: cost,
-                    ),
-                  ),
+          // §AD 遗漏 2：入口按钮（文案按首次 / 再次区分）
+          Text('库存', style: theme.textTheme.titleLarge),
+          if (widget.exports != null)
+            ExportButton(
+              key: const Key('export-stock'),
+              // AF-2：说清导的是「有流水或有库存」的那批
+              label: '导出库存',
+              export: () => widget.exports!.write(
+                stockExportTable(
+                  // AF-12：**含停用** —— 停用但有库存的商品也要能对账
+                  //（页面上看不到它们，但导出的账里不能少）
+                  products: widget.products.listForExport(),
+                  book: book,
+                  inTransit: inTransit,
+                  cost: cost,
                 ),
-              TextButton.icon(
-                key: const Key('stock-open-entry'),
-                onPressed: () => setState(() => _showOpening = true),
-                icon: const Icon(Icons.inventory_2_outlined, size: 18),
-                label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
               ),
+            ),
+          TextButton.icon(
+            key: const Key('stock-open-entry'),
+            onPressed: () => setState(() => _showOpening = true),
+            icon: const Icon(Icons.inventory_2_outlined, size: 18),
+            label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
+          ),
             ],
           ),
               const SizedBox(height: 4),

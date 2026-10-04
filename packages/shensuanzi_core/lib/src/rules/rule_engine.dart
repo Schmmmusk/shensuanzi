@@ -195,7 +195,8 @@ class RuleEngine {
 
   /// **RULE-001 采购入库**（`docs/rules.md`）
   ///
-  /// - `StockLedger`：每 line `quantity = +qty`，`total_cost = qty × unit_price`
+  /// - `StockLedger`：每 line `quantity = +qty`，`total_cost = line.amount`
+  ///   （v3 口径：`amount` 是真相、含让价；`unit_price` 是派生展示）
   /// - `PartyLedger`：主单 `amount = -total_amount`（我欠供应商）
   /// - **不直接写** `MoneyLedger`；立即付款由 [PaymentEntry] 触发自动 payment 单
   RuleOutcome _purchaseInbound(
@@ -219,10 +220,8 @@ class RuleEngine {
         productId: line.productId,
         documentId: doc.id,
         quantity: line.quantity,
-        totalCost: _cost.inboundCost(
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-        ),
+        // v3 口径：入库成本 = 该行 amount（含让价），不再 qty × unit_price
+        totalCost: _cost.inboundCost(line),
         doc: doc,
         now: now,
       );
@@ -432,6 +431,21 @@ class RuleEngine {
 
     // 立即退款（sale_return → payment 单）/ 立即收退款（purchase_return → receipt 单）
     _applyImmediateSettlement(doc, immediatePayments, moneyOut: inbound, now: now);
+
+    // §BH·七（reply.md 2026-10-04 裁定）：**拒收收口** —— 原单是送货单且
+    // 还没签收（in_transit）⇒ 同一事务内置为 `cancelled`。否则在途视图会
+    // 永远把拒收的货算进去，低库存告警失真。这是 RULE-007 的**副作用**
+    // （规则内部的状态转变，不走 `documentAction` —— R-3 只定义了
+    // mark_delivered）；已签收（delivered）的原单不在此列 —— 货确实送到过，
+    // 之后的退货不改变「送过货」这个事实（状态机不允许 delivered → cancelled）。
+    if (original.docType == DocType.delivery &&
+        original.status == DocStatus.inTransit) {
+      _docs.updateStatusAndPaid(
+        id: refDocId,
+        status: DocStatus.cancelled,
+        updatedAt: now,
+      );
+    }
 
     return RuleOutcome(RuleStatus.applied, document: doc);
   }

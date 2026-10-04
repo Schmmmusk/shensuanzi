@@ -1,5 +1,6 @@
 import '../dao/ledger_dao.dart';
 import '../models/document.dart';
+import '../models/document_line.dart';
 import '../util/money.dart';
 
 /// 库存成本口径（`docs/data_model.md` §3.3 / §六）。
@@ -14,9 +15,15 @@ class CostPolicy {
 
   final StockLedgerDao _stock;
 
-  /// **入库成本**：`quantity × unit_price`（精确，不涉及舍入）
-  int inboundCost({required int quantity, required int unitPrice}) =>
-      quantity * unitPrice;
+  /// **入库成本** = **该行的 [`DocumentLine.amount`]**
+  /// （v3 口径：`amount` 是这一行真正发生多少钱的真相，让价已含在内；
+  /// 见 `docs/data_model.md` §3.2 第 5/6 条）。
+  ///
+  /// ⚠️ **不再是 `quantity × unit_price`**（v2 口径）—— `unit_price` 自 v3 起
+  /// 是派生展示值（= `round(amount / quantity)`），拿它重算会有舍入差、
+  /// 且让价信息会丢失。收整个 [DocumentLine] 而不是裸数字，
+  /// 就是让签名本身挡住「`qty × unit_price` 重算一遍」的旧写法回流。
+  int inboundCost(DocumentLine line) => line.amount;
 
   /// **出库成本**（也用于盘亏）。[quantity] 为**负数**。
   ///

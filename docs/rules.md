@@ -20,6 +20,39 @@
 自动生成的收付款单与用户手动创建的收付款单**表结构上无差异**，
 用 `documents.ref_doc_id` 区分：自动生成 → 指向来源主单；手动创建 → `null`。
 
+## 零·乙、数量与让价口径（v3，2026-10-03 裁定 · `reply_review.md` §BD）
+
+> 适用于**有金额/交易明细**的单据：RULE-001 / 002 / 003 / 007 / 008。
+> 盘点（RULE-009）**不适用**本节的换算与让价口径 —— 它的 `quantity` 是**盘点后的实际数量**，
+> 语义见 RULE-009。
+> 字段定义与 7 条交互关系见 `data_model.md` §3.2（那里是权威）。
+
+- **`document_lines.quantity` 永远是最小销售单位**（`products.unit`）——
+  按「3 箱」录入时落库 **36**；`entry_quantity = 3` / `entry_unit = '箱'` 只记**录入原文**。
+  ⚠️ **「纯记录」的准确含义**：**落库之后**不参与库存、成本、往来余额等**派生**计算；
+  但**落库当时** `entry_unit` 是 `toBaseQuantity` 的输入、`entry_quantity` 是
+  `amount` 公式的原文数量与展示反推来源 —— 不是"从头到尾都不参与"
+  （`entry_unit = null` = 用户没切单位）
+- **`entry_unit` 可选「箱」的前提是成对启用**：`products.package_unit` 与 `package_size`
+  **都非空**；缺一个就只能选最小单位或 null（否则会出现"能选箱但报没设换算"的半配置状态）
+- **换算的唯一落点** = core 纯函数 `toBaseQuantity`（**不在 UI**，三份草稿共用）；
+  失败返回 `null` ⇒ UI 报错，**三种失败分开说**：
+  选了 `package_unit` 但没设 `package_size` ⇒「**这个商品没设包装换算**」；
+  `package_size <= 0` ⇒「**包装换算无效**」（档案校验本应挡住，纯函数兜底）；
+  出现第三种单位 ⇒「**单位不合法**」（校验拒绝，理论上不该发生）
+- **`amount` 是这一行真正发生多少钱的真相**：
+  `amount = entry_quantity × entry_unit_price − discount_amount`
+  （`entry_unit_price` 是**派生**，**不存第六列** —— 展示**原始**按箱报价由
+  `(amount + discount_amount) / entry_quantity` 反推；展示**折后**单价才用
+  `amount / entry_quantity`）
+- **`unit_price` 是派生展示**：`round(amount / quantity)`，**不再被改**；
+  档价只是预填默认值
+- **让价 `discount_amount`**：分、**正数**、默认 0；**整单议价记在某一行**（UI 默认最后一行）。
+  ⚠️ 单行上限 `[0, entry_quantity × entry_unit_price]` —— 差额超过最后一行折前金额时，
+  **由 UI 从最后一行向前分摊到多行**（整单差额恒 ≤ 整单折前金额，分摊总有解）；
+  「记在某一行」只是默认起点，不是硬性约束
+- **`entry_*` 不因商品档案变化而重解释**：改 `package_size` 改的是**将来**的换算，**不改历史**
+
 ---
 
 ## RULE-001 采购入库
@@ -176,7 +209,14 @@
 客户签收 ───────────→ delivered
 签收 + 已收满款 ────→ settled
 已付款但未签收 ─────→ 停在 in_transit    钱到了，货还在路上
+客户签收 ───────────→ delivered
+签收 + 已收满款 ────→ settled
+已付款但未签收 ─────→ 停在 in_transit    钱到了，货还在路上
 客户拒收 ───────────→ 走 RULE-007 销售退货（ref_doc_id 指向本送货单）
+                       且原送货单**同一事务内**置为 `cancelled`
+                       （2026-10-04 裁定：否则在途视图永远把拒收的货算进去）；
+                       仅未签收（in_transit）时收口，已签收（delivered）的
+                       原单不在此列 —— 货确实送到过，退货不改「送过货」这个事实
 ```
 
 > ⚠️ **送货的 `status` 由上面的状态机驱动，不由通用的

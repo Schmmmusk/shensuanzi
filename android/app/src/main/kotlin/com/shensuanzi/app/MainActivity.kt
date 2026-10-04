@@ -1,4 +1,4 @@
-package com.example.shensuanzi
+package com.shensuanzi.app
 
 import io.flutter.embedding.android.FlutterActivity
 

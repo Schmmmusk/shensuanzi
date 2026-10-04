@@ -384,8 +384,9 @@ void main() {
     await tester.pumpAndSettle();
 
     await fillRow(tester); // 合计 50
-    await tester.tap(find.text('收 100'));
-    await tester.pumpAndSettle();
+    // ⚠️ v3 加了「整单让价」框，页面又高了一截 ——「收 100」在视口外，
+    // 直接 tap 会 miss（offset 越界）且收款框没被填。先滚到可见再点。
+    await tapFinder(tester, find.text('收 100'));
 
     final TextField payField = tester.widget<TextField>(
       find.byKey(const Key('sale-pay-amount')),
@@ -401,6 +402,13 @@ void main() {
   testWidgets('非现金账户不显示找零辅助行（找零是现金的物理属性）', (
     WidgetTester tester,
   ) async {
+    // ⚠️ v3 加了「整单让价」框，账户 Dropdown 的按钮位置更低 ——
+    // 800×600 视口里弹出菜单放不下（框架断言 menuLimits）。
+    // 该用例临时加高视口；addTearDown 恢复，不影响别的用例。
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     final int t = 1700000000000;
     AccountDao(db).insert(Account(
       id: newId(),
@@ -430,5 +438,56 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('顾客给了'), findsNothing);
+  });
+
+  // ---- §BG 方案 A：切单位 ⇒ 未被手改的预填价跟着换算（三页同构，各钉各的 Key）----
+
+  testWidgets('§BG 方案A：切到「箱」⇒ 预填价 ×12、单价标注单位、显示换算说明', (WidgetTester tester) async {
+    final Product milk = Product(
+      id: newId(),
+      code: 'P0002',
+      name: '蒙牛纯牛奶',
+      unit: '瓶',
+      sellPrice: 250,
+      packageUnit: '箱',
+      packageSize: 12,
+      createdAt: 2,
+      updatedAt: 2,
+    );
+    ProductDao(db).insert(milk);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 选牛奶（⚠️ 结果行按 ListTile 找 —— 搜索框里的字也会被 find.text 命中）
+    await tester.tap(find.text('点此选商品'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('picker-search')), '蒙牛');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, '蒙牛纯牛奶'));
+    await tester.pumpAndSettle();
+
+    TextField priceField() => tester.widget<TextField>(
+      find.byKey(const Key('sale-price')),
+    );
+    // 预填 = 瓶价 2.50，label 标注最小单位
+    expect(priceField().controller!.text, '2.50');
+    expect(find.text('单价（元/瓶）*'), findsOneWidget);
+
+    // 切到「箱」⇒ 预填价 ×12 = 30.00（§BG 方案 A 的核心断言）
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, '箱'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, '箱'));
+    await tester.pumpAndSettle();
+    expect(priceField().controller!.text, '30.00');
+    expect(find.text('单价（元/箱）*'), findsOneWidget);
+    expect(find.text('1 箱 = 12 瓶，入库按 12 瓶记。'), findsOneWidget);
+
+    // 切回「瓶」⇒ ÷12 还原；换算说明消失（只在切到包装时显示，裁定 ③）
+    await tester.tap(find.widgetWithText(ChoiceChip, '瓶'));
+    await tester.pumpAndSettle();
+    expect(priceField().controller!.text, '2.50');
+    expect(find.text('单价（元/瓶）*'), findsOneWidget);
+    expect(find.text('1 箱 = 12 瓶，入库按 12 瓶记。'), findsNothing);
   });
 }

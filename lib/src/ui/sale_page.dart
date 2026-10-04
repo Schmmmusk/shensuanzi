@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'entry_unit_hints.dart';
 import 'product_form_dialog.dart';
 
 /// 店内销售开单页。
@@ -54,8 +55,82 @@ class _RowCtl {
   /// 商品选择结果 —— 只能由「选商品」动作写入（`_pickProduct`）。
   Product? product;
 
+  // ---- v3 换算上下文（选商品时由 [attachProduct] 写入）----
+  String? baseUnit;
+  String? packageUnit;
+  int? packageSize;
+
+  /// **录入单位**：'' = 最小单位（没切）；切到包装 = [packageUnit] 原文
+  String entryUnit = '';
+
+  /// 切单位时价格没换成（除不尽，保留原值）⇒ `true`：橙色告知，不拦提交
+  /// （§BG 方案 A ②）—— 与采购 / 送货**逐字段同构**，改一边必须扫另两边
+  bool entryPriceKept = false;
+
+  /// 本行让价（分）—— 由整单让价分摊写入（`_syncSpread`），行卡只读展示
+  int discountCents = 0;
+
+  /// 成对启用 ⇒ 行卡显示单位切换（§BD·三 第 3 条）
+  bool get canSwitchPackage =>
+      packageUnit != null &&
+      packageUnit!.isNotEmpty &&
+      (packageSize ?? 0) > 0;
+
+  /// 数量框 label 上显示的单位
+  String get entryUnitDisplay =>
+      entryUnit.isNotEmpty ? entryUnit : (baseUnit ?? '');
+
+  /// 单价框 label（§BG 方案 A ②：标注「这个数现在按什么单位计」——
+  /// 否则切到箱后，瓶价会被悄悄当成箱价，真机踩过）
+  String get priceLabel {
+    final String unit = entryUnitDisplay;
+    return unit.isEmpty ? '单价（元）' : '单价（元/$unit）';
+  }
+
+  /// 选商品时写入换算上下文；**换商品重置单位**（不同商品上下文不同）
+  void attachProduct(Product picked) {
+    product = picked;
+    baseUnit = picked.unit;
+    packageUnit = picked.packageUnit;
+    packageSize = picked.packageSize;
+    entryUnit = '';
+    entryPriceKept = false;
+    priceTouched = false;
+  }
+
   /// 单价预填售价：**只在刚选中商品时填**，用户之后改了不再覆盖
   bool pricePrefilled = false;
+
+  /// 价格框被**用户手改过**（§BG 方案 A ①：裁定明令用**显式布尔**，
+  /// 不靠「值变没变」猜）—— 预填 = false；用户编辑（非空）= true；
+  /// 用户清空 = false；**程序换算不算手改**（换算后的价仍是「预填价」，
+  /// 可继续跟随单位）。
+  bool priceTouched = false;
+
+  /// 切录入单位（§BG 方案 A）。**判断在 core**（`convertEntryPriceCents`），
+  /// 这里只做状态变更：未被手改的价格跟着换到新单位；换算不出（除不尽）⇒
+  /// 保留原值 + [entryPriceKept] 告知。与采购 / 送货**逐字段同构**。
+  void switchEntryUnit(String toUnit) {
+    final String fromUnit = entryUnit;
+    final int? price = Money.tryParseYuan(unitPrice.text.trim());
+    entryUnit = toUnit;
+    entryPriceKept = false;
+    if (priceTouched || price == null) return; // 手改过 / 空 ⇒ 数字是用户的，不动
+    final int? converted = convertEntryPriceCents(
+      priceCents: price,
+      fromUnit: fromUnit,
+      toUnit: toUnit,
+      baseUnit: baseUnit ?? '',
+      packageUnit: packageUnit,
+      packageSize: packageSize,
+    );
+    if (converted == null) {
+      entryPriceKept = true;
+      return;
+    }
+    // 程序写入不触发 onChanged ⇒ priceTouched 保持 false（仍是「预填价」）
+    unitPrice.text = Money.format(converted);
+  }
 
   final TextEditingController quantity;
   final TextEditingController unitPrice;
@@ -65,18 +140,35 @@ class _RowCtl {
       quantity.text.trim().isEmpty &&
       unitPrice.text.trim().isEmpty;
 
-  /// 数量取值；非法时 `null`（与 `PurchaseLineDraft.quantityValue` 同名对齐）
+  /// **录入原文数量**取值；非法时 `null`（调用方应先 `validate`）
   int? get quantityValue {
     final int? qty = int.tryParse(quantity.text.trim());
     return (qty == null || qty <= 0) ? null : qty;
   }
 
-  /// 本行小计（分）；字段没填全 ⇒ `null`（合计按 0 处理，校验会拦）
-  int? get amountCents {
+  /// 本行**折前**金额（分）= 录入原文数量 × 录入单位报价
+  int? get grossCents {
     final int? qty = int.tryParse(quantity.text.trim());
     final int? price = Money.tryParseYuan(unitPrice.text.trim());
     if (qty == null || qty <= 0 || price == null || price < 0) return null;
     return qty * price;
+  }
+
+  /// 换算后的**最小单位数量**（`document_lines.quantity` 的值）；
+  /// 换算失败 ⇒ `null`（validate 会带文案拦住）
+  int? get baseQuantityValue => toBaseQuantity(
+    entryQuantity: quantityValue ?? 0,
+    entryUnit: entryUnit.isEmpty ? null : entryUnit,
+    baseUnit: baseUnit ?? '',
+    packageUnit: packageUnit,
+    packageSize: packageSize,
+  ).baseQuantityOrNull;
+
+  /// 本行小计（分）= 折前 − 让价（v3 真相口径）；字段没填全 ⇒ `null`
+  int? get amountCents {
+    final int? gross = grossCents;
+    if (gross == null) return null;
+    return gross - discountCents;
   }
 
   void dispose() {
@@ -112,6 +204,13 @@ class _SalePageState extends State<SalePage> {
   /// 「顾客给了」的原文（现金找零辅助行，§AJ·AI-4）。
   /// ⚠️ **只用于算找零** —— 永远不进 [_draft]、不落库，保存 / 取消即清。
   final TextEditingController _given = TextEditingController();
+
+  /// **整单让价**原文（元）—— 分摊到各行（`spreadDiscount`，从最后一行向前，
+  /// §BD·九 #3）。行卡的让价只是分摊**结果**，用户永远只填这一个框。
+  final TextEditingController _discountAll = TextEditingController();
+
+  /// 让价分摊失败的内联提示（超整单折前金额 / 不是数字）
+  String? _discountError;
   final List<_RowCtl> _rows = <_RowCtl>[];
   final List<_PayCtl> _pays = <_PayCtl>[];
 
@@ -139,6 +238,7 @@ class _SalePageState extends State<SalePage> {
   void dispose() {
     _remark.dispose();
     _given.dispose();
+    _discountAll.dispose();
     for (final _RowCtl row in _rows) {
       row.dispose();
     }
@@ -163,6 +263,13 @@ class _SalePageState extends State<SalePage> {
           productName: row.product?.name ?? '',
           quantity: row.quantity.text,
           unitPrice: row.unitPrice.text,
+          entryUnit: row.entryUnit,
+          discountAmount: row.discountCents == 0
+              ? ''
+              : Money.format(row.discountCents),
+          baseUnit: row.baseUnit,
+          packageUnit: row.packageUnit,
+          packageSize: row.packageSize,
         ),
     ],
     payments: <SalePaymentDraft>[
@@ -195,6 +302,41 @@ class _SalePageState extends State<SalePage> {
       if (_rows.isEmpty) _addRow();
       _invalid = null;
     });
+    _syncSpread();
+  }
+
+  /// 把整单让价分摊到各行（§BD·九 #3：**从最后一行向前**，每行钳在折前金额内）。
+  /// 超整单 / 非数字 ⇒ 记 [_discountError]（内联橙字），各行清零。
+  void _syncSpread() {
+    final String text = _discountAll.text.trim();
+    if (text.isEmpty) {
+      _discountError = null;
+      for (final _RowCtl row in _rows) {
+        row.discountCents = 0;
+      }
+      return;
+    }
+    final int? disc = Money.tryParseYuan(text);
+    if (disc == null || disc < 0) {
+      _discountError = '让价只能填数字，最多两位小数';
+      return;
+    }
+    int total = 0;
+    for (final _RowCtl row in _rows) {
+      total += row.grossCents ?? 0;
+    }
+    if (disc > total) {
+      _discountError = '让价不能超过合计 ¥${Money.format(total)}';
+      return;
+    }
+    _discountError = null;
+    final List<int> spread = spreadDiscount(
+      grossAmounts: <int>[for (final _RowCtl row in _rows) row.grossCents ?? 0],
+      discountCents: disc,
+    );
+    for (int i = 0; i < _rows.length; i++) {
+      _rows[i].discountCents = spread[i];
+    }
   }
 
   void _addPayment() {
@@ -300,6 +442,8 @@ class _SalePageState extends State<SalePage> {
   /// `create` 是**同步**的（库操作进程内完成，无 IO 等待）。
   void _save() {
     if (_saving) return;
+    _syncSpread();
+    if (_discountError != null) return; // 内联橙字已在屏上（onChanged 里 setState）
     final SaleDraft draft = _draft;
     setState(() => _saving = true);
     try {
@@ -429,7 +573,7 @@ class _SalePageState extends State<SalePage> {
     final Product? picked = await _showProductPicker(context);
     if (picked == null || rowIndex >= _rows.length) return;
     final _RowCtl row = _rows[rowIndex];
-    row.product = picked;
+    row.attachProduct(picked); // v3：带换算上下文 + 重置录入单位
     // 单价预填售价 —— 只在「刚选中」时填一次；**改后不回写商品档**
     if (!row.pricePrefilled) {
       row.unitPrice.text = Money.format(picked.sellPrice);
@@ -610,15 +754,41 @@ class _SalePageState extends State<SalePage> {
   /// 合计：**大字 + 右对齐 + 千分位**（用户最关心的数字）
   Widget _totalBar(ThemeData theme) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        Text('合计', style: theme.textTheme.titleMedium),
-        const Spacer(),
-        Text(
-          '¥ ${Money.formatGrouped(_draft.totalCents)}',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.w700,
-            fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+        Row(
+          children: <Widget>[
+            Text('合计', style: theme.textTheme.titleMedium),
+            const Spacer(),
+            Text(
+              '¥ ${Money.formatGrouped(_draft.totalCents)}',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                fontFeatures: const <FontFeature>[
+                  FontFeature.tabularFigures(),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          key: const Key('sale-discount'),
+          controller: _discountAll,
+          enabled: !_saving,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          onChanged: (_) {
+            _syncSpread();
+            setState(() {});
+          },
+          decoration: InputDecoration(
+            labelText: '整单让价（可选）',
+            hintText: '例：2.00',
+            isDense: true,
+            prefixText: '- ¥',
+            errorText: _discountError,
+            helperText: '从最后一行往前分摊；每行让价不超过它自己的金额',
           ),
         ),
       ],
@@ -933,7 +1103,9 @@ class _LineCard extends StatelessWidget {
                     onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                     onChanged: (_) => onChanged(),
                     decoration: InputDecoration(
-                      labelText: '数量 *',
+                      labelText: row.entryUnitDisplay.isEmpty
+                          ? '数量 *'
+                          : '数量（${row.entryUnitDisplay}）*',
                       isDense: true,
                       errorText: errors?[SaleLineField.quantity],
                     ),
@@ -950,9 +1122,14 @@ class _LineCard extends StatelessWidget {
                         const TextInputType.numberWithOptions(decimal: true),
                     textInputAction: TextInputAction.next,
                     onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                    onChanged: (_) => onChanged(),
+                    onChanged: (_) {
+                      // §BG 方案 A ①：显式布尔记「手改过」——编辑（非空）= true，清空 = false
+                      row.priceTouched = row.unitPrice.text.trim().isNotEmpty;
+                      row.entryPriceKept = false; // 重新输入 ⇒ 「保留」告知失效
+                      onChanged();
+                    },
                     decoration: InputDecoration(
-                      labelText: '单价（元）*',
+                      labelText: '${row.priceLabel}*',
                       isDense: true,
                       errorText: errors?[SaleLineField.unitPrice],
                     ),
@@ -975,6 +1152,54 @@ class _LineCard extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            // v3 单位切换（§BD·三 第 3 条）：只在**成对启用**时出现；
+            // chips 是唯一入口 —— 文字标签必须有（UI 基线），不用图标猜
+            if (row.canSwitchPackage && enabled) ...<Widget>[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: <Widget>[
+                  ChoiceChip(
+                    label: Text(row.baseUnit ?? ''),
+                    selected: row.entryUnit.isEmpty ||
+                        row.entryUnit == row.baseUnit,
+                    onSelected: (_) {
+                      row.switchEntryUnit(''); // §BG 方案 A：预填价跟着换
+                      onChanged();
+                    },
+                  ),
+                  ChoiceChip(
+                    label: Text(row.packageUnit ?? ''),
+                    selected:
+                        row.entryUnit.isNotEmpty &&
+                        row.entryUnit == row.packageUnit,
+                    onSelected: (_) {
+                      row.switchEntryUnit(row.packageUnit ?? '');
+                      onChanged();
+                    },
+                  ),
+                ],
+              ),
+            ],
+            if (errors?[SaleLineField.entryUnit] != null) ...<Widget>[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  errors![SaleLineField.entryUnit]!,
+                  style: TextStyle(color: theme.colorScheme.error, height: 1.6),
+                ),
+              ),
+            ],
+            // §BG 方案 A ②③：切到包装才显示换算说明；除不尽保留原价的橙色告知
+            ...entryUnitHints(
+              theme: theme,
+              baseUnit: row.baseUnit,
+              packageUnit: row.packageUnit,
+              packageSize: row.packageSize,
+              entryUnit: row.entryUnit,
+              priceKept: row.entryPriceKept,
             ),
             // 库存快照（Z-2）：**提示不是校验** —— 负库存允许，保存必然放行。
             // 文案标明「打开本页时」，用户看到数字与实际有差不会以为是 bug。

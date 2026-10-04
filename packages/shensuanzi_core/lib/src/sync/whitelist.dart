@@ -51,6 +51,9 @@ class SyncWhitelist {
       'is_active',
       'remark',
       'package_note',
+      // v3：包装换算两列（成对启用；§BD / data_model §2.1）
+      'package_unit',
+      'package_size',
     },
     Schema.parties: <String>{
       'id',
@@ -84,6 +87,10 @@ class SyncWhitelist {
       'unit_price',
       'amount',
       'remark',
+      // v3：让价 + 录入原文（§BD / data_model §3.2 的 7 条交互关系）
+      'discount_amount',
+      'entry_quantity',
+      'entry_unit',
     },
   };
 

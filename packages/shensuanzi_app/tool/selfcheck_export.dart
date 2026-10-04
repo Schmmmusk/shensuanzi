@@ -353,10 +353,10 @@ Future<void> main() async {
         partyName: '王老板',
       ),
     ]);
-    check('单据：类型 / 状态中文 + 对方散客 + 日期带时分',
+    check('单据：类型 / 状态中文 + 对方散客 + 日期只到日（§BG 方案甲）',
         docs.header.join(',') == '单号,单据类型,对方,金额,已收付,状态,日期' &&
             docs.rows[0].join('|') ==
-                'XS20260928-002|店内销售|散客|12.50|12.50|已结清|2026-09-28 10:00');
+                'XS20260928-002|店内销售|散客|12.50|12.50|已结清|2026-09-28');
 
     final ExportTable flow = partyFlowExportTable(
       flow: <PartyFlowEntry>[

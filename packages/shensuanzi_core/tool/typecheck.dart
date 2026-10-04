@@ -12,6 +12,7 @@
 // ignore: unused_import
 import '../test/database_test.dart' as database_test;
 // ignore: unused_import
+import '../test/discount_spread_test.dart' as discount_spread_test;
 import '../test/delivery_draft_test.dart' as delivery_draft_test;
 import '../test/delivery_test.dart' as delivery_test;
 // ignore: unused_import
@@ -25,9 +26,12 @@ import '../test/party_service_test.dart' as party_service_test;
 // ignore: unused_import
 import '../test/product_service_test.dart' as product_service_test;
 // ignore: unused_import
+import '../test/quantity_conversion_test.dart' as quantity_conversion_test;
 import '../test/purchase_draft_test.dart' as purchase_draft_test;
 // ignore: unused_import
 import '../test/query_test.dart' as query_test;
+// ignore: unused_import
+import '../test/return_service_test.dart' as return_service_test;
 // ignore: unused_import
 import '../test/return_test.dart' as return_test;
 // ignore: unused_import
@@ -90,13 +94,16 @@ void main() {
     account_draft_test.main,
     database_test.main,
     delivery_draft_test.main,
+    discount_spread_test.main,
     delivery_test.main,
     export_reads_test.main,
     immediate_payment_test.main,
     party_service_test.main,
     product_service_test.main,
     purchase_draft_test.main,
+    quantity_conversion_test.main,
     query_test.main,
+    return_service_test.main,
     return_test.main,
     rule_engine_test.main,
     sale_draft_test.main,

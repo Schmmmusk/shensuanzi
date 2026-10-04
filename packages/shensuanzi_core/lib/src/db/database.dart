@@ -33,22 +33,34 @@ class Db {
   /// 版本高于程序）时若直接向上抛，`sqlite3.open` 建立的连接不会关闭 ——
   /// Windows 上 `.db` 文件句柄被持有（临时目录删不掉），长期反复尝试还会累积。
   ///
-  /// **迁移失败 → 从迁移前备份恢复**（`<db>.before-v{N}`）：
-  /// 「迁移失败时能不能回到起点」是 Schema 兼容性的底线（reply.md §七），
-  /// 而回滚只能保证**结构一致**，回不到「升级前的样子」。
+  /// ## 迁移失败时**不会**自动回滚（2026-10-03 裁定 · §BE）
+  ///
+  /// 两条事实**别搞混**：
+  ///
+  /// 1. **库停在「最后一版已提交的版本」** —— 迁移链**每版一个事务**
+  ///    （见 [_migrate]），所以「v1→v2 成功、v2→v3 失败」时库**停在 v2**；
+  ///    下次打开会**从断点继续**（只跑 v2→v3）。**不是**回到 v1。
+  /// 2. **`<db>.before-v{N}` 是「人工退路」，不是自动回滚点** —— 它是
+  ///    迁移前那份文件的拷贝，**由人**在需要时使用（恢复流程见用户手册
+  ///    「备份与恢复」一章）。软件**不会**在失败时拿它覆盖回去。
+  ///
+  /// **为什么不留自动回滚**：回滚到 v1 会让下一轮**从头重跑**并**重蹈同一失败**；
+  /// 「停在断点、修好再继续」既保住已完成的工作，也让失败点更可诊断。
+  ///
+  /// ⚠️ **曾经这里写着「迁移失败 → 从迁移前备份恢复」，还配了一个 `_restoreFrom`** ——
+  /// 但那条路径**根本走不到**（`backupPath` 在抛异常时不会被赋值），
+  /// 属「**文档描述了不存在的功能**」。已按**纪律 17** 删掉。
   static Db open(String path, {bool foreignKeys = true}) {
     final Database db = sqlite3.open(path);
-    String? backupPath;
     try {
       // WAL 必须在事务外设置；它提升并发读性能，且是断电安全性的基础。
       db.execute('PRAGMA journal_mode = WAL');
       _configure(db, foreignKeys: foreignKeys);
-      backupPath = _migrate(db, path);
+      _migrate(db, path);
       return Db._(db, foreignKeys: foreignKeys);
     } catch (_) {
-      // 先关连接：Windows 上文件被占用就写不回去
+      // 先关连接：Windows 上文件被占用就写不回去（也决定临时目录删不删得掉）
       db.dispose();
-      if (backupPath != null) _restoreFrom(backupPath, path);
       rethrow;
     }
   }
@@ -85,13 +97,17 @@ class Db {
     db.execute('PRAGMA synchronous = NORMAL');
   }
 
-  /// 迁移。返回**迁移前备份的路径**（没迁移 / 空库 / 内存库 → `null`）。
+  /// 迁移。**逐版本、每版一个事务**（`Agents.md` 纪律 14）。
   ///
   /// [path] 为 `null` = 内存库（测试）—— 没有文件可备份，其余逻辑一致。
-  static String? _migrate(Database db, String? path) {
+  ///
+  /// **不返回任何东西**：备份路径由 [_backupBeforeMigration] 自己写到盘上，
+  /// 没有人在此处消费它（曾经返回 `String?` 给「失败后恢复」用 ——
+  /// 那条路径走不到，已删；见 [open] 的说明）。
+  static void _migrate(Database db, String? path) {
     final int current =
         db.select('PRAGMA user_version').first['user_version']! as int;
-    if (current == Schema.version) return null;
+    if (current == Schema.version) return;
 
     // 旧代码打开新库 → **拒绝**（`SchemaTooNewException`）。
     // 拒绝比崩溃好：拒绝能告诉用户「升级软件或从备份恢复」，崩溃只会让
@@ -116,7 +132,7 @@ class Db {
         _rollbackQuietly(db);
         rethrow;
       }
-      return null;
+      return;
     }
 
     // ---- 存量库：**先备份，再迁移**。
@@ -124,9 +140,11 @@ class Db {
     // 备份是**迁移的第一道防线，比回滚更重要** —— 回滚只能保证「结构没有
     // 半成品」，回不到「升级前的样子」；而文件级备份与崩溃时机无关
     // （reply.md Schema 篇 §3.2 / §七）。
-    final String? backupPath = path == null
-        ? null
-        : _backupBeforeMigration(db, path, current);
+    //
+    // ⚠️ 备份**只写盘**，程序**不消费**它：它不是自动回滚点，而是**人工退路**
+    //    （见 [open]）。**也不接返回值** —— 曾经接来喂 `_restoreFrom`，而那条
+    //    路径走不到（纪律 17：不留「描述不存在功能」的代码）。
+    if (path != null) _backupBeforeMigration(db, path, current);
 
     // **逐版本**跑迁移链，**每版一个事务** ——
     // v1 → v3 中途失败时 v1 → v2 的部分保留，重试只跑 v2 → v3（粒度更细）。
@@ -146,8 +164,6 @@ class Db {
         rethrow;
       }
     }
-
-    return backupPath;
   }
 
   /// 迁移前把库拷一份：`<db>.before-v{N}`（`N` = **迁移前**的版本）。
@@ -159,7 +175,9 @@ class Db {
   /// - 不同版本各自留档（`before-v1` / `before-v2` …），互不覆盖
   /// - **备份失败就抛** ⇒ 上层的 `catch` 会让这次打开失败：
   ///   宁可先打不开，也不在**没有退路**的情况下改用户的数据
-  static String _backupBeforeMigration(
+  ///
+  /// **不返回任何东西**：这份文件是给**人**用的（见 [open]），程序不消费它。
+  static void _backupBeforeMigration(
     Database db,
     String path,
     int fromVersion,
@@ -173,23 +191,6 @@ class Db {
         '升级前没能自动备份（$error）。'
         '请检查磁盘空间和文件夹权限，然后再打开一次。',
       );
-    }
-    return backupPath;
-  }
-
-  /// 从迁移前备份恢复（失败路径）。**不覆盖原始异常** —— 原始异常才是根因。
-  ///
-  /// 调用方必须**先 `dispose` 连接**：Windows 上文件被占用就写不回去。
-  /// 顺带清掉 `-wal` / `-shm` 残留，否则它们可能把恢复后的库再带坏。
-  static void _restoreFrom(String backupPath, String path) {
-    try {
-      File(backupPath).copySync(path);
-      for (final String suffix in <String>['-wal', '-shm']) {
-        final File side = File('$path$suffix');
-        if (side.existsSync()) side.deleteSync();
-      }
-    } catch (_) {
-      // 恢复失败不掩盖原始异常 —— 报告根因比报告「恢复也失败了」有用
     }
   }
 

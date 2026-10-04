@@ -15,6 +15,10 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 /// 为什么带时分（§AF 遗漏 6）：只到日的话，同一天的多张单在 Excel 里
 /// 排序是随机的（Excel 稳定排序只对**相同键**有效）—— 会计按日期排一下
 /// 顺序就乱了。带上时分，排序稳，而且会计不会觉得多余。
+///
+/// ⚠️ **适用面 = 真实时刻**（往来流水、`created_at`）。**单据的 `occurred_at`
+/// 不用本函数** —— 那是业务日期（天粒度，开单页只能选到日），套带时分的
+/// 格式会让整列/详情页印出「00:00」（真机踩过，§BG 方案甲）⇒ 用 [formatDate]。
 String formatDateTime(int millis) {
   final DateTime t = DateTime.fromMillisecondsSinceEpoch(millis);
   return '${formatDate(millis)} '

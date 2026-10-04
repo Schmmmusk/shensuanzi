@@ -29,14 +29,16 @@
 | `code` | TEXT UNIQUE | 商品编码。**由系统生成**（`P0001` 起，见 `docs/reply.md`），用户不填 |
 | `name` | TEXT | 名称 |
 | `barcode` | TEXT NULL | 条码，索引 |
-| `unit` | TEXT | 单位，默认"件"。**最小销售单位**（§AJ·AI-5 裁定）—— 库存、成本、流水均按此单位记。按箱进、按个卖的商品填「个」，装箱关系写 `package_note` |
+| `unit` | TEXT | 单位，默认"件"。**最小销售单位**（§AJ·AI-5 裁定）—— 库存、成本、流水均按此单位记。按箱进、按个卖的商品填「个」，装箱关系写 `package_note`；**需要按箱录入自动换算**的商品另填 `package_unit` / `package_size`（见下方 v3 两列与 §3.2 的 7 条） |
 | `cost_price` | INTEGER | 参考进价（分） |
 | `sell_price` | INTEGER | 售价（分） |
 | `safety_stock` | INTEGER | 安全库存 |
 | `category` | TEXT NULL | 分类 |
 | `is_active` | INTEGER | 默认 1 |
 | `remark` | TEXT NULL | |
-| `package_note` | TEXT NULL | 包装说明（如「1 箱 = 48 瓶」）。**纯备注，不参与任何计算**（§AJ·AI-5），库存页展示用。schema v2 新增，存量库经 `Schema.migrationStep(1)` 迁移 |
+| `package_note` | TEXT NULL | 包装说明（如「1 箱 = 48 瓶」）。**纯备注，给人看的**（§AJ·AI-5），库存页展示用。schema v2 新增，存量库经 `Schema.migrationStep(1)` 迁移 |
+| `package_unit` | TEXT NULL | **包装单位名**（如「箱」）。与 `package_size` **成对**：两列**同时有值**才启用包装换算，任一为空 ⇒ 行为与 v2 完全一致。schema v3 新增（`migrationStep(2)`）。与 `package_note` 的分工：**那个是备注，这两列是给换算用的数据** |
+| `package_size` | INTEGER NULL | **1 个包装 = 多少个最小单位**（正整数，如 48）。与 `package_unit` 成对，schema v3 新增（`migrationStep(2)`）。换算的唯一实现 = core 纯函数 `toBaseQuantity`（见 §3.2 的 7 条交互关系） |
 | `created_at` | INTEGER | |
 | `updated_at` | INTEGER | |
 | `sync_version` | INTEGER | 默认 0 |
@@ -153,7 +155,9 @@ status      = paid_amount >= total_amount ? settled : confirmed
 - `receipt` / `payment` 单**创建即 `status = settled`**，此后不再变更
 - `stocktake`：`status = confirmed`，永不变化
 - ⚠️ `delivery` **不适用**该公式 —— 它的 `status` 由送货状态机驱动
-  （`in_transit → delivered → settled`），与上式冲突，已记为待裁定项 **R-10**。
+  （`in_transit → delivered → settled`；**拒收路径**：客户拒收 ⇒ 规则
+  RULE-007 在同一事务内把未签收的送货单置为 `cancelled`，2026-10-04 裁定 ——
+  见 `rules.md` RULE-003 状态机），与上式冲突，已记为待裁定项 **R-10**。
   具体语义见 `rules.md` RULE-003：
   - 创建即 `in_transit`，**即使已收满款也不改**（钱到了，货还在路上）
   - 签收后（`RuleEngine.markDelivered`）才允许由 `paid_amount` 决定
@@ -184,24 +188,68 @@ CREATE INDEX idx_documents_created     ON documents(created_at, id);
 | `document_id` | TEXT FK | |
 | `product_id` | TEXT FK | |
 | `quantity` | INTEGER | 正数。语义按 `doc_type` 分支 |
-| `unit_price` | INTEGER | 单价（分）。**派生展示**：不等于档价时可解释（议价行），但 `amount` 才是真相 |
-| `amount` | INTEGER | 小计（分）。**这一行真正发生多少钱** —— 当前 = `quantity × unit_price`；v3 起再减去 `discount_amount`（见下） |
+| `unit_price` | INTEGER | 单价（分）。**派生展示**：v3 起 = `round(amount / quantity)`，**不再被改**（档价 `products.sell_price` 只是预填默认值） |
+| `amount` | INTEGER | 小计（分）。**这一行真正发生多少钱** —— v3 起 = **`entry_quantity × entry_unit_price − discount_amount`**（`entry_unit_price` 是**录入单位报价**，**不落库**）。⚠️ 别写成 `quantity × unit_price` —— `unit_price` 是派生值（见下），用它反算会有舍入差（36 × 2083 = 74988 ≠ 75000） |
+| `discount_amount` | INTEGER | **让价**（分、**正数**、默认 **0**）—— 这一行让掉多少，**不是**「负商品」。schema v3 新增（`migrationStep(2)`）。**整单议价 = 把差额记在某一行**（UI 默认最后一行）。`unit_price` 是**派生展示**（= `round(amount / quantity)`），**不再被改**；档价只是预填默认值 |
+| `entry_quantity` | INTEGER NULL | **录入原文数量** —— 用户当时在输入框里输的那个数字。schema v3 新增。⚠️ **「纯记录」的准确含义**：落库**之后**不参与库存、成本、往来余额等**派生**计算；但落库**当时**它是 `amount` 公式的原文数量、也是展示反推（`amount / entry_quantity`）的来源 —— 不是"从头到尾都不参与" |
+| `entry_unit` | TEXT NULL | **录入原文单位** —— **三态**：`null` / `products.unit` / `products.package_unit`；可取 `package_unit` 的前提是 **`package_unit` 与 `package_size` 都非空**（成对启用 —— 缺一个就只能选 `products.unit` 或 null，否则会出现"能选箱但报没设换算"的半配置状态）；**其余值 ⇒ 校验拒绝**。**null = 用户没在两种单位间切换**。schema v3 新增。⚠️ **「纯记录」的准确含义**：落库**之后**不参与派生计算；但落库**当时**它是 `toBaseQuantity` 的**输入**（决定 `quantity` 怎么来）—— 见下方第 4 条 |
 | `remark` | TEXT NULL | |
 
-> 🔜 **v3 预留（未实现）：`discount_amount`（让价）** —— 整单议价 / 抹零的落点。
->
-> | 项 | 约定 |
-> |---|---|
-> | 单位 | **分**（与 `amount` / `unit_price` 同口径） |
-> | 符号 | **正数** = 这一行让掉多少（**不是**「负商品」） |
-> | 关系 | `amount = quantity × unit_price − discount_amount` |
-> | 约束 | `0 ≤ discount_amount ≤ quantity × unit_price` |
-> | 默认 | **0**（不是 `NULL` —— 老行 `ALTER ADD` 自动为 0，与「无让价」同义） |
-> | 落点 | **整单议价** = 把差额记在**某一行**（UI 默认最后一行）；`unit_price` **保持档价**，不再被改 |
-> | 不变量 | 列级 **`Σ amount = documents.total_amount` 不变**（B5 守的正是这条，**不守**行级乘积） |
->
-> 排期见 `reply_review.md` §BA·一（schema v3 · `migrationStep(2)`，与 `entry_quantity` / `entry_unit` 同一次迁移）。
-> ⚠️ **`amount` 是真相、`unit_price` 是派生展示** —— 与 `total_cost` / `unit_cost` 同哲学（§AY·一 已解除行级严格约束）。
+#### v3 五列：包装换算与让价（**已落地** · schema v3 / `migrationStep(2)` · §BD）
+
+**7 条交互关系**（裁定原文见 `reply_review.md` §BD·三）—— 实现者**不许在各处各自解读**：
+
+1. **三对字段的分工**：`products.unit` = **最小销售单位** · `products.package_unit` = **包装单位名** ·
+   `products.package_size` = **1 个包装 = 多少个最小单位**（正整数）·
+   `document_lines.quantity` = **永远是最小单位数量** · `entry_quantity` = **录入原文数量** ·
+   `entry_unit` = **录入原文单位**。
+2. **`entry_unit` 允许 `null`**（散客买 3 个，强制选单位是摩擦）：`null` = 用户没在两种单位间切换，
+   此时 `entry_quantity == quantity`；`= products.unit` ⇒ 同上；`= package_unit` ⇒
+   `entry_quantity × package_size == quantity`。**规则统一：`entry_quantity` 永远等于输入框里
+   那个数字，`quantity` 永远是换算后的值。**
+3. **两个名字空间**：档案写了 `package_unit = '箱'` **不代表**这次必须按箱录（可以输「5 瓶」）。
+   `entry_unit` **三态** —— `null`、`products.unit` 或 `products.package_unit`；
+   可选 `package_unit` 的**前提是成对启用**（`package_unit` 与 `package_size` **都非空**；
+   缺一个就只能选 `products.unit` 或 null —— 否则会出现"能选箱但报没设换算"的半配置状态）。
+   **其余值 ⇒ 校验拒绝**。
+4. **换算的唯一落点 = core 纯函数 `toBaseQuantity`**（`documents/quantity_conversion.dart`，
+   2b 段实现）—— **不在 UI 里做**：三份草稿（采购 / 销售 / 送货）共用同一换算 · UI 不懂业务 ·
+   `dart test` 要能覆盖。失败返回 `null`，**三种原因分开报**（UI 文案不许共用一句）：
+   `entryUnit == null || == baseUnit` ⇒ `entryQuantity`（不失败）；
+   `== packageUnit` 且 `packageSize != null && packageSize > 0` ⇒ `entryQuantity × packageSize`；
+   `== packageUnit` 但 `packageSize == null` ⇒ `null`（UI 报**「这个商品没设包装换算」**）；
+   `== packageUnit` 但 `packageSize <= 0` ⇒ `null`（UI 报**「包装换算无效」**——
+   档案校验本应挡住，纯函数兜底防的是数据被外部改坏）；
+   第三种单位 ⇒ `null`（UI 报**「单位不合法」**—— 校验拒绝；理论上不该发生，因为 UI 只给两个
+   选项，但兜底文案必须与"没设换算"分开）。
+5. **`unit_price` 是派生展示，禁止加第六列** —— 用户输「3 箱 × ¥250/箱」：
+   `amount` = 75000（**真相**，用户填的）· `quantity` = 36（**真相**，换算后）·
+   `unit_price` = `round(amount / quantity)` = 2083（**派生**；⚠️ 它与 36 相乘 ≠ 75000，
+   正因为如此 `amount` 才是真相、它只是展示）。
+   **「¥250/箱」不需要存**：展示**原始录入报价**时由
+   `(amount + discount_amount) / entry_quantity` 反推；展示**折后**单位报价时才用
+   `amount / entry_quantity` ⇒ **不许加 `entry_unit_price` 列**。
+6. **`discount_amount` 与单位无关** —— 让价是**整单金额**的减项：
+   `amount = entry_quantity × entry_unit_price − discount_amount`
+   （`entry_unit_price = amount_before_discount / entry_quantity`，派生）。
+   永远是**分**、**正值**，范围 `[0, entry_quantity × entry_unit_price]`。
+   ⚠️ 这个上限是**单行**的 —— **整单议价**的差额若超过最后一行折前金额，
+   **由 UI 从最后一行向前分摊到多行**（每行各记各的 `discount_amount`，都守各自上限；
+   整单差额恒 ≤ 整单折前金额，所以分摊**总有解**，不会出现"摊不完"）。
+   「记在某一行」只是**默认起点**，不是硬性约束。
+7. **`entry_*` 不因商品档案变化而重解释** —— 录入时 `package_size = 12`，历史行
+   `entry_quantity = 3 / entry_unit = '箱'`；三个月后档案改成 24 ⇒ 历史行 `quantity`
+   **不变**（仍 36）。改档案改的是**将来**怎么换算，**不改历史** ——
+   与「业务数据不可变」同一哲学。
+
+**连带校验（2b 段实现）**：有 `packageSize` 时必须 `packageSize > 0` 且 `packageUnit`
+非空；`packageUnit` 与 `packageSize` **成对**，不允许半配置。导出表**取 `amount`
+不取 `unit_price`**，并加断言（导出列里不出现 `unit_price`）。
+
+**不变量不变**：B5 守的是**列级** `Σ amount = documents.total_amount`
+（`amount` 已含让价），**不守**行级乘积。
+`amount` 是真相、`unit_price` 是派生展示 —— 与 `total_cost` / `unit_cost` 同哲学
+（§AY·一 已解除行级严格约束）。
 
 **`quantity` 语义分支**：
 

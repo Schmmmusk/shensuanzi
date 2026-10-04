@@ -508,4 +508,56 @@ void main() {
       );
     });
   });
+
+  group('v3 包装换算与让价（§BD，与销售同构）', () {
+    PurchaseLineDraft boxed({
+      String qty = '3',
+      String price = '250.00',
+      String entryUnit = '箱',
+      String? packageSize = '12',
+      String discount = '',
+    }) => PurchaseLineDraft(
+      productId: 'p1',
+      productName: '牛奶',
+      quantity: qty,
+      unitPrice: price,
+      entryUnit: entryUnit,
+      discountAmount: discount,
+      baseUnit: '个',
+      packageUnit: '箱', // 恒定 —— "没设 size" 是档案缺列，不是包装不启用
+      packageSize: packageSize == null ? null : int.parse(packageSize),
+    );
+
+    test('按箱录入 ⇒ quantity 36、amount 按录入进价', () {
+      expect(boxed().validate(), isEmpty);
+      expect(boxed().baseQuantityValue, 36);
+      expect(boxed().amountCents, 75000);
+    });
+
+    test('让价 ⇒ amount = entry_qty × entry_price − discount', () {
+      final PurchaseLineDraft line = boxed(
+        qty: '10',
+        price: '5.00',
+        entryUnit: '',
+        discount: '0.50',
+      );
+      expect(line.validate(), isEmpty);
+      expect(line.amountCents, 4950);
+    });
+
+    test('三种换算失败文案分开', () {
+      expect(
+        boxed(packageSize: null).validate()[PurchaseLineField.entryUnit],
+        '这个商品没设包装换算',
+      );
+      expect(
+        boxed(packageSize: '0').validate()[PurchaseLineField.entryUnit],
+        '包装换算无效',
+      );
+      expect(
+        boxed(entryUnit: '桶').validate()[PurchaseLineField.entryUnit],
+        '单位不合法',
+      );
+    });
+  });
 }

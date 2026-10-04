@@ -357,4 +357,41 @@ void main() {
       expect(() => service.markDelivered('没有这张单'), throwsStateError);
     });
   });
+
+  group('v3 包装换算（§BD，与销售/采购同构）', () {
+    DeliveryLineDraft boxed({
+      String qty = '3',
+      String entryUnit = '箱',
+      String? packageSize = '12',
+    }) => DeliveryLineDraft(
+      productId: 'p1',
+      productName: '牛奶',
+      quantity: qty,
+      unitPrice: '250.00',
+      entryUnit: entryUnit,
+      baseUnit: '个',
+      packageUnit: '箱', // 恒定 —— "没设 size" 是档案缺列，不是包装不启用
+      packageSize: packageSize == null ? null : int.parse(packageSize),
+    );
+
+    test('按箱录入 ⇒ quantity 换算 36（送货无收款区，但换算同口径）', () {
+      expect(boxed().validate(), isEmpty);
+      expect(boxed().baseQuantityValue, 36);
+    });
+
+    test('换算失败文案分开（没设 / ≤0 / 不合法）', () {
+      expect(
+        boxed(packageSize: null).validate()[DeliveryLineField.entryUnit],
+        '这个商品没设包装换算',
+      );
+      expect(
+        boxed(packageSize: '0').validate()[DeliveryLineField.entryUnit],
+        '包装换算无效',
+      );
+      expect(
+        boxed(entryUnit: '桶').validate()[DeliveryLineField.entryUnit],
+        '单位不合法',
+      );
+    });
+  });
 }

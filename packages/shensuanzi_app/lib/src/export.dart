@@ -28,6 +28,14 @@ import 'fs.dart';
 
 /// 一张待导出的表：**列名 + 行**（映射规则在 `export_tables.dart`，纯 Dart 可测）。
 class ExportTable {
+  /// ⚠️ **v3 口径（§BD·四 #3）**：导出列里**不许出现「单价」**。
+  ///
+  /// `unit_price` 自 v3 起是**派生展示**（= `round(amount / quantity)`），
+  /// 拿它导出会有舍入差（36 × 2083 ≠ 75000）—— 明细级金额只许用 `amount`，
+  /// 单据级用 `total_amount`。当前全部导出都是单据级/聚合级。
+  ///
+  /// 守卫在 [ExportSink.write] 的执行路径上（`_guardExportHeader`）——
+  /// **不能放这里**：const 构造的 initializer assert 不允许方法调用/闭包。
   const ExportTable({
     required this.label,
     required this.header,
@@ -208,6 +216,15 @@ class ExportService implements ExportSink {
   }
 
   Future<ExportOutcome> _execute(ExportTable table, String fileName) async {
+    // v3 口径守卫（§BD·四 #3）：「单价」列不许导出 —— unit_price 是派生展示
+    //（见 ExportTable 文档）。放在**真实写盘路径**上，比构造 assert 更有牙。
+    if (table.header.any((String column) => column.contains('单价'))) {
+      return ExportFailed(
+        '导出列配置错误：出现「单价」列。'
+        '金额请用成交金额（amount），不要用单价（unit_price 派生展示有舍入差）',
+      );
+    }
+
     // 遗漏 4：0 行不生成文件（只有表头的 CSV 会让人以为「导出坏了」）
     if (table.isEmpty) return const ExportEmpty();
 

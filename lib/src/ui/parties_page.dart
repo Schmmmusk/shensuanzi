@@ -65,11 +65,14 @@ class _PartiesPageState extends State<PartiesPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              Row(
+              // §BH·六 B1c·补：超大字号下标题被按钮挤成竖排 ⇒ Wrap 自适应换行
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
-                  Expanded(
-                    child: Text('往来方', style: theme.textTheme.titleLarge),
-                  ),
+                  Text('往来方', style: theme.textTheme.titleLarge),
                   if (widget.exports != null)
                     ExportButton(
                       key: const Key('export-parties'),

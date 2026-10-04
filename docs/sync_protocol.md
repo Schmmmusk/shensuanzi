@@ -26,6 +26,8 @@ RuleEngine 落地                 本地镜像（权威状态的副本，FK 关�
 （`data_model.md` §4.1）。
 
 **客户端只做数量累加**，不算成本、不算往来、不算盘点（`data_model.md` §七）。
+**开单 UI 不受此限** —— 开单只推 `Document`，不跑规则；由此派生的离线显示
+（权威镜像 + 未同步影响）必须标注为**估算**。
 
 **信任边界**：家庭 / 店铺局域网。详见 `threat_model.md`。
 
@@ -451,11 +453,11 @@ GET    /api/party_ledger?party_id=&since=
 
 | 表 | 列 |
 |---|---|
-| `products` | `id` `code` `name` `barcode` `unit` `cost_price` `sell_price` `safety_stock` `category` `is_active` `remark` `package_note` |
+| `products` | `id` `code` `name` `barcode` `unit` `cost_price` `sell_price` `safety_stock` `category` `is_active` `remark` `package_note` `package_unit` `package_size` |
 | `parties` | `id` `name` `phone` `address` `roles` `credit_limit` `is_active` `remark` |
 | `accounts` | `id` `name` `type` `initial_balance` `is_active` |
 | `documents` | `id` `doc_no` `doc_type` `status` `party_id` `account_id` `total_amount` `ref_doc_id` `occurred_at` `time_estimated` `remark` |
-| `document_lines` | `id` `document_id` `product_id` `quantity` `unit_price` `amount` `remark` |
+| `document_lines` | `id` `document_id` `product_id` `quantity` `unit_price` `amount` `remark` `discount_amount` `entry_quantity` `entry_unit` |
 
 **主机专属列 —— 客户端永远不能写**，出现即 `rejected`：
 

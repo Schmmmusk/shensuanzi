@@ -58,6 +58,18 @@ dependencies:
   # （ShensuanziApp(pickDirectory:)），测试传桩、生产用默认值。
   file_selector: ^1.1.0
 
+  # Android 私有目录定位（§BH·五 B1b 裁定，2026-10-04）：
+  # getApplicationSupportDirectory() = /data/user/0/<pkg>/files —— §AH-6 的落位。
+  # 桌面端不调用它（main.dart 只在移动分支 import 的路径上经过这里）。
+  path_provider: ^2.1.5
+
+  # 导出备份（§BH·六 B1c，2026-10-04）：file_selector 的「选保存位置」在
+  # Android 上官方不支持（能力表 ❌，真机实测转圈卡死）⇒ 用系统分享面板
+  # （存到文件 / 发微信 / 发邮箱），正合裁定「发微信 / 存网盘」的出路。
+  # 解析到 11.1.0：SharePlus.instance.share(ShareParams(...)) 新 API；
+  # XFile 由本包直接转出（cross_file 不必显式声明）。
+  share_plus: ^11.0.0
+
   # 路径拼接（`test/startup_test.dart` 用 `p.join` 拼沙箱路径）。
   # 虽然 `shensuanzi_app` 已经间接带着它，但根测试**直接** `import` 它，
   # 按 `depend_on_referenced_packages` 必须在这里显式声明。

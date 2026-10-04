@@ -15,6 +15,12 @@ class NetCandidate {
   String toString() => '$name=$addresses';
 }
 
+/// 扫网卡的**可注入的缝**（与 §AT 的 `AppEnvironment.detect({driveEnumerator})` 同一模式）。
+///
+/// 为什么必须留缝：「一块网卡都没有」「扫到一堆 loopback 又被全过滤」这些路径
+/// **没法用真实机器在测试里构造**，只能注入。默认 `null` = 真扫网卡。
+typedef NetScanner = Future<List<NetCandidate>> Function();
+
 /// 选一个**局域网 IPv4** —— 配对二维码里要填的那个地址。
 ///
 /// ## 为什么不能直接用 `HostHttpServer.address`
@@ -31,6 +37,17 @@ class NetCandidate {
 ///    扫出来常常不可达 —— 用户会得到「二维码扫了连不上」这种最难查的故障
 /// 4. 都挑不出来就退回第一个非 loopback 地址；一个都没有 ⇒ `null`
 ///    （UI 必须能处理 `null`：显示「找不到局域网地址 + 怎么办」，**不能画个假地址**）
+///
+/// ## 职责划分（这条让「扫」与「选」都能测）
+///
+/// | 层 | 可测性 |
+/// |---|---|
+/// | [choose]（纯函数） | ✅ 喂假候选，覆盖全部规则 |
+/// | [detect] 的**兜底分支**（空候选 / 全被过滤） | ✅ 注入 [scan] 桩 |
+/// | 真网卡扫描（[_scanReal]） | ❌ **唯一不可测的部分**，隔离在默认参数里 |
+///
+/// **`detect` 永不抛**：拿不到网卡不是「启动失败」，只是「画不出二维码」——
+/// 上抛会让整个同步服务起不来（同 §AT 的 `AppEnvironment.detect` 口径）。
 ///
 /// 纯 `dart:io`，无 Flutter 依赖。
 class LocalIp {
@@ -61,14 +78,28 @@ class LocalIp {
     'npcap',
   ];
 
-  /// 探测本机可用的局域网地址。`null` = 一块合适的网卡都没有。
-  static Future<String?> detect() async {
+  /// 探测本机可用的局域网地址。`null` = 一块合适的网卡都没有 / 扫不动。
+  ///
+  /// [scan] 是**可注入的缝**（§AT 的 `driveEnumerator` 同款）：不传就真扫网卡。
+  static Future<String?> detect({NetScanner? scan}) async {
+    try {
+      final NetScanner scanner = scan ?? _scanReal;
+      return choose(await scanner());
+    } catch (_) {
+      // 扫网卡本身失败（个别系统会抛 SocketException）⇒ 当作「找不到地址」。
+      // **不上抛**：这会让一个本来能跑的服务整个起不来，而它其实只是画不出二维码。
+      return null;
+    }
+  }
+
+  /// 真扫网卡 —— **本文件唯一不可测的一行**（隔离在 [detect] 的默认参数后面）。
+  static Future<List<NetCandidate>> _scanReal() async {
     final List<NetworkInterface> interfaces = await NetworkInterface.list(
       type: InternetAddressType.IPv4,
       includeLoopback: false,
       includeLinkLocal: false,
     );
-    return choose(fromInterfaces(interfaces));
+    return fromInterfaces(interfaces);
   }
 
   /// 把 `dart:io` 的结果摊成 [NetCandidate]（测试可绕过这一步直接喂假数据）。

@@ -39,6 +39,7 @@ class DocumentsPage extends StatefulWidget {
     this.settlements,
     this.deliveries,
     this.products,
+    this.returnService,
   });
 
   final DocumentDao dao;
@@ -54,6 +55,9 @@ class DocumentsPage extends StatefulWidget {
 
   /// 商品服务（详情页的明细行显示商品名）
   final ProductService? products;
+
+  /// 退货服务（详情页的 **[退货]** / **[客户拒收]** 入口；§BI R2）
+  final ReturnService? returnService;
 
   @override
   State<DocumentsPage> createState() => _DocumentsPageState();
@@ -94,6 +98,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
           settlements: settlements,
           deliveries: widget.deliveries,
           products: widget.products,
+          returnService: widget.returnService,
         ),
       ),
     );
@@ -120,11 +125,14 @@ class _DocumentsPageState extends State<DocumentsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              Row(
+              // §BH·六 B1c·补：超大字号下标题被按钮挤成竖排 ⇒ Wrap 自适应换行
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
-                  Expanded(
-                    child: Text('单据', style: theme.textTheme.titleLarge),
-                  ),
+                  Text('单据', style: theme.textTheme.titleLarge),
                   if (widget.exports != null)
                     ExportButton(
                       key: const Key('export-documents'),

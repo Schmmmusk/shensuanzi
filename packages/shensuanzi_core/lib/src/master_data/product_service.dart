@@ -105,6 +105,8 @@ class ProductService {
         sellPrice: draft.sellPriceCents,
         safetyStock: draft.safetyStockValue,
         packageNote: draft.normalizedPackageNote,
+        packageUnit: draft.normalizedPackageUnit,
+        packageSize: draft.normalizedPackageSize,
         createdAt: stamp,
         updatedAt: stamp,
       );
@@ -140,6 +142,8 @@ class ProductService {
         sellPrice: draft.sellPriceCents,
         safetyStock: draft.safetyStockValue,
         packageNote: draft.normalizedPackageNote,
+        packageUnit: draft.normalizedPackageUnit,
+        packageSize: draft.normalizedPackageSize,
         category: existing.category,
         isActive: existing.isActive,
         remark: existing.remark,

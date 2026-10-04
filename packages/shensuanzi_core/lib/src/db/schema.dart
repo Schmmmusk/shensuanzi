@@ -25,7 +25,16 @@ class Schema {
   ///
   /// v2（2026-09-29，§AJ·AI-5）：`products` 加 `package_note`（包装说明，
   /// 纯备注）。
-  static const int version = 2;
+  ///
+  /// v3（2026-10-03，§BD）：**5 列一次到齐**（包装换算 + 让价 + 录入原文）——
+  /// `products` 加 `package_unit` / `package_size`；`document_lines` 加
+  /// `discount_amount` / `entry_quantity` / `entry_unit`。
+  /// **五列的交互关系（7 条）见 `docs/reply_review.md` §BD·三**（那里是权威）。
+  ///
+  /// ⚠️ **本步（段 1a）只动 schema 与迁移**：`document_lines.quantity` 仍
+  /// **永远是最小单位**、`amount` 仍是这一行**实际发生金额的真相**；
+  /// 引擎 / 草稿 / UI 的口径改动分别在 2a / 2b / 3 段。
+  static const int version = 3;
 
   // ---------------------------------------------------------------- 表名
 
@@ -126,6 +135,9 @@ class Schema {
       is_active     INTEGER NOT NULL DEFAULT 1,
       remark        TEXT,
       package_note  TEXT,
+      -- v3（§BD）：包装换算。**两列同时有值**才启用；任一为空 ⇒ 行为与现在完全一致。
+      package_unit  TEXT,
+      package_size  INTEGER,
       created_at    INTEGER NOT NULL,
       updated_at    INTEGER NOT NULL,
       sync_version  INTEGER NOT NULL DEFAULT 0
@@ -195,6 +207,10 @@ class Schema {
     // （见 docs/sync_protocol.md §8.2 / R-4 处置）
     'CREATE INDEX idx_documents_created     ON $documents(created_at, id)',
 
+    // v3（§BD）：`discount_amount` = 这一行的**让价**（分、正数、默认 0）；
+    // `entry_quantity` / `entry_unit` = **录入原文**（用户当时输的数字与单位）——
+    // **纯记录、不参与任何计算**，也**不因商品档案变化而重解释**（§BD·三 第 7 条）。
+    // ⚠️ `quantity` 不变：**永远是最小单位数量**；`unit_price` 是派生展示值。
     '''
     CREATE TABLE $documentLines (
       id           TEXT PRIMARY KEY,
@@ -203,6 +219,10 @@ class Schema {
       quantity     INTEGER NOT NULL,
       unit_price   INTEGER NOT NULL,
       amount       INTEGER NOT NULL,
+      -- v3（§BD）：让价（分、正数、默认 0）+ 录入原文（可空 = 用户没切单位）
+      discount_amount INTEGER NOT NULL DEFAULT 0,
+      entry_quantity  INTEGER,
+      entry_unit      TEXT,
       remark       TEXT,
       FOREIGN KEY (document_id) REFERENCES $documents(id),
       FOREIGN KEY (product_id)  REFERENCES $products(id)
@@ -351,9 +371,36 @@ class Schema {
   ///
   /// `products` 加 `package_note TEXT NULL`（包装说明，纯备注、不参与计算）。
   /// `ALTER TABLE ADD COLUMN` 对已有行自动取 NULL，不需要回填，不锁旧数据。
+  ///
+  /// ## v2 → v3（2026-10-03，§BD）
+  ///
+  /// **5 列一次到齐**，全部是 `ALTER TABLE ADD COLUMN`（纪律 14 / 15）：
+  ///
+  /// | 表 | 列 | 语义 |
+  /// |---|---|---|
+  /// | `products` | `package_unit TEXT NULL` | 包装单位名（如「箱」） |
+  /// | `products` | `package_size INTEGER NULL` | 1 个包装 = 多少个**最小单位**（正整数） |
+  /// | `document_lines` | `discount_amount INTEGER NOT NULL DEFAULT 0` | 这一行的**让价**（**分**、正数） |
+  /// | `document_lines` | `entry_quantity INTEGER NULL` | **录入原文数量**（用户当时输的那个数字） |
+  /// | `document_lines` | `entry_unit TEXT NULL` | **录入原文单位**（`unit` / `package_unit`，可为 null） |
+  ///
+  /// - `package_*` **两列同时有值**才启用换算；任一为空 ⇒ 行为与现在**完全一致**
+  /// - `entry_*` **不参与任何计算**，也**不因商品档案变化而重解释**（历史不可变）
+  /// - 一个**带默认**（`discount_amount` 默认 0）、四个**可空** ⇒ 旧行不需要回填，
+  ///   也不锁旧数据（`ALTER TABLE ADD COLUMN` 的语义）
+  ///
+  /// ⚠️ **本步（段 1a）只加列，不改口径**：`quantity` 仍**永远是最小单位**，
+  /// `amount` 仍是这一行**实际发生金额的真相**（§AY·一 已解除严格等式）。
+  /// 引擎 / 草稿 / 白名单 / UI 分别在 2a / 2b / 2c / 3 段改。
   static List<String> migrationStep(int from) => switch (from) {
     1 => <String>['ALTER TABLE $products ADD COLUMN package_note TEXT NULL'],
-    // 2 => <String>[...],   ← 将来 v2 → v3：加一行即可，不要动上面那步
+    2 => <String>[
+      'ALTER TABLE $products ADD COLUMN package_unit TEXT NULL',
+      'ALTER TABLE $products ADD COLUMN package_size INTEGER NULL',
+      'ALTER TABLE $documentLines ADD COLUMN discount_amount INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE $documentLines ADD COLUMN entry_quantity INTEGER NULL',
+      'ALTER TABLE $documentLines ADD COLUMN entry_unit TEXT NULL',
+    ],
     _ => throw MissingMigrationException(from),
   };
 }

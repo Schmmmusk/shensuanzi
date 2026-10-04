@@ -40,7 +40,9 @@ enum ProductField {
   costPrice('进价'),
   barcode('条码'),
   safetyStock('安全库存'),
-  packageNote('包装说明');
+  packageNote('包装说明'),
+  packageUnit('包装单位'),
+  packageSize('包装换算');
 
   const ProductField(this.label);
 
@@ -56,6 +58,8 @@ class ProductDraft {
     this.barcode = '',
     this.safetyStock = '',
     this.packageNote = '',
+    this.packageUnit = '',
+    this.packageSize = '',
   });
 
   /// 从已有商品回填（编辑用）。金额按「分 → 元」展示，用户看到的就是库里存的值。
@@ -67,6 +71,8 @@ class ProductDraft {
     barcode: product.barcode ?? '',
     safetyStock: product.safetyStock.toString(),
     packageNote: product.packageNote ?? '',
+    packageUnit: product.packageUnit ?? '',
+    packageSize: product.packageSize?.toString() ?? '',
   );
 
   /// 名称上限（表单护栏，不是 schema 约束）：防止误把一整段话粘进来
@@ -102,6 +108,15 @@ class ProductDraft {
   /// 包装说明（原文；空 = 没填）。**纯备注，不参与任何计算**（§AJ·AI-5）
   final String packageNote;
 
+  /// **包装单位名**（如「箱」）—— v3。与 [packageSize] **成对**：
+  /// 两列同时有值才启用包装换算，任一为空 ⇒ 与 v2 行为一致
+  /// （`docs/data_model.md` §2.1）。'' = 不启用。
+  final String packageUnit;
+
+  /// **1 包 = 多少最小单位**（正整数原文）—— v3，与 [packageUnit] 成对。
+  /// '' = 不启用。
+  final String packageSize;
+
   ProductDraft copyWith({
     String? name,
     String? unit,
@@ -110,6 +125,8 @@ class ProductDraft {
     String? barcode,
     String? safetyStock,
     String? packageNote,
+    String? packageUnit,
+    String? packageSize,
   }) => ProductDraft(
     name: name ?? this.name,
     unit: unit ?? this.unit,
@@ -118,6 +135,8 @@ class ProductDraft {
     barcode: barcode ?? this.barcode,
     safetyStock: safetyStock ?? this.safetyStock,
     packageNote: packageNote ?? this.packageNote,
+    packageUnit: packageUnit ?? this.packageUnit,
+    packageSize: packageSize ?? this.packageSize,
   );
 
   /// 校验。**空 map = 通过**；否则 `字段 → 给用户看的一句话`。
@@ -143,6 +162,7 @@ class ProductDraft {
     _checkStock(errors);
     _checkBarcode(errors);
     _checkPackageNote(errors);
+    _checkPackageConversion(errors);
 
     return errors;
   }
@@ -167,6 +187,50 @@ class ProductDraft {
   String? get normalizedPackageNote {
     final String trimmed = packageNote.trim();
     return trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// 包装单位名：空白归一成 `null`（不启用 = `NULL`，不是 `''` ——
+  /// 「成对启用」的判定依赖"非空"，空串会制造半配置）
+  String? get normalizedPackageUnit {
+    final String trimmed = packageUnit.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// 包装换算数量：空白归一成 `null`；非数字/≤0 ⇒ `null`（validate 会拦）
+  int? get normalizedPackageSize {
+    final String trimmed = packageSize.trim();
+    if (trimmed.isEmpty) return null;
+    final int? size = int.tryParse(trimmed);
+    return (size == null || size <= 0) ? null : size;
+  }
+
+  /// **包装换算两列的成对校验**（§BD·四 #2）：
+  /// ① 成对 —— 只填一个 ⇒ 报没填的那个；② `packageSize > 0`；
+  /// ③ 包装单位不能与最小单位相同（同名会让"选箱"走最小单位分支、
+  /// `package_size` 被静默忽略 ⇒ 换算语义错乱）。
+  void _checkPackageConversion(Map<ProductField, String> errors) {
+    final String unitName = packageUnit.trim();
+    final String sizeText = packageSize.trim();
+    if (unitName.isEmpty && sizeText.isEmpty) return; // 都没填 = 不启用
+
+    if (unitName.isEmpty) {
+      errors[ProductField.packageUnit] =
+          '填了「1 包 = 多少个」，就要给包装起个名字，比如「箱」';
+    }
+    if (sizeText.isEmpty) {
+      errors[ProductField.packageSize] = '填了包装单位，就要填 1 包 = 多少个，比如 12';
+    }
+    if (unitName.isEmpty || sizeText.isEmpty) return; // 成对缺一，上面已报
+
+    final int? size = int.tryParse(sizeText);
+    if (size == null || size <= 0) {
+      errors[ProductField.packageSize] = '包装换算数量要填正整数，比如 12';
+    }
+    if (unitName == unit.trim()) {
+      errors[ProductField.packageUnit] =
+          '包装单位不能和最小单位（${unit.trim()}）一样 —— '
+          '一样的话「按箱换算」就失去意义了';
+    }
   }
 
   // ------------------------------------------------------------ 断言细节

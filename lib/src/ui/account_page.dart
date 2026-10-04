@@ -45,11 +45,14 @@ class _AccountsPageState extends State<AccountsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              Row(
+              // §BH·六 B1c·补：超大字号下标题被按钮挤成竖排 ⇒ Wrap 自适应换行
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
-                  Expanded(
-                    child: Text('资金账户', style: theme.textTheme.titleLarge),
-                  ),
+                  Text('资金账户', style: theme.textTheme.titleLarge),
                   FilledButton.icon(
                     onPressed: () => _editAccount(context),
                     icon: const Icon(Icons.add),
