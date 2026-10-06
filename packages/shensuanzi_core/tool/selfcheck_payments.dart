@@ -557,7 +557,7 @@ void main() {
       .map((DocumentSummary e) => e.document.id)
       .toSet();
   final Set<String> allShown = documents
-      .listDocuments(includeAutoSettlements: true)
+      .listDocuments(includeDerived: true)
       .map((DocumentSummary e) => e.document.id)
       .toSet();
   final String autoReceiptId = db.raw
@@ -570,7 +570,7 @@ void main() {
 
   check('自动生成的收款单不进列表', !shown.contains(autoReceiptId));
   check(
-      'includeAutoSettlements: true 能看到全部', allShown.contains(autoReceiptId));
+      'includeDerived: true 能看到全部', allShown.contains(autoReceiptId));
   check('手动收款单要显示', shown.contains(vreceipt.id));
   check('⚠️ 退货单不被误伤（只判 ref_doc_id 会把它一起滤掉）',
       shown.contains(vret.id));
@@ -665,28 +665,37 @@ void main() {
   check('部分收款：单据仍未结清',
       documents.findById(ssale.id)!.status == DocStatus.confirmed);
 
-  var overRejected = false;
+  // ⚠️ 本条原先断言「超收被服务层拒绝」—— 与 §AX·一（3甲）**直接矛盾**
+  // （裁定：超收不再抛，按未收额封顶、多出的是找零）。陈旧断言，已按裁定改写。
+  final SettlementSaved capped = settlementService.settle(
+    targetDocId: ssale.id,
+    accountId: sa,
+    amountCents: 9999,
+    now: now(),
+  );
+  check('超收按未收额封顶（入账 3000 不是 9999）',
+      capped.amountCents == 3000, '${capped.amountCents}');
+  check('超收差额进找零（6999）',
+      capped.changeCents == 6999, '${capped.changeCents}');
+  check('超收后结清', capped.targetUnsettledAfterCents == 0);
+  check('收满后状态 settled',
+      documents.findById(ssale.id)!.status == DocStatus.settled);
+
+  // 「服务层自己校验一遍」这条防线仍然在 —— 只是触发条件是**已结清**，
+  // 不再是「超收」（§AX·一 把超收变成了合法操作）。
+  var settledRejected = false;
   try {
     settlementService.settle(
       targetDocId: ssale.id,
       accountId: sa,
-      amountCents: 9999,
+      amountCents: 1,
       now: now(),
     );
   } on SettlementInvalid {
-    overRejected = true;
+    settledRejected = true;
   }
-  check('超收被服务层拒绝（界面提示不是唯一防线）', overRejected);
+  check('已结清再收 ⇒ 被服务层拒绝（界面提示不是唯一防线）', settledRejected);
 
-  final SettlementSaved part2 = settlementService.settle(
-    targetDocId: ssale.id,
-    accountId: sa,
-    amountCents: 3000,
-    now: now(),
-  );
-  check('收满后结清', part2.targetUnsettledAfterCents == 0);
-  check('收满后状态 settled',
-      documents.findById(ssale.id)!.status == DocStatus.settled);
   check('两个方向都能查到这两笔', settlementService.settledBy(ssale.id).length == 2);
 
   db.close();

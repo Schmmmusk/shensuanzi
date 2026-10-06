@@ -241,5 +241,183 @@ void main() {
       expect(second.phone, '138', reason: '只新建时写');
       expect(second.address, '东门', reason: '只新建时写');
     });
+
+    test('OBS-05 回归：同名往来方已停用 ⇒ 恢复它 + 追加角色，**不造第二条**', () {
+      final PartyService service = PartyService(PartyDao(db));
+      final PartyMutation first = service.ensureParty(
+        name: '老王批发',
+        role: PartyRole.customer,
+        now: now(),
+      );
+      // 停用它（模拟用户「不和他做了」）
+      final Party disabled = Party(
+        id: first.party.id,
+        name: first.party.name,
+        roles: first.party.roles,
+        isActive: false,
+        createdAt: first.party.createdAt,
+        updatedAt: now(),
+      );
+      PartyDao(db).update(disabled);
+
+      // 之后又以同名建（比如开采购单时输入「老王批发」）——
+      // 修复前：查重只看启用行 ⇒ 造出第二条同名，往来账分流（OBS-05）
+      final PartyMutation again = service.ensureParty(
+        name: '老王批发',
+        role: PartyRole.supplier,
+        now: now(),
+      );
+
+      expect(again.party.id, first.party.id, reason: '必须复用同一条，不许新建');
+      expect(again.action, PartyMutationAction.revived);
+      expect(again.party.isActive, isTrue, reason: '恢复使用');
+      expect(
+        again.party.roles,
+        containsAll(<PartyRole>[PartyRole.customer, PartyRole.supplier]),
+      );
+      // 库里只有一条同名
+      expect(
+        PartyDao(db)
+            .findAll(active: null, limit: 100)
+            .where((Party party) => party.name == '老王批发')
+            .length,
+        1,
+      );
+    });
   });
+
+  // ============================================================ §审查 OBS-05 后半
+  //
+  // 主数据的生命周期：角色可编辑（从源头断掉「停用+重建」）+ 停用前有依据
+  // 可校验 + 停用但还欠钱的往来方**不能从账上消失**。
+
+  group('OBS-05 后半：角色可编辑 / 停用校验 / 幽灵账可见', () {
+    test('updateProfile 可改角色：历史流水不受影响，syncVersion +1', () {
+      final PartyMutation created = service.ensureParty(
+        name: '老王',
+        role: PartyRole.customer,
+        phone: '138',
+        now: now(),
+      );
+      final int before = created.party.syncVersion;
+
+      final Party updated = service.updateProfile(
+        created.party.id,
+        name: '老王',
+        roles: <PartyRole>[PartyRole.customer, PartyRole.supplier],
+        now: now(),
+      );
+
+      expect(updated.roles, <PartyRole>[PartyRole.customer, PartyRole.supplier]);
+      expect(updated.syncVersion, before + 1);
+      // 角色以外的字段一个都不许动
+      expect(updated.id, created.party.id);
+      expect(updated.name, '老王');
+      expect(updated.createdAt, created.party.createdAt);
+      expect(updated.isActive, isTrue);
+      // 再读回库里确认**落盘**（不是只改内存对象）
+      expect(PartyDao(db).findById(created.party.id)!.roles, updated.roles);
+    });
+
+    test('updateProfile 的 roles 传 null =「不改角色」（只改资料）', () {
+      final PartyMutation created = service.ensureParty(
+        name: '老王',
+        role: PartyRole.supplier,
+        now: now(),
+      );
+      final Party updated = service.updateProfile(
+        created.party.id,
+        name: '老王批发',
+        phone: '139',
+        now: now(),
+      );
+      expect(updated.name, '老王批发');
+      expect(updated.roles, <PartyRole>[PartyRole.supplier], reason: '角色原样');
+    });
+
+    test('角色**去重保序**（重复角色会让界面印出「客户 / 客户」）', () {
+      final PartyMutation created = service.ensureParty(
+        name: '老王',
+        role: PartyRole.customer,
+        now: now(),
+      );
+      final Party updated = service.updateProfile(
+        created.party.id,
+        name: '老王',
+        roles: <PartyRole>[
+          PartyRole.supplier,
+          PartyRole.customer,
+          PartyRole.supplier,
+        ],
+        now: now(),
+      );
+      expect(updated.roles, <PartyRole>[PartyRole.supplier, PartyRole.customer]);
+    });
+
+    test('角色可以清空（UI 会给提示），落库也是空', () {
+      final PartyMutation created = service.ensureParty(
+        name: '老王',
+        role: PartyRole.customer,
+        now: now(),
+      );
+      final Party updated = service.updateProfile(
+        created.party.id,
+        name: '老王',
+        roles: <PartyRole>[],
+        now: now(),
+      );
+      expect(updated.roles, isEmpty);
+      expect(PartyDao(db).findById(created.party.id)!.roles, isEmpty);
+    });
+
+    test('balanceOf 从 party_ledger 算（正 = 应收 / 负 = 应付 / 无流水 = 0）', () {
+      insertParty(db.raw, partyId);
+      insertDocument(db.raw, documentId);
+      expect(service.balanceOf(partyId), 0, reason: '没流水就是 0');
+
+      insertPartyLedger(db.raw, 'pl-1', party: partyId, amount: 6000);
+      expect(service.balanceOf(partyId), 6000);
+      insertPartyLedger(db.raw, 'pl-2', party: partyId, amount: -2000);
+      expect(service.balanceOf(partyId), 4000);
+      // 停用前校验的口径必须与列表汇总一致 —— 未知 id 不编值
+      expect(service.balanceOf('没有这个往来方'), 0);
+    });
+
+    test('listVisible：启用全显示；停用**无余额**不显示；停用**有余额**必须显示', () {
+      final Party active = service.createFull(
+        name: '在用的',
+        roles: <PartyRole>[PartyRole.customer],
+        now: now(),
+      );
+      final Party idleDisabled = service.createFull(
+        name: '停用无账',
+        roles: <PartyRole>[PartyRole.customer],
+        now: now(),
+      );
+      final Party owingDisabled = service.createFull(
+        name: '停用有账',
+        roles: <PartyRole>[PartyRole.supplier],
+        now: now(),
+      );
+      service.setActive(idleDisabled.id, active: false, now: now());
+      service.setActive(owingDisabled.id, active: false, now: now());
+
+      // 给「停用有账」造一笔应收（就是那种会被藏起来的钱）
+      insertDocument(db.raw, documentId);
+      insertPartyLedger(db.raw, 'pl-c', party: owingDisabled.id, amount: 4500);
+
+      final Set<String> visible = service
+          .listVisible()
+          .map((Party party) => party.id)
+          .toSet();
+      expect(visible, contains(active.id), reason: '启用中的照常显示');
+      expect(visible, isNot(contains(idleDisabled.id)), reason: '停用且无余额 ⇒ 不必显示');
+      expect(
+        visible,
+        contains(owingDisabled.id),
+        reason: '§审查 OBS-05：停用但**还欠着钱**的必须还能看到 —— 否则就是「幽灵账」',
+      );
+    });
+  });
+
 }

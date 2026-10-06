@@ -87,6 +87,11 @@ class DataDirectoryPolicy {
     'baidunetdisk',
     '百度网盘',
     'onedrive - ',
+    // 发布后反馈（§BK·二）：国内常见的还有这些 —— 片段都足够特异，不会误伤
+    '阿里云盘',
+    '夸克网盘',
+    '天翼云盘',
+    '微云',
   ];
 
   /// 默认数据目录：**优先非系统盘**。
@@ -234,10 +239,15 @@ class DataDirectoryPolicy {
     final DriveInfo? drive = environment.driveOf(target);
     if (drive != null) {
       if (drive.kind == DriveKind.removable) {
+        // ⚠️ 文案要说清「为什么机箱外的硬盘也会中这条」——
+        // USB 线接的移动硬盘 / 硬盘盒，Windows 同样标成「可移动盘」，
+        // 只说「U 盘」会让用户困惑「我的硬盘怎么成了 U 盘」（发布后反馈 §BK·二）
         return const DirectoryAdvice(
           DirectoryVerdict.warn,
-          '这是可移动盘（U 盘 / 移动硬盘），拔掉之后就打不开了',
-          advice: '想随身带走数据的话，建议用同一磁盘上的固定分区，或只把备份拷到 U 盘',
+          '这是接在电脑外面的盘（Windows 把 U 盘、移动硬盘、硬盘盒都标成'
+              '「可移动盘」）—— 一拔线或一拔盘，数据就打不开了',
+          advice: '经营数据建议放在机箱里的硬盘上；要随身带走，只把'
+              '「神算子备份」文件夹拷过去就行',
         );
       }
       if (drive.kind == DriveKind.network) {
@@ -274,7 +284,12 @@ class DataDirectoryPolicy {
     final DriveInfo? drive = environment.driveOf(_absoluteOr(path));
     final int? free = drive?.freeBytes;
     if (drive == null || free == null) return null;
-    return '${drive.letter} 盘剩余 ${formatBytes(free)}';
+    // 卷标（用户自己在「此电脑」里起的名字）让用户认得出「这是我的哪块盘」
+    // —— 只报「E: 盘」对用户是抽象的（§BK·二）
+    final String label = (drive.volumeLabel == null || drive.volumeLabel!.isEmpty)
+        ? ''
+        : '「${drive.volumeLabel}」';
+    return '${drive.letter} 盘$label剩余 ${formatBytes(free)}';
   }
 
   /// 迁移校验：`from` → `to` 能不能搬。

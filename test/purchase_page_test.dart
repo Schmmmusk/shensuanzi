@@ -23,6 +23,8 @@ void main() {
   late Db db;
   late PurchaseService service;
   late ProductService products;
+  // B3b：页面提交改吃 Sink —— 桌面语义 = ServiceSink（与直连逐字同行为）
+  late DocumentSink sink;
   late String productId;
 
   setUp(() {
@@ -30,6 +32,11 @@ void main() {
     db = Db.open(p.join(box.path, 'shensuanzi.db'));
     service = PurchaseService(engine: RuleEngine(db), queries: QueryDao(db));
     products = ProductService(db);
+    sink = ServiceSink(
+      sales: SaleService(engine: RuleEngine(db), queries: QueryDao(db)),
+      purchases: service,
+      deliveries: DeliveryService(engine: RuleEngine(db), queries: QueryDao(db)),
+    );
 
     final Product product = Product(
       id: newId(),
@@ -72,7 +79,11 @@ void main() {
 
   Widget page() => MaterialApp(
     home: Scaffold(
-      body: PurchasePage(service: service, productService: products),
+      body: PurchasePage(
+        service: service,
+        productService: products,
+        sink: sink,
+      ),
     ),
   );
 

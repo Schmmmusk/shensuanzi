@@ -259,6 +259,20 @@ void main() {
       expect(DataDirectoryPolicy(machine(drives: <DriveInfo>[]))
           .spaceHint(r'D:\神算子数据'), isNull);
     });
+
+    test('容量提示：有卷标就带上（§BK·二：用户认得出是哪块盘）', () {
+      final DataDirectoryPolicy withLabel = DataDirectoryPolicy(
+        machine(drives: <DriveInfo>[
+          const DriveInfo(
+            root: r'E:\',
+            kind: DriveKind.fixed,
+            freeBytes: 128 * gb,
+            volumeLabel: '仓库',
+          ),
+        ]),
+      );
+      expect(withLabel.spaceHint(r'E:\神算子数据'), 'E 盘「仓库」剩余 128.0 GB');
+    });
   });
 
   // ============================================================ 工具函数

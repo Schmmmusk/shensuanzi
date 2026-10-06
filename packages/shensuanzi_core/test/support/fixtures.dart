@@ -118,6 +118,35 @@ int nextSeq(Database db, String table) =>
     db.select('SELECT COALESCE(MAX(seq_no), 0) + 1 AS n FROM $table').first['n']!
         as int;
 
+/// 插一条 `party_ledger`（往来流水）—— 造「某往来方有余额」的场景。
+///
+/// §审查 OBS-05 后半的回归测试要用它：**余额是判断「能不能停用」的唯一依据**，
+/// 而余额只从这张流水表算出来（没有余额列）。
+void insertPartyLedger(
+  Database db,
+  String id, {
+  String party = partyId,
+  String document = documentId,
+  int amount = 100,
+  int? seqNo,
+}) {
+  final int t = now();
+  db.execute(
+    'INSERT INTO party_ledger '
+    '(id, party_id, document_id, amount, seq_no, occurred_at, created_at) '
+    'VALUES (?,?,?,?,?,?,?)',
+    <Object?>[
+      id,
+      party,
+      document,
+      amount,
+      seqNo ?? nextSeq(db, 'party_ledger'),
+      t,
+      t,
+    ],
+  );
+}
+
 /// 最小可用夹具集：商品 + 账户 + 单据
 void seedMinimal(Db db) {
   insertProduct(db.raw, productId);

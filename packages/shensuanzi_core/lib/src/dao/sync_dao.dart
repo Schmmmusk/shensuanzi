@@ -187,6 +187,50 @@ class SyncQueueDao {
   int count() =>
       _raw.select('SELECT COUNT(*) AS n FROM ${Schema.syncQueue}').first['n']!
           as int;
+
+  /// 三态条的判定依据（B3a，裁定 ④）。
+  ///
+  /// ⚠️ **「已同步」≠「队列为空」**：`sent` 条目还在队列里（等 pull 确认），
+  /// 但主机**已经收下** —— 用户不该看到「待同步」。
+  /// 所以判定是「没有 `pending` 和 `failed`」，`sent` **不显示**。
+  SyncQueueTriage counts() {
+    final ResultSet rows = _raw.select(
+      'SELECT status, COUNT(*) AS n FROM ${Schema.syncQueue} '
+      "WHERE status != '${SyncQueueStatus.sent.wire}' GROUP BY status",
+    );
+    int pending = 0;
+    int failed = 0;
+    for (final Row row in rows) {
+      switch (SyncQueueStatus.fromWire(row['status']! as String)) {
+        case SyncQueueStatus.pending:
+          pending = row['n']! as int;
+        case SyncQueueStatus.failed:
+          failed = row['n']! as int;
+        case SyncQueueStatus.sent:
+          break; // WHERE 已排除；留着是穷举完整性
+      }
+    }
+    return SyncQueueTriage(pendingCount: pending, failedCount: failed);
+  }
+}
+
+/// 三态条的判定结果（B3a·裁定 ④）—— `SyncQueueDao.counts()` 的返回。
+///
+/// 明细列表用现成的 [SyncQueueDao.withStatus]（`pending` / `failed` 各一查）。
+class SyncQueueTriage {
+  const SyncQueueTriage({required this.pendingCount, required this.failedCount});
+
+  /// `pending` 条数 = 「待同步 N 条」的 N。
+  final int pendingCount;
+
+  /// `failed`（死信）条数 = 「失败 M 条」的 M —— 与待同步**并列**，不互相覆盖。
+  final int failedCount;
+
+  /// 「已同步」= 没有 `pending` 和 `failed`（`sent` 不算 —— 主机已收下）。
+  bool get isSynced => pendingCount == 0 && failedCount == 0;
+
+  @override
+  String toString() => 'SyncQueueTriage(pending: $pendingCount, failed: $failedCount)';
 }
 
 /// 时钟偏移（`docs/data_model.md` §4.2，单行表）。

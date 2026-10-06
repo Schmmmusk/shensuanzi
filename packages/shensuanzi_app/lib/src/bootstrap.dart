@@ -22,6 +22,7 @@ import 'app_config.dart';
 import 'data_directory.dart';
 import 'data_marker.dart';
 import 'environment.dart';
+import 'startup.dart';
 
 /// 数据目录被拒绝（含「里面已经有别人的东西」）
 class DataDirectoryRejected implements Exception {
@@ -99,7 +100,111 @@ class AppBootstrap {
   /// 返回 `null` 表示**需要走向导**：没配过、配置指向的目录没了、
   /// 或者目录里的标记不见了（被搬走 / 被清空）。
   DataLocation? resolved() {
-    final String? configured = loadConfig().dataDirectory;
+    final DataLocation? location = _configuredLocation();
+    if (location == null) return null;
+    // §审查 BUG-03：目录与标记都在 ≠ 库能用 —— 再加一步**可打开性探测**
+    if (!Db.probe(location.databasePath)) return null;
+    return location;
+  }
+
+  /// 「配置里的位置**目录与标记都在，但库打不开**」时返回那个位置；否则 `null`。
+  ///
+  /// ⚠️ **为什么必须把它与 [resolved] 的 `null` 分开**（§审查 2026-10-05 真机）：
+  /// 库损坏时若一律 `null`，启动流程会当成「首次启动」**弹选目录向导**，
+  /// 而向导会把 `config.json` 写成一个**新**路径 —— 用户原来的目录
+  /// （实测 `D://fed`）就**再也切不回去**了（配置里已经没有它）。
+  ///
+  /// ⇒ 这种情况要停在**错误页**：把原路径摆出来，给「重试」（库修好即原样回来）
+  /// 与「换一个文件夹」两条出路，**绝不覆盖配置**。
+  DataLocation? unusableConfigured() {
+    final DataLocation? location = _configuredLocation();
+    if (location == null) return null;
+    return Db.probe(location.databasePath) ? null : location;
+  }
+
+  /// 配置文件的读取状态（§审查 OBS-15）—— `absent` 才是真·第一次启动。
+  AppConfigLoadStatus configStatus() => configStore.status();
+
+  /// 这个目录是不是神算子的数据目录（**只看标记文件**，不看内容与合法性）。
+  bool isShensuanziDir(String path) => DataMarker.existsIn(path);
+
+  /// 本次启动落在哪个场景（§审查「启动路径健壮性」批次，见 `startup.dart`）。
+  ///
+  /// **只判定，不落盘** —— 留档（`.corrupt`）与抢救都是写操作，由调用方按
+  /// [StartupDecision.scenario] 决定做不做。判定保持纯函数，才能用 `dart test` 钉住。
+  ///
+  /// 这条链把先前散在 `app.dart` 的四个边界（BUG-03 坏库 / OBS-15 配置损坏 /
+  /// OBS-11 首启撞已有数据 / 位置失效）**收成一次判定**，避免顺序打架。
+  ///
+  /// ## [defaultDataDirectory]：**只替换「机器给的那个值」**
+  ///
+  /// 这是一个**参数**，不是「机器环境的替身」（§BR·补 2 裁定 方案 B）——
+  /// 注入它之后，判定**照样拿这个路径去真实文件系统问**「有没有 `.shensuanzi-data`」
+  /// （[isShensuanziDir] → `existsSync`）。**别拿它当先例去论证「注入整个
+  /// `AppEnvironment` 也行」**：那是把真实机器换成假的，`AGENTS.md` §4.3 明令禁止。
+  ///
+  /// - `null` = 用机器算出来的默认位置（[DataDirectoryPolicy.defaultDataDirectory]）
+  ///   —— **生产行为，一个字都不变**
+  /// - 非 `null` = **只在「真·第一次启动」那一支**替换这一个值；
+  ///   配置里已有路径时它**不参与任何判定**
+  StartupDecision startupDecision({String? defaultDataDirectory}) {
+    final AppConfigLoadStatus status = configStore.status();
+
+    if (status == AppConfigLoadStatus.ok) {
+      // ⚠️ **复用** [resolved] / [unusableConfigured] —— 不在这里再写一遍
+      // 「库能不能打开」的判断：那样就有两处并行，早晚漂移（纪律 17）。
+      final DataLocation? existing = resolved();
+      if (existing != null) return StartupDecision.openExisting(existing);
+      final DataLocation? broken = unusableConfigured();
+      if (broken != null) return StartupDecision.brokenDatabase(broken);
+      // 位置记着，但目录 / 标记现在用不了（被搬走、盘符变了……）——
+      // 走向导，但**不许**说「第一次启动」（§AG 遗漏 1）
+      return StartupDecision.recoverLocation(
+        previousPath: loadConfig().dataDirectory,
+      );
+    }
+
+    if (status == AppConfigLoadStatus.locationLost) {
+      // §审查 OBS-15：从原始文本里抢救原位置；**救得到且库也能开**才算数
+      //（`salvagedLocation` 只解析位置，不 probe —— 见它的文档）
+      final DataLocation? salvaged = salvagedLocation();
+      if (salvaged != null && Db.probe(salvaged.databasePath)) {
+        return StartupDecision.salvageConfig(salvaged);
+      }
+      return const StartupDecision.recoverLocation();
+    }
+
+    // absent = 真·第一次启动。但**默认位置可能已经有数据**（§审查 OBS-11 前半：
+    // 重装软件 / 解压到别处 / 双击第二份 exe 都会撞上）—— 那就要先问一句，
+    // 不能直接点「开始使用」挂上去。
+    //
+    // ⚠️ 这是 [defaultDataDirectory] **唯一**被读的地方（见方法头注释）。
+    final String defaultPath =
+        defaultDataDirectory ?? policy.defaultDataDirectory();
+    return isShensuanziDir(defaultPath)
+        ? StartupDecision.firstRunWithData(defaultPath)
+        : const StartupDecision.welcome();
+  }
+
+  /// 配置**读不懂 / 位置丢了**时，从原始文本里抢救原位置（§审查 OBS-15）。
+  ///
+  /// 救回来就能**自动回到用户原来的数据**（见 `app.dart` 的 `_prepare`），
+  /// 不必让用户自己回忆路径 —— 这是 OBS-15 最好的收场：他根本不会察觉出过问题。
+  ///
+  /// ⚠️ **本方法只解析位置，不探测库能不能打开** —— 「打不开怎么办」由调用方
+  /// 决定（[startupDecision] 会在救不到可用的库时退到「走向导」，
+  /// 而别的调用方可能只想看看「原来是什么路径」）。
+  DataLocation? salvagedLocation() =>
+      _locationFrom(configStore.salvageDataDirectory());
+
+  /// 把读不懂的配置另存一份 `config.json.corrupt`（**不删原件**）—— 人工退路。
+  void preserveCorruptConfig() => configStore.preserveCorruptCopy();
+
+  /// 配置位置的前置检查（**不含**「库能不能打开」这一步）—— 上面几个方法的共用体。
+  DataLocation? _configuredLocation() =>
+      _locationFrom(loadConfig().dataDirectory);
+
+  DataLocation? _locationFrom(String? configured) {
     if (configured == null) return null;
 
     final DirectoryAdvice advice = policy.inspect(configured);

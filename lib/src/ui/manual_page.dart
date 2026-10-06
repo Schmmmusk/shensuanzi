@@ -105,6 +105,27 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+/// 手册正文 → 富文本（§审查：手册里的 `**加粗**` 以前是**原样印成星号**的）。
+///
+/// 只认 `**…**` 一种标记 —— 手册不需要完整 Markdown，多一种语法就多一处
+/// 两边渲染不一致的机会（HTML 侧与这里必须同款）。
+Widget _manualText(String text, TextStyle style) {
+  // 按 `**` 切开后**奇数段**是加粗的（0 普通 / 1 粗 / 2 普通 …）
+  final List<String> parts = text.split('**');
+  return Text.rich(
+    TextSpan(
+      children: <TextSpan>[
+        for (int i = 0; i < parts.length; i++)
+          TextSpan(
+            text: parts[i],
+            style: i.isOdd ? const TextStyle(fontWeight: FontWeight.w700) : null,
+          ),
+      ],
+    ),
+    style: style,
+  );
+}
+
 class _Block extends StatelessWidget {
   const _Block({required this.block, required this.secondary});
 
@@ -119,7 +140,7 @@ class _Block extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: switch (block) {
-        ManualParagraph(:final text) => Text(text, style: body),
+        ManualParagraph(:final text) => _manualText(text, body),
         ManualSteps(:final items) => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -148,7 +169,7 @@ class _Block extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 10),
-                    Expanded(child: Text(items[i], style: body)),
+                    Expanded(child: _manualText(items[i], body)),
                   ],
                 ),
               ),
@@ -166,19 +187,18 @@ class _Block extends StatelessWidget {
               color: warning ? const Color(0xFFE8C268) : const Color(0xFFB7DFB7),
             ),
           ),
-          child: Text(
-            '${warning ? '注意' : '小贴士'}：$text',
-            style: body,
-          ),
+          child: _manualText('${warning ? '注意' : '小贴士'}：$text', body),
         ),
         ManualQa(:final question, :final answer) => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text('问：$question', style: body.copyWith(fontWeight: FontWeight.w600)),
+            _manualText('问：$question', body),
+            // 问句本身就是主句，用「问：」前缀 + 原有字重（不再整句加粗，
+            // 免得与正文里的 `**` 强调抢视觉）
             const SizedBox(height: 2),
             Padding(
               padding: const EdgeInsets.only(left: 12),
-              child: Text('答：$answer', style: body),
+              child: _manualText('答：$answer', body),
             ),
           ],
         ),

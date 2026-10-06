@@ -16,6 +16,8 @@
 /// | 同名但没有该 role | **追加 role**（不新建，其余字段不动） |
 library;
 
+import 'dart:collection';
+
 import '../dao/ledger_dao.dart' show PartyFlowEntry, PartyLedgerDao;
 import '../dao/party_dao.dart';
 import '../dao/query_dao.dart';
@@ -33,6 +35,10 @@ enum PartyMutationAction {
 
   /// 已有同名且 role 齐全，直接返回（什么都没改）
   existing,
+
+  /// 同名往来方**原来是停用的** —— 本次把它恢复使用并确保 role 齐全
+  /// （§审查 OBS-05：不恢复就会造出第二条同名、把往来账分流）
+  revived,
 }
 
 /// [PartyService.ensureParty] 的返回值。
@@ -63,6 +69,21 @@ class PartyService {
     return matches.first;
   }
 
+  /// 按名称取回（**含停用**）；同名取最早建的。
+  ///
+  /// §审查 OBS-05：停用行也可能是「还欠着钱的同名客户」——
+  /// 创建前必须能看到它，否则会造出第二条同名把往来账分流。
+  Party? findByNameIncludingInactive(String name) {
+    final String trimmed = name.trim();
+    if (trimmed.isEmpty) return null;
+    final List<Party> matches = _dao
+        .findAll(active: null, limit: 500)
+        .where((Party party) => party.name == trimmed)
+        .toList();
+    if (matches.isEmpty) return null;
+    return matches.first;
+  }
+
   /// 「没有就建；有就加 role；role 也齐了就原样返回」。
   ///
   /// - [name] 必填（空或全空格抛 [StateError]，调用方的 UI 先拦）
@@ -83,6 +104,31 @@ class PartyService {
 
     final Party? existing = findByName(trimmed);
     if (existing == null) {
+      // §审查 OBS-05：启用中找不到，但**停用里可能有一个同名的**
+      // （可能还欠着钱）—— 恢复它并确保 role，而不是造第二条同名
+      final Party? inactive = findByNameIncludingInactive(trimmed);
+      if (inactive != null) {
+        final List<PartyRole> roles = inactive.roles.contains(role)
+            ? inactive.roles
+            : <PartyRole>[...inactive.roles, role];
+        // Party 没有 copyWith（模型是「显式构造」风格）—— 逐字段重建，
+        // 除 roles / isActive / updatedAt 外**原样保留**（含余额、备注）
+        final Party revived = Party(
+          id: inactive.id,
+          name: inactive.name,
+          phone: inactive.phone,
+          address: inactive.address,
+          roles: roles,
+          creditLimit: inactive.creditLimit,
+          isActive: true,
+          remark: inactive.remark,
+          createdAt: inactive.createdAt,
+          updatedAt: stamp,
+          syncVersion: inactive.syncVersion,
+        );
+        _dao.update(revived);
+        return PartyMutation(party: revived, action: PartyMutationAction.revived);
+      }
       final Party party = Party(
         id: newId(),
         name: trimmed,
@@ -124,8 +170,7 @@ class PartyService {
 
   /// 往来方页的**完整新建**入口（§AA 遗漏 1：与开单页的应急入口互补）。
   ///
-  /// - [roles] 至少一个（新建时定角色；**编辑不改角色**属 v1.1 ——
-  ///   改角色会影响余额语义）
+  /// - [roles] 至少一个（新建时定角色；之后可用 [updateProfile] **随时改**）
   /// - 内部按角色逐个走 [ensureParty]：**同名往来方自动复用并追加角色**，
   ///   与 Z-4「绝不出现两条同名 party」同一保证；[phone]/[address]
   ///   仍只在真正新建时写入
@@ -151,11 +196,24 @@ class PartyService {
     return findByName(name)!;
   }
 
-  /// 编辑**资料**（名称 / 电话 / 地址）。⚠️ 不改角色（会影响余额语义，
-  /// §AA 遗漏 1：改角色属 v1.1）；`id` 不存在抛 [StateError]。
+  /// 编辑**资料与角色**（名称 / 电话 / 地址 / 角色）。`id` 不存在抛 [StateError]。
+  ///
+  /// ## §审查 OBS-05 后半：角色为什么可以随时改
+  ///
+  /// 角色是 party 的**属性**，**不参与任何流水计算** —— 库存 / 资金 / 往来
+  /// 全部按 `party_id` 汇总，与 `roles` 无关。所以：
+  ///
+  /// - **任何时候都能加 / 减角色**，历史交易**不受影响**（流水里存的是
+  ///   `party_id`，不是角色快照）。
+  /// - 这正是「想给老王加供应商角色」的正路。此前编辑不给碰角色，用户只能
+  ///   **停用 + 重建**，而那会造出第二条同名把往来账分流（真隐患）。
+  ///
+  /// [roles] 传 `null` = **不改角色**（只改资料）；传空列表 = 角色清空
+  /// （UI 会给提示：没有角色的往来方不会出现在开单选择器里）。
   Party updateProfile(
     String id, {
     required String name,
+    List<PartyRole>? roles,
     String? phone,
     String? address,
     int? now,
@@ -175,7 +233,10 @@ class PartyService {
       phone: (phone == null || phone.trim().isEmpty) ? null : phone.trim(),
       address:
           (address == null || address.trim().isEmpty) ? null : address.trim(),
-      roles: existing.roles,
+      // 去重且保序（`LinkedHashSet`）—— 重复角色会让界面印出「客户 / 客户」
+      roles: roles == null
+          ? existing.roles
+          : List<PartyRole>.unmodifiable(LinkedHashSet<PartyRole>.of(roles)),
       creditLimit: existing.creditLimit,
       isActive: existing.isActive,
       remark: existing.remark,
@@ -186,6 +247,13 @@ class PartyService {
     _dao.update(updated);
     return updated;
   }
+
+  /// 某往来方当前的**余额**（分）：正 = 对方欠我（应收），负 = 我欠对方（应付）。
+  ///
+  /// §审查 OBS-05 后半：停用前要用它做校验 —— 「还有未结清的账就别停用」
+  /// （停用后它不再出现在开单选择器里，但余额仍在，容易变成看不到的账）。
+  /// 与 [partyBalances] **同一口径**（都从 `party_ledger` 算，无余额表）。
+  int balanceOf(String id) => partyBalances()[id] ?? 0;
 
   /// 停用 / 恢复（软删；不影响历史流水）。
   Party setActive(String id, {required bool active, int? now}) {
@@ -217,6 +285,27 @@ class PartyService {
 
   /// 列表。默认只看启用中的（[active] 传 `null` 看全部）。
   List<Party> list({bool? active = true}) => _dao.findAll(active: active);
+
+  /// 往来方页的**显示口径**（§审查 OBS-05 后半）：启用中的全部 +
+  /// **停用但余额 ≠ 0** 的。
+  ///
+  /// ## 为什么停用但有余额的**还要显示**
+  ///
+  /// 停用只是「不再出现在开单选择器里」，**不是从账上消失**。若把它藏起来，
+  /// 那笔应收 / 应付就成了看不见的「幽灵账」—— 用户按往来方页去催款时
+  /// **会漏掉它**，对账永远差一笔（v0.1.0 审查点名的真隐患）。
+  ///
+  /// 用 `findAllForExport`（不分页）而不是 `findAll`（默认 200 条）——
+  /// 显示口径不能因为条数上限漏掉欠款的往来方。
+  List<Party> listVisible() {
+    final Map<String, int> balances = partyBalances();
+    return <Party>[
+      ..._dao.findAllForExport(active: true),
+      ..._dao.findAllForExport(active: false).where(
+        (Party party) => (balances[party.id] ?? 0) != 0,
+      ),
+    ];
+  }
 
   /// **导出用**：不分页、**默认含停用**（§AF-5）。
   ///

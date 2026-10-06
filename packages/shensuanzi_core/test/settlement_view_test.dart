@@ -164,7 +164,7 @@ void main() {
           .map((DocumentSummary e) => e.document.id)
           .toSet();
       final Set<String> all = documents
-          .listDocuments(includeAutoSettlements: true)
+          .listDocuments(includeDerived: true)
           .map((DocumentSummary e) => e.document.id)
           .toSet();
 
@@ -216,7 +216,7 @@ void main() {
         reason: 'AF-5：导出与列表同一份筛选',
       );
       expect(
-        documents.listDocumentsForExport(includeAutoSettlements: true).length,
+        documents.listDocumentsForExport(includeDerived: true).length,
         greaterThan(documents.listDocumentsForExport().length),
       );
     });
@@ -322,6 +322,273 @@ void main() {
     test('没有核销关系 → 两个方向都是空（不报错）', () {
       expect(settlements.settlementsOfReceipt('没有这张单'), isEmpty);
       expect(settlements.settlementsOfTarget('没有这张单'), isEmpty);
+    });
+  });
+
+  // ============================================================ 拒收折叠 + 退货记录
+  //
+  // §审查 2026-10-05：客户拒收后，原送货单（已作废）与自动生成的**整单退回**
+  // `sale_return` 内容一模一样 —— 列表里并排出现等于「同一笔生意两个入口」。
+  // 折叠必须**精确**：只折叠「ref 指向已作废单据」的退货单，正常退货照常显示。
+
+  group('拒收折叠与退货记录（§审查 2026-10-05）', () {
+    test('拒收：原送货单已作废 ⇒ 派生退货单不进默认列表；要全量时能看到', () {
+      final String p = createProduct();
+      final String party = createParty();
+
+      // ① 送货（引擎强制 in_transit）
+      final Document delivery = doc(
+        type: DocType.delivery,
+        partyId: party,
+        totalAmount: 5000,
+      );
+      run(delivery, lines: <DocumentLine>[line(delivery, p, 10, 500)]);
+      expect(
+        documents.findById(delivery.id)!.status,
+        DocStatus.inTransit,
+        reason: '送货的状态机起点',
+      );
+
+      // ② 拒收 = 全量 sale_return ref 送货单 ⇒ 引擎同事务把原单置 cancelled
+      final Document reject = doc(
+        type: DocType.saleReturn,
+        partyId: party,
+        totalAmount: 5000,
+        refDocId: delivery.id,
+      );
+      run(reject, lines: <DocumentLine>[line(reject, p, 10, 500)]);
+      expect(
+        documents.findById(delivery.id)!.status,
+        DocStatus.cancelled,
+        reason: '拒收收口（§BH·七）：原送货单同事务置 cancelled',
+      );
+
+      final Set<String> shown = documents
+          .listDocuments()
+          .map((DocumentSummary e) => e.document.id)
+          .toSet();
+      expect(shown, contains(delivery.id), reason: '原送货单保留 —— 它是唯一入口');
+      expect(
+        shown,
+        isNot(contains(reject.id)),
+        reason: '整单退回的派生退货单不该并排出现',
+      );
+
+      // 要全量（按「销售退货」筛选时页面会传 includeDerived）时能看到
+      expect(
+        documents
+            .listDocuments(includeDerived: true)
+            .map((DocumentSummary e) => e.document.id),
+        contains(reject.id),
+      );
+
+      // 原单行带出退货额（列表行显示「已退 ¥50.00」）
+      expect(documents.summaryById(delivery.id)!.returnedCents, 5000);
+    });
+
+    test('「退货记录」：原单能查到自己被退过什么（详情页区块的数据源）', () {
+      final String p = createProduct();
+      final String party = createParty();
+
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 6000,
+      );
+      run(sale, lines: <DocumentLine>[line(sale, p, 12, 500)]);
+
+      // 先查空
+      expect(documents.returnsAgainst(sale.id), isEmpty, reason: '没退过就是空');
+
+      // 退 1500（部分）
+      final Document ret = doc(
+        type: DocType.saleReturn,
+        partyId: party,
+        totalAmount: 1500,
+        refDocId: sale.id,
+      );
+      run(ret, lines: <DocumentLine>[line(ret, p, 3, 500)]);
+
+      final List<DocumentSummary> history = documents.returnsAgainst(sale.id);
+      expect(history, hasLength(1));
+      expect(history.first.document.id, ret.id);
+      expect(history.first.document.totalAmount, 1500);
+      expect(history.first.document.docType, DocType.saleReturn);
+      // 只认自己的：别的单查不到
+      expect(documents.returnsAgainst('别的单'), isEmpty);
+    });
+
+    test('正常部分退货：原单未作废 ⇒ 退货单**仍要显示**（独立交易）', () {
+      final String p = createProduct();
+      final String party = createParty();
+
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 6000,
+      );
+      run(sale, lines: <DocumentLine>[line(sale, p, 12, 500)]);
+
+      final Document ret = doc(
+        type: DocType.saleReturn,
+        partyId: party,
+        totalAmount: 1500,
+        refDocId: sale.id,
+      );
+      run(ret, lines: <DocumentLine>[line(ret, p, 3, 500)]);
+
+      expect(
+        documents.findById(sale.id)!.status,
+        isNot(DocStatus.cancelled),
+        reason: '部分退货不动原单状态',
+      );
+      final Set<String> shown = documents
+          .listDocuments()
+          .map((DocumentSummary e) => e.document.id)
+          .toSet();
+      expect(
+        shown,
+        contains(ret.id),
+        reason: '⚠️ 折叠条件只认「原单已作废」—— 正常退货必须显示',
+      );
+      expect(shown, contains(sale.id));
+      // 行上的退货额也要有（列表显示「已退 ¥15.00」）
+      expect(
+        documents
+            .listDocuments()
+            .firstWhere((DocumentSummary e) => e.document.id == sale.id)
+            .returnedCents,
+        1500,
+      );
+    });
+
+    test('状态筛选：未结清（扣退货冲减）/ 已作废 / 待签收', () {
+      final String p = createProduct();
+      final String acc = createAccount();
+      final String party = createParty();
+
+      // ① 赊销 6000 → 退 1500 ⇒ 真实未收 4500（「未结清」应命中）
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 6000,
+      );
+      run(sale, lines: <DocumentLine>[line(sale, p, 12, 500)]);
+      final Document ret = doc(
+        type: DocType.saleReturn,
+        partyId: party,
+        totalAmount: 1500,
+        refDocId: sale.id,
+      );
+      run(ret, lines: <DocumentLine>[line(ret, p, 3, 500)]);
+
+      // ② 已结清 1000（「未结清」不该命中）
+      final Document paid = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 1000,
+      );
+      run(
+        paid,
+        lines: <DocumentLine>[line(paid, p, 2, 500)],
+        pays: <PaymentEntry>[PaymentEntry(accountId: acc, amount: 1000)],
+      );
+
+      // ③ 在途送货（「待签收」应命中）
+      final Document delivery = doc(
+        type: DocType.delivery,
+        partyId: party,
+        totalAmount: 2000,
+      );
+      run(delivery, lines: <DocumentLine>[line(delivery, p, 4, 500)]);
+
+      Set<String> idsFor(Set<DocumentStatusView> views) => documents
+          .listDocuments(statusViews: views)
+          .map((DocumentSummary e) => e.document.id)
+          .toSet();
+
+      final Set<String> unsettled = idsFor(
+        const <DocumentStatusView>{DocumentStatusView.unsettled},
+      );
+      expect(unsettled, contains(sale.id), reason: '60 的单退了 15 ⇒ 仍欠 45');
+      expect(
+        unsettled,
+        isNot(contains(paid.id)),
+        reason: '已结清的不算未结清',
+      );
+      expect(
+        unsettled,
+        contains(delivery.id),
+        reason: '在途送货单也还欠着钱（货送了没收到钱）',
+      );
+      expect(
+        unsettled,
+        isNot(contains(ret.id)),
+        reason: '退货单本身不产生欠款',
+      );
+
+      final Set<String> cancelledIds = idsFor(
+        const <DocumentStatusView>{DocumentStatusView.cancelled},
+      );
+      expect(cancelledIds, isEmpty, reason: '本夹具没有作废单');
+
+      final Set<String> awaiting = idsFor(
+        const <DocumentStatusView>{DocumentStatusView.awaitingSignature},
+      );
+      expect(awaiting, <String>{delivery.id});
+
+      // 多选 = 并集
+      expect(
+        idsFor(const <DocumentStatusView>{
+          DocumentStatusView.awaitingSignature,
+          DocumentStatusView.unsettled,
+        }),
+        containsAll(<String>[sale.id, delivery.id]),
+        reason: '多选 = 并集',
+      );
+      expect(
+        idsFor(const <DocumentStatusView>{
+          DocumentStatusView.awaitingSignature,
+          DocumentStatusView.unsettled,
+        }),
+        isNot(contains(paid.id)),
+        reason: '已结清单既不是「未结清」也不是「待签收」—— 不该混进并集',
+      );
+    });
+
+    test('untilMillis 上界 + types 多选（自定义时间范围 / 多类型）', () {
+      final String p = createProduct();
+      final String party = createParty();
+
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 1000,
+      );
+      run(sale, lines: <DocumentLine>[line(sale, p, 2, 500)]);
+      final int boundary = now();
+      final Document after = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 2000,
+      );
+      run(after, lines: <DocumentLine>[line(after, p, 4, 500)]);
+
+      final List<String> before = documents
+          .listDocuments(untilMillis: boundary)
+          .map((DocumentSummary e) => e.document.id)
+          .toList();
+      expect(before, contains(sale.id));
+      expect(before, isNot(contains(after.id)), reason: '上界是开区间');
+
+      // types 多选 = 并集；且只含选中类型
+      final Set<DocType> picked = <DocType>{DocType.sale, DocType.purchase};
+      expect(
+        documents
+            .listDocuments(types: picked)
+            .every((DocumentSummary e) => picked.contains(e.document.docType)),
+        isTrue,
+      );
     });
   });
 }

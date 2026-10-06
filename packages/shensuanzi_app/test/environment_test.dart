@@ -100,6 +100,21 @@ void main() {
       expect(e.failures, <String>['Q', 'W']);
     });
 
+    test('卷标原样透传（§BK·二：让用户认得出「这是我的哪块盘」）', () {
+      final DriveEnumeration e = mapRawDrives(<RawDrive>[
+        RawDrive(
+          letter: 'E',
+          type: winDriveFixed,
+          freeBytes: 128 * gb,
+          volumeLabel: '仓库',
+        ),
+        RawDrive(letter: 'F', type: winDriveFixed, freeBytes: 64 * gb), // 没起名
+      ]);
+
+      expect(e.drives[0].volumeLabel, '仓库');
+      expect(e.drives[1].volumeLabel, isNull);
+    });
+
     test('远程盘进了列表，但**不进默认位置候选**（策略排除，不是事实排除）', () {
       final DriveEnumeration e = mapRawDrives(<RawDrive>[
         RawDrive(letter: 'C', type: winDriveFixed, freeBytes: 100 * gb),

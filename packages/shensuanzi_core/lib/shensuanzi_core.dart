@@ -49,7 +49,8 @@ export 'src/models/sync_queue_entry.dart' show SyncQueueEntry, SyncQueueStatus;
 
 // DAO
 export 'src/dao/account_dao.dart' show AccountDao;
-export 'src/dao/document_dao.dart' show DocumentDao, DocumentSummary;
+export 'src/dao/document_dao.dart'
+    show DocumentDao, DocumentStatusView, DocumentSummary;
 export 'src/dao/ledger_dao.dart'
     show
         MoneyLedgerDao,
@@ -61,7 +62,8 @@ export 'src/dao/party_dao.dart' show PartyDao;
 export 'src/dao/product_dao.dart' show ProductDao;
 export 'src/dao/query_dao.dart' show QueryDao;
 export 'src/dao/settlement_dao.dart' show SettlementDao;
-export 'src/dao/sync_dao.dart' show ClockOffsetDao, SyncCursorDao, SyncQueueDao;
+export 'src/dao/sync_dao.dart'
+    show ClockOffsetDao, SyncCursorDao, SyncQueueDao, SyncQueueTriage;
 
 // 规则
 export 'src/rules/cost_policy.dart' show CostPolicy;
@@ -136,6 +138,18 @@ export 'src/documents/stocktake_draft.dart'
 export 'src/documents/stocktake_service.dart'
     show StocktakeDraftInvalid, StocktakeResult, StocktakeService;
 
+// B3a：提交出口（`DocumentSink` 两实现 + 统一返回）与「草稿 → 实体」纯构造
+export 'src/documents/draft_invalid.dart' show DraftInvalidException;
+export 'src/documents/document_build.dart'
+    show DocumentBuild, buildDeliveryDocument, buildPurchaseDocument, buildSaleDocument;
+export 'src/documents/document_sink.dart'
+    show
+        DocumentSink,
+        DocumentSubmitResult,
+        QueueSink,
+        ServiceSink,
+        documentCreatePayload;
+
 // 同步（协议层：DTO + 白名单。**服务端实现在 `shensuanzi_host`**）
 export 'src/sync/sync_operation.dart'
     show
@@ -150,7 +164,9 @@ export 'src/sync/sync_pull.dart'
 export 'src/sync/whitelist.dart' show SyncValueCheck, SyncWhitelist;
 
 // 同步（客户端：离线队列 + 拉取应用。**不含传输实现**）
+export 'src/sync/pairing_payload.dart' show PairingPayload;
 export 'src/sync/sync_client.dart'
     show StockView, SyncClient, SyncPullReport, SyncPushReport;
+export 'src/sync/stock_delta.dart' show StockDelta;
 export 'src/sync/transport.dart'
     show SyncHttpException, Transport, TransportRequest, TransportResponse;

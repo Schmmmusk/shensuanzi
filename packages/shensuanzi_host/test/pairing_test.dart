@@ -3,6 +3,9 @@
 // 核心主张：**「生成」与「渲染」拆开** —— 这里全是纯计算，可 `dart test`；
 // 只有最后的 widget 渲染在 Flutter 层，无需测试。
 import 'package:qr/qr.dart';
+// ⚠️ `PairingPayload` 归属 core（协议 wire 格式），**不经 host 桶转手** ——
+// 见 `packages/shensuanzi_host/lib/src/pairing.dart` 的头注释（2026-10-06）。
+import 'package:shensuanzi_core/shensuanzi_core.dart' show PairingPayload;
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 import 'package:test/test.dart';
 

@@ -16,24 +16,24 @@ import '../dao/document_dao.dart';
 import '../dao/party_dao.dart';
 import '../dao/query_dao.dart';
 import '../models/document.dart';
-import '../models/document_line.dart';
 import '../models/party.dart';
 import '../models/product.dart';
-import '../rules/payment_entry.dart';
 import '../rules/rule_engine.dart';
-import '../util/ids.dart';
 import 'delivery_draft.dart';
+import 'document_build.dart';
+import 'draft_invalid.dart';
 
 /// 草稿校验失败：**带两组字段级原因**，界面直接标红对应输入框。
 ///
 /// ⚠️ 比 `SaleDraftInvalid` **少一组** `paymentErrors` —— 送货单没有收款区。
-class DeliveryDraftInvalid implements Exception {
+class DeliveryDraftInvalid implements DraftInvalidException {
   DeliveryDraftInvalid(this.fieldErrors, this.lineErrors);
 
   final Map<DeliveryField, String> fieldErrors;
   final List<Map<DeliveryLineField, String>> lineErrors;
 
   /// 拼成一句话（日志 / 汇总提示用）
+  @override
   String get summary => <String>[
     ...fieldErrors.values,
     for (final Map<DeliveryLineField, String> e in lineErrors) ...e.values,
@@ -41,6 +41,21 @@ class DeliveryDraftInvalid implements Exception {
 
   @override
   String toString() => 'DeliveryDraftInvalid($summary)';
+}
+
+/// 两组校验跑一遍；**有失败 → 聚成异常返回，全过 → `null`**。
+///
+/// 与 `saleDraftFailure` 同构 —— `DeliveryService.create` 与 `QueueSink`
+/// 共用这一份（裁定 ⑥：客户端不跑规则，但**不等于不校验**）。
+DeliveryDraftInvalid? deliveryDraftFailure(DeliveryDraft draft) {
+  final Map<DeliveryField, String> fieldErrors = draft.validate();
+  final List<Map<DeliveryLineField, String>> lineErrors =
+      draft.validateLines();
+  if (fieldErrors.isNotEmpty ||
+      lineErrors.any((Map<DeliveryLineField, String> e) => e.isNotEmpty)) {
+    return DeliveryDraftInvalid(fieldErrors, lineErrors);
+  }
+  return null;
 }
 
 /// 保存成功后给 UI 的结果（与 `SaleSaved` 同构，去掉收款相关的字段）。
@@ -129,7 +144,10 @@ class DeliveryService {
   /// —— 为它单开一条 SQL 不划算（多一处口径）。
   List<DocumentSummary> pendingDeliveries({int limit = 50}) => <DocumentSummary>[
     for (final DocumentSummary summary
-        in _docs.listDocuments(type: DocType.delivery, limit: limit))
+        in _docs.listDocuments(
+        types: const <DocType>{DocType.delivery},
+        limit: limit,
+      ))
       if (summary.document.status == DocStatus.inTransit) summary,
   ];
 
@@ -142,52 +160,19 @@ class DeliveryService {
   /// 提交草稿。校验不通过抛 [DeliveryDraftInvalid]；规则拒绝抛 [StateError]
   /// （此时库已整单回滚，界面走「意外失败」兜底文案）。
   DeliverySaved create(DeliveryDraft draft, {int? now}) {
-    final Map<DeliveryField, String> fieldErrors = draft.validate();
-    final List<Map<DeliveryLineField, String>> lineErrors =
-        draft.validateLines();
-    if (fieldErrors.isNotEmpty ||
-        lineErrors.any((Map<DeliveryLineField, String> e) => e.isNotEmpty)) {
-      throw DeliveryDraftInvalid(fieldErrors, lineErrors);
-    }
+    final DeliveryDraftInvalid? failure = deliveryDraftFailure(draft);
+    if (failure != null) throw failure;
 
     final int stamp = now ?? DateTime.now().millisecondsSinceEpoch;
 
-    final Document document = Document(
-      id: newId(),
-      // 占位号：`_prepare` 会换成正式单号（SH…）
-      docNo: '${Document.pendingDocNoPrefix}${draft.hashCode}',
-      docType: DocType.delivery,
-      // 规则层会**强制覆盖**成 in_transit（RULE-003）；这里给一个合法初值
-      status: DocStatus.inTransit,
-      partyId: draft.partyId,
-      totalAmount: draft.totalCents,
-      occurredAt: draft.occurredAt,
-      createdAt: stamp,
-      updatedAt: stamp,
-      remark: draft.remark.trim().isEmpty ? null : draft.remark.trim(),
-    );
-
-    final List<DocumentLine> lines = <DocumentLine>[
-      for (final DeliveryLineDraft line in draft.lines)
-        if (!line.isEmpty)
-          // v3：quantity = 换算后的最小单位数量；amount = 真相（含让价）；
-          // entry_* 记录入原文（§BD·三 第 1/2/6 条）
-          DocumentLine.create(
-            documentId: document.id,
-            productId: line.productId,
-            quantity: line.baseQuantityValue!,
-            amount: line.amountCents!,
-            entryQuantity: line.entryQuantityValue!,
-            entryUnit: line.entryUnitValue,
-            discountAmount: line.discountCents ?? 0,
-          ),
-    ];
+    // B3a：构造抽到 `document_build.dart`（与 QueueSink 共用一份，行为零变化）。
+    // ⚠️ 送货单**没有收款区** ⇒ build.payments 恒为空列表。
+    final DocumentBuild build = buildDeliveryDocument(draft, now: stamp);
 
     final RuleOutcome outcome = _engine.dispatch(
-      document: document,
-      lines: lines,
-      // ⚠️ 送货单**没有收款区** ⇒ 永不带立即收付款（客户的payment 走 1a 的核销）
-      immediatePayments: const <PaymentEntry>[],
+      document: build.document,
+      lines: build.lines,
+      immediatePayments: build.payments,
       now: stamp,
     );
 

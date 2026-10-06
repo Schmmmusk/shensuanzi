@@ -26,7 +26,10 @@ library;
 export 'src/auth.dart' show HostIdentity, HostIdentityStore, HostToken;
 export 'src/http_server.dart' show HostHttpServer, PortRange;
 export 'src/local_ip.dart' show LocalIp, NetCandidate;
-export 'src/pairing.dart' show PairingPayload, PairingQr;
+// ⚠️ `PairingPayload`（协议 wire 格式）**归属 core**，不经这里转手 ——
+// 用它的地方直接 `import 'package:shensuanzi_core/shensuanzi_core.dart'`。
+// 本包只导出渲染侧那一半（`PairingQr`）：见 `src/pairing.dart` 的头注释。
+export 'src/pairing.dart' show PairingQr;
 export 'src/service_controller.dart'
     show
         HostServiceController,

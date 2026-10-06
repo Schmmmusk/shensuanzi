@@ -195,4 +195,88 @@ void main() {
       expect(UiScale.fromFactor(null), isNull);
     });
   });
+  // ============================================================ §审查 OBS-15
+  //
+  // 「配置损坏」不能当成「第一次启动」——那是撒谎，还会让用户在慌乱里
+  // 把原来那个完好的数据目录丢在一边。
+
+  group('配置读取状态（§审查 OBS-15）', () {
+    late Directory cfgBox;
+    late File cfgFile;
+    late AppConfigStore cfgStore;
+
+    setUp(() {
+      cfgBox = Directory.systemTemp.createTempSync('shensuanzi_cfg_status_');
+      cfgFile = File(p.join(cfgBox.path, 'config.json'));
+      cfgStore = AppConfigStore(cfgFile);
+    });
+
+    tearDown(() {
+      try {
+        cfgBox.deleteSync(recursive: true);
+      } catch (_) {
+        // 删不掉不影响结论
+      }
+    });
+
+    test('文件不存在 ⇒ absent（**只有这一种**才是真·第一次启动）', () {
+      expect(cfgStore.status(), AppConfigLoadStatus.absent);
+      expect(cfgStore.salvageDataDirectory(), isNull, reason: '没东西可抢救');
+    });
+
+    test('正常配置 ⇒ ok', () {
+      cfgStore.save(const AppConfig(dataDirectory: r'D:/数据'));
+      expect(cfgStore.status(), AppConfigLoadStatus.ok);
+      expect(cfgStore.load().dataDirectory, r'D:/数据');
+    });
+
+    test('JSON 截断（写到一半断电）⇒ locationLost，且能从原文**抢救**出路径', () {
+      // 真·Windows 形态（一个反斜杠）；用 jsonEncode 生成**合法**的 JSON
+      // 字符串字面量（`"D://fed"`）再手工截断 —— 这样测的正是
+      // 「半截 JSON 里那段路径还能不能正确反转义回来」，不靠手写转义。
+      const String original = r'D:/fed';
+      final String literal = jsonEncode(original);
+      cfgFile.writeAsStringSync('{\n  "data_directory": $literal,\n  "ui_sca');
+
+      expect(
+        cfgStore.status(),
+        AppConfigLoadStatus.locationLost,
+        reason: '文件在、位置读不出来 ⇒ 不是 absent',
+      );
+      expect(cfgStore.load().dataDirectory, isNull, reason: 'load 退化成默认，不崩');
+      expect(
+        cfgStore.salvageDataDirectory(),
+        original,
+        reason: '反斜杠必须正确反转义',
+      );
+    });
+
+    test('JSON 完整、但**没有位置字段** ⇒ 同样算 locationLost', () {
+      cfgFile.writeAsStringSync('{"ui_scale": 1.25}');
+      expect(cfgStore.status(), AppConfigLoadStatus.locationLost);
+      expect(cfgStore.salvageDataDirectory(), isNull);
+    });
+
+    test('坏得没救的文本 ⇒ 抢救返回 null（坏片段不当数据用）', () {
+      cfgFile.writeAsStringSync('{ 根本不是 JSON');
+      expect(cfgStore.status(), AppConfigLoadStatus.locationLost);
+      expect(cfgStore.salvageDataDirectory(), isNull);
+    });
+
+    test('留档：另存 .corrupt、**不删原件**、已存在就不覆盖', () {
+      const String first = '{"data_directory": "坏了的第一版"';
+      cfgFile.writeAsStringSync(first);
+      cfgStore.preserveCorruptCopy();
+
+      final File copy = File('${cfgFile.path}.corrupt');
+      expect(copy.existsSync(), isTrue);
+      expect(copy.readAsStringSync(), first);
+      expect(cfgFile.existsSync(), isTrue, reason: '只是读不懂，不是垃圾 —— 不许删');
+
+      // 再坏一次：**第一份**最有诊断价值，不覆盖
+      cfgFile.writeAsStringSync('第二版更烂');
+      cfgStore.preserveCorruptCopy();
+      expect(copy.readAsStringSync(), first);
+    });
+  });
 }

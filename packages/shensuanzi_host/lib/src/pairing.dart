@@ -1,76 +1,15 @@
 import 'package:qr/qr.dart';
+import 'package:shensuanzi_core/shensuanzi_core.dart' show PairingPayload;
 
-/// 配对载荷（`docs/sync_protocol.md` §9.1）。
-///
-/// ```
-/// shensuanzi://pair?host_id=<uuid>&ip=<lan_ip>&port=<port>&token=<token>&v=1
-/// ```
-///
-/// **只负责「生成/解析这个字符串」** —— 二维码的**渲染**在根 Flutter 应用
-/// （自绘 painter，见 `reply_review.md` §BB·三 / §BF）。把生成与渲染拆开，
-/// 是为了让这一层留在纯 Dart 里可测。
-class PairingPayload {
-  const PairingPayload({
-    required this.hostId,
-    required this.ip,
-    required this.port,
-    required this.token,
-    this.version = 1,
-  });
-
-  static const String scheme = 'shensuanzi';
-  static const String host = 'pair';
-  static const int currentVersion = 1;
-
-  final String hostId;
-
-  /// 局域网 IP。IP 变化后旧二维码失效，客户端需**重新扫码**（§9.2）
-  final String ip;
-  final int port;
-
-  /// **明文令牌**。它随二维码走带外通道（人眼 → 摄像头）。
-  final String token;
-  final int version;
-
-  String get uri {
-    final Uri url = Uri(
-      scheme: scheme,
-      host: host,
-      queryParameters: <String, String>{
-        'host_id': hostId,
-        'ip': ip,
-        'port': '$port',
-        'token': token,
-        'v': '$version',
-      },
-    );
-    return url.toString();
-  }
-
-  static PairingPayload parse(String raw) {
-    final Uri? url = Uri.tryParse(raw);
-    if (url == null || url.scheme != scheme || url.host != host) {
-      throw FormatException('不是神算子配对码：$raw');
-    }
-    final Map<String, String> q = url.queryParameters;
-    for (final String key in <String>['host_id', 'ip', 'port', 'token']) {
-      if (q[key] == null || q[key]!.isEmpty) {
-        throw FormatException('配对码缺少 $key：$raw');
-      }
-    }
-    final int? port = int.tryParse(q['port']!);
-    if (port == null || port <= 0 || port > 65535) {
-      throw FormatException('配对码的 port 非法：${q['port']}');
-    }
-    return PairingPayload(
-      hostId: q['host_id']!,
-      ip: q['ip']!,
-      port: port,
-      token: q['token']!,
-      version: int.tryParse(q['v'] ?? '') ?? currentVersion,
-    );
-  }
-}
+// §BL·一（2026-10-05 裁定）：`PairingPayload` 是同步协议 §9.1 的 wire 格式，
+// **归属 core**（客户端要解析它，而包边界裁定 app 不依赖 host）。
+//
+// ⚠️ **2026-10-06 修正**：起初这里 `export` 了一份，想让旧导入路径不变；
+// 结果使用方同时经 host 与 core 拿到**同一个**类 ——
+// `flutter analyze` 判 `unnecessary_import`（`host_service_section.dart` 那条），
+// 而 `import_guard` 又要求「用到 core 的符号就直接 import core」——
+// **两个守卫打架**。所以去掉 re-export：**用 `PairingPayload` 就必须 import core**。
+// `PairingQr`（渲染数据那一半）仍是 host 的，照常从桶里导出。
 
 /// 配对二维码的**数据**生成（§9.1）。
 ///

@@ -27,16 +27,29 @@
 /// —— 不需要真的插一个 U 盘。
 library;
 
-export 'src/app_config.dart' show AppConfig, AppConfigStore, UiScale;
+export 'src/app_config.dart'
+    show AppConfig, AppConfigLoadStatus, AppConfigStore, UiScale;
 export 'src/bootstrap.dart'
     show AppBootstrap, DataDirectoryRejected, DataLocation;
 export 'src/data_directory.dart'
     show DataDirectoryPolicy, DirectoryAdvice, DirectoryVerdict, formatBytes;
 export 'src/data_directory_service.dart' show DataDirectoryService;
+export 'src/data_migrator.dart'
+    show DataMigrationResult, DataMigrator, MigrationPlan, MigrationProgress;
+export 'src/instance_lock.dart'
+    show InstanceLock, InstanceLockResult, instanceLockFileName;
+export 'src/http_transport.dart' show HttpTransport;
+export 'src/mobile_sync_service.dart'
+    show MobileSyncService, SyncOutcome, SyncOutcomeKind;
+export 'src/mirror_view.dart' show MirrorView;
+export 'src/mobile_guidance.dart'
+    show MobileGuideTopic, mirrorEmptyMessage, mobileGuideMessage, mobileGuideTitle;
+export 'src/pairing_store.dart' show PairingInfo, PairingStore;
 export 'src/data_marker.dart'
     show DataMarker, DirectoryContents, contentsOf;
 export 'src/dialog_model.dart'
     show ConfirmOutcome, DataDirectoryDialogModel, DialogNoticeKind;
+export 'src/startup.dart' show StartupDecision, StartupScenario;
 // ⚠️ 这里只导出**接缝本身**（`DriveEnumerator` 的契约 = `() → DriveEnumeration`）。
 // `RawDrive` / `winDrive*` / `mapRawDrives` 是**生产实现的词汇**，不是接缝的一部分 ——
 // 它们**刻意不导出**（不扩大包的公开面），但仍是 public 的，

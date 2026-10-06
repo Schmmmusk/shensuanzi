@@ -25,8 +25,11 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart'
+    show MobileGuideTopic, mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'mobile_guidance_dialog.dart';
 import 'product_form_dialog.dart';
 import 'entry_unit_hints.dart';
 
@@ -38,9 +41,24 @@ class PurchasePage extends StatefulWidget {
     super.key,
     required this.service,
     required this.productService,
+    required this.sink,
+    this.onSubmitted,
+    this.readOnlyMasterData = false,
   });
 
+  /// 开单页**查询**用（选择器 / 库存快照 —— 读）。
   final PurchaseService service;
+
+  /// 提交**出口**（B3b·§CA）：页面对 [DocumentSink] 编程，**不出现
+  /// 「是不是客户端」的分支**。桌面 = `ServiceSink`；手机 = `QueueSink`。
+  final DocumentSink sink;
+
+  /// 提交成功回调（B3b）。手机端注入 = 刷新三态条 + 触发自动推送（裁定 ③）。
+  final void Function(DocumentSubmitResult result)? onSubmitted;
+
+  /// 手机端**主数据禁建**（C2·§CC）：`true` 时「新建供应商 / 新建商品」入口
+  /// **保留但点击后弹引导对话框**。桌面缺省 `false` = 现状零变化。
+  final bool readOnlyMasterData;
 
   /// 商品搜索与「＋新建商品」复用商品建档。
   final ProductService productService;
@@ -331,20 +349,23 @@ class _PurchasePageState extends State<PurchasePage> {
     });
   }
 
-  /// `create` 是**同步**的（库操作进程内完成，无 IO 等待）——
-  /// 不需要 async/await；try/catch 直接接同步异常。
+  /// `sink.submitPurchase` 是**同步**的（库操作 / 入队进程内完成，无 IO 等待）。
   void _save() {
     if (_saving) return;
     final PurchaseDraft draft = _draft;
     setState(() => _saving = true);
     try {
-      final PurchaseSaved saved = widget.service.create(draft);
-      _afterSaved(saved);
-    } on PurchaseDraftInvalid catch (error) {
-      setState(() {
-        _invalid = error;
-        _saving = false;
-      });
+      // B3b：提交走 Sink（桌面 = 落库+规则；手机 = 入队）——页面无分支
+      final DocumentSubmitResult result = widget.sink.submitPurchase(draft);
+      if (result.isFailure) {
+        // 校验失败（裁定 ⑥）：带着原始的 PurchaseDraftInvalid 标红字段
+        setState(() {
+          _invalid = result.error! as PurchaseDraftInvalid;
+          _saving = false;
+        });
+        return;
+      }
+      _afterSaved(result);
     } catch (error) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -361,7 +382,7 @@ class _PurchasePageState extends State<PurchasePage> {
 
   /// 保存成功：**保留供应商与日期**（连续给同一供应商录多笔 / 补录同一天是常态），
   /// 只清明细与付款 —— 每次开单不多两步（§X 六 / P-3）。
-  void _afterSaved(PurchaseSaved saved) {
+  void _afterSaved(DocumentSubmitResult result) {
     setState(() {
       for (final _RowCtl row in _rows) {
         row.dispose();
@@ -379,22 +400,36 @@ class _PurchasePageState extends State<PurchasePage> {
       _saving = false;
     });
 
-    final String due = saved.dueCents > 0
-        ? '，欠款 ¥${Money.formatGrouped(saved.dueCents)}'
+    // B3b：提交成功回调（手机端装配 = 刷新三态条 + 自动推送；桌面为 null）
+    widget.onSubmitted?.call(result);
+
+    // 裁定 ②：入队成功的文案在 core（`queuedNotice`），UI 不造句
+    if (result.isQueued) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.queuedNotice!),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+      return;
+    }
+
+    final String due = result.dueCents > 0
+        ? '，欠款 ¥${Money.formatGrouped(result.dueCents)}'
         : '（已结清）';
     // §AY·四 的**第二处告知**：SnackBar 再说一次「记了多少、找了多少」。
     // 措辞取自 core 的 `Overpay.savedNoteOf` —— 与销售页、核销对话框**同源**。
     final String change = Overpay.savedNoteOf(
-      recordedCents: saved.paidCents,
-      changeCents: saved.changeCents,
+      recordedCents: result.paidCents,
+      changeCents: result.changeCents,
     );
-    final String partyDue = saved.partyDueCents > 0
-        ? '；$_partyName 累计欠款 ¥${Money.formatGrouped(saved.partyDueCents)}'
+    final String partyDue = (result.partyDueCents ?? 0) > 0
+        ? '；$_partyName 累计欠款 ¥${Money.formatGrouped(result.partyDueCents!)}'
         : '';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '单号 ${saved.docNo} 已保存 ¥${Money.formatGrouped(saved.totalCents)}'
+          '单号 ${result.finalDocNo} 已保存 ¥${Money.formatGrouped(result.totalCents)}'
           '$due${change.isEmpty ? '' : '，$change'}$partyDue',
         ),
         duration: const Duration(seconds: 6),
@@ -477,7 +512,10 @@ class _PurchasePageState extends State<PurchasePage> {
     return showModalBottomSheet<Party>(
       context: context,
       isScrollControlled: true,
-      builder: (BuildContext sheetContext) => _PartyPickerSheet(service: service),
+      builder: (BuildContext sheetContext) => _PartyPickerSheet(
+        service: service,
+        readOnly: widget.readOnlyMasterData,
+      ),
     );
   }
 
@@ -493,6 +531,7 @@ class _PurchasePageState extends State<PurchasePage> {
       builder: (BuildContext sheetContext) => _ProductPickerSheet(
         service: widget.productService,
         recentProducts: widget.service.recentlyPurchased(),
+        readOnly: widget.readOnlyMasterData,
       ),
     );
   }
@@ -1060,9 +1099,12 @@ class _PayCard extends StatelessWidget {
 ///
 /// 空查询列出全部启用中的供应商；搜索按名称过滤（客户端过滤，量级足够）。
 class _PartyPickerSheet extends StatefulWidget {
-  const _PartyPickerSheet({required this.service});
+  const _PartyPickerSheet({required this.service, this.readOnly = false});
 
   final PurchaseService service;
+
+  /// 手机端主数据禁建（C2·§CC）：`true` = 「新建供应商」点击后弹引导。
+  final bool readOnly;
 
   @override
   State<_PartyPickerSheet> createState() => _PartyPickerSheetState();
@@ -1095,6 +1137,11 @@ class _PartyPickerSheetState extends State<_PartyPickerSheet> {
   }
 
   Future<void> _create() async {
+    // C2·§CC：手机端主数据禁建 —— 保留入口，点击后引导
+    if (widget.readOnly) {
+      await showMobileGuideDialog(context, MobileGuideTopic.newParty);
+      return;
+    }
     // 搜索框里已有的文字就是供应商名称（少一步复制粘贴）；空名必须拦 ——
     // 「名称必填」是 P-7 的约定，默默造一个「供应商」会让列表长出垃圾数据。
     final String name = _query.text.trim();
@@ -1171,6 +1218,7 @@ class _ProductPickerSheet extends StatefulWidget {
   const _ProductPickerSheet({
     required this.service,
     required this.recentProducts,
+    this.readOnly = false,
   });
 
   final ProductService service;
@@ -1178,6 +1226,9 @@ class _ProductPickerSheet extends StatefulWidget {
   /// 空查询时展示的「最近采购」列表 —— 由页面查好传入
   /// （查询在 `PurchaseService` 上，本组件只拿 `ProductService` 做搜索与新建）。
   final List<Product> recentProducts;
+
+  /// 手机端主数据禁建（C2·§CC）：`true` = 「新建商品」点击后弹引导。
+  final bool readOnly;
 
   @override
   State<_ProductPickerSheet> createState() => _ProductPickerSheetState();
@@ -1205,6 +1256,11 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
   }
 
   Future<void> _createProduct() async {
+    // C2·§CC：手机端主数据禁建 —— 保留入口，点击后引导
+    if (widget.readOnly) {
+      await showMobileGuideDialog(context, MobileGuideTopic.newProduct);
+      return;
+    }
     // 复用商品建档对话框（§X P-4：搜不到就建，不打断录入）
     final Product? created = await showProductFormDialog(
       context,
@@ -1250,7 +1306,11 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
                 ? Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text(
-                      _searched ? '没有匹配的商品，可以点下面新建。' : '还没有采购记录，直接搜索或新建。',
+                      widget.readOnly
+                          ? mirrorEmptyMessage('商品列表')
+                          : _searched
+                          ? '没有匹配的商品，可以点下面新建。'
+                          : '还没有采购记录，直接搜索或新建。',
                       textAlign: TextAlign.center,
                       style: const TextStyle(height: 1.6),
                     ),

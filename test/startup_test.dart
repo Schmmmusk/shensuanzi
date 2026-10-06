@@ -8,14 +8,23 @@
 // 2026-09-26 裁定：只注入这两个（`docs/reply_review.md` §W），其余走真实路径 ——
 // 所以 [ShensuanziApp] 的 `pickDirectory` 传桩、`configStore` 指到沙箱。
 //
-// ⚠️ 环境（盘符 / 剩余空间）**保持真实**（`AppEnvironment.detect()`）：
-// 我们要测的是「真实机器 + 沙箱配置」下的启动行为，不是「假机器上的假配置」。
-// 因此场景 2 的「配置过且可用」需要一个**真实存在**的目录 + 有效标记。
+// ⚠️ 环境（盘符 / 剩余空间）**保持真实**（`AppEnvironment.detect()`）——
+// `AGENTS.md` §4.3「启动流程的两个注入点」明确：注入环境会把「真实机器」变成假的。
+// 场景 2 的「配置过且可用」因此需要一个**真实存在**的目录 + 有效标记。
+//
+// ⚠️ **由此：首启究竟弹哪个框是「机器相关」的**（§审查 OBS-11 前半起）：
+// 默认位置没数据 ⇒ 欢迎向导；有数据（重装 / 解压到别处 / 双击第二份 exe）
+// ⇒ 先问「继续使用 / 选一个新位置」。开发机本机就在用，默认位置恰恰**有数据** ——
+// 所以：① 「无配置」的用例只断言「弹了对话框 + 没乱调选择器」，不假设是哪种；
+// ② 需要「**一定**弹『选择数据存放位置』」的用例改成**配置驱动**（配置指向一个
+// 不存在的目录 ⇒ `recoverLocation`，与机器无关）；③ 六个场景的**精确**判定由
+// `bootstrap_test` 覆盖（纯 Dart，机器可造）。
 //
 // 场景 6/7/8 是 §AE 备份接线：**空库不备份**（遗漏 1）、**自动备份失败要
 // 静默但在概览页可见**（AE-3 两层机制）、**正常链路启动即出一份**（AE-3）。
 //
 // 运行：`flutter test`（本机由用户执行）
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -53,9 +62,13 @@ void main() {
   Widget app({
     Future<String?> Function()? pickDirectory,
     AppConfigStore? configStore,
+    String? defaultDataDirectory,
   }) => ShensuanziApp(
     pickDirectory: pickDirectory ?? () async => null,
     configStore: configStore ?? store,
+    // §BR·补 2 裁定 方案 B：只注入「机器给的默认位置」**一个值**
+    //（`null` = 不注入 ⇒ 走真实机器的默认值）
+    defaultDataDirectory: defaultDataDirectory,
   );
 
   // ---------------------------------------------------------------- 查找器
@@ -74,7 +87,7 @@ void main() {
     matching: find.text('选择数据存放位置'),
   );
 
-  testWidgets('场景 1：没有配置过 → 弹出「选择数据存放位置」对话框', (WidgetTester tester) async {
+  testWidgets('场景 1：没有配置过 → 弹出对话框，且不乱调选择器', (WidgetTester tester) async {
     var picked = 0;
     await tester.pumpWidget(
       app(pickDirectory: () async {
@@ -84,9 +97,94 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // 首启两种形态（见文件头注释）**都该弹对话框、都不该调选择器** ——
+    // widget 层只钉这两条；精确到哪种由 `bootstrap_test` 的六场景覆盖
+    expect(dialog, findsOneWidget);
+    expect(picked, 0, reason: '还没点任何按钮，不该调选择器');
+  });
+
+  // ---- §BR·补 2 裁定 方案 B：注入 `defaultDataDirectory` **一个值**，
+  //      让「首启两条分支」都能**确定性**覆盖（不再依赖开发机默认位置有没有数据）----
+
+  testWidgets('场景 1b：注入的默认位置**为空** ⇒ 走欢迎向导（Case 1）', (
+    WidgetTester tester,
+  ) async {
+    // 注入「机器给的默认位置」一个值 —— 空目录 ⇒ 没有标记 ⇒ welcome
+    final String injected = p.join(box.path, '注入的默认位置');
+    Directory(injected).createSync(recursive: true);
+
+    await tester.pumpWidget(app(defaultDataDirectory: injected));
+    await tester.pumpAndSettle();
+
+    expect(dialog, findsOneWidget);
+    expect(dialogTitle, findsOneWidget, reason: '空位置 ⇒ 正常首启（带欢迎语）');
+    expect(
+      find.textContaining(injected),
+      findsWidgets,
+      reason: '对话框里预填的就是注入的那个位置',
+    );
+  });
+
+  testWidgets('场景 1c：注入的默认位置**已有数据** ⇒ 先问一句（Case 2 / OBS-11 前半）', (
+    WidgetTester tester,
+  ) async {
+    final String injected = p.join(box.path, '注入的默认位置');
+    Directory(injected).createSync(recursive: true);
+    DataMarker.write(injected, schemaVersion: 1, now: 1700000000000);
+    Db.open(p.join(injected, AppBootstrap.databaseFileName)).close();
+
+    var picked = 0;
+    await tester.pumpWidget(
+      app(
+        defaultDataDirectory: injected,
+        pickDirectory: () async {
+          picked++;
+          return null;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('这个位置已经有神算子的数据'),
+      findsOneWidget,
+      reason: '§审查 OBS-11 前半：不问就直接点「开始使用」会挂到同一份数据上',
+    );
+    expect(find.textContaining(injected), findsOneWidget, reason: '要说清是哪个位置');
+    expect(dialogTitle, findsNothing, reason: '弹的是询问，不是「选择数据存放位置」');
+    expect(picked, 0);
+
+    // 「继续使用已有数据」⇒ 复用那份数据（**真的读盘**：标记是测试真写下去的）
+    await tester.tap(find.text('继续使用已有数据'));
+    await tester.pumpAndSettle();
+    expect(store.load().dataDirectory, injected);
+  });
+
+  testWidgets('场景 1d：注入的默认位置有数据 → 选「新位置」⇒ 弹选位置对话框，原数据不动', (
+    WidgetTester tester,
+  ) async {
+    final String injected = p.join(box.path, '注入的默认位置');
+    Directory(injected).createSync(recursive: true);
+    DataMarker.write(injected, schemaVersion: 1, now: 1700000000000);
+    Db.open(p.join(injected, AppBootstrap.databaseFileName)).close();
+
+    await tester.pumpWidget(app(defaultDataDirectory: injected));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('选一个新位置'));
+    await tester.pumpAndSettle();
+
     expect(dialog, findsOneWidget);
     expect(dialogTitle, findsOneWidget);
-    expect(picked, 0, reason: '还没点「更改」，不该调选择器');
+    expect(
+      find.textContaining('不会被删掉'),
+      findsOneWidget,
+      reason: '要说清「那份数据不会被动」，否则用户以为被覆盖了',
+    );
+    expect(
+      File(p.join(injected, AppBootstrap.databaseFileName)).existsSync(),
+      isTrue,
+      reason: '原数据一个字节都不动',
+    );
   });
 
   testWidgets('场景 2：配置过且目录可用 → 不弹对话框，直接进主界面', (WidgetTester tester) async {
@@ -112,6 +210,9 @@ void main() {
 
   testWidgets('场景 3：选了目录 → 对话框消失，进入主界面', (WidgetTester tester) async {
     final String dataDir = p.join(box.path, 'data');
+    // 造**位置失效**（配置指向一个不存在的目录）⇒ **必然**弹「选择数据存放位置」，
+    // 与机器上默认位置有没有数据无关（见文件头注释）
+    store.save(AppConfig(dataDirectory: p.join(box.path, '搬走了')));
     await tester.pumpWidget(app(pickDirectory: () async => dataDir));
     await tester.pumpAndSettle();
 
@@ -131,6 +232,8 @@ void main() {
   });
 
   testWidgets('场景 4：取消（选择器返回 null）→ 对话框仍在，不崩', (WidgetTester tester) async {
+    // 位置失效 ⇒ **一定**弹选位置对话框（不受机器默认位置影响）
+    store.save(AppConfig(dataDirectory: p.join(box.path, '搬走了')));
     await tester.pumpWidget(app(pickDirectory: () async => null));
     await tester.pumpAndSettle();
 
@@ -147,6 +250,8 @@ void main() {
   testWidgets('场景 5：库打不开 → 错误页（不是主界面）', (WidgetTester tester) async {
     // 造一个「标记有效、但数据库文件是坏的」目录，再选它
     final String dataDir = p.join(box.path, 'data');
+    // 位置失效 ⇒ **一定**弹选位置对话框（首启形态与机器默认位置无关）
+    store.save(AppConfig(dataDirectory: p.join(box.path, '搬走了')));
     Directory(dataDir).createSync(recursive: true);
     DataMarker.write(dataDir, schemaVersion: 1, now: 1700000000000);
     // 把数据库文件写成一个非法 SQLite 文件（非空、但不是有效库）
@@ -167,6 +272,118 @@ void main() {
 
     expect(dialog, findsNothing);
     expect(find.textContaining('数据文件打不开'), findsOneWidget);
+  });
+
+  testWidgets('场景 5b：配置里的目录还在、只是库损坏 → **直接错误页**（不弹首启向导）', (
+    WidgetTester tester,
+  ) async {
+    // 真机场景（2026-10-05）：配置指向 `D://fed`，目录与标记都好，
+    // 只是库文件被弄坏了。修复前这里会弹「选择数据存放位置」——
+    // 用户一点，`config.json` 就被默认路径覆盖，原目录**再也切不回去**。
+    final String dataDir = p.join(box.path, 'data');
+    Directory(dataDir).createSync(recursive: true);
+    DataMarker.write(dataDir, schemaVersion: 1, now: 1700000000000);
+    File(p.join(dataDir, AppBootstrap.databaseFileName)).writeAsStringSync(
+      '这不是一个有效的 SQLite 数据库',
+    );
+    store.save(AppConfig(dataDirectory: dataDir));
+
+    var picked = 0;
+    await tester.pumpWidget(
+      app(pickDirectory: () async {
+        picked++;
+        return null;
+      }),
+    );
+    await tester.pumpAndSettle();
+
+    expect(dialog, findsNothing, reason: '库坏 ≠ 第一次启动（§审查 2026-10-05）');
+    expect(find.textContaining('数据文件打不开'), findsOneWidget);
+    expect(
+      find.textContaining(dataDir),
+      findsOneWidget,
+      reason: '要说清**哪个目录**打不开 —— 用户才知道去哪修',
+    );
+    expect(find.text('重试'), findsOneWidget);
+    expect(find.text('换一个文件夹'), findsOneWidget);
+    expect(picked, 0, reason: '没点按钮就不该调选择器');
+
+    // 点「重试」：库还没修好 ⇒ 仍停在错误页（不越走越乱，也不弹向导）
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(dialog, findsNothing);
+    expect(find.textContaining('数据文件打不开'), findsOneWidget);
+    expect(picked, 0, reason: '「重试」不是「换文件夹」');
+
+    // **配置一个字节都没被动** —— 这正是真机踩到的那个坑
+    expect(
+      store.load().dataDirectory,
+      dataDir,
+      reason: '库打不开时绝不覆盖 config（否则原目录就丢了）',
+    );
+  });
+
+  testWidgets('场景 5c：配置被截断 ⇒ 从原文**抢救**回原位置，直接进主界面（§审查 OBS-15）', (
+    WidgetTester tester,
+  ) async {
+    // 真机最可能的坏法：写到一半断电 ⇒ JSON 截断，但 `data_directory` 那段还在
+    final String dataDir = p.join(box.path, 'data');
+    Directory(dataDir).createSync(recursive: true);
+    DataMarker.write(dataDir, schemaVersion: Schema.version, now: 1700000000000);
+    Db.open(p.join(dataDir, AppBootstrap.databaseFileName)).close(); // 真库
+
+    // 用 jsonEncode 生成**合法**的路径字面量，再手工截断（不手写转义）
+    File(p.join(box.path, 'config.json')).writeAsStringSync(
+      '{\n  "data_directory": ${jsonEncode(dataDir)},\n  "ui_sca',
+    );
+
+    var picked = 0;
+    await tester.pumpWidget(
+      app(pickDirectory: () async {
+        picked++;
+        return null;
+      }),
+    );
+    await tester.pumpAndSettle();
+
+    // 抢救成功 ⇒ 用户**什么都察觉不到**：不弹对话框、直接回主界面
+    expect(dialog, findsNothing, reason: '救回来了就不该打扰用户');
+    expect(find.byType(AppShell), findsOneWidget);
+    expect(picked, 0);
+
+    // 读不懂的原文件要留档（人工退路），但**原件不删**
+    expect(
+      File(p.join(box.path, 'config.json.corrupt')).existsSync(),
+      isTrue,
+      reason: '留一份给人工看',
+    );
+    expect(
+      File(p.join(box.path, 'config.json')).existsSync(),
+      isTrue,
+      reason: '只是读不懂，不是垃圾 —— 不许删',
+    );
+  });
+
+  testWidgets('场景 5d：位置记着但文件夹没了 ⇒ 不说「第一次启动」，说清「找不到了」', (
+    WidgetTester tester,
+  ) async {
+    final String gone = p.join(box.path, '被搬走了');
+    store.save(AppConfig(dataDirectory: gone));
+
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+
+    expect(dialog, findsOneWidget, reason: '位置用不了 ⇒ 要用户重新指一个');
+    expect(
+      find.text('欢迎使用神算子'),
+      findsNothing,
+      reason: '配过就不能说「第一次启动」（§AG 遗漏 1）',
+    );
+    expect(
+      find.textContaining('上次用的数据文件夹'),
+      findsOneWidget,
+      reason: '光不说谎还不够 —— 要说清原来那个在哪、该怎么办',
+    );
   });
 
   // ---------------------------------------------------------------- §AE 备份接线
@@ -297,6 +514,8 @@ void main() {
     tester.platformDispatcher.textScaleFactorTestValue = 2.0;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
+    // 位置失效 ⇒ 弹选位置对话框（与 200% 缩放叠加，是最容易顶出屏幕的组合）
+    store.save(AppConfig(dataDirectory: p.join(box.path, '搬走了')));
     await tester.pumpWidget(app());
     await tester.pumpAndSettle();
 
@@ -307,7 +526,8 @@ void main() {
       reason: '内容必须可滚动 —— 200% 字号下顶出屏幕 = 用户看不到「开始使用」',
     );
 
-    // 主按钮仍然存在且可点（内容再长也不能把它挤出屏幕）
+    // 标题与主按钮都仍然在（内容再长也不能把它们挤出屏幕）
+    expect(dialogTitle, findsOneWidget);
     expect(find.text('开始使用'), findsOneWidget);
   });
 }

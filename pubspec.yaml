@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.1.0+1
+version: 0.3.0+3
 
 environment:
   sdk: ^3.11.0
@@ -29,6 +29,11 @@ environment:
 # versions available, run `flutter pub outdated`.
 dependencies:
   flutter:
+    sdk: flutter
+
+  # 界面本地化（§BK·一，2026-10-05 用户反馈 1）：日期选择器等 Material
+  # 组件的文字跟随系统语言。SDK 自带（与 Flutter 同版本，无 pub.dev 版本风险）。
+  flutter_localizations:
     sdk: flutter
 
   # The following adds the Cupertino Icons font to your application.
@@ -69,6 +74,11 @@ dependencies:
   # 解析到 11.1.0：SharePlus.instance.share(ShareParams(...)) 新 API；
   # XFile 由本包直接转出（cross_file 不必显式声明）。
   share_plus: ^11.0.0
+
+  # 扫码配对（§BL·三，2026-10-05 裁定 AH-4）。minSdk 要求 21（推荐 24，
+  # 与我们一致 —— 裁定 ⑤ 已验证）；compileSdk 35（我们 36）。默认 bundled
+  # ML Kit（离线可用，不依赖 Google Play 服务 —— 国产机友好，保持默认）。
+  mobile_scanner: ^7.0.0
 
   # 路径拼接（`test/startup_test.dart` 用 `p.join` 拼沙箱路径）。
   # 虽然 `shensuanzi_app` 已经间接带着它，但根测试**直接** `import` 它，

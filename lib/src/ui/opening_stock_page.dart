@@ -85,6 +85,9 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
   }
 
   StocktakeDraft _draft() => StocktakeDraft(
+    // §审查 OBS-09①：备注要说清是「期初建账」还是「重新清点」——
+    // 原来写死成「期初录入」，重新清点出来的单据也跟着这么写
+    isOpening: widget.isFirstTime,
     lines: <StocktakeLineDraft>[
       for (final _RowCtl row in _rows)
         StocktakeLineDraft(

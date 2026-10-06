@@ -1,15 +1,22 @@
-/// 单据列表页（§AC 四 / SC-3、SC-4、SC-6：只读 + 时间范围 + 类型筛选 + 复制单号）。
+/// 单据列表页（§AC 四 / SC-3、SC-6、§审查 2026-10-05）。
 ///
-/// ## 裁定落点
+/// ## 三排筛选键（都可以组合）
 ///
-/// - **SC-3**：默认**最近 30 天**（不是 limit 200 硬切 —— 200 条只覆盖 10 天）；
-///   时间 chips：今天 / 本周 / 本月 / 最近 30 天（默认）/ 全部；「全部」档
-///   提示「只显示最近 200 条」
-/// - **SC-4**：行**整行可点 = 复制单号**（SnackBar 反馈）—— 把「死路」变成
-///   有副作用的动作；底部灰字说明详情开发中
+/// 1. **时间**（单选）：今天 / 本周 / 本月 / 最近 30 天（默认）/ 自定义 / 全部。
+///    「自定义」弹日期范围选择器；「全部」档提示「只显示最近 200 条」（SC-3）
+/// 2. **类型**（**多选**，空 = 全部）：采购入库 / 店内销售 / 送货 / 销售退货 /
+///    采购退货 / 收款 / 付款。⚠️ **只列已实现**的类型 —— 盘点 / 调拨 v1 不做，
+///    摆出来点了没数据会让用户以为「软件坏了」
+/// 3. **状态**（**多选**，空 = 不限）：未结清 / 已作废 / 待签收。
+///    「未结清」= 金额 − 已核销 − 退货冲减 > 0（与详情页「未收」同一口径）
+///
 /// - **SC-6**：对方名列（`listDocuments` JOIN parties）；散客/散采显示文字而非空白
-/// - 付款核销 / 退货入口**不在本阶段**（§Z 七：随核销阶段）
+/// - 行**整行可点 = 打开详情**（1a 起；复制单号已挪到详情页右上角）
+/// - **派生单据**（自动生成的收付款单、拒收产生的整单退货单）默认不进列表；
+///   用户明确按这些类目筛时才放开 —— 见 `DocumentDao._summaries`
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
@@ -24,6 +31,7 @@ enum _TimeRange {
   thisWeek('本周'),
   thisMonth('本月'),
   last30('最近 30 天'),
+  custom('自定义'),
   all('全部');
 
   const _TimeRange(this.label);
@@ -65,23 +73,92 @@ class DocumentsPage extends StatefulWidget {
 
 class _DocumentsPageState extends State<DocumentsPage> {
   _TimeRange _range = _TimeRange.last30;
-  DocType? _typeFilter;
 
-  /// 各档位的起始时间（毫秒）；「全部」返回 `null`
-  int? _sinceMillis(_TimeRange range) {
+  /// 自定义时间范围（只在 `_range == _TimeRange.custom` 且选过之后有效）
+  DateTimeRange? _customRange;
+
+  /// 类型筛选 —— **多选**（空 = 全部）。可同时看「送货 + 退货」。
+  final Set<DocType> _types = <DocType>{};
+
+  /// 状态视图筛选 —— **多选**（空 = 不限）：未结清 / 已作废 / 待签收。
+  final Set<DocumentStatusView> _statusViews = <DocumentStatusView>{};
+
+  /// 类型 chips 的顺序与范围（§审查 2026-10-05）。
+  ///
+  /// 只列**已实现**的类型：盘点 / 调拨 v1 不做，摆出来点了没数据会让用户
+  /// 以为「软件坏了」（`docs/ui_principles.md` §二）。
+  static const List<DocType> _typeChoices = <DocType>[
+    DocType.purchase,
+    DocType.sale,
+    DocType.delivery,
+    DocType.saleReturn,
+    DocType.purchaseReturn,
+    DocType.receipt,
+    DocType.payment,
+  ];
+
+  /// **派生单据**的类目：自动生成的收付款单、拒收产生的整单退货单。
+  /// 默认不进列表（否则「一笔生意两条记录」）；用户**明确按这些类目筛选**
+  /// 时才放开 —— 否则选了「销售退货」会是一片空白。
+  static const Set<DocType> _derivedCategories = <DocType>{
+    DocType.receipt,
+    DocType.payment,
+    DocType.saleReturn,
+    DocType.purchaseReturn,
+  };
+
+  bool get _includeDerived => _types.any(_derivedCategories.contains);
+
+  /// 时间起点（毫秒）；「全部」/ 自定义但没选过 → `null`
+  int? get _sinceMillis {
     final DateTime now = DateTime.now();
     final DateTime startOfToday = DateTime(now.year, now.month, now.day);
-    return switch (range) {
+    return switch (_range) {
       _TimeRange.today => startOfToday.millisecondsSinceEpoch,
       _TimeRange.thisWeek => startOfToday
           .subtract(Duration(days: now.weekday - 1))
           .millisecondsSinceEpoch,
-      _TimeRange.thisMonth => DateTime(now.year, now.month, 1).millisecondsSinceEpoch,
-      _TimeRange.last30 => startOfToday
-          .subtract(const Duration(days: 30))
-          .millisecondsSinceEpoch,
+      _TimeRange.thisMonth =>
+        DateTime(now.year, now.month, 1).millisecondsSinceEpoch,
+      _TimeRange.last30 =>
+        startOfToday.subtract(const Duration(days: 30)).millisecondsSinceEpoch,
+      _TimeRange.custom => _customRange == null
+          ? null
+          : DateTime(
+              _customRange!.start.year,
+              _customRange!.start.month,
+              _customRange!.start.day,
+            ).millisecondsSinceEpoch,
       _TimeRange.all => null,
     };
+  }
+
+  /// 时间终点（毫秒，**开区间**）。只有自定义范围有上界 ——
+  /// 选到 10-05 的含义是「到 10-05 当天结束」，所以传次日 00:00。
+  int? get _untilMillis {
+    if (_range != _TimeRange.custom || _customRange == null) return null;
+    final DateTime end = _customRange!.end;
+    return DateTime(
+      end.year,
+      end.month,
+      end.day,
+    ).add(const Duration(days: 1)).millisecondsSinceEpoch;
+  }
+
+  /// 选自定义范围（取消 ⇒ 保持原来的档位，不把用户丢进空列表）
+  Future<void> _pickCustomRange() async {
+    final DateTime now = DateTime.now();
+    final DateTimeRange? picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 1),
+      initialDateRange: _customRange,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _customRange = picked;
+      _range = _TimeRange.custom;
+    });
   }
 
   /// 打开单据详情（1a 起：行点击 = 看详情；**复制单号挪到详情页**）。
@@ -111,11 +188,18 @@ class _DocumentsPageState extends State<DocumentsPage> {
     final ThemeData theme = Theme.of(context);
     // ⚠️ 时间起点**只算一次**：列表与导出必须用同一个值，
     // 否则「列表显示 30 天、导出却从 30 天前那一秒算起」这类缝隙就出来了
-    final int? since = _sinceMillis(_range);
+    final int? since = _sinceMillis;
+    final int? until = _untilMillis;
+    // §审查 2026-10-05：退货冲减额由 `_summaries` 一次 JOIN 带出（`returnedCents`）
+    // —— 不再单独发一条批量查询
     final List<DocumentSummary> rows = widget.dao.listDocuments(
-      type: _typeFilter,
+      types: _types,
+      statusViews: _statusViews,
       sinceMillis: since,
+      untilMillis: until,
       limit: 200,
+      // 明确按「退货 / 收付款」类目筛时，把派生单据放出来（否则一片空白）
+      includeDerived: _includeDerived,
     );
 
     return Scaffold(
@@ -143,8 +227,11 @@ class _DocumentsPageState extends State<DocumentsPage> {
                           // AF-5：导出走**独立查询**（无 200 上限），
                           // 筛选条件与列表同一份（`since` 是同一个局部变量）
                           widget.dao.listDocumentsForExport(
-                            type: _typeFilter,
+                            types: _types,
+                            statusViews: _statusViews,
                             sinceMillis: since,
+                            untilMillis: until,
+                            includeDerived: _includeDerived,
                           ),
                         ),
                         from: since == null
@@ -156,7 +243,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
               ),
               const SizedBox(height: 4),
               Text(
-                '点一行看单据详情；收款、付款、复制单号都在详情页里。',
+                // §审查 OBS-10：排序规则原来只写在代码里 —— 用户看到
+                // 「SK-005 排在 SH-002 前面」会以为软件乱排。说清楚就好。
+                '点一行看单据详情；收款、付款、复制单号都在详情页里。\n'
+                '最新的排在最上面：先按「单据日期」，同一天里按「录入时间」倒序。',
                 style: TextStyle(
                   height: 1.6,
                   color: theme.textTheme.bodySmall?.color,
@@ -164,36 +254,73 @@ class _DocumentsPageState extends State<DocumentsPage> {
               ),
               const SizedBox(height: 12),
 
-              // 时间范围 chips（SC-3）
+              // 时间范围 chips（SC-3 + §审查 2026-10-05 的「自定义」）
               Wrap(
                 spacing: 8,
                 children: <Widget>[
                   for (final _TimeRange range in _TimeRange.values)
                     ChoiceChip(
-                      label: Text(range.label),
+                      key: Key('doc-range-${range.name}'),
+                      // 自定义选过之后，chip 上直接印出这段范围
+                      label: Text(
+                        range == _TimeRange.custom && _customRange != null
+                            ? '${formatDate(_customRange!.start.millisecondsSinceEpoch)}'
+                                  '~'
+                                  '${formatDate(_customRange!.end.millisecondsSinceEpoch)}'
+                            : range.label,
+                      ),
                       selected: _range == range,
                       onSelected: (bool selected) {
                         if (!selected) return;
-                        setState(() => _range = range);
+                        if (range == _TimeRange.custom) {
+                          // 日期范围选择器要 await —— 不能在 setState 里做
+                          unawaited(_pickCustomRange());
+                        } else {
+                          setState(() => _range = range);
+                        }
                       },
                     ),
                 ],
               ),
-              // 类型 chips
+              const SizedBox(height: 8),
+              // 类型 chips —— **多选**（§审查 2026-10-05：4 类不够用，
+              // 补上送货与两种退货；可同时选多个）
               Wrap(
                 spacing: 8,
                 children: <Widget>[
-                  for (final DocType type in const <DocType>[
-                    DocType.purchase,
-                    DocType.sale,
-                    DocType.receipt,
-                    DocType.payment,
-                  ])
-                    ChoiceChip(
+                  for (final DocType type in _typeChoices)
+                    FilterChip(
+                      key: Key('doc-type-${type.wire}'),
                       label: Text(type.label),
-                      selected: _typeFilter == type,
+                      selected: _types.contains(type),
                       onSelected: (bool selected) => setState(() {
-                        _typeFilter = selected ? type : null;
+                        if (selected) {
+                          _types.add(type);
+                        } else {
+                          _types.remove(type);
+                        }
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // 状态 chips —— **多选**（空 = 不限）。「未结清」= 金额 − 已核销 −
+              // 退货冲减 > 0，与详情页的「未收」同一个口径。
+              Wrap(
+                spacing: 8,
+                children: <Widget>[
+                  for (final DocumentStatusView view
+                      in DocumentStatusView.values)
+                    FilterChip(
+                      key: Key('doc-status-${view.name}'),
+                      label: Text(view.label),
+                      selected: _statusViews.contains(view),
+                      onSelected: (bool selected) => setState(() {
+                        if (selected) {
+                          _statusViews.add(view);
+                        } else {
+                          _statusViews.remove(view);
+                        }
                       }),
                     ),
                 ],
@@ -232,6 +359,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                         _DocumentRow(
                           key: Key('doc-row-${rows[i].document.id}'),
                           entry: rows[i],
+                          returnedCents: rows[i].returnedCents,
                           onTap: widget.settlements == null
                               ? null
                               : () => _openDetail(rows[i].document.id),
@@ -250,9 +378,17 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
 /// 单据列表里的一行（1a 起：整行可点 = **打开详情**；复制单号在详情页）
 class _DocumentRow extends StatelessWidget {
-  const _DocumentRow({super.key, required this.entry, this.onTap});
+  const _DocumentRow({
+    super.key,
+    required this.entry,
+    required this.returnedCents,
+    this.onTap,
+  });
 
   final DocumentSummary entry;
+
+  /// 该单**已发生的退货冲减额**（分）—— 真实未收的第三项（§审查 BUG-04）
+  final int returnedCents;
 
   /// `null` = 不可点（没接核销服务 —— 与其他可选服务同款判定）
   final VoidCallback? onTap;
@@ -267,8 +403,17 @@ class _DocumentRow extends StatelessWidget {
     final String party = documentPartyLabel(entry.partyName, doc.docType);
     // 赊账未结清 → 一眼看出「这张还欠钱」（比状态词直接）。
     // 收付款单自身不显示（它**就是**那笔钱）。
-    final int unsettled = doc.totalAmount - doc.paidAmount;
+    // §审查 BUG-04：真实未收 = 金额 − 已核销 − 退货冲减
+    final int unsettled = doc.totalAmount - doc.paidAmount - returnedCents;
+    // §审查 BUG-05：已作废（拒收）不显示「未收」—— 不对着废单收款
+    // §审查 OBS-07：**退货单是冲减方**，没有「未收」这个概念
+    //（它天生"没收到钱"：退货就是把欠款冲掉，不是又欠了一笔）
+    final bool isReturnDoc =
+        doc.docType == DocType.saleReturn ||
+        doc.docType == DocType.purchaseReturn;
     final bool showUnsettled = unsettled > 0 &&
+        !isReturnDoc &&
+        doc.status != DocStatus.cancelled &&
         doc.docType != DocType.receipt &&
         doc.docType != DocType.payment;
     final String unsettledVerb =
@@ -334,7 +479,10 @@ class _DocumentRow extends StatelessWidget {
                 Text(
                   // ⚠️ 走共用词汇表（`docStatusLabel`）：以前这里是内联三元，
                   //    非「已结清」非「在途」时**直接印英文 wire 值**（`confirmed`）
-                  docStatusLabel(doc.status),
+                  // §审查 BUG-04：状态展示用真实未收判定
+                  docStatusLabel(
+                    SettlementService.displayStatus(doc, unsettled),
+                  ),
                   style: TextStyle(
                     height: 1.6,
                     color: theme.textTheme.bodySmall?.color,

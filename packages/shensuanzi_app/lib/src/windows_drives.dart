@@ -44,7 +44,12 @@ const int winDriveRamdisk = 6;
 
 /// 一块盘的**原始 Win32 事实**（未经领域映射 —— 那是 `environment.dart` 的事）。
 class RawDrive {
-  const RawDrive({required this.letter, required this.type, this.freeBytes});
+  const RawDrive({
+    required this.letter,
+    required this.type,
+    this.freeBytes,
+    this.volumeLabel,
+  });
 
   /// 大写盘符，如 `D`（不含冒号与反斜杠）
   final String letter;
@@ -55,8 +60,16 @@ class RawDrive {
   /// 剩余字节；`null` = 没查（**远程盘**）或查不到
   final int? freeBytes;
 
+  /// 卷标（用户在「此电脑」里给盘起的名字，如「仓库」）；
+  /// `null` = 没查（**远程盘**）、没起名或查不到。
+  ///
+  /// 为什么要它（§BK·二）：**让用户认得出「这是我的哪块盘」** ——
+  /// 「E: 盘」对用户是抽象的，「E: 盘（卷标「仓库」）」不是。
+  final String? volumeLabel;
+
   @override
-  String toString() => 'RawDrive($letter:, type=$type, free=$freeBytes)';
+  String toString() =>
+      'RawDrive($letter:, type=$type, free=$freeBytes, label=$volumeLabel)';
 }
 
 /// 枚举本机的盘符与类型（+ 本地盘的剩余空间）。
@@ -74,11 +87,13 @@ List<RawDrive> enumerateWindowsRawDrives() {
     if (root == nullptr) continue; // 分配失败：跳过这块盘，不影响其它盘
     try {
       final int type = k.getDriveType(root);
-      // ⚠️ 只给**本地**盘查剩余空间 —— 远程盘一查就触网（见文件头）
-      final int? free = (type == winDriveFixed || type == winDriveRemovable)
-          ? _freeBytesOf(k, root)
-          : null;
-      out.add(RawDrive(letter: letter, type: type, freeBytes: free));
+      // ⚠️ 卷标与剩余空间都**只给本地盘**查 —— 远程盘一查就触网（见文件头）
+      final bool local = type == winDriveFixed || type == winDriveRemovable;
+      final int? free = local ? _freeBytesOf(k, root) : null;
+      final String? label = local ? _volumeLabelOf(k, root) : null;
+      out.add(
+        RawDrive(letter: letter, type: type, freeBytes: free, volumeLabel: label),
+      );
     } finally {
       k.localFree(root.cast<Uint8>());
     }
@@ -103,6 +118,7 @@ class _Kernel32 {
     this.getLogicalDrives,
     this.getDriveType,
     this.getDiskFreeSpaceEx,
+    this.getVolumeInformation,
     this.localAlloc,
     this.localFree,
   );
@@ -117,6 +133,9 @@ class _Kernel32 {
       lib.lookupFunction<_GetDiskFreeSpaceExNative, _GetDiskFreeSpaceEx>(
         'GetDiskFreeSpaceExW',
       ),
+      lib.lookupFunction<_GetVolumeInformationNative, _GetVolumeInformation>(
+        'GetVolumeInformationW',
+      ),
       lib.lookupFunction<_LocalAllocNative, _LocalAlloc>('LocalAlloc'),
       lib.lookupFunction<_LocalFreeNative, _LocalFree>('LocalFree'),
     );
@@ -125,6 +144,7 @@ class _Kernel32 {
   final _GetLogicalDrives getLogicalDrives;
   final _GetDriveType getDriveType;
   final _GetDiskFreeSpaceEx getDiskFreeSpaceEx;
+  final _GetVolumeInformation getVolumeInformation;
   final _LocalAlloc localAlloc;
   final _LocalFree localFree;
 }
@@ -144,6 +164,29 @@ typedef _GetDiskFreeSpaceExNative =
     );
 typedef _GetDiskFreeSpaceEx =
     int Function(Pointer<Uint16>, Pointer<Uint64>, Pointer<Uint64>, Pointer<Uint64>);
+
+typedef _GetVolumeInformationNative =
+    Int32 Function(
+      Pointer<Uint16>,
+      Pointer<Uint16>,
+      Uint32,
+      Pointer<Uint32>,
+      Pointer<Uint32>,
+      Pointer<Uint32>,
+      Pointer<Uint16>,
+      Uint32,
+    );
+typedef _GetVolumeInformation =
+    int Function(
+      Pointer<Uint16>,
+      Pointer<Uint16>,
+      int,
+      Pointer<Uint32>,
+      Pointer<Uint32>,
+      Pointer<Uint32>,
+      Pointer<Uint16>,
+      int,
+    );
 
 typedef _LocalAllocNative = Pointer<Uint8> Function(Uint32, IntPtr);
 typedef _LocalAlloc = Pointer<Uint8> Function(int, int);
@@ -183,6 +226,39 @@ int? _freeBytesOf(_Kernel32 k, Pointer<Uint16> root) {
     );
     if (ok == 0) return null;
     return out.value;
+  } finally {
+    k.localFree(raw);
+  }
+}
+
+/// 卷标（`GetVolumeInformationW` 的第一个输出，只取名字、其余全传 `null`）。
+///
+/// 没起过名的盘返回 `null`（调用失败与「空卷标」都按没有处理 —— **未知不猜值**）。
+String? _volumeLabelOf(_Kernel32 k, Pointer<Uint16> root) {
+  // MAX_PATH + 1（卷标最长 32 字符，但按 MAX_PATH 给足余量）
+  const int chars = 261;
+  final Pointer<Uint8> raw = k.localAlloc(_lptr, chars * 2);
+  if (raw == nullptr) return null;
+  try {
+    final Pointer<Uint16> name = raw.cast<Uint16>();
+    final int ok = k.getVolumeInformation(
+      root,
+      name,
+      chars,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      0,
+    );
+    if (ok == 0) return null;
+    // 读到 NUL 为止
+    int len = 0;
+    while (len < chars && (name + len).value != 0) {
+      len++;
+    }
+    if (len == 0) return null;
+    return String.fromCharCodes(name.asTypedList(len));
   } finally {
     k.localFree(raw);
   }

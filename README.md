@@ -72,7 +72,7 @@ D:\神算子数据\                     ← 有非系统盘时优先（重装系
 
 ## 当前状态
 
-**版本 0.1.0（第一个可部署版本）** —— 数据格式版本 `schema v3`（v1 / v2 老库自动逐版迁移：v2 补 `package_note` 备注列，v3 补包装换算与让价五列 —— 均无需手工干预，升级前自动备份）。
+**版本 0.3.0（第三个可部署版本）** —— 数据格式版本 `schema v3`（v1 / v2 老库自动逐版迁移：v2 补 `package_note` 备注列，v3 补包装换算与让价五列 —— 均无需手工干预，升级前自动备份）。
 
 ### ✅ 已实现（可以真用了）
 
@@ -93,13 +93,13 @@ D:\神算子数据\                     ← 有非系统盘时优先（重装系
 | 导出 | 商品 / 库存 / 往来方 / 单据 / 流水五处导出 CSV（给会计、给 Excel） |
 | 设置 | 界面缩放五档（含重置）、店名、数据位置、**多设备同步开关** |
 | 帮助 | 「查看完整手册」入口（**18 章全文**）+ 四步上手 + 常见问题 |
+| 退货 | 销售退货 / 客户拒收（送货单整单退回）/ 采购退货；金额按原单累计比例回退，支持立即退款或挂账冲减 |
 
 ### 🚧 开发中
 
 | 功能 | 说明 |
 |---|---|
 | 手机端连过来 | 主机侧**已经能开**（设置页「多设备同步」→ 打开开关 → 手机扫码配对、配对码旁边有主机地址兜底）；手机端**开发中（AH-B）**，目标能力：扫码配对、销售 / 采购 / 送货开单、库存/往来视图（含未同步影响的估算标记）、送货签收 |
-| 退货 | **已实现**：销售退货 / 客户拒收（送货单整单退回）/ 采购退货；金额按原单累计比例回退，支持立即退款或挂账冲减 |
 
 ### 📋 计划
 
@@ -107,6 +107,15 @@ Android 客户端 · 打印单据 · 安装包（当前是便携版）
 
 > 这张表**只讲现在是什么**，不写「下个版本会做什么」——
 > 那是承诺不是现状。排期与设计讨论在 [`docs/`](docs/) 里。
+
+---
+
+## 反馈与联系
+
+- **GitHub Issues（推荐，能贴截图）**：<https://github.com/Schmmmusk/shensuanzi/issues>
+- **邮箱**：cedarandjoy@163.com
+
+提交问题时请附上软件「帮助」页最下方的**版本号**，能更快定位。
 
 ---
 
@@ -166,7 +175,7 @@ repo/
 │   └── src/ui/              # 各页面（判断都在纯 Dart 包里，这里只摆放）
 ├── packages/
 │   ├── shensuanzi_core/     # 纯 Dart：模型 / DAO / 规则引擎 / 同步协议 + SyncClient
-│   ├── shensuanzi_host/     # 纯 Dart：shelf 服务 / SyncServer / 令牌 / 配对数据
+│   ├── shensuanzi_host/     # 纯 Dart：shelf 服务 / SyncServer / 令牌 / 配对二维码数据
 │   └── shensuanzi_app/      # 纯 Dart：数据目录策略 / 配置 / 备份 / 导出 / 日志 / 字体栈
 ├── test/                    # 根 Flutter 应用的 widget 测试
 ├── tool/                    # 仓库根的静态守卫（`import_guard` + 它的自检）
@@ -177,8 +186,8 @@ repo/
 **包边界**（2026-09-25 / 09-26 裁定）：
 
 ```text
-shensuanzi_core        纯 Dart   模型 / DAO / 规则引擎 / 同步协议 / SyncClient
-shensuanzi_host        纯 Dart   shelf / SyncServer / 令牌 / 端口探测 / 配对数据
+shensuanzi_core        纯 Dart   模型 / DAO / 规则引擎 / 同步协议（含配对载荷）/ SyncClient
+shensuanzi_host        纯 Dart   shelf / SyncServer / 令牌 / 端口探测 / 配对二维码数据
 shensuanzi_app         纯 Dart   数据目录 / 配置 / 标记 / 恢复 / 备份 / 导出 / 日志
 Flutter 应用(Windows)  Flutter   UI + 调用 host + app
 Flutter 应用(Android)  Flutter   UI + 调用 core 的 SyncClient（**不依赖 host**）

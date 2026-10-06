@@ -11,6 +11,7 @@
 
 // ignore: unused_import
 import '../test/database_test.dart' as database_test;
+import '../test/pairing_payload_test.dart' as pairing_payload_test;
 // ignore: unused_import
 import '../test/discount_spread_test.dart' as discount_spread_test;
 import '../test/delivery_draft_test.dart' as delivery_draft_test;
@@ -37,7 +38,10 @@ import '../test/return_test.dart' as return_test;
 // ignore: unused_import
 import '../test/rule_engine_test.dart' as rule_engine_test;
 // ignore: unused_import
+import '../test/document_build_test.dart' as document_build_test;
+import '../test/document_sink_test.dart' as document_sink_test;
 import '../test/sale_draft_test.dart' as sale_draft_test;
+import '../test/sync_queue_triage_test.dart' as sync_queue_triage_test;
 // ignore: unused_import
 import '../test/schema_test.dart' as schema_test;
 // ignore: unused_import
@@ -47,6 +51,7 @@ import '../test/settlement_service_test.dart' as settlement_service_test;
 // ignore: unused_import
 import '../test/stocktake_service_test.dart' as stocktake_service_test;
 // ignore: unused_import
+import '../test/stock_delta_test.dart' as stock_delta_test;
 import '../test/sync_client_test.dart' as sync_client_test;
 // ignore: unused_import
 import '../test/util_test.dart' as util_test;
@@ -93,6 +98,7 @@ void main() {
     // test/
     account_draft_test.main,
     database_test.main,
+    pairing_payload_test.main,
     delivery_draft_test.main,
     discount_spread_test.main,
     delivery_test.main,
@@ -106,11 +112,15 @@ void main() {
     return_service_test.main,
     return_test.main,
     rule_engine_test.main,
+    document_build_test.main,
+    document_sink_test.main,
     sale_draft_test.main,
+    sync_queue_triage_test.main,
     schema_test.main,
     settlement_view_test.main,
     settlement_service_test.main,
     stocktake_service_test.main,
+    stock_delta_test.main,
     sync_client_test.main,
     util_test.main,
     // tool/

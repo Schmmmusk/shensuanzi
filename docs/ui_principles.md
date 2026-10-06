@@ -356,6 +356,8 @@ Android 端的同步依赖 Windows 主机先跑起来，所以 **Windows 先做*
 同一条分工也适用于**启动流程**（`lib/src/app.dart`）：判断在
 `DataDirectoryDialogModel` / `AppBootstrap`（纯 Dart，`dart test` 覆盖），
 Flutter 层只剩「什么时候弹、拿到结果之后干什么」。
-而**剩下这一段也有测试**（`test/startup_test.dart`）—— 靠的是**两个注入点**
-`pickDirectory` + `configStore`，其余（环境、数据目录服务、开库）全部走真实路径。
+而**剩下这一段也有测试**（`test/startup_test.dart`）—— 靠的是**三个注入点**
+`pickDirectory` + `configStore` + `defaultDataDirectory`，其余（环境、数据目录服务、开库）
+全部走真实路径。其中 `defaultDataDirectory` 是一个**值**（只在首启场景判定里替换
+「机器给的默认位置」），**不是「机器环境的替身」** —— 参数化 ≠ 假机器，见 §BR·补 2 方案 B。
 见 `docs/reply_review.md` §W。

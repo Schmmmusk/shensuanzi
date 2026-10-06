@@ -11,13 +11,14 @@
 /// ## B1a 的刻意留白（§BH：B3 再细化）
 ///
 /// - 「开单」tab 是**三个入口按钮**（销售 / 采购 / 送货），各自推整屏
-///   现有页面 —— 复用桌面页在手机上可滚可用；B3 做「只进队列」时再整体重设计。
+///   现有页面 —— 复用桌面页在手机上可滚可用；提交走 `QueueSink`（B3b·§CA）。
 /// - 推入的页面套一层 `Scaffold + AppBar`（带返回键）—— 桌面页自身
 ///   不带返回导航，直接推会「进去出不来」。
 library;
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
+import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'app_shell.dart';
 
@@ -54,18 +55,26 @@ class _MobileShellState extends State<MobileShell> {
   int _tab = 0;
 
   /// 把某个 destination 推成**整屏页**（带 AppBar 与返回键）。
+  ///
+  /// ⚠️ 三态条也挂在整屏页上 —— 用户是在**这里**开单的（裁定 ②：
+  /// 保存后三态条要**立即**可见地更新），只在 tab 底下挂会看不见。
   void _openFull(NavDestination destination) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => Scaffold(
           appBar: AppBar(title: Text(destination.label)),
-          body: appShellPage(widget.shell, destination),
+          body: Column(
+            children: <Widget>[
+              _SyncStatusBar(sync: widget.shell.mobileSync, version: widget.shell),
+              Expanded(child: appShellPage(widget.shell, destination)),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  /// 「开单」tab：三个入口（§BH B3 扩展前的过渡形态）。
+  /// 「开单」tab：三个入口（B3 已接入 `QueueSink`：开单入队 → 自动推给电脑）。
   Widget _billingTab(ThemeData theme) => ListView(
     padding: const EdgeInsets.all(16),
     children: <Widget>[
@@ -86,8 +95,8 @@ class _MobileShellState extends State<MobileShell> {
           ),
         ),
       Text(
-        '先在手机上试开单 —— 当前版本在手机本机记账；'
-        '与电脑的自动同步在后续版本开放。',
+        '开单后自动推送到电脑（断网时先记在待同步队列，联网自动补传）——'
+        '先到「我的 → 设置」扫码连接电脑。',
         style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
       ),
     ],
@@ -156,7 +165,16 @@ class _MobileShellState extends State<MobileShell> {
       // SafeArea(top) —— §BH·六 B1c（真机反馈：全面屏状态栏压住内容）：
       // 桌面页没有 AppBar，直接摆会被状态栏盖住 ⇒ 统一让出顶部；
       // bottom 交给 NavigationBar 自己处理（避免双重内边距）
-      body: SafeArea(bottom: false, child: body),
+      body: SafeArea(
+        bottom: false,
+        // 三态条常驻所有 tab 顶部（裁定 ④「顶部常驻」）；明细见 [_SyncStatusBar]
+        child: Column(
+          children: <Widget>[
+            _SyncStatusBar(sync: widget.shell.mobileSync, version: widget.shell),
+            Expanded(child: body),
+          ],
+        ),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (int index) => setState(() => _tab = index),
@@ -167,4 +185,162 @@ class _MobileShellState extends State<MobileShell> {
       ),
     );
   }
+}
+
+/// 同步**三态条**（B3b·裁定 ④⑤）—— 手机壳顶部常驻、可点开看明细。
+///
+/// ## 判定（core 的 `SyncQueueTriage`，UI 只取值不造句）
+///
+/// - **已同步** = 没有 `pending` 和 `failed`（`sent` 不显示 —— 主机已收下）；
+/// - **待同步 N 条** = `pending` 数；**失败 M 条** = `failed` 数，两者**并列**。
+///
+/// ## 为什么桌面没有它
+///
+/// 桌面是主机（`ServiceSink` 永不产生队列条目）—— 不挂它是**减少视觉噪音**，
+/// 不是功能差异。手机壳（本文件）只此一份 ⇒ 天然满足「`if (mobile) 渲染`」，
+/// 不写「`if (桌面) 不渲染`」（前者不容易漏，裁定 ⑤）。
+///
+/// ## 数据什么时候刷新（IO 不进 build）
+///
+/// [version] 每次壳重建（app.dart `setState`）都换新 `AppShell` 实例，
+/// 以**实例身份**当版本号：「提交成功 / 立即同步完成 / 自动推送结束」都会触发
+/// app.dart 重建 ⇒ 这里 `didUpdateWidget` 重查一次队列计数。
+class _SyncStatusBar extends StatefulWidget {
+  const _SyncStatusBar({required this.sync, required this.version});
+
+  /// 手机端同步服务（持镜像库）。`null` = 装配没给（摆放层测试）⇒ 不显示。
+  final MobileSyncService? sync;
+
+  /// 刷新版本号（用 `AppShell` 实例身份）。
+  final Object version;
+
+  @override
+  State<_SyncStatusBar> createState() => _SyncStatusBarState();
+}
+
+class _SyncStatusBarState extends State<_SyncStatusBar> {
+  SyncQueueTriage? _triage;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_SyncStatusBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.version, widget.version)) _load();
+  }
+
+  void _load() {
+    final MobileSyncService? sync = widget.sync;
+    if (sync == null) return;
+    try {
+      // 首次会建空镜像库 —— 空队列 =「已同步」，诚实
+      setState(() => _triage = SyncQueueDao(sync.openMirror()).counts());
+    } catch (_) {
+      // 镜像打不开就不显示这一行 —— 三态条是辅助信息，不能把壳挡死
+      setState(() => _triage = null);
+    }
+  }
+
+  Future<void> _showDetail() async {
+    final SyncQueueTriage? triage = _triage;
+    final MobileSyncService? sync = widget.sync;
+    if (triage == null || triage.isSynced || sync == null) return;
+    final SyncQueueDao dao = SyncQueueDao(sync.openMirror());
+    final List<SyncQueueEntry> pending = dao.withStatus(SyncQueueStatus.pending);
+    final List<SyncQueueEntry> failed = dao.withStatus(SyncQueueStatus.failed);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (BuildContext sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: <Widget>[
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                '同步队列',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+            ),
+            for (final SyncQueueEntry entry in pending)
+              ListTile(
+                leading: const Icon(Icons.schedule_outlined),
+                title: Text(_docLabel(entry), style: const TextStyle(height: 1.4)),
+                subtitle: const Text(
+                  '待同步 —— 联网后自动推给电脑',
+                  style: TextStyle(height: 1.4),
+                ),
+              ),
+            for (final SyncQueueEntry entry in failed)
+              ListTile(
+                leading: Icon(
+                  Icons.error_outline,
+                  color: Theme.of(sheetContext).colorScheme.error,
+                ),
+                title: Text(_docLabel(entry), style: const TextStyle(height: 1.4)),
+                subtitle: Text(
+                  '推送没成功（${entry.lastError ?? '原因不明'}）—— '
+                  '到「我的 → 设置」点「立即同步」再试',
+                  style: const TextStyle(height: 1.4),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final SyncQueueTriage? triage = _triage;
+    if (triage == null) return const SizedBox.shrink();
+
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final String label = triage.isSynced
+        ? '已同步'
+        : <String>[
+            if (triage.pendingCount > 0) '待同步 ${triage.pendingCount} 条',
+            if (triage.failedCount > 0) '失败 ${triage.failedCount} 条',
+          ].join(' · ');
+    // 红色只留给错误（ui_principles §二）；待同步用主色，已同步用弱化色
+    final Color color = triage.failedCount > 0
+        ? colors.error
+        : triage.pendingCount > 0
+        ? colors.primary
+        : colors.outline;
+
+    return Align(
+      alignment: Alignment.topRight,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(0, 4, 8, 0),
+        child: Material(
+          color: colors.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: _showDetail,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              child: Text(label, style: TextStyle(fontSize: 12, color: color)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 队列条目的展示名：wire payload 里的**占位单号**（`待同步-…`）；
+/// 取不到再退回实体 id 前缀（不该发生，防御）。
+String _docLabel(SyncQueueEntry entry) {
+  final Object? document = entry.payload['document'];
+  if (document is Map) {
+    final Object? docNo = document['doc_no'];
+    if (docNo is String && docNo.isNotEmpty) return docNo;
+  }
+  return '单据 ${entry.entityId.length > 8 ? entry.entityId.substring(0, 8) : entry.entityId}…';
 }

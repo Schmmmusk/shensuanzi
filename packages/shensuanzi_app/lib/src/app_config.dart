@@ -126,4 +126,75 @@ class AppConfigStore {
   void clear() {
     if (file.existsSync()) file.deleteSync();
   }
+
+  /// 配置文件**当前是什么状态**（§审查 OBS-15）。
+  ///
+  /// ⚠️ 为什么不能只看 `load().dataDirectory == null`：那会把
+  /// 「**从没配过**（真·第一次启动）」与「**配过、但文件坏了 / 字段没了**」
+  /// 混成一件事 —— 后者对用户说「这是第一次启动」是**撒谎**，
+  /// 而且会让他在惊慌里随便选个位置，把原来那个还完好的数据目录丢在一边。
+  AppConfigLoadStatus status() {
+    if (!file.existsSync()) return AppConfigLoadStatus.absent;
+    return load().dataDirectory == null
+        ? AppConfigLoadStatus.locationLost
+        : AppConfigLoadStatus.ok;
+  }
+
+  /// 从**原始文本**里抢救 `data_directory`（§审查 OBS-15）。
+  ///
+  /// 为什么能救：配置损坏多半是「写到一半断电」⇒ JSON 截断，但
+  /// `"data_directory": "D:////fed"` 这一小段往往**还在**。
+  /// 救回来就能自动回到用户原来的数据，不必让他自己回忆路径。
+  ///
+  /// 用 `jsonDecode` 反转义（Windows 路径里的反斜杠是 `\\`）——
+  /// 自己写 unescape 容易漏 case。解析不出来就当没救到（返回 `null`）。
+  String? salvageDataDirectory() {
+    try {
+      if (!file.existsSync()) return null;
+      final String? raw = _dataDirectoryPattern
+          .firstMatch(file.readAsStringSync())
+          ?.group(1);
+      if (raw == null) return null;
+      final Object? decoded = jsonDecode('"$raw"');
+      if (decoded is! String) return null;
+      final String trimmed = decoded.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 把**读不懂**的配置文件另存为 `config.json.corrupt`（§审查 OBS-15）。
+  ///
+  /// - **不删原件**：我们只是读不懂它，不代表它是垃圾
+  /// - 已经有 `.corrupt` 就不覆盖（不堆积；**第一份**最有诊断价值）
+  /// - 任何失败都吞掉：留档是辅助动作，绝不能因此拦人启动
+  void preserveCorruptCopy() {
+    try {
+      if (!file.existsSync()) return;
+      final File copy = File('${file.path}.corrupt');
+      if (copy.existsSync()) return;
+      copy.writeAsStringSync(file.readAsStringSync());
+    } catch (_) {
+      // 见上：留档失败不影响启动
+    }
+  }
+
+  /// `"data_directory"` 后面那个 JSON 字符串（转义感知）。
+  static final RegExp _dataDirectoryPattern = RegExp(
+    r'"data_directory"\s*:\s*"((?:[^"\\]|\\.)*)"',
+  );
+}
+
+/// 配置文件的读取状态（§审查 OBS-15）。
+enum AppConfigLoadStatus {
+  /// 文件**不存在** ⇒ 真·第一次启动（可以放心说「欢迎使用」）
+  absent,
+
+  /// 文件在，但**位置读不出来**（JSON 坏了 / 字段缺失或类型不对）
+  /// ⇒ 数据没丢，只是软件记不住它在哪了 —— **不能说「第一次启动」**
+  locationLost,
+
+  /// 正常读到位置
+  ok,
 }

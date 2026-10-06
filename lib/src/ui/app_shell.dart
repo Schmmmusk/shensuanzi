@@ -42,7 +42,15 @@ class AppShell extends StatefulWidget {
     this.purchases,
     this.sales,
     this.deliveries,
+    this.documentSink,
+    this.onDocumentSubmitted,
+    this.stockDelta,
+    this.readOnlyMasterData = false,
     this.returns,
+    this.onMigrateData,
+    this.mobileSync,
+    this.onScanPair,
+    this.onSyncNow,
     this.accounts,
     this.parties,
     this.queries,
@@ -84,8 +92,40 @@ class AppShell extends StatefulWidget {
   /// 批次 1b —— 规则早就在 core 里（RULE-003），本批次只补入口。
   final DeliveryService? deliveries;
 
+  /// 开单**提交出口**（B3b·§CA）：三个开单页只对它编程，
+  /// **不出现「是不是客户端」的分支**。桌面 = `ServiceSink`（落库+规则，
+  /// 与直连逐字同行为）；手机 = `QueueSink`（校验 → 入队）。
+  /// `null` 时开单页显示占位（库未就绪）。
+  final DocumentSink? documentSink;
+
+  /// 提交成功回调（B3b）。手机端注入 = 刷新三态条 + 触发自动推送
+  /// （裁定 ③，app.dart 实现）；桌面不注入 —— `ServiceSink` 恒
+  /// `isQueued=false`，没有队列这回事。
+  final void Function(DocumentSubmitResult result)? onDocumentSubmitted;
+
+  /// 库存叠加（C2·§CC 裁定七：权威 + 未同步 + 拆解）。
+  /// 手机端注入（镜像队列）；桌面 `null` = 现状零变化。
+  final StockDelta? stockDelta;
+
+  /// 手机端**主数据禁建**（C2·§CC：协议正确性 —— 本机建的 id 推到主机
+  /// 必被外键拒绝）。`true` 时「新建 / 编辑 / 期初」入口**保留但点击后弹
+  /// 引导对话框**（不隐藏 —— Agents.md 4.3）。桌面缺省 `false` = 零变化。
+  final bool readOnlyMasterData;
+
   /// 退货服务（§BI R2：单据详情页的退货 / 拒收入口；`null` = 入口不可用）
   final ReturnService? returns;
+
+  /// 「更改数据位置」完整流程（§BK·三，宿主 app.dart 实现）；`null` = 不显示按钮
+  final Future<void> Function()? onMigrateData;
+
+  /// 手机端同步服务（§BL·三；`null` = 桌面 —— 桌面是主机，用 hostService 面板）
+  final MobileSyncService? mobileSync;
+
+  /// 「扫码连接主机」（app.dart：推扫码页 + 完成后重建页面）
+  final Future<void> Function()? onScanPair;
+
+  /// 「立即同步」（app.dart：遮罩 + syncNow + 完成后重建页面 —— 裁定 ⑦）
+  final Future<void> Function()? onSyncNow;
 
   /// 账户建档服务（同一数据库；为 `null` 时账户页显示「数据文件还没就绪」）
   final AccountService? accounts;
@@ -192,12 +232,20 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
       page = ProductsPage(service: shell.products, exports: shell.exports);
     } else if (destination.id == 'sale') {
       // 店内销售是核心闭环的第三块（RULE-002）；客户「新建」共用 PartyService
-      page = shell.sales == null || shell.products == null || shell.parties == null
+      page = shell.sales == null ||
+              shell.products == null ||
+              shell.parties == null ||
+              shell.documentSink == null
           ? _PendingPage(destination: destination)
           : SalePage(
               service: shell.sales!,
               productService: shell.products!,
               partyService: shell.parties!,
+              // B3b：提交走 Sink（桌面/手机同一份页面代码，无分支）
+              sink: shell.documentSink!,
+              onSubmitted: shell.onDocumentSubmitted,
+              // C2·§CC：手机端主数据禁建（保留入口 + 引导）
+              readOnlyMasterData: shell.readOnlyMasterData,
             );
     } else if (destination.id == 'delivery') {
       // 送货（批次 1b / RULE-003）：创建即扣库存、状态强制 in_transit，
@@ -205,12 +253,16 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
       page =
           shell.deliveries == null ||
               shell.products == null ||
-              shell.parties == null
+              shell.parties == null ||
+              shell.documentSink == null
           ? _PendingPage(destination: destination)
           : DeliveryPage(
               service: shell.deliveries!,
               productService: shell.products!,
               partyService: shell.parties!,
+              sink: shell.documentSink!,
+              onSubmitted: shell.onDocumentSubmitted,
+              readOnlyMasterData: shell.readOnlyMasterData,
             );
     } else if (destination.id == 'stock') {
       // 库存查询是 RULE-006 的纯聚合读；期初录入入口（§AD）还要引擎
@@ -221,11 +273,17 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               products: shell.products!,
               queries: shell.queries!,
               exports: shell.exports,
+              stockDelta: shell.stockDelta,
+              readOnlyMasterData: shell.readOnlyMasterData,
             );
     } else if (destination.id == 'parties') {
       page = shell.parties == null
           ? _PendingPage(destination: destination)
-          : PartiesPage(service: shell.parties!, exports: shell.exports);
+          : PartiesPage(
+              service: shell.parties!,
+              exports: shell.exports,
+              readOnlyMasterData: shell.readOnlyMasterData,
+            );
     } else if (destination.id == 'documents') {
       page = shell.documents == null
           ? _PendingPage(destination: destination)
@@ -252,6 +310,10 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
       hostSyncNote: shell.hostSyncNote,
       onExportBackup: shell.onExportBackup,
       onChanged: shell.onConfigChanged,
+      onMigrateData: shell.onMigrateData,
+      mobileSync: shell.mobileSync,
+      onScanPair: shell.onScanPair,
+      onSyncNow: shell.onSyncNow,
     );
     } else if (destination.id == 'help') {
       // AE-6：恢复步骤要带**用户真实的两个文件夹**，否则他照做不下去
@@ -265,11 +327,16 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
           : AccountsPage(service: shell.accounts!);
     } else if (destination.id == 'purchase') {
       // 采购入库是核心闭环的第二块 —— 库存与规则早就在 core 里（RULE-001）
-      page = shell.purchases == null || shell.products == null
+      page = shell.purchases == null ||
+              shell.products == null ||
+              shell.documentSink == null
           ? _PendingPage(destination: destination)
           : PurchasePage(
               service: shell.purchases!,
               productService: shell.products!,
+              sink: shell.documentSink!,
+              onSubmitted: shell.onDocumentSubmitted,
+              readOnlyMasterData: shell.readOnlyMasterData,
             );
     } else {
       page = _PendingPage(destination: destination);

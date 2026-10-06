@@ -592,7 +592,7 @@ dart run tool/import_guard.dart        # §AF 复跑返工新增：只查「用�
 | 手段 | 能查出什么 |
 |---|---|
 | `flutter analyze`（**在仓库根跑**） | 类型错误、未使用导入、lint（**首选**） |
-| `flutter test` | widget 测试（`test/widget_test.dart` + `test/startup_test.dart`）。启动流程靠**两个注入点**变得可测：`pickDirectory`（会真弹系统框）+ `configStore`（**不注入就会读写开发者真实的 `%APPDATA%`**）。⚠️ 还要 `useLocalSqlite()` —— `sqlite3_flutter_libs` 只把 DLL 放进**应用目录**，`flutter test` 不打包它 |
+| `flutter test` | widget 测试（`test/widget_test.dart` + `test/startup_test.dart`）。启动流程靠**三个注入点**变得可测：`pickDirectory`（会真弹系统框）+ `configStore`（**不注入就会读写开发者真实的 `%APPDATA%`**）+ `defaultDataDirectory`（**一个值**，只在首启场景判定里替换「机器给的默认位置」——见 §BR·补 2 方案 B：**参数化 ≠ 假机器**）。⚠️ 还要 `useLocalSqlite()` —— `sqlite3_flutter_libs` 只把 DLL 放进**应用目录**，`flutter test` 不打包它 |
 | `dart format --output=none lib test` | **语法**（解析文件但不解析导入）。⚠️ **它抓不住语义错**（构造函数少参数、方法不存在、await 非 Future、const 里掺表达式……
   以及「State 字段初始化器读 widget」—— 2026-09-27 账户页连踩两轮）——
   2026-09-27 采购页首轮 14 个 analyze issue 全部漏过它。**`flutter analyze` 在 AI 会话里能跑但间歇失败**（子进程管道耗尽，会话后期可能持续失败）—— 能跑时一律以它为准；跑不了时降级为`dart format`（仅语法）+ 语义自查 + 用户复跑。仍要跑 format 时：**别用管道接它再取 `$?`** —— 管道后取到的是 `tail` 的退出码，**语法错误会被静默放行**（2026-09-26 真实漏过一次）。要么直跑，要么取 `${PIPESTATUS[0]}` |

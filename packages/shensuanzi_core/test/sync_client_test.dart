@@ -1035,4 +1035,83 @@ void main() {
       );
     });
   });
+
+  group('rebuildMirror：重建而非迁移（§BL·一，schema_migration.md §六）', () {
+    test('drop 九表 + 重建 + 游标清零；sync_queue 保留', () async {
+      // 先放一些镜像数据 + 游标 + 一条队列（客户端自己的离线单）
+      transport.replyJson(pullBody(
+        products: <Map<String, Object?>>[
+          <String, Object?>{
+            'id': 'p1', 'code': 'P0001', 'name': '牛奶', 'unit': '瓶',
+            'cost_price': 250, 'sell_price': 350, 'safety_stock': 0,
+            'is_active': 1, 'created_at': 1, 'updated_at': 1,
+          },
+        ],
+        cursors: <String, String>{'documents': '2026-01-01 00:00:00'},
+      ));
+      await client.pull();
+      db.raw.execute(
+        "INSERT INTO sync_queue (id, entity, entity_id, operation, payload, "
+        "status, retry_count, created_at) "
+        "VALUES ('q1', 'documents', 'd9', 'create', '{}', 'pending', 0, 1)",
+      );
+      expect(db.raw.select('SELECT COUNT(*) c FROM products').first['c'], 1);
+      expect(db.raw.select('SELECT COUNT(*) c FROM sync_cursor').first['c'], 1);
+
+      client.rebuildMirror();
+
+      // 镜像数据清零
+      expect(db.raw.select('SELECT COUNT(*) c FROM products').first['c'], 0);
+      expect(db.raw.select('SELECT COUNT(*) c FROM documents').first['c'], 0);
+      // 游标清零（下次 pull 从头全量拉）
+      expect(db.raw.select('SELECT COUNT(*) c FROM sync_cursor').first['c'], 0);
+      // 表结构还在（重建不是消失）—— 能再插一行
+      db.raw.execute(
+        "INSERT INTO products (id, code, name, unit, cost_price, sell_price, "
+        "safety_stock, is_active, created_at, updated_at) "
+        "VALUES ('p2', 'P0002', '可乐', '瓶', 200, 300, 0, 1, 1, 1)",
+      );
+      // 队列保留（客户端离线单不是派生数据）
+      expect(db.raw.select('SELECT COUNT(*) c FROM sync_queue').first['c'], 1);
+    });
+
+    test('重建后能再 pull（游标清零 = 从头全量拉）', () async {
+      transport.replyJson(pullBody(
+        documents: <Map<String, Object?>>[
+          <String, Object?>{
+            'id': 'd1', 'doc_no': 'XS20260101-001', 'doc_type': 'sale',
+            'party_id': null, 'total_amount': 100,
+            'paid_amount': 100, 'status': 'settled', 'occurred_at': 1,
+            'created_at': 1, 'updated_at': 1,
+          },
+        ],
+        cursors: <String, String>{'documents': '2026-06-01 00:00:00'},
+      ));
+      await client.pull();
+      final String cursorBefore = db.raw
+          .select("SELECT cursor FROM sync_cursor WHERE entity = 'documents'")
+          .first['cursor']! as String;
+      expect(cursorBefore, '2026-06-01 00:00:00');
+
+      client.rebuildMirror();
+      transport.replyJson(pullBody(
+        documents: <Map<String, Object?>>[
+          <String, Object?>{
+            'id': 'd1', 'doc_no': 'XS20260101-001', 'doc_type': 'sale',
+            'party_id': null, 'total_amount': 100,
+            'paid_amount': 100, 'status': 'settled', 'occurred_at': 1,
+            'created_at': 1, 'updated_at': 1,
+          },
+        ],
+        cursors: <String, String>{'documents': '2026-01-01 00:00:00'},
+      ));
+      await client.pull();
+      // 游标回到主机给的初始值 ⇒ 这次 pull 确实是「从头拉」
+      final String cursorAfter = db.raw
+          .select("SELECT cursor FROM sync_cursor WHERE entity = 'documents'")
+          .first['cursor']! as String;
+      expect(cursorAfter, '2026-01-01 00:00:00');
+      expect(db.raw.select('SELECT COUNT(*) c FROM documents').first['c'], 1);
+    });
+  });
 }

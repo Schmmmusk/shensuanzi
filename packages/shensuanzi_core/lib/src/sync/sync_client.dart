@@ -2,13 +2,13 @@ import 'dart:convert';
 
 import 'package:sqlite3/sqlite3.dart';
 
-import '../dao/query_dao.dart';
 import '../dao/sync_dao.dart';
 import '../db/database.dart';
 import '../db/schema.dart';
 import '../models/sync_queue_entry.dart';
 import 'sync_operation.dart';
 import 'sync_pull.dart';
+import 'stock_delta.dart';
 import 'transport.dart';
 
 /// 客户端同步引擎（`docs/sync_protocol.md`）。
@@ -41,11 +41,10 @@ class SyncClient {
     int Function()? clock,
     this.pageLimit = 500,
     this.batchLimit = 200,
-  }) : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
+  })     : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
        cursors = SyncCursorDao(db),
        queue = SyncQueueDao(db),
-       clockOffset = ClockOffsetDao(db),
-       _queries = QueryDao(db) {
+       clockOffset = ClockOffsetDao(db) {
     if (db.foreignKeysEnabled) {
       throw StateError(
         '客户端镜像必须用 `Db.open(path, foreignKeys: false)` 打开。\n'
@@ -70,7 +69,6 @@ class SyncClient {
   final SyncCursorDao cursors;
   final SyncQueueDao queue;
   final ClockOffsetDao clockOffset;
-  final QueryDao _queries;
 
   /// 一次 `pull` 每实体最大行数
   final int pageLimit;
@@ -108,6 +106,46 @@ class SyncClient {
   ];
 
   Database get _raw => db.raw;
+
+  // ---------------------------------------------------------------- 镜像重建
+
+  /// 每条建表语句 → 表名（首次访问时从 [Schema.createStatements] 推导；
+  /// Schema 加表自动跟上，**没有手维护的映射可漂移**）。
+  static final Map<String, String> _createByTable = () {
+    final RegExp pattern = RegExp(r'CREATE TABLE\s+(\w+)');
+    return <String, String>{
+      for (final String sql in Schema.createStatements)
+        if (pattern.firstMatch(sql) != null)
+          pattern.firstMatch(sql)!.group(1)!: sql,
+    };
+  }();
+
+  /// 镜像重建（`schema_migration.md` §六：**重建而非迁移**）。
+  ///
+  /// 镜像是**派生数据**（真相在主机）⇒ 客户端不写迁移逻辑：主机 schema 版本
+  /// 与本地镜像不一致时，**drop 全部镜像表 + 重建 + 游标清零**（下次 pull
+  /// 从头全量拉）。版本比对由应用层做（`/api/health` 的 `schema_version` vs
+  /// 镜像库的 `user_version`，后者 `Db.schemaVersion` 直读）。
+  ///
+  /// ⚠️ **`sync_queue` 不动** —— 队列里是客户端自己创建、还没被主机确认的
+  /// 操作（payload 内嵌在队列行里），不是派生数据；清了它 = 丢用户离线单。
+  /// `clock_offset` 同理保留（客户端时钟校准，与镜像内容无关）。
+  void rebuildMirror() {
+    db.transaction<void>(() {
+      for (final String table in applyOrder.reversed) {
+        _raw.execute('DROP TABLE IF EXISTS $table');
+      }
+      for (final String table in applyOrder) {
+        final String? sql = _createByTable[table];
+        if (sql == null) {
+          // Schema 加了表但没进 applyOrder（或反之）⇒ 立刻炸出来，不许静默
+          throw StateError('镜像重建：applyOrder 里的 $table 找不到建表语句');
+        }
+        _raw.execute(sql);
+      }
+      cursors.clear();
+    });
+  }
 
   Map<String, String> _headers() => <String, String>{
     'Authorization': 'Bearer $token',
@@ -351,45 +389,12 @@ class SyncClient {
 
   /// 一条队列条目对**库存数量**的影响（纯函数，`sync_protocol.md` §一）。
   ///
-  /// 只做 `±quantity` 累加：**不算成本、不算往来、不算盘点**。
+  /// C1：实现搬到了 [StockDelta.deltaOf]（手机端库存视图不依赖传输层也要用
+  /// 同一份计算）；此处保留原 API 作转调 —— 行为零变化。
   ///
-  /// | `doc_type` | 符号 | 为什么 |
-  /// |---|---|---|
-  /// | `purchase` / `sale_return` | **+** | 货进店 |
-  /// | `sale` / `delivery` / `purchase_return` | **−** | 货离店 |
-  /// | `stocktake` | `0` | 它的影响是「实际数量 − 账面数量」，而账面数量依赖完整流水 —— **客户端算不出**，所以诚实地贡献 0。盘点是低频操作，用户不会期望中途看到估算 |
-  /// | `receipt` / `payment` | `0` | 资金单据，不影响库存 |
-  ///
-  /// 不做任何校验（负库存允许，`threat_model.md` §3.4），UI 标红即可。
-  static Map<String, int> deltaOf(SyncQueueEntry entry) {
-    if (entry.operation != SyncOpType.createDocument) {
-      return const <String, int>{}; // 主数据与动作不影响库存数量
-    }
-    final Object? rawDocument = entry.payload['document'];
-    if (rawDocument is! Map) return const <String, int>{};
-    final Object? rawType = rawDocument['doc_type'];
-    if (rawType is! String) return const <String, int>{};
-
-    final int sign = switch (rawType) {
-      'purchase' || 'sale_return' => 1,
-      'sale' || 'delivery' || 'purchase_return' => -1,
-      _ => 0, // 含 stocktake / receipt / payment
-    };
-    if (sign == 0) return const <String, int>{};
-
-    final Object? rawLines = entry.payload['lines'];
-    if (rawLines is! List) return const <String, int>{};
-
-    final Map<String, int> delta = <String, int>{};
-    for (final Object? rawLine in rawLines) {
-      if (rawLine is! Map) continue;
-      final Object? productId = rawLine['product_id'];
-      final Object? quantity = rawLine['quantity'];
-      if (productId is! String || quantity is! int) continue;
-      delta[productId] = (delta[productId] ?? 0) + sign * quantity;
-    }
-    return delta;
-  }
+  /// 只做 `±quantity` 累加：**不算成本、不算往来、不算盘点**（盘点诚实贡献 0）。
+  static Map<String, int> deltaOf(SyncQueueEntry entry) =>
+      StockDelta.deltaOf(entry);
 
   /// 全部「已发生、但权威状态还没包含」的库存影响之和（`pending` + `sent` +
   /// `failed` 都算）。UI 的表达式是：
@@ -397,37 +402,17 @@ class SyncClient {
   /// ```
   /// 显示库存 = 权威镜像 + delta   ← 用 stockViewOf 一次算好
   /// ```
-  Map<String, int> unsyncedDelta() {
-    final Map<String, int> total = <String, int>{};
-    for (final SyncQueueEntry entry in queue.all()) {
-      deltaOf(entry).forEach((String productId, int value) {
-        total[productId] = (total[productId] ?? 0) + value;
-      });
-    }
-    return total;
-  }
+  ///
+  /// C1：转调 [StockDelta.unsyncedDelta]（行为零变化）。
+  Map<String, int> unsyncedDelta() =>
+      StockDelta(db: db, queue: queue).unsyncedDelta();
 
-  /// 给 UI 用：`权威库存 + 未同步影响`，并给出拆解。
+  /// 给 UI 用：`权威库存 + 未同步影响`，并给出拆解（C1：转调 [StockDelta]）。
   ///
   /// 「权威镜像 10、未同步 −3」这样的拆解要能点开看到是哪几张单 ——
   /// 所以返回结构里带 [StockView.contributors]。
-  StockView stockViewOf(String productId) {
-    final int authoritative = _queries.stockByProduct()[productId] ?? 0;
-    final List<SyncQueueEntry> contributors = <SyncQueueEntry>[
-      for (final SyncQueueEntry entry in queue.all())
-        if (deltaOf(entry).containsKey(productId)) entry,
-    ];
-    final int delta = contributors.fold<int>(
-      0,
-      (int sum, SyncQueueEntry entry) => sum + (deltaOf(entry)[productId] ?? 0),
-    );
-    return StockView(
-      productId: productId,
-      authoritative: authoritative,
-      unsynced: delta,
-      contributors: contributors,
-    );
-  }
+  StockView stockViewOf(String productId) =>
+      StockDelta(db: db, queue: queue).stockViewOf(productId);
 
   // ---------------------------------------------------------------- 时钟
 

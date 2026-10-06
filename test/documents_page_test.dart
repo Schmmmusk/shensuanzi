@@ -110,6 +110,27 @@ void main() {
     );
   }
 
+  /// 赊账销售（不收款）—— `sell` 是**当场结清**，测「未结清」要用这个。
+  /// 散客不许赊账，所以必须给 partyId。
+  void sellOnCredit({required String date, required int qty, required String partyId}) {
+    sales.create(
+      SaleDraft(
+        partyId: partyId,
+        date: date,
+        lines: <SaleLineDraft>[
+          SaleLineDraft(
+            productId: 'p1',
+            productName: '商品',
+            quantity: '$qty',
+            unitPrice: '5.00',
+          ),
+        ],
+        payments: const <SalePaymentDraft>[],
+      ),
+      now: 1700000000000,
+    );
+  }
+
   Widget page({ExportSink? exports, bool withSettlement = false}) => MaterialApp(
     home: Scaffold(
       body: DocumentsPage(
@@ -154,33 +175,92 @@ void main() {
     expect(ySale < yBuy, isTrue, reason: '后发生的在前');
   });
 
-  testWidgets('类型 chips：选「店内销售」只看销售', (WidgetTester tester) async {
+  testWidgets('类型 chips：**多选**（可同时看销售与采购，§审查 2026-10-05）', (
+    WidgetTester tester,
+  ) async {
     buy(date: '2026-09-28', qty: 10, partyId: 'pt1');
     sell(date: '2026-09-28', qty: 2, partyId: 'pt2');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
-    // ⚠️ chip 文案 = DocType.label：sale 是「店内销售」（不是「销售开单」）。
-    // 同文案会命中两处（chip + 行内类型标签），必须用 ChoiceChip 祖先定位
-    await tester.tap(
-      find.ancestor(
-        of: find.text('店内销售'),
-        matching: find.byType(ChoiceChip),
-      ),
-    );
+    // ⚠️ 一律**按 Key** 找 chip：文案是 `DocType.label`，与行内类型标签同字
+    //    （按文案找会命中两处）；且 §审查 2026-10-05 起类型筛选是**多选**
+    //    （`FilterChip`），不再有原来的「单选 / 再点一次取消」语义。
+    await tester.tap(find.byKey(const Key('doc-type-sale')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('XS'), findsWidgets, reason: '销售单在');
+    expect(find.textContaining('CG'), findsNothing, reason: '采购单被筛掉');
+
+    // 再点「采购入库」⇒ **并集**（两张都回来）
+    await tester.tap(find.byKey(const Key('doc-type-purchase')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('XS'), findsWidgets);
+    expect(find.textContaining('CG'), findsWidgets, reason: '多选 = 并集');
+
+    // 取消「店内销售」⇒ 只剩采购
+    await tester.tap(find.byKey(const Key('doc-type-sale')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('XS'), findsNothing);
+    expect(find.textContaining('CG'), findsWidgets);
+  });
+
+  testWidgets('类型 chips 补上「送货」「销售退货」（原来只有 4 类）', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('XS'), findsWidgets, reason: '销售单在');
-    // 采购单被筛掉：切到「采购入库」chip 验证（同样用 ChoiceChip 定位）
-    await tester.tap(
-      find.ancestor(
-        of: find.text('采购入库'),
-        matching: find.byType(ChoiceChip),
-      ),
-    );
+    for (final String wire in <String>[
+      'purchase',
+      'sale',
+      'delivery',
+      'sale_return',
+      'purchase_return',
+      'receipt',
+      'payment',
+    ]) {
+      expect(
+        find.byKey(Key('doc-type-$wire')),
+        findsOneWidget,
+        reason: '$wire 这一类要有入口',
+      );
+    }
+    // 盘点 / 调拨 v1 不做 —— **不摆出来**（点了没数据 = 「软件坏了」）
+    expect(find.byKey(const Key('doc-type-stocktake')), findsNothing);
+    expect(find.byKey(const Key('doc-type-transfer')), findsNothing);
+  });
+
+  testWidgets('状态 chips：未结清只留还欠钱的单（§审查 2026-10-05）', (
+    WidgetTester tester,
+  ) async {
+    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2'); // 欠 ¥10
+    sell(date: '2026-09-28', qty: 4, partyId: 'pt2'); // 当场结清
+    await tester.pumpWidget(page());
     await tester.pumpAndSettle();
-    expect(find.textContaining('CG'), findsWidgets, reason: '采购单号 CG 前缀');
-    expect(find.textContaining('XS'), findsNothing, reason: '销售单被筛掉');
+
+    expect(find.textContaining('XS'), findsNWidgets(2), reason: '两张都在');
+
+    await tester.tap(find.byKey(const Key('doc-status-unsettled')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('XS'),
+      findsOneWidget,
+      reason: '只留还没结清的那张',
+    );
+    expect(
+      find.textContaining('未收'),
+      findsOneWidget,
+      reason: '行上要标出还欠多少',
+    );
+
+    // 三个状态 chip 都在（送货待签收 / 已作废也要有入口）
+    for (final String name in <String>[
+      'unsettled',
+      'cancelled',
+      'awaitingSignature',
+    ]) {
+      expect(find.byKey(Key('doc-status-$name')), findsOneWidget);
+    }
   });
 
   testWidgets('点行打开单据详情（1a 起；复制单号挪到详情页）', (

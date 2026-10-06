@@ -94,5 +94,8 @@ static List<String> migrationStep(int from) => switch (from) {
 
 ## 八、当前状态
 
-`Schema.version = 2`（`products.package_note`，§AJ·AI-5）。迁移链目前只有 **v1 → v2** 一段。
-未落地（记在案）：客户端 `mirror_schema_version` + 重建逻辑（随 AH-B Android 端）。
+`Schema.version = 3`（§BD：`products.package_unit` / `package_size` + `document_lines.discount_amount` /
+`entry_quantity` / `entry_unit`）。迁移链：v1 → v2（`package_note`）→ v3（五列）。
+✅ **客户端镜像重建已落地**（§BL·一，2026-10-05）：`SyncClient.rebuildMirror()` ——
+镜像版本比对由应用层做（`/api/health` 的 `schema_version` vs 镜像库 `user_version`），
+不一致即 drop 九张镜像表 + 重建 + 游标清零（`sync_queue` 保留 —— 客户端离线单不是派生数据）。

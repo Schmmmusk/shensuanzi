@@ -220,6 +220,156 @@ void main() {
     expect(find.textContaining('这类单据不需要收付款'), findsOneWidget);
   });
 
+  /// 直接走引擎造一张**赊销**：2 × ¥5.00 = ¥10.00（不收钱 ⇒ 未收 = 全额）。
+  /// 再对它退 1 × ¥4.00（部分退货）——**原单不作废**（作废只发生在拒收）。
+  ({String saleId, String retId}) partialReturn() {
+    final RuleEngine engine = RuleEngine(db);
+    Document mk(String id, DocType type, int total, {String? ref}) => Document(
+      id: id,
+      docNo: '${Document.pendingDocNoPrefix}$id',
+      docType: type,
+      status: DocStatus.confirmed,
+      partyId: 'pt1',
+      totalAmount: total,
+      refDocId: ref,
+      occurredAt: 1700000000000,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+    );
+
+    final Document sale = mk('xs-1', DocType.sale, 1000);
+    engine.dispatch(
+      document: sale,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: sale.id,
+          productId: 'p1',
+          quantity: 2,
+          unitPrice: 500,
+        ),
+      ],
+      now: 1700000000000,
+    );
+
+    final Document ret = mk('th-1', DocType.saleReturn, 400, ref: sale.id);
+    engine.dispatch(
+      document: ret,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: ret.id,
+          productId: 'p1',
+          quantity: 1,
+          unitPrice: 400,
+        ),
+      ],
+      now: 1700000000000,
+    );
+    return (saleId: sale.id, retId: ret.id);
+  }
+
+  /// 送货（在途）→ **客户拒收**（整单退回）⇒ 引擎把原送货单置 `cancelled`。
+  String rejectedDelivery() {
+    final RuleEngine engine = RuleEngine(db);
+    Document mk(String id, DocType type, int total, {String? ref}) => Document(
+      id: id,
+      docNo: '${Document.pendingDocNoPrefix}$id',
+      docType: type,
+      status: DocStatus.confirmed,
+      partyId: 'pt1',
+      totalAmount: total,
+      refDocId: ref,
+      occurredAt: 1700000000000,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+    );
+
+    final Document delivery = mk('sh-1', DocType.delivery, 1000);
+    engine.dispatch(
+      document: delivery,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: delivery.id,
+          productId: 'p1',
+          quantity: 2,
+          unitPrice: 500,
+        ),
+      ],
+      now: 1700000000000,
+    );
+    final Document reject = mk('sr-1', DocType.saleReturn, 1000, ref: delivery.id);
+    engine.dispatch(
+      document: reject,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: reject.id,
+          productId: 'p1',
+          quantity: 2,
+          unitPrice: 500,
+        ),
+      ],
+      now: 1700000000000,
+    );
+    return delivery.id;
+  }
+
+  testWidgets('退货记录：部分退货后详情页能看到那笔退货（§审查 2026-10-05）', (
+    WidgetTester tester,
+  ) async {
+    final ({String saleId, String retId}) fixture = partialReturn();
+    await tester.pumpWidget(page(fixture.saleId));
+    await tester.pumpAndSettle();
+
+    // 金额卡把冲减额摆出来 —— 直接回答「60 的单怎么收 40 就结清了」
+    expect(find.text('已退货'), findsOneWidget);
+    expect(find.textContaining('¥4.00'), findsWidgets);
+
+    // 退货记录区块：说清退过几次、共多少，并列出单号
+    expect(find.text('退货记录'), findsOneWidget);
+    expect(find.textContaining('退过 1 次'), findsOneWidget);
+    expect(
+      find.byKey(Key('return-row-${fixture.retId}')),
+      findsOneWidget,
+      reason: '那笔退货单要能点开',
+    );
+
+    // 原单本身**不作废**（部分退货 ≠ 拒收）
+    expect(find.textContaining('客户拒收'), findsNothing);
+  });
+
+  testWidgets('没退过货的单不显示「退货记录」区块', (WidgetTester tester) async {
+    final Document doc = sellOnCredit();
+    await tester.pumpWidget(page(doc.id));
+    await tester.pumpAndSettle();
+
+    expect(find.text('退货记录'), findsNothing, reason: '没退过就别多一块空白');
+    expect(find.text('已退货'), findsNothing);
+  });
+
+  testWidgets('拒收的送货单：只说「已作废」，**不再**冒出「已签收」', (
+    WidgetTester tester,
+  ) async {
+    // 真机截图 bug：同一屏上同时出现「已作废（客户拒收）」+「已签收」。
+    // 根因是 `_actionRow` 的 else 分支把 cancelled 也当成「已签收」。
+    await tester.pumpWidget(page(rejectedDelivery()));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('已作废'), findsWidgets);
+    expect(
+      find.textContaining('已签收'),
+      findsNothing,
+      reason: '作废的单不可能同时是「已签收」',
+    );
+    expect(
+      find.textContaining('不用收付款'),
+      findsNothing,
+      reason: '作废原因说一次就够，不再补第二句',
+    );
+    // 作废单不给收款 / 拒收 / 退货入口
+    expect(find.byKey(const Key('settle-button')), findsNothing);
+    expect(find.byKey(const Key('reject-button')), findsNothing);
+    expect(find.byKey(const Key('return-button')), findsNothing);
+  });
+
   testWidgets('单据不存在 → 说清「可能已经被删掉」', (WidgetTester tester) async {
     await tester.pumpWidget(page('没有这张单'));
     await tester.pumpAndSettle();

@@ -97,7 +97,7 @@ BEGIN
             VALUE "OriginalFilename", "shensuanzi.exe" "\0"
             VALUE "ProductName", "Shensuanzi" "\0"
             // ProductVersion is deliberately the PLAIN version (no build suffix):
-            // pubspec says `0.1.0+1`, and `+1` is the Flutter/pub build-number
+            // pubspec says `0.3.0+3`, and `+1` is the Flutter/pub build-number
             // convention -- showing "0.1.0+1" in the properties page is noise.
             // NOTE: hardcoding adds a second place to keep in sync, so
             //       test/version_test.dart reads THIS FILE and compares it with
@@ -105,7 +105,7 @@ BEGIN
             // NOTE: keep this file ASCII-only. rc.exe decodes sources with the
             //       system code page (see docs/windows_build.md section 7); the
             //       C/C++ `/utf-8` fix does not apply to the resource compiler.
-            VALUE "ProductVersion", "0.1.0" "\0"
+            VALUE "ProductVersion", "0.3.0" "\0"
         END
     END
     BLOCK "VarFileInfo"

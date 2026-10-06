@@ -124,7 +124,14 @@ class DataDirectoryDialogModel {
   }
 
   /// 打开对话框：用**默认位置**起步（首次启动不弹目录选择框）。
-  void open() => choosePath(service.resolveDefault());
+  ///
+  /// [defaultPath] 覆盖「机器给的默认位置」——**仅供测试注入**（§BR·补 2 裁定 方案 B）。
+  /// ⚠️ 它必须与 `AppBootstrap.startupDecision(defaultDataDirectory:)` 的注入值**同一个**：
+  /// 判定说「注入的那个位置没有数据 ⇒ 走欢迎向导」，对话框就得**预填那个位置** ——
+  /// 否则用户点「开始使用」会落到机器默认位置，与判定自相矛盾
+  /// （测试里更会**写到开发机真实磁盘上**）。
+  void open({String? defaultPath}) =>
+      choosePath(defaultPath ?? service.resolveDefault());
 
   /// 用户点了「更改」，并在系统文件夹选择器里选了一个路径。
   ///

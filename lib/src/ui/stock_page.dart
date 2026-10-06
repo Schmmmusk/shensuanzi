@@ -25,6 +25,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'export_button.dart';
+import 'mobile_guidance_dialog.dart';
 import 'opening_stock_page.dart';
 
 /// 库存查询页。
@@ -35,6 +36,8 @@ class StockPage extends StatefulWidget {
     required this.products,
     required this.queries,
     this.exports,
+    this.stockDelta,
+    this.readOnlyMasterData = false,
   });
 
   /// 规则引擎（期初录入「重新清点」入口用 —— RULE-009 经 `StocktakeService`）
@@ -45,6 +48,15 @@ class StockPage extends StatefulWidget {
 
   /// 导出服务（`null` = 不显示导出按钮）
   final ExportSink? exports;
+
+  /// 库存叠加（C2·§CC 裁定七：权威 + 未同步 + 拆解）。
+  /// 手机端注入（镜像队列）；桌面 `null` = 现状零变化。
+  final StockDelta? stockDelta;
+
+  /// 手机端**主数据禁建**（C2·§CC）：`true` 时期初录入入口保留但点击后弹
+  /// 引导对话框（盘点客户端算不出 delta —— `deltaOf` 诚实贡献 0）。
+  /// 桌面缺省 `false` = 现状零变化。
+  final bool readOnlyMasterData;
 
   @override
   State<StockPage> createState() => _StockPageState();
@@ -86,6 +98,11 @@ class _StockPageState extends State<StockPage> {
 
     // 商品全集（含停用的？—— 不，库存页只看启用中的商品）
     final List<Product> all = widget.products.list();
+
+    // C2·§CC 裁定七：库存叠加 —— 一次遍历队列算全部未同步影响，
+    // 行内只查 map；点开拆解才逐商品取 contributors（IO 不进常驻路径）
+    final Map<String, int> unsyncedByProduct = widget.stockDelta
+        ?.unsyncedDelta() ?? const <String, int>{};
     // 搜索：名称 / 编码 / 条码
     final List<Product> matched = _searchText.isEmpty
         ? all
@@ -149,7 +166,13 @@ class _StockPageState extends State<StockPage> {
             ),
           TextButton.icon(
             key: const Key('stock-open-entry'),
-            onPressed: () => setState(() => _showOpening = true),
+            // C2·§CC：手机端期初录入保留入口 + 引导（客户端算不出盘点 delta）
+            onPressed: widget.readOnlyMasterData
+                ? () => showMobileGuideDialog(
+                    context,
+                    MobileGuideTopic.openingStock,
+                  )
+                : () => setState(() => _showOpening = true),
             icon: const Icon(Icons.inventory_2_outlined, size: 18),
             label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
           ),
@@ -207,12 +230,17 @@ class _StockPageState extends State<StockPage> {
                   child: Column(
                     children: <Widget>[
                       Text(
-                        _searchText.isEmpty ? '还没有库存记录' : '没有匹配的商品。',
+                        widget.readOnlyMasterData && _searchText.isEmpty
+                            ? mirrorEmptyMessage('库存数字')
+                            : _searchText.isEmpty
+                            ? '还没有库存记录'
+                            : '没有匹配的商品。',
                         textAlign: TextAlign.center,
                         style: TextStyle(height: 1.8, color: theme.hintColor),
                       ),
                       // §AD-6：空态两段式 —— 首段给「开店」场景，次段给「日常」场景
-                      if (_searchText.isEmpty) ...<Widget>[
+                      // （手机端期初录入被引导接管 ⇒ 不展示这段，裁定六的空态文案顶上）
+                      if (_searchText.isEmpty && !widget.readOnlyMasterData) ...<Widget>[
                         const SizedBox(height: 8),
                         Card(
                           child: Padding(
@@ -261,6 +289,8 @@ class _StockPageState extends State<StockPage> {
                           inTransit: inTransit[shown[i].id] ?? 0,
                           costCents: cost[shown[i].id] ?? 0,
                           everInbound: inbound.contains(shown[i].id),
+                          unsynced: unsyncedByProduct[shown[i].id] ?? 0,
+                          delta: widget.stockDelta,
                         ),
                       ],
                     ],
@@ -282,6 +312,8 @@ class _StockRow extends StatelessWidget {
     required this.inTransit,
     required this.costCents,
     required this.everInbound,
+    this.unsynced = 0,
+    this.delta,
   });
 
   final Product product;
@@ -292,9 +324,17 @@ class _StockRow extends StatelessWidget {
   /// 是否有过正数量入库（§AD 遗漏 1：成本列三态的判断依据）
   final bool everInbound;
 
+  /// 未同步影响（C2·§CC 裁定七）。`0` = 不显示叠加行（桌面恒 0）。
+  final int unsynced;
+
+  /// 叠加计算器（点开拆解时取 contributors；`null` = 桌面）。
+  final StockDelta? delta;
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    // ⚠️ 局部变量才能提升非空（public 字段判空不提升 —— analyze 实测）
+    final StockDelta? delta = this.delta;
     final int inStore = book - inTransit;
 
     // AA-3 三档：负红 / 低橙 / 正常无色。safety_stock = 0 = 不需要告警。
@@ -311,6 +351,16 @@ class _StockRow extends StatelessWidget {
         : low
             ? '低于安全库存 $safety，该补货了'
             : null;
+
+    // §审查 OBS-12：**没货了却还有成本** —— 这是「先卖后补」的结果
+    //（卖的时候账上没货，出库成本按 0 记；后来进的货，进价没被摊出去，
+    //  于是数量补回来了、成本还挂在那批卖掉的货上）。
+    // 口径没错，但**不解释会被当成 bug**，所以在这里说清它是怎么来的。
+    final String? costNotice = (book <= 0 && costCents != 0)
+        ? '已无货，仍有成本 ¥${Money.format(costCents)} 没摊出去 —— '
+              '先卖后补造成的：卖的时候账上没货，成本按 0 记过一次。'
+              '下次进货的进价会把它校准回来。'
+        : null;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -442,7 +492,112 @@ class _StockRow extends StatelessWidget {
                 ),
               ),
             ),
+          if (costNotice != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  costNotice,
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
+                ),
+              ),
+            ),
+          // C2·§CC 裁定七：未同步叠加 —— 橙「≈」/ 负数红 +「可能负库存」；
+          // 行内展开拆解（不打断浏览 —— 裁定七之 2）
+          if (unsynced != 0 && delta != null)
+            _StockDeltaLine(
+              delta: delta,
+              productId: product.id,
+              book: book,
+              unsynced: unsynced,
+            ),
         ],
+      ),
+    );
+  }
+}
+
+/// 未同步叠加行（C2·§CC 裁定七）—— 「≈ 台账 + 未同步 = 合计」，
+/// 点开**行内**展开是哪几张单贡献的（`contributors`，core 已备）。
+///
+/// 颜色（裁定七之 1）：合计 ≥ 0 橙（未同步估算的语义色）；
+/// 合计 < 0 红 +「可能负库存」（与负库存告警同色 —— 两个语义叠加时取更严重的）。
+class _StockDeltaLine extends StatefulWidget {
+  const _StockDeltaLine({
+    required this.delta,
+    required this.productId,
+    required this.book,
+    required this.unsynced,
+  });
+
+  final StockDelta delta;
+  final String productId;
+  final int book;
+  final int unsynced;
+
+  @override
+  State<_StockDeltaLine> createState() => _StockDeltaLineState();
+}
+
+class _StockDeltaLineState extends State<_StockDeltaLine> {
+  bool _expanded = false;
+
+  static String _signed(int value) => value >= 0 ? '+$value' : '$value';
+
+  static String _docNoOf(SyncQueueEntry entry) {
+    final Object? document = entry.payload['document'];
+    if (document is Map) {
+      final Object? docNo = document['doc_no'];
+      if (docNo is String && docNo.isNotEmpty) return docNo;
+    }
+    return '待同步单据';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final int estimated = widget.book + widget.unsynced;
+    final Color color = estimated < 0
+        ? theme.colorScheme.error
+        : const Color(0xFFB45309);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                '≈ 台账 ${widget.book} + 未同步 ${_signed(widget.unsynced)} '
+                '= ${_signed(estimated)}'
+                '${estimated < 0 ? '（可能负库存）' : ''} —— 点看是哪几张单',
+                style: TextStyle(height: 1.6, color: color),
+              ),
+              if (_expanded)
+                for (final SyncQueueEntry entry in widget.delta
+                    .stockViewOf(widget.productId)
+                    .contributors)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2, left: 8),
+                    child: Text(
+                      '${_docNoOf(entry)}   '
+                      '${_signed(StockDelta.deltaOf(entry)[widget.productId] ?? 0)} 件',
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                    ),
+                  ),
+            ],
+          ),
+        ),
       ),
     );
   }

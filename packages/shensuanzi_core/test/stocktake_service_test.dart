@@ -191,6 +191,72 @@ void main() {
       expect(_count(db, 'party_ledger'), 0);
     });
 
+    test('OBS-09① 备注随来源变：期初录入 / 重新清点**不能都写「期初录入」**', () {
+      String remarkOf(StocktakeResult r) => db.raw
+          .select("SELECT remark FROM documents WHERE id = '${r.documentId}'")
+          .first['remark']! as String;
+
+      // 首建账（页面以 isFirstTime: true 传入）
+      final StocktakeResult first = service.create(
+        StocktakeDraft(
+          lines: <StocktakeLineDraft>[
+            const StocktakeLineDraft(
+              productId: 'p1',
+              productName: '可乐',
+              quantity: '10',
+            ),
+          ],
+        ),
+        now: t,
+      );
+      expect(remarkOf(first), contains('期初录入'));
+
+      // 之后「重新清点」—— 再写「期初录入」就是假话
+      final StocktakeResult again = service.create(
+        StocktakeDraft(
+          isOpening: false,
+          lines: <StocktakeLineDraft>[
+            const StocktakeLineDraft(
+              productId: 'p1',
+              productName: '可乐',
+              quantity: '8',
+            ),
+          ],
+        ),
+        now: t,
+      );
+      expect(
+        remarkOf(again),
+        contains('重新清点'),
+        reason: '§审查 OBS-09①：备注原来写死成「期初录入」，与事实不符',
+      );
+      expect(remarkOf(again), isNot(contains('期初录入')));
+    });
+
+    test('OBS-09② 盘点单能反推「账面」（该单的库存流水 = 差额）', () {
+      // 账面 0 → 实盘 10 ⇒ 盘盈 +10；差额必须能从流水里读到
+      final StocktakeResult r = service.create(
+        draftOf(<String, String>{'p1': '10'}),
+        now: t,
+      );
+      final Map<String, int> flow = DocumentDao(db).stockFlowByProductOf(
+        r.documentId,
+      );
+      expect(flow, <String, int>{'p1': 10});
+
+      // 账面 = 实盘 − 差额；再盘一次到 8 ⇒ 差额 −2（盘亏）
+      final StocktakeResult r2 = service.create(
+        draftOf(<String, String>{'p1': '8'}),
+        now: t,
+      );
+      expect(
+        DocumentDao(db).stockFlowByProductOf(r2.documentId),
+        <String, int>{'p1': -2},
+      );
+      // 非盘点单也有流水差额（出库是负数），这个方法不挑单据类型
+      expect(DocumentDao(db).stockFlowByProductOf('不存在的单'), isEmpty);
+    });
+
     test('校验不通过 → StocktakeDraftInvalid，库无新单', () {
       expect(
         () => service.create(const StocktakeDraft(), now: t),

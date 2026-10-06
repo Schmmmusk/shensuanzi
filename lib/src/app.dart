@@ -26,9 +26,11 @@
 library;
 
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io' show Directory, File, Platform;
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
@@ -39,6 +41,7 @@ import 'folder_picker.dart';
 import 'ui/app_shell.dart';
 import 'ui/data_directory_dialog.dart';
 import 'ui/mobile_shell.dart';
+import 'ui/pairing_scan_page.dart';
 
 class ShensuanziApp extends StatefulWidget {
   /// `pickDirectory` 的默认值**就在参数上就地给出**（真实实现）——
@@ -49,6 +52,7 @@ class ShensuanziApp extends StatefulWidget {
     super.key,
     this.pickDirectory = pickFolderFromSystem,
     this.configStore,
+    this.defaultDataDirectory,
     this.shellKind,
     this.dataRoot,
   });
@@ -67,6 +71,25 @@ class ShensuanziApp extends StatefulWidget {
   /// ⚠️ **widget 测试必须把它指向沙箱**：否则测试会读、甚至**改写**开发者真实的
   /// 配置文件 —— 下次真机启动就会开到测试用的临时目录（`docs/testing.md` §K）。
   final AppConfigStore? configStore;
+
+  /// **机器给的默认数据目录** —— 仅供测试注入（§BR·补 2 裁定：**方案 B**）。
+  ///
+  /// ## ⚠️ 它是一个「值」，不是「机器环境的替身」—— 这是裁定的关键区分
+  ///
+  /// 注入它**不改变 UI 探测目录的方式**：UI 照样拿这个路径去**真实文件系统**
+  /// 问「有没有 `.shensuanzi-data` 标记」（`isShensuanziDir` → `existsSync`），
+  /// 行为是真实的。**注入整个 `AppEnvironment` 才叫「假机器」**
+  /// （`AGENTS.md` §4.3 明令禁止前置替换环境）—— 那是**参数化 vs 假机器**的区别，
+  /// **别拿这个当先例**去论证「再注入一个 `AppEnvironment` 也没问题」。
+  ///
+  /// ## 边界（写死在裁定里，实现不许越界）
+  ///
+  /// - `null` = 用真实机器算出来的默认位置 —— **生产行为，一个字都不变**；
+  /// - 非 `null` = **只在「真·第一次启动」的场景判定里**替换这一个值；
+  /// - **配置里已有路径时它不参与任何判定**（不影响 `openExisting` /
+  ///   `brokenDatabase` / `recoverLocation` / `salvageConfig`）；
+  /// - 与 [pickDirectory] **不重叠**：那个只在首启对话框里被调，这个只在首启判定时被读。
+  final String? defaultDataDirectory;
 
   /// 壳形态（§BH B1a）。`null` = 按真实平台判（`shellKindFor`，纯 Dart 可测）。
   /// 测试里跑在 Windows 上 ⇒ 恒为桌面壳，注入只供将来移动端测试用。
@@ -87,6 +110,9 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// **刻意不注入、保持真实**：启动流程要验证的恰恰是「真实机器 + 沙箱配置」
   /// 下的行为；把机器也伪造了，就变成「在假机器上跑假配置」，
   /// 每个场景还得自己造一套盘符（`docs/reply_review.md` §W 二）。
+  /// 机器环境（盘符 / 剩余空间）。**不注入**（`AGENTS.md` §4.3「启动流程的两个
+  /// 注入点」：注入它会把「真实机器」变成假的）。测试要造机器就往下层走 ——
+  /// `packages/shensuanzi_app` 的 `AppBootstrap` 收 `environment` 参数，那里可造。
   final AppEnvironment _environment = AppEnvironment.detect();
 
   /// 配置读写：测试传沙箱，生产用 `%APPDATA%`。
@@ -161,6 +187,21 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 退货服务（§BI R2：单据详情页的退货 / 拒收入口）
   ReturnService? _returns;
 
+  /// 手机端同步服务（§BL·二/三；仅移动端 —— 桌面是主机，没有「客户端同步」）
+  MobileSyncService? _mobileSync;
+
+  /// 懒建：镜像库与 pairing.json 都在**应用私有目录**（`dataRoot`，main.dart 注入；
+  /// 桌面 `dataRoot == null` ⇒ 服务不存在，设置页显示 hostService 面板）
+  MobileSyncService? get _mobileSyncService {
+    if (_shellKind != ShellKind.mobile) return null;
+    final String? root = widget.dataRoot;
+    if (root == null) return null;
+    return _mobileSync ??= MobileSyncService(
+      mirrorPath: p.join(root, 'mirror', 'shensuanzi_mirror.db'),
+      pairingStore: PairingStore(File(p.join(root, '神算子', 'pairing.json'))),
+    );
+  }
+
   /// 聚合查询（库存页 + 备份的空库判定共用同一个 DAO）
   QueryDao? _queries;
 
@@ -197,6 +238,20 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 开库失败的原因（含「怎么办」）
   String? _dbFailure;
 
+  /// 打不开的那个数据目录（§审查 2026-10-05 真机）。
+  ///
+  /// 非 `null` 时错误页多给一个「重试」—— 库修好（或占用它的程序关掉）之后，
+  /// **不用换文件夹就能回到原来的数据**。没有它，用户只能「换一个文件夹」，
+  /// 等于把原目录连同里面的真数据一起放弃（实测踩过：`D://fed` 切不回去）。
+  String? _brokenDirectory;
+
+  /// 单实例锁（§审查 OBS-14）—— 同一个数据目录只允许一个实例开着库。
+  final InstanceLock _instanceLock = InstanceLock();
+
+  /// 「神算子已经在运行了」—— 与「数据有问题」是两回事，单独一个状态，
+  /// 免得错误页给出「换一个文件夹」这种不相关的出路。
+  bool _alreadyRunning = false;
+
   /// 库的**真实数据格式版本**（`PRAGMA user_version`）。
   ///
   /// ⚠️ 不能用 `location.marker.schemaVersion`：老用户的标记还是 v1，
@@ -224,41 +279,113 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     _hostService = null;
     if (host != null) unawaited(host.stop());
     _db?.close();
+    // §审查 OBS-14：放锁（其实进程退出操作系统也会收，显式放更干净）
+    _instanceLock.release();
     super.dispose();
   }
 
   Future<void> _prepare() async {
-    final DataLocation? existing = _service.existing();
-    if (existing != null) {
-      _openDatabase(existing);
+    // Android：私有目录用户选不了（scoped storage），没有「选择位置」这回事
+    // —— 它自己一条路（§BH·五 B1b）
+    if (_shellKind == ShellKind.mobile) {
+      _prepareMobile();
       return;
     }
-    if (!mounted) return;
 
-    // §BH·五 B1b（2026-10-04 裁定）：Android **不弹选目录对话框** ——
-    // 私有目录用户选不了（scoped storage，真机实测 `/storage/emulated/0`
-    // 写不进、还会建议 `C:\` 这种 Windows 路径），数据直接落在
-    // `<私有目录>/data`（兄弟目录算法自动生成 神算子备份 / 神算子导出）。
-    if (_shellKind == ShellKind.mobile) {
-      final String? root = widget.dataRoot;
-      if (root == null) {
+    // §审查「启动路径健壮性」批次：判定收在 `AppBootstrap.startupDecision()`
+    // **一处**。原来是这里的一串 `if`，每加一个边界就补一段 —— **真机踩过**
+    // 顺序打架：库损坏被当成「首次启动」，向导把 `config.json` 覆盖掉，
+    // 用户的目录（实测 `D://fed`）再也切不回去。
+    final StartupDecision decision = _service.startupDecision(
+      // §BR·补 2 裁定 方案 B：只把「机器给的默认位置」这一个值参数化
+      //（`null` = 用真实机器的默认值 —— 生产行为不变）
+      defaultDataDirectory: widget.defaultDataDirectory,
+    );
+
+    // §审查 OBS-15：配置读不懂就**先留档**（另存 `.corrupt`、**不删原件**）——
+    // 无论救不救得回来，那份读不懂的原文件对人工排查都有价值
+    if (_service.configStatus() == AppConfigLoadStatus.locationLost) {
+      _service.preserveCorruptConfig();
+    }
+
+    switch (decision.scenario) {
+      case StartupScenario.openExisting:
+        _openDatabase(decision.location!);
+        return;
+
+      case StartupScenario.salvageConfig:
+        // ⚠️ **只改内存、不写盘**：`load()` 读的是坏文件（返回默认配置），
+        // 直接 save 会把用户的字号 / 店名一起冲成默认值。用户下次改任何
+        // 设置时这份内存配置会被整份写下去，配置就**自愈**了。
+        setState(
+          () => _config = _config.copyWith(
+            dataDirectory: decision.location!.directory,
+          ),
+        );
+        _openDatabase(decision.location!);
+        return;
+
+      case StartupScenario.brokenDatabase:
+        // ⚠️ **不许**继续往下走向导：向导会拿默认路径**覆盖 config**，
+        // 原目录就从配置里消失了（BUG-03 的另一半，§审查 2026-10-05 真机）
         setState(() {
-          _dbFailure = '应用数据目录不可用（没有拿到私有目录）。'
-              '请卸载后重新安装再试；如果还不行，请把这句话告诉技术支持。';
+          _brokenDirectory = decision.location!.directory;
+          _dbFailure = _brokenDatabaseMessage(decision.location!.directory);
         });
         return;
-      }
-      try {
-        _openDatabase(_service.ensureInitialized(p.join(root, 'data')));
-      } on DataDirectoryRejected catch (error) {
-        // 私有目录被拒（系统占位 / 只读）—— 诚实展示，不兜圈子
-        setState(() {
-          _dbFailure = '${error.reason}。${error.howTo ?? '请重新安装后再试。'}';
-        });
-      }
+
+      case StartupScenario.firstRunWithData:
+        await _askExistingOrDefault(decision.defaultPath!);
+        return;
+
+      case StartupScenario.welcome:
+        await _chooseDirectory(firstRun: true, note: null);
+        return;
+
+      case StartupScenario.recoverLocation:
+        // **不说「第一次启动」** —— 这是「我记不住位置了 / 原位置用不了」
+        // （§AG 遗漏 1 + §审查 OBS-15）
+        await _chooseDirectory(
+          firstRun: false,
+          note: decision.previousPath == null
+              ? _lostConfigNote
+              : '上次用的数据文件夹（${decision.previousPath}）现在找不到了。'
+                    '如果它被搬走、或者盘符变了，点「更改」直接选它现在的位置就行；'
+                    '数据本身不会因为这个提示消失。',
+        );
+        return;
+    }
+  }
+
+  /// Android 的启动路径（§BH·五 B1b，2026-10-04 裁定）：**不弹选目录对话框**。
+  ///
+  /// 私有目录用户选不了（scoped storage，真机实测 `/storage/emulated/0` 写不进、
+  /// 还会建议 `C:\` 这种 Windows 路径），数据直接落在 `<私有目录>/data`
+  /// （兄弟目录算法自动生成 神算子备份 / 神算子导出）。
+  void _prepareMobile() {
+    final String? root = widget.dataRoot;
+    if (root == null) {
+      setState(() {
+        _dbFailure = '应用数据目录不可用（没有拿到私有目录）。'
+            '请卸载后重新安装再试；如果还不行，请把这句话告诉技术支持。';
+      });
       return;
     }
+    try {
+      _openDatabase(_service.ensureInitialized(p.join(root, 'data')));
+    } on DataDirectoryRejected catch (error) {
+      // 私有目录被拒（系统占位 / 只读）—— 诚实展示，不兜圈子
+      setState(() {
+        _dbFailure = '${error.reason}。${error.howTo ?? '请重新安装后再试。'}';
+      });
+    }
+  }
 
+  /// 弹「选择数据存放位置」对话框，选到了就开库。
+  ///
+  /// [firstRun] 控制**要不要说「欢迎使用」**（`docs/data_directory.md` §9.2）；
+  /// [note] 是替换掉「欢迎」那一句的说明（配置读不懂 / 原位置用不了）。
+  Future<void> _chooseDirectory({required bool firstRun, String? note}) async {
     // 用 Navigator 的 context（见 `_navigatorKey` 的注释）
     final BuildContext? dialogContext = _navigatorKey.currentContext;
     if (dialogContext == null) return;
@@ -268,15 +395,247 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       model: DataDirectoryDialogModel(_service),
       // 注入点：生产环境是系统选择器，测试里是桩
       pickDirectory: widget.pickDirectory,
-      // §AG 遗漏 1：只有「配置里根本没有位置」才是真首次启动 ——
-      // 位置失效（盘符变了 / 被搬走）时不能再对用户说「这是第一次启动」
-      firstRun: _config.dataDirectory == null,
+      firstRun: firstRun,
+      lostLocationNote: note,
+      // §BR·补 2：对话框**预填**的默认位置必须与判定用的注入值**同一个** ——
+      // 否则判定说「那个位置没数据 ⇒ 走欢迎向导」，用户点「开始使用」却落到
+      // 机器默认位置（测试里还会写到开发机真实磁盘上）
+      defaultPath: widget.defaultDataDirectory,
     );
     if (chosen == null) return; // 用户退出了 —— 界面会停在「需要选择位置」
     _openDatabase(chosen);
   }
 
+  /// 首启撞上「**默认位置已经有数据**」—— 先问一句（§审查 OBS-11 前半）。
+  ///
+  /// ## 为什么要问
+  ///
+  /// 默认位置在同一台机器上每次都是同一个，而「重装软件 / 解压到别处 /
+  /// 双击第二份 exe」都会走到这里。不问的话，用户直接点「开始使用」
+  /// 就挂到同一份数据上了 —— 他以为「换了个文件夹就是新数据」。
+  ///
+  /// 「继续使用已有数据」= 复用那份数据（`ensureInitialized` 见标记即复用）；
+  /// 「选一个新位置」= 正常走向导（**原来那份数据一个字节都不动**）。
+  Future<void> _askExistingOrDefault(String defaultPath) async {
+    final BuildContext? navContext = _navigatorKey.currentContext;
+    if (navContext == null) return;
+
+    final bool? useExisting = await showDialog<bool>(
+      context: navContext,
+      // 数据落在哪是启动前提，点外面关掉会停在「需要选择位置」——
+      // 与选目录对话框同款（`showDataDirectoryDialog` 也是不可点掉的）
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('这个位置已经有神算子的数据'),
+        content: Text(
+          '$defaultPath\n\n'
+          '这个文件夹里已经有一份神算子的数据了。\n'
+          '要继续用这份数据，点「继续使用已有数据」；'
+          '想从零开始、或者把数据放到别的地方，点「选一个新位置」。',
+          style: const TextStyle(height: 1.8),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('选一个新位置'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('继续使用已有数据'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (useExisting == true) {
+      // 有标记 ⇒ `ensureInitialized` 走**复用**分支，不动目录里的东西
+      _openDatabase(_service.ensureInitialized(defaultPath));
+      return;
+    }
+    // 「选一个新位置」/ 对话框被系统关掉（返回 null）—— 都走向导，
+    // 但说明一句「默认位置里那份数据不会被动」，免得用户以为被删了。
+    // ⚠️ `firstRun: false` —— 不说「这是第一次启动」：用户刚看到「那个位置
+    // 已经有数据」，再说「第一次启动」会自相矛盾（`lostLocationNote` 就是
+    // 用来替换那句欢迎语的）
+    await _chooseDirectory(
+      firstRun: false,
+      note: '默认位置（$defaultPath）里已经有一份神算子的数据 —— '
+          '它不会被删掉，你现在选的是新位置。'
+          '数据都存在你自己电脑里，不会上传。',
+    );
+  }
+
+  /// 切到**已经装过神算子数据**的目录（只改配置，**不搬文件**）。
+  ///
+  /// §审查 2026-10-05 真机：与「更改数据位置（搬迁）」是两件事 ——
+  /// 那个把数据**搬**到新目录，这个只是把软件**指向**另一个已有数据目录。
+  /// 两边数据都原样留着，随时能再切回来，所以确认文案必须说清「不搬、不删」。
+  Future<void> _switchToExistingData(
+    BuildContext navContext,
+    String target,
+  ) async {
+    final DataLocation? current = _location;
+    if (current == null) return;
+    final Color hint = Theme.of(navContext).hintColor;
+
+    final bool? confirmed = await showDialog<bool>(
+      context: navContext,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('切到这个已有的数据文件夹？'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('这个文件夹里已经有神算子的数据：',
+                  style: const TextStyle(height: 1.6)),
+              Text(
+                target,
+                style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '点「切过去」，软件就改用它的数据。不会搬文件，也不会删东西。',
+                style: TextStyle(height: 1.6),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '现在的数据还留在 ${current.directory}，随时能切回来。',
+                style: TextStyle(height: 1.6, color: hint),
+              ),
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('切过去'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    // 关旧库 + 停主机（与「换一个文件夹」同一套收尾）
+    final Db? openingDb = _db;
+    _db = null;
+    if (openingDb != null) openingDb.close();
+    final HostServiceController? leavingHost = _hostService;
+    _hostService = null;
+    if (leavingHost != null) unawaited(leavingHost.stop());
+
+    try {
+      // 标记在那儿 ⇒ `ensureInitialized` 走**复用**分支，不动目录里的东西
+      final DataLocation location = _service.ensureInitialized(target);
+      _configStore.save(_config.copyWith(dataDirectory: location.directory));
+      setState(() => _config = _configStore.load());
+      _openDatabase(location);
+    } on DataDirectoryRejected catch (error) {
+      final BuildContext? retryContext = _navigatorKey.currentContext;
+      if (retryContext == null || !retryContext.mounted) return;
+      setState(() {
+        _brokenDirectory = target;
+        _dbFailure = '${error.reason}。${error.howTo ?? '请再选一个文件夹。'}';
+      });
+    }
+  }
+
+  /// 配置**读不懂 / 记不住位置**时的说明（§审查 OBS-15）。
+  ///
+  /// 要点：① 明说「不是第一次启动」的替代信息 —— 数据没丢；
+  /// ② 给一条**能自己走通**的找回路径（我们不一定救得回来）。
+  static const String _lostConfigNote =
+      '上次记的数据位置读不出来了（配置文件坏了）。'
+      '你的数据没有丢 —— 如果记得原来的文件夹，点「更改」直接选它；'
+      '忘了也不怕：数据文件叫 shensuanzi.db，'
+      '找到那个文件夹、点「更改」选它就回来了。';
+
+  /// 数据文件打不开时的统一说辞（说清**怎么办**，不吓人、不说技术名词）。
+  String _brokenDatabaseMessage(String directory) =>
+      '$directory 里的数据文件打不开 —— 可能是文件损坏了，'
+      '也可能是被别的程序占用着。\n'
+      '修好之后点「重试」；也可以点「换一个文件夹」换个位置。';
+
+  /// 错误页的**重试**（§审查 2026-10-05 真机）。
+  ///
+  /// 不碰 `config.json`：只是把启动流程重跑一遍 —— 库修好了就原样回到原目录。
+  Future<void> _retry() async {
+    setState(() {
+      _dbFailure = null;
+      _brokenDirectory = null;
+      _alreadyRunning = false;
+    });
+    await _prepare();
+  }
+
+  /// 数据打不开时的出路：**直接弹目录选择框**（不经过自动解析）。
+  ///
+  /// §审查 BUG-03：坏库位置若仍能从配置解析出来，用户就会被困在
+  /// 「点按钮 → 同一个错误页」的死循环里 —— 这里强制由用户挑一个新位置。
+  Future<void> _pickAndOpen() async {
+    final BuildContext? navContext = _navigatorKey.currentContext;
+    if (navContext == null || !navContext.mounted) return;
+
+    final String? picked = await widget.pickDirectory();
+    if (picked == null || picked.trim().isEmpty || !mounted) return;
+
+    // 清掉旧状态（与失败分支同一份清单：库没了，依赖它的东西一起清）
+    setState(() {
+      _dbFailure = null;
+      _brokenDirectory = null;
+      _alreadyRunning = false;
+      _location = null;
+      _db = null;
+      _queries = null;
+      _backup = null;
+      _exports = null;
+      _returns = null;
+      _lastBackup = null;
+      _backupError = null;
+      _hasDocuments = false;
+    });
+    final HostServiceController? leavingHost = _hostService;
+    _hostService = null;
+    if (leavingHost != null) unawaited(leavingHost.stop());
+
+    try {
+      // 非空目录要用户再确认一次（与首启对话框同口径）
+      final DataLocation location = _service.ensureInitialized(
+        picked.trim(),
+        acceptForeignDirectory: false,
+      );
+      _configStore.save(_config.copyWith(dataDirectory: location.directory));
+      setState(() => _config = _configStore.load());
+      _openDatabase(location);
+    } on DataDirectoryRejected catch (error) {
+      // 目录不可用 / 非空 —— 诚实展示原因与「怎么办」，用户可再点一次
+      final BuildContext? retryContext = _navigatorKey.currentContext;
+      if (retryContext == null || !retryContext.mounted) return;
+      setState(() => _dbFailure = '${error.reason}。${error.howTo ?? '请再选一个文件夹。'}');
+    }
+  }
+
   void _openDatabase(DataLocation location) {
+    // §审查 OBS-14：**开库之前**先抢锁 —— 同一数据目录被两个实例同时打开，
+    // 就是两条写路径（开单 / 核销 / **迁移**要关库）。第二个实例拦在这里。
+    //
+    // ⚠️ 锁拿不到 ≠ 数据有问题：单独一个状态，不给「换一个文件夹」这种出路。
+    // ⚠️ `unavailable`（锁机制用不了）**必须放行** —— 锁是保护措施，
+    //    不能变成新的故障点。
+    final InstanceLockResult lock = _instanceLock.acquire(location.directory);
+    if (lock == InstanceLockResult.alreadyRunning) {
+      setState(() {
+        _alreadyRunning = true;
+        _dbFailure = null;
+        _brokenDirectory = null;
+      });
+      return;
+    }
     try {
       final Db db = _service.open(location);
       // 打开即迁移完毕 —— 之后的自动备份内容是这个版本的格式，
@@ -356,6 +715,8 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
                 ),
               );
         _dbFailure = null;
+        _brokenDirectory = null;
+        _alreadyRunning = false;
       });
       // 先把状态读出来（设置页/概览页首帧就得有「上次备份」），
       // 再异步跑自动备份 —— **不 await**：用户马上要用软件
@@ -390,10 +751,343 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         _engine = null;
         _settlements = null;
         _returns = null;
-        _dbFailure = '数据文件打不开（$error）。'
-            '如果这个文件夹在 U 盘或网盘里，请换到本机磁盘上的文件夹。';
+        // §审查 OBS-13：原始异常只进日志（上面已 `_log.crash`）——
+        // 界面只留结论 + 怎么办（中老年用户读不懂 SqliteException）
+        _brokenDirectory = location.directory;
+        _dbFailure = _brokenDatabaseMessage(location.directory);
       });
     }
+  }
+
+  /// 「更改数据位置」全流程（§BK·三，2026-10-05 裁定开工；七条工程细节全采纳）。
+  ///
+  /// 序列：选新位置 → 校验（嵌套 / 已存在 / 空间 ≥ 数据+备份+100MB，裁定 ①）
+  /// → 二次确认（旧→新、文件数、大小）→ **关库**（先停 host 并等它收尾，裁定 ②）
+  /// → `Isolate` 里拷贝 + 原子改名（进度经 `ReceivePort` 回流，裁定 ③）
+  /// → 成功：更新 config（在 `%APPDATA%`，与数据分离 —— 裁定 ⑤）→ 重开库；
+  /// 失败：删暂存（迁移器负责，裁定 ⑦）→ 原库重开 → 把话说清。
+  Future<void> _migrateDataLocation() async {
+    final DataLocation? current = _location;
+    final Db? openingDb = _db;
+    if (current == null || openingDb == null) return;
+    // 库还没起来的界面不该出现「更改」按钮 —— 这里只做兜底
+    if (_navigatorKey.currentContext == null) return;
+
+    // ① 选新位置（与首启同一注入点 —— 测试传桩、生产系统选择器）
+    final String? picked = await widget.pickDirectory();
+    if (picked == null || picked.trim().isEmpty || !mounted) return;
+    // 跨 async gap 后不持旧 context —— 每次从 navigatorKey 取新的；
+    // ⚠️ 守卫必须用 **context 自己的 mounted** —— State 的 `mounted` 管不到
+    // navigatorKey 取来的 context（lint use_build_context_synchronously 的判定）
+    final BuildContext? navContext = _navigatorKey.currentContext;
+    if (navContext == null || !navContext.mounted) return;
+    final String target = p.normalize(p.absolute(picked.trim()));
+
+    // ② 校验（裁定 ①：空间算全；嵌套校验 `inspectMigration` 已备）
+    final DirectoryAdvice advice = _service.policy.inspectMigration(
+      current.directory,
+      target,
+    );
+    if (!advice.isUsable) {
+      await _migrationMessage(
+        navContext,
+        '${advice.reason}。${advice.advice ?? ''}',
+      );
+      return;
+    }
+    // ⚠️ §审查 2026-10-05 真机：用户选中的目录**本身就是神算子的数据目录**
+    //（有标记文件）⇒ 这不是「迁移」，是**切回去用那个目录**。
+    //
+    // 为什么必须有这条路：下面「目标不能非空」的硬校验会把 `D://fed` 这种
+    // **装过数据的目录**挡死 —— 而配置一旦被覆盖（旧代码在库损坏时会走首启
+    // 向导、把 config 写成默认路径），用户就**再也回不到自己的数据**了。
+    // 这条路**不搬任何文件**：只改 config 再开库，两边数据都原样留着。
+    if (_service.isShensuanziDir(target)) {
+      await _switchToExistingData(navContext, target);
+      return;
+    }
+    final Directory targetDir = Directory(target);
+    if (targetDir.existsSync() && targetDir.listSync().isNotEmpty) {
+      await _migrationMessage(
+        navContext,
+        '目标文件夹已存在且有内容 —— 请选一个空文件夹，'
+        '或者填一个还不存在的名字（会自动创建）',
+      );
+      return;
+    }
+    final DataMigrator migrator = DataMigrator(
+      dataDirectory: current.directory,
+      backupDirectory: current.backupDirectory,
+      newDataDirectory: target,
+      newBackupDirectory: _service.policy.backupDirectoryFor(target),
+    );
+    final MigrationPlan plan = migrator.plan();
+    final DriveInfo? drive = _environment.driveOf(target);
+    if (drive != null && drive.freeBytes != null && drive.freeBytes! < plan.requiredBytes) {
+      await _migrationMessage(
+        navContext,
+        '${drive.letter} 盘剩余空间不够：需要约 '
+            '${formatBytes(plan.requiredBytes)}（数据 + 备份 + 余量），'
+            '现在只剩 ${formatBytes(drive.freeBytes)}',
+      );
+      return;
+    }
+
+    // ③ 二次确认：危险操作说清下一步会发生什么
+    final bool? confirmed = await showDialog<bool>(
+      context: navContext,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('更改数据位置？'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('从 ${current.directory}', style: const TextStyle(height: 1.6)),
+              Text('搬到 $target', style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Text(
+                '共 ${plan.fileCount} 个文件、约 ${formatBytes(plan.byteCount)}'
+                '（含备份目录）。过程中会短暂不能开单，搬完自动继续。',
+                style: const TextStyle(height: 1.6),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '原目录不会删除 —— 确认新位置好用之前，它是你唯一的完好备份。',
+                style: TextStyle(height: 1.6, color: Theme.of(context).hintColor),
+              ),
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('开始迁移')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    // 再取一次新 context（确认对话框已跨一个 async gap）
+    final BuildContext? maskContext = _navigatorKey.currentContext;
+    if (maskContext == null || !maskContext.mounted) return;
+
+    // ④ 进度遮罩（裁定 ③：进度 + 请勿关闭；不可点掉）
+    final ValueNotifier<MigrationProgress?> progress =
+        ValueNotifier<MigrationProgress?>(null);
+    final Completer<void> dialogClosed = Completer<void>();
+    unawaited(
+      showDialog<void>(
+        context: maskContext,
+        barrierDismissible: false,
+        builder: (BuildContext context) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: const Text('正在搬数据…'),
+            content: ValueListenableBuilder<MigrationProgress?>(
+              valueListenable: progress,
+              builder: (BuildContext context, MigrationProgress? value, _) {
+                final int done = value?.filesCopied ?? 0;
+                final int total = value?.totalFiles ?? 0;
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    LinearProgressIndicator(value: value?.fraction),
+                    const SizedBox(height: 12),
+                    Text(
+                      total == 0 ? '准备中…' : '已复制 $done / $total 个文件',
+                      style: const TextStyle(height: 1.6),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '请勿关闭软件。',
+                      style: TextStyle(
+                        height: 1.6,
+                        fontWeight: FontWeight.w700,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ).whenComplete(dialogClosed.complete),
+    );
+
+    // ⑤ 停 host（裁定 ②：不再收新请求 + 等在途收尾，带超时不无限等）
+    final HostServiceController? host = _hostService;
+    if (host != null) {
+      try {
+        await host.stop().timeout(const Duration(seconds: 3));
+      } catch (_) {
+        // 超时也继续 —— host 里没有未落库的数据（落库都在主机事务里完成）
+      }
+    }
+
+    // ⑥ 关库 → Isolate 里搬文件（拷贝不再冻结界面，进度实时回流）
+    openingDb.close();
+    final ReceivePort progressPort = ReceivePort();
+    // `ReceivePort` 本身没有 send —— 发送走它的 `sendPort`（我臆造 API 的教训）
+    final SendPort progressSend = progressPort.sendPort;
+    final StreamSubscription<dynamic> sub = progressPort.listen(
+      (dynamic message) => progress.value = message as MigrationProgress?,
+    );
+    DataMigrationResult result;
+    try {
+      final DataMigrator worker = migrator;
+      // ⚠️ isolate 入口必须是**顶层函数**（见文件末尾 `_runMigrationInIsolate`）：
+      // 写成方法内闭包会沿作用域链把 State 的 Completer/Notifier 一起拖进
+      // isolate 消息 —— 「object is unsendable」，真机炸过（§BK·三·补 2）
+      result = await _runMigrationInIsolate(worker, progressSend);
+    } catch (error) {
+      result = DataMigrationResult.failed('$error');
+    } finally {
+      progressPort.close();
+      await sub.cancel();
+    }
+    progress.value = MigrationProgress(
+      filesCopied: plan.fileCount,
+      totalFiles: plan.fileCount,
+    );
+    // 收起遮罩 —— **成功失败都要**：真机踩过「失败后遮罩永不消失」
+    // （错误页盖在上面时看不出来，错误页一退它就露出来了）
+    final BuildContext? popContext = _navigatorKey.currentContext;
+    if (popContext != null && popContext.mounted) {
+      Navigator.of(popContext, rootNavigator: true).pop();
+    }
+    await dialogClosed.future.timeout(const Duration(seconds: 2), onTimeout: () {});
+    if (!mounted) return;
+
+    // ⑦ 成败处置
+    if (result.ok) {
+      final AppConfig updated = _config.copyWith(dataDirectory: target);
+      _configStore.save(updated);
+      setState(() => _config = updated);
+      _openDatabase(_service.ensureInitialized(target));
+      _toast('数据已迁移到 $target。原目录保留着，确认好用后可自行删除。');
+    } else {
+      _openDatabase(current); // 旧位置原样 —— 立刻恢复可用
+      _toast('没能搬过去（${result.error}）。数据还在原位置，软件已恢复。');
+    }
+  }
+
+  Future<void> _migrationMessage(BuildContext context, String message) => showDialog<void>(
+    context: context,
+    builder: (BuildContext context) => AlertDialog(
+      title: const Text('先停一下'),
+      content: Text(message, style: const TextStyle(height: 1.6)),
+      actions: <Widget>[
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('知道了')),
+      ],
+    ),
+  );
+
+  void _toast(String message) {
+    final BuildContext? dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null) return;
+    ScaffoldMessenger.of(dialogContext).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 8)),
+    );
+  }
+
+  /// 「扫码连接主机」（§BL·三）：推扫码页（含相机理由文案与首拉），
+  /// 回来后重建页面（裁定 ⑦：各页重查镜像库）。
+  Future<void> _mobileScanPair() async {
+    final MobileSyncService? service = _mobileSyncService;
+    if (service == null) return;
+    final BuildContext? context = _navigatorKey.currentContext;
+    if (context == null || !context.mounted) return;
+    final String? message = await showPairingScanPage(context, service);
+    if (!mounted) return;
+    setState(() {}); // 裁定 ⑦：镜像可能变了，全部页面重查
+    if (message != null) _toast(message);
+  }
+
+  /// 「立即同步」（§BL·三，裁定 ③：B2 手动触发）。
+  ///
+  /// 裁定 ②：任何 401 / 403 ⇒ 配对失效 ⇒ **清除本地 pairing.json** +
+  /// 提示重新扫码（面板会自动回到「扫码连接主机」态）。
+  Future<void> _mobileSyncNow() async {
+    final MobileSyncService? service = _mobileSyncService;
+    if (service == null) return;
+    final BuildContext? maskOwner = _navigatorKey.currentContext;
+    if (maskOwner == null || !maskOwner.mounted) return;
+
+    // 遮罩（小库同步是秒级；不做进度条 —— pull 分页拿不到总数，裁定 ⑥：
+    // 拿不到总数就不放假进度条，给「正在同步」+ 请勿关闭）
+    final Completer<void> dialogClosed = Completer<void>();
+    unawaited(
+      showDialog<void>(
+        context: maskOwner,
+        barrierDismissible: false,
+        builder: (BuildContext context) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                const Text('正在同步…', style: TextStyle(height: 1.6)),
+                const SizedBox(height: 8),
+                Text(
+                  '请勿关闭软件。',
+                  style: TextStyle(
+                    height: 1.6,
+                    fontWeight: FontWeight.w700,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ).whenComplete(dialogClosed.complete),
+    );
+
+    SyncOutcome outcome;
+    try {
+      outcome = await service.syncNow();
+    } catch (error) {
+      // belt：服务层保证不抛，这里再兜一层（遮罩绝不能卡死）
+      outcome = SyncOutcome(
+        SyncOutcomeKind.error,
+        '同步时出错（$error）—— 请重试；一直这样请把这句话告诉技术支持',
+      );
+    }
+
+    // 收起遮罩（成功失败都要 —— 同遮罩教训 §BK·三·补 2）
+    final BuildContext? popContext = _navigatorKey.currentContext;
+    if (popContext != null && popContext.mounted) {
+      Navigator.of(popContext, rootNavigator: true).pop();
+    }
+    await dialogClosed.future.timeout(const Duration(seconds: 2), onTimeout: () {});
+    if (!mounted) return;
+
+    if (outcome.kind == SyncOutcomeKind.authExpired) {
+      service.forgetHost(); // 裁定 ②：清除本地凭据，面板回到「扫码」态
+    }
+    setState(() {}); // 裁定 ⑦：镜像可能变了 + 面板状态切换
+    _toast(outcome.message);
+  }
+
+  /// 开单提交成功（B3b·§CA，手机端装配；桌面为 `null` 不走这里）。
+  ///
+  /// - **立即刷新**三态条（裁定 ②：保存后三态条马上变「待同步 N 条」）；
+  /// - **异步推送一次**（裁定 ③）：不 await、不阻塞 UI，失败静默留队列；
+  ///   推送结束后再刷一次（条目转 `sent` / 退避，三态条跟着变）。
+  void _onDocumentSubmitted(DocumentSubmitResult result) {
+    if (!result.isQueued) return; // 桌面结果不会到这里；防御
+    setState(() {}); // 触发三态条重查（didUpdateWidget 以壳实例身份为版本号）
+    final MobileSyncService? sync = _mobileSyncService;
+    if (sync == null) return;
+    unawaited(
+      sync.autoPush().then((SyncOutcome _) {
+        if (mounted) setState(() {}); // 失败也刷新（条目可能进了退避/死信）
+      }),
+    );
   }
 
   /// 重读「最新一份备份」+「库里有没有单据」。
@@ -497,6 +1191,13 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2F6FA8)),
       scaffoldBackgroundColor: const Color(0xFFFAFAFA),
       useMaterial3: true,
+      // 日期选择器的左栏大字（「10月5 日周一」）默认用 headlineMedium（32px），
+      // 在本应用的界面尺度里**过大**（发布后反馈 2026-10-05，100% 缩放仍大）。
+      // 压回与正文协调的尺度；字体族随 ThemeData.fontFamily 自动继承。
+      datePickerTheme: const DatePickerThemeData(
+        headerHeadlineStyle: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        headerHelpStyle: TextStyle(fontSize: 13),
+      ),
     );
   }
 
@@ -505,6 +1206,15 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     return MaterialApp(
       title: '神算子',
       debugShowCheckedModeBanner: false,
+      // 界面本地化（§BK·一）：Material 组件（日期选择器等）的文字用中文。
+      // 没有这三行时 showDatePicker 全是英文 —— 用户反馈 2026-10-05 发布后。
+      localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const <Locale>[Locale('zh'), Locale('en')],
+      locale: const Locale('zh'),
       // 启动流程要在首帧之后弹对话框，用它的 context（见 `_navigatorKey`）
       navigatorKey: _navigatorKey,
       theme: _theme,
@@ -524,27 +1234,28 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     // 每次 build 取一次当前时刻，跨天后下一次重绘就对了
     final DateTime now = DateTime.now();
 
+    // §审查 OBS-14：已经在运行 —— 只给「重试」（用户关掉那个实例后再点）
+    if (_alreadyRunning) {
+      return _StartupPage(
+        message: '神算子已经在运行了。\n请到任务栏找到它，不要重复打开。\n'
+            '（同一个数据文件夹同时只允许一个神算子开着 —— '
+            '同时开两个会有数据风险。）',
+        actionLabel: '再试一次',
+        onAction: _retry,
+      );
+    }
     if (_dbFailure != null) {
       return _StartupPage(
         message: _dbFailure!,
-        actionLabel: '重新选择位置',
-        onAction: () async {
-          setState(() => _dbFailure = null);
-          _location = null;
-          _db = null;
-          // 与失败分支保持同一份清单：库没了，依赖它的东西一起清掉
-          final HostServiceController? leavingHost = _hostService;
-          _hostService = null;
-          if (leavingHost != null) unawaited(leavingHost.stop());
-          _queries = null;
-          _backup = null;
-          _exports = null;
-          _returns = null;
-          _lastBackup = null;
-          _backupError = null;
-          _hasDocuments = false;
-          await _prepare();
-        },
+        actionLabel: '换一个文件夹',
+        // §审查 BUG-03：**必须强制弹目录选择框** —— 原来重新走 `_prepare()`，
+        // 而 `resolved()` 会再次解析出同一个坏位置 ⇒ 反复点、反复回到错误页
+        onAction: _pickAndOpen,
+        // §审查 2026-10-05：知道是哪个目录打不开时，多给一条「重试」——
+        // 用户把库修好（或关掉占用它的程序）就能**回到原来的数据**，
+        // 不必放弃那个目录。不知道是哪个目录时不显示。
+        retryLabel: _brokenDirectory == null ? null : '重试',
+        onRetry: _brokenDirectory == null ? null : _retry,
       );
     }
 
@@ -558,6 +1269,60 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     }
 
     // §BH B1a：壳参数**装配一份**，桌面直接摆 / 移动端交给 MobileShell 持有。
+    // B3b（§CA）：开单提交出口 —— 页面对它编程，无「是不是客户端」分支：
+    // 桌面 = ServiceSink（落库+规则，与直连逐字同行为）；手机 = QueueSink（入队）。
+    final DocumentSink? documentSink;
+    if (_shellKind == ShellKind.mobile) {
+      final MobileSyncService? sync = _mobileSyncService;
+      documentSink = sync == null
+          ? null
+          : QueueSink(queue: SyncQueueDao(sync.openMirror()));
+    } else {
+      final SaleService? sales = _sales;
+      final PurchaseService? purchases = _purchases;
+      final DeliveryService? deliveries = _deliveries;
+      documentSink =
+          sales == null || purchases == null || deliveries == null
+          ? null
+          : ServiceSink(
+              sales: sales,
+              purchases: purchases,
+              deliveries: deliveries,
+            );
+    }
+
+    // C2·§CC 方案 1：手机端读面切**镜像**（主库废弃但保留 —— 边界见
+    // `MirrorView` 类文档）。桌面分支维持主库服务，零变化。
+    // ⚠️ 手机壳业务页用的服务全部构造在镜像 db 上；主数据写入被
+    // `readOnlyMasterData` 引导接管（协议正确性：本机建的 id 推到主机必被拒）。
+    final Db? mirror = _shellKind == ShellKind.mobile
+        ? _mobileSyncService?.openMirror()
+        : null;
+    final SaleService? shellSales = mirror == null
+        ? _sales
+        : SaleService(engine: RuleEngine(mirror), queries: QueryDao(mirror));
+    final PurchaseService? shellPurchases = mirror == null
+        ? _purchases
+        : PurchaseService(engine: RuleEngine(mirror), queries: QueryDao(mirror));
+    final DeliveryService? shellDeliveries = mirror == null
+        ? _deliveries
+        : DeliveryService(engine: RuleEngine(mirror), queries: QueryDao(mirror));
+    final ProductService? shellProducts = mirror == null
+        ? _products
+        : ProductService(mirror);
+    final PartyService? shellParties = mirror == null
+        ? _parties
+        : PartyService(PartyDao(mirror));
+    final AccountService? shellAccounts = mirror == null
+        ? _accounts
+        : AccountService(AccountDao(mirror));
+    final QueryDao? shellQueries = mirror == null ? _queries : QueryDao(mirror);
+    // 仅库存页期初入口用；手机上该入口被引导接管（engine 不会被调）
+    final RuleEngine? shellEngine = mirror == null ? _engine : RuleEngine(mirror);
+    final StockDelta? stockDelta = mirror == null
+        ? null
+        : StockDelta(db: mirror, queue: SyncQueueDao(mirror));
+
     final AppShell shell = AppShell(
       dataDirectory: location.directory,
       backupDirectory: location.backupDirectory,
@@ -566,17 +1331,25 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
           ? _schemaVersion
           : location.marker.schemaVersion,
       databaseReady: _db != null,
-      products: _products,
-      purchases: _purchases,
-      sales: _sales,
-      deliveries: _deliveries,
-      accounts: _accounts,
-      parties: _parties,
-      queries: _queries,
+      products: shellProducts,
+      purchases: shellPurchases,
+      sales: shellSales,
+      deliveries: shellDeliveries,
+      documentSink: documentSink,
+      onDocumentSubmitted: _shellKind == ShellKind.mobile
+          ? _onDocumentSubmitted
+          : null,
+      stockDelta: stockDelta,
+      // ⚠️ 按壳类型判定，不按 mirror 是否取到 —— 手机上禁建必须恒真
+      //（mirror 万一没建好时退回主库服务，但建档依旧不许）
+      readOnlyMasterData: _shellKind == ShellKind.mobile,
+      accounts: shellAccounts,
+      parties: shellParties,
+      queries: shellQueries,
       documents: _db == null ? null : DocumentDao(_db!),
       settlements: _settlements,
       returns: _returns,
-      engine: _engine,
+      engine: shellEngine,
       hostService: _hostService,
       uiScale: _config.uiScale,
       shopName: _config.shopName,
@@ -622,12 +1395,19 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
               '包括备份 —— 请定期用下面的「导出备份」保留一份。'
           : null,
       hostSyncNote: _shellKind == ShellKind.mobile
-          ? '手机版不做「主机」—— 多设备连接这样用：\n'
-              '一、在这台手机上记好账；\n'
-              '二、到电脑上打开「设置 → 多设备同步」；\n'
-              '三、用手机扫电脑上的二维码（后续版本开放，当前手机与电脑各自记账）。'
+          ? '手机版不做「主机」—— 与电脑连接这样用：\n'
+              '一、到电脑上打开「设置 → 多设备同步」；\n'
+              '二、用手机扫电脑上的二维码；\n'
+              '三、连接后手机开单会自动推送到电脑'
+              '（断网时先记在待同步队列，联网自动补传）。'
           : null,
       onExportBackup: _shellKind == ShellKind.mobile ? _exportBackupMobile : null,
+      // §BK·三：更改数据位置 —— 桌面专属（Android 私有目录改不了）
+      onMigrateData: _shellKind == ShellKind.mobile ? null : _migrateDataLocation,
+      // §BL·三：手机端同步（桌面是主机，无客户端同步）
+      mobileSync: _mobileSyncService,
+      onScanPair: _mobileScanPair,
+      onSyncNow: _mobileSyncNow,
       // §AI-1：传**解析后**的实例（生产里 widget.configStore 是 null）
       configStore: _configStore,
       onConfigChanged: (AppConfig config) {
@@ -655,11 +1435,17 @@ class _StartupPage extends StatelessWidget {
     required this.message,
     required this.actionLabel,
     required this.onAction,
+    this.retryLabel,
+    this.onRetry,
   });
 
   final String message;
   final String actionLabel;
   final VoidCallback onAction;
+
+  /// 可选的第二动作（如「重试」）；两个都为 `null` 时只显示主按钮
+  final String? retryLabel;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -672,10 +1458,36 @@ class _StartupPage extends StatelessWidget {
             Text(message, textAlign: TextAlign.center),
             const SizedBox(height: 24),
             // 常驻可见的文字按钮，不用图标（`docs/ui_principles.md` §1.1）
-            FilledButton(onPressed: onAction, child: Text(actionLabel)),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: <Widget>[
+                // 「重试」放前面：它是**代价最小**的那条路（不用重选目录）
+                if (retryLabel != null && onRetry != null)
+                  OutlinedButton(onPressed: onRetry, child: Text(retryLabel!)),
+                FilledButton(onPressed: onAction, child: Text(actionLabel)),
+              ],
+            ),
           ],
         ),
       ),
     ),
   );
 }
+
+/// 迁移的 **isolate 入口**（§BK·三·补 2）。
+///
+/// ⚠️ 必须是**顶层函数**：方法内闭包的上下文会沿作用域链拖走 State 的
+/// `Completer` / `ValueNotifier`（都不可跨 isolate 发送）——
+/// 真机炸过「object is unsendable: _AsyncCompleter」。顶层函数的闭包
+/// 上下文只含这两个参数（`DataMigrator` 字段全为 String + null 函数，
+/// `SendPort` 本就可发送），干净。
+Future<DataMigrationResult> _runMigrationInIsolate(
+  DataMigrator worker,
+  SendPort progressSend,
+) => Isolate.run<DataMigrationResult>(
+  () => worker.execute(
+    onProgress: (MigrationProgress value) => progressSend.send(value),
+  ),
+);

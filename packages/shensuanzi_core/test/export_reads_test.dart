@@ -135,7 +135,7 @@ void main() {
       expect(DocumentDao(db).listDocumentsForExport().length, overCap);
     });
 
-    test('type 过滤在导出路径上同样生效', () {
+    test('types 过滤在导出路径上同样生效（可多选）', () {
       seedDocuments(3);
       insertDocument(
         db.raw,
@@ -146,11 +146,15 @@ void main() {
 
       expect(DocumentDao(db).listDocumentsForExport().length, 4);
       expect(
-        DocumentDao(db).listDocumentsForExport(type: DocType.sale).length,
+        DocumentDao(db).listDocumentsForExport(
+          types: <DocType>{DocType.sale},
+        ).length,
         1,
       );
       expect(
-        DocumentDao(db).listDocumentsForExport(type: DocType.purchase).length,
+        DocumentDao(db).listDocumentsForExport(
+          types: <DocType>{DocType.purchase},
+        ).length,
         3,
       );
     });

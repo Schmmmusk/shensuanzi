@@ -26,6 +26,7 @@ import 'bootstrap.dart';
 import 'data_directory.dart';
 import 'data_marker.dart';
 import 'environment.dart';
+import 'startup.dart';
 
 class DataDirectoryService {
   DataDirectoryService({
@@ -79,6 +80,34 @@ class DataDirectoryService {
   ///
   /// 返回 `null` 表示**要弹对话框**：没配过、目录没了、标记不见了、或路径已非法。
   DataLocation? existing() => bootstrap.resolved();
+
+  /// 配置里的位置**目录与标记都在、只是库打不开** ⇒ 返回它（否则 `null`）。
+  ///
+  /// ⚠️ 调用方**不许**把它当成「首次启动」去弹向导 —— 走向导会覆盖
+  /// `config.json`，用户原来的目录就找不回来了（§审查 2026-10-05 真机）。
+  /// 正确处置：停在错误页 + 显示这个路径 + 给「重试」。
+  DataLocation? unusableExisting() => bootstrap.unusableConfigured();
+
+  /// 配置文件的状态（§审查 OBS-15）：`absent` 才是真·第一次启动。
+  AppConfigLoadStatus configStatus() => bootstrap.configStatus();
+
+  /// **本次启动落在哪个场景**（§审查「启动路径健壮性」批次）。
+  ///
+  /// 把先前散在 UI 里的四个启动边界（BUG-03 坏库 / OBS-15 配置损坏 /
+  /// OBS-11 首启撞已有数据 / 位置失效）收成一次判定，见 `startup.dart`。
+  /// 本方法**只转发** —— 与其他方法一致（见文件头「本类不含逻辑」）。
+  ///
+  /// [defaultDataDirectory]：**只替换「机器给的默认位置」那一个值**（§BR·补 2
+  /// 裁定 方案 B，仅供测试注入）；`null` = 用真实机器的默认值，生产行为不变。
+  /// ⚠️ 它是**参数**不是「机器替身」——判定照样去真实文件系统问「有没有标记」。
+  StartupDecision startupDecision({String? defaultDataDirectory}) =>
+      bootstrap.startupDecision(defaultDataDirectory: defaultDataDirectory);
+
+  /// 配置读不懂时从原文**抢救**原位置；救不到返回 `null`。
+  DataLocation? salvagedExisting() => bootstrap.salvagedLocation();
+
+  /// 把读不懂的配置另存 `config.json.corrupt`（不删原件）。
+  void preserveCorruptConfig() => bootstrap.preserveCorruptConfig();
 
   /// 展示用容量提示，如 `D 盘剩余 128 GB`；拿不到返回 `null`（不编一个值）。
   String? spaceHint(String path) => policy.spaceHint(path);

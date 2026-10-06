@@ -22,6 +22,8 @@ void main() {
   late PurchaseService purchases;
   late ProductService products;
   late PartyService partyService;
+  // B3b：页面提交改吃 Sink —— 桌面语义 = ServiceSink（与直连逐字同行为）
+  late DocumentSink sink;
   late String productId;
   late String accountId;
 
@@ -30,6 +32,11 @@ void main() {
     db = Db.open(p.join(box.path, 'shensuanzi.db'));
     service = SaleService(engine: RuleEngine(db), queries: QueryDao(db));
     purchases = PurchaseService(engine: RuleEngine(db), queries: QueryDao(db));
+    sink = ServiceSink(
+      sales: service,
+      purchases: purchases,
+      deliveries: DeliveryService(engine: RuleEngine(db), queries: QueryDao(db)),
+    );
     products = ProductService(db);
     partyService = PartyService(PartyDao(db));
 
@@ -80,6 +87,7 @@ void main() {
         service: service,
         productService: products,
         partyService: partyService,
+        sink: sink,
       ),
     ),
   );
@@ -168,6 +176,41 @@ void main() {
     expect(find.textContaining('已保存'), findsOneWidget);
     expect(find.textContaining('已结清'), findsOneWidget);
     expect(StockLedgerDao(db).stockOf(productId), 0, reason: '买 10 卖 10');
+  });
+
+  testWidgets('手机端（QueueSink）保存 → 「已记入待同步」SnackBar，本地不落库（§CA）', (
+    WidgetTester tester,
+  ) async {
+    // 队列库按真机形态：镜像库 FK 是关的（SyncClient 毒丸守卫的前提）
+    final Db queueDb = Db.openInMemory(foreignKeys: false);
+    final DocumentSink queueSink = QueueSink(queue: SyncQueueDao(queueDb));
+    stockUp(); // 选择器/快照仍查本地服务（B3c 再切镜像视图 —— 台账已列开放项）
+    addTearDown(queueDb.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SalePage(
+            service: service,
+            productService: products,
+            partyService: partyService,
+            sink: queueSink,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await fillRow(tester);
+    await tester.tap(find.text('全款'));
+    await tester.pumpAndSettle();
+    await tapBottomButton(tester, '保存 (Ctrl+S)');
+
+    // 裁定 ② 的文案（core `queuedNotice` 给，UI 不造句）
+    expect(find.textContaining('已记入待同步'), findsOneWidget);
+    expect(find.textContaining('主机下次联网时会收到'), findsOneWidget);
+    expect(StockLedgerDao(db).stockOf(productId), 10, reason: '客户端不落库 —— 库存不动');
+    expect(SyncQueueDao(queueDb).count(), 1, reason: '入队 1 条');
   });
 
   testWidgets('散客欠款 → 报「散客要当场结清」', (WidgetTester tester) async {

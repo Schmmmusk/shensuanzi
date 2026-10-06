@@ -217,5 +217,30 @@ void main() {
         }
       }
     });
+
+  // ============================================================ §BR·补 2 方案 B
+  group('默认位置可注入（§BR·补 2 裁定 方案 B）', () {
+    test('open(defaultPath:) 覆盖「机器给的默认位置」；不注入时一个字不变', () {
+      // ① 不注入 ⇒ 机器算出来的那个
+      model.open();
+      expect(model.path, service.resolveDefault());
+
+      // ② 注入 ⇒ 预填注入值。⚠️ 必须与 `startupDecision(defaultDataDirectory:)`
+      //    的注入值**同一个** —— 否则判定说「那个位置没数据 ⇒ 走欢迎向导」，
+      //    对话框却预填机器默认位置，用户点「开始使用」就落到别处了
+      final String injected = sandboxPath(box, '注入的位置');
+      Directory(injected).createSync(recursive: true);
+
+      final DataDirectoryDialogModel m = DataDirectoryDialogModel(service);
+      m.open(defaultPath: injected);
+      expect(m.path, injected);
+      expect(
+        m.canConfirm,
+        isTrue,
+        reason: '沙箱里的空目录：能直接开始（created）',
+      );
+      expect(m.confirm(), ConfirmOutcome.created);
+    });
+  });
   });
 }

@@ -18,16 +18,15 @@ import '../dao/query_dao.dart';
 import '../master_data/party_service.dart';
 import '../models/account.dart';
 import '../models/document.dart';
-import '../models/document_line.dart';
 import '../models/party.dart';
 import '../models/product.dart';
-import '../rules/payment_entry.dart';
 import '../rules/rule_engine.dart';
-import '../util/ids.dart';
+import 'document_build.dart';
+import 'draft_invalid.dart';
 import 'sale_draft.dart';
 
 /// 草稿校验失败：**带三组字段级原因**，界面直接标红对应输入框。
-class SaleDraftInvalid implements Exception {
+class SaleDraftInvalid implements DraftInvalidException {
   SaleDraftInvalid(this.fieldErrors, this.lineErrors, this.paymentErrors);
 
   final Map<SaleField, String> fieldErrors;
@@ -35,6 +34,7 @@ class SaleDraftInvalid implements Exception {
   final List<Map<SalePaymentField, String>> paymentErrors;
 
   /// 拼成一句话（日志 / 汇总提示用）
+  @override
   String get summary => <String>[
     ...fieldErrors.values,
     for (final Map<SaleLineField, String> e in lineErrors) ...e.values,
@@ -43,6 +43,23 @@ class SaleDraftInvalid implements Exception {
 
   @override
   String toString() => 'SaleDraftInvalid($summary)';
+}
+
+/// 三组校验跑一遍；**有失败 → 聚成异常返回，全过 → `null`**。
+///
+/// `SaleService.create` 与 `QueueSink`（B3 客户端入队）**共用这一份**
+/// —— 两处各写一遍必然漂移（裁定 ⑥：客户端不跑规则，但**不等于不校验**）。
+SaleDraftInvalid? saleDraftFailure(SaleDraft draft) {
+  final Map<SaleField, String> fieldErrors = draft.validate();
+  final List<Map<SaleLineField, String>> lineErrors = draft.validateLines();
+  final List<Map<SalePaymentField, String>> paymentErrors =
+      draft.validatePayments();
+  if (fieldErrors.isNotEmpty ||
+      lineErrors.any((Map<SaleLineField, String> e) => e.isNotEmpty) ||
+      paymentErrors.any((Map<SalePaymentField, String> e) => e.isNotEmpty)) {
+    return SaleDraftInvalid(fieldErrors, lineErrors, paymentErrors);
+  }
+  return null;
 }
 
 /// 保存成功后给 UI 的结果（与 `PurchaseSaved` 同构 —— 将来抽 `DocumentSaved`）。
@@ -115,65 +132,18 @@ class SaleService {
   /// 提交草稿。校验不通过抛 [SaleDraftInvalid]；规则拒绝抛 [StateError]
   /// （此时库已整单回滚，界面走「意外失败」兜底文案）。
   SaleSaved create(SaleDraft draft, {int? now}) {
-    final Map<SaleField, String> fieldErrors = draft.validate();
-    final List<Map<SaleLineField, String>> lineErrors = draft.validateLines();
-    final List<Map<SalePaymentField, String>> paymentErrors =
-        draft.validatePayments();
-    if (fieldErrors.isNotEmpty ||
-        lineErrors.any((Map<SaleLineField, String> e) => e.isNotEmpty) ||
-        paymentErrors.any((Map<SalePaymentField, String> e) => e.isNotEmpty)) {
-      throw SaleDraftInvalid(fieldErrors, lineErrors, paymentErrors);
-    }
+    final SaleDraftInvalid? failure = saleDraftFailure(draft);
+    if (failure != null) throw failure;
 
     final int stamp = now ?? DateTime.now().millisecondsSinceEpoch;
 
-    final Document document = Document(
-      id: newId(),
-      // 占位号：主机路径由 `_prepare` 换成正式单号
-      docNo: '${Document.pendingDocNoPrefix}${draft.hashCode}',
-      docType: DocType.sale,
-      status: DocStatus.confirmed,
-      partyId: draft.partyId,
-      totalAmount: draft.totalCents,
-      occurredAt: draft.occurredAt,
-      createdAt: stamp,
-      updatedAt: stamp,
-      remark: draft.remark.trim().isEmpty ? null : draft.remark.trim(),
-    );
-
-    final List<DocumentLine> lines = <DocumentLine>[
-      for (final SaleLineDraft line in draft.lines)
-        if (!line.isEmpty)
-          // v3：quantity = 换算后的最小单位数量；amount = 真相（含让价）；
-          // entry_* 记录入原文（§BD·三 第 1/2/6 条）
-          DocumentLine.create(
-            documentId: document.id,
-            productId: line.productId,
-            quantity: line.baseQuantityValue!,
-            amount: line.amountCents!,
-            entryQuantity: line.entryQuantityValue!,
-            entryUnit: line.entryUnitValue,
-            discountAmount: line.discountCents ?? 0,
-          ),
-    ];
-
-    // §AX·一：落库按**钳制后**的金额走 —— 超收的部分是找零，不落库。
-    // 逐行钳制（`recordedPaymentCents`），并跳过被钳成 0 的行：
-    // 0 元的收付款单没有意义，规则层也会拒。
-    final List<int> recorded = draft.recordedPaymentCents;
-    final List<PaymentEntry> payments = <PaymentEntry>[
-      for (int i = 0; i < draft.payments.length; i++)
-        if (!draft.payments[i].isBlank && recorded[i] > 0)
-          PaymentEntry(
-            accountId: draft.payments[i].accountId,
-            amount: recorded[i],
-          ),
-    ];
+    // B3a：构造抽到 `document_build.dart`（与 QueueSink 共用一份，行为零变化）
+    final DocumentBuild build = buildSaleDocument(draft, now: stamp);
 
     final RuleOutcome outcome = _engine.dispatch(
-      document: document,
-      lines: lines,
-      immediatePayments: payments,
+      document: build.document,
+      lines: build.lines,
+      immediatePayments: build.payments,
       now: stamp,
     );
 

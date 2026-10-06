@@ -103,12 +103,28 @@ class StocktakeValidation {
 
 /// 期初录入草稿（主单）。
 class StocktakeDraft {
-  const StocktakeDraft({this.lines = const <StocktakeLineDraft>[]});
+  const StocktakeDraft({
+    this.lines = const <StocktakeLineDraft>[],
+    this.isOpening = true,
+  });
 
   final List<StocktakeLineDraft> lines;
 
-  StocktakeDraft copyWith({List<StocktakeLineDraft>? lines}) =>
-      StocktakeDraft(lines: lines ?? this.lines);
+  /// `true` = **期初建账**（第一回把店里已有的货记进来）；
+  /// `false` = 之后的「重新清点」。
+  ///
+  /// §审查 OBS-09①：原来备注**写死**成「期初录入（店内已有货建账）」——
+  /// 于是重新清点出来的单据也这么写，与事实不符。只影响备注，不影响口径。
+  final bool isOpening;
+
+  /// 单据备注 —— 两类动作**说清是哪一种**。
+  String get remark => isOpening ? '期初录入（店内已有货建账）' : '重新清点（按实盘调整库存）';
+
+  StocktakeDraft copyWith({List<StocktakeLineDraft>? lines, bool? isOpening}) =>
+      StocktakeDraft(
+        lines: lines ?? this.lines,
+        isOpening: isOpening ?? this.isOpening,
+      );
 
   /// 参与盘点的行（非空行）。空行忽略 —— 只增行的录入方式里，「删干净」
   /// 不应该是提交的前置动作。

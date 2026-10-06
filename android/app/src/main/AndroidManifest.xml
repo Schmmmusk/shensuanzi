@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- §BL·三（裁定 ③）：扫码配对需要相机；INTERNET 是 release 构建里
+         HttpTransport 的硬要求（debug 清单自带，release 必须显式声明） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
     <application
         android:label="神算子"
         android:name="${applicationName}"

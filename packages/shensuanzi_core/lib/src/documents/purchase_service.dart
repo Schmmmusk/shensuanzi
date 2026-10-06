@@ -3,8 +3,9 @@
 /// ## 为什么这一层存在（与 `ProductService` 同理）
 ///
 /// - **草稿校验不能假设调用方做过** —— 同步层 / 将来的其他入口可能直接调它
-/// - **把「构造 Document / lines / PaymentEntry」这些形状转换收在这里**，
-///   界面只调一个 `create(draft)`，不必知道 `dispatch` 的参数形状
+/// - **把「构造 Document / lines / PaymentEntry」委托给 `document_build.dart`**
+///   （B3a：与客户端 `QueueSink` 共用同一份纯构造），界面只调一个
+///   `create(draft)`，不必知道 `dispatch` 的参数形状
 /// - `RuleOutcome` 的 `rejected` 在这里转成**异常**，界面走统一的兜底分支
 ///
 /// ## 不做的事
@@ -22,16 +23,15 @@ import '../dao/query_dao.dart';
 import '../master_data/party_service.dart';
 import '../models/account.dart';
 import '../models/document.dart';
-import '../models/document_line.dart';
 import '../models/party.dart';
 import '../models/product.dart';
-import '../rules/payment_entry.dart';
 import '../rules/rule_engine.dart';
-import '../util/ids.dart';
+import 'document_build.dart';
+import 'draft_invalid.dart';
 import 'purchase_draft.dart';
 
 /// 草稿校验失败：**带三组字段级原因**，界面直接标红对应输入框。
-class PurchaseDraftInvalid implements Exception {
+class PurchaseDraftInvalid implements DraftInvalidException {
   PurchaseDraftInvalid(this.fieldErrors, this.lineErrors, this.paymentErrors);
 
   final Map<PurchaseField, String> fieldErrors;
@@ -39,6 +39,7 @@ class PurchaseDraftInvalid implements Exception {
   final List<Map<PurchasePaymentField, String>> paymentErrors;
 
   /// 拼成一句话（日志 / 汇总提示用）
+  @override
   String get summary => <String>[
     ...fieldErrors.values,
     for (final Map<PurchaseLineField, String> e in lineErrors) ...e.values,
@@ -47,6 +48,23 @@ class PurchaseDraftInvalid implements Exception {
 
   @override
   String toString() => 'PurchaseDraftInvalid($summary)';
+}
+
+/// 三组校验跑一遍；**有失败 → 聚成异常返回，全过 → `null`**。
+///
+/// 与 `saleDraftFailure` 同构 —— `PurchaseService.create` 与 `QueueSink`
+/// 共用这一份（裁定 ⑥：客户端不跑规则，但**不等于不校验**）。
+PurchaseDraftInvalid? purchaseDraftFailure(PurchaseDraft draft) {
+  final Map<PurchaseField, String> fieldErrors = draft.validate();
+  final List<Map<PurchaseLineField, String>> lineErrors = draft.validateLines();
+  final List<Map<PurchasePaymentField, String>> paymentErrors =
+      draft.validatePayments();
+  if (fieldErrors.isNotEmpty ||
+      lineErrors.any((Map<PurchaseLineField, String> e) => e.isNotEmpty) ||
+      paymentErrors.any((Map<PurchasePaymentField, String> e) => e.isNotEmpty)) {
+    return PurchaseDraftInvalid(fieldErrors, lineErrors, paymentErrors);
+  }
+  return null;
 }
 
 /// 保存成功后给 UI 的结果（SnackBar 要显示的三样东西都在这）。
@@ -109,63 +127,18 @@ class PurchaseService {
   /// 提交草稿。校验不通过抛 [PurchaseDraftInvalid]；规则拒绝抛 [StateError]
   /// （此时库已整单回滚，界面走「意外失败」兜底文案）。
   PurchaseSaved create(PurchaseDraft draft, {int? now}) {
-    final Map<PurchaseField, String> fieldErrors = draft.validate();
-    final List<Map<PurchaseLineField, String>> lineErrors = draft.validateLines();
-    final List<Map<PurchasePaymentField, String>> paymentErrors =
-        draft.validatePayments();
-    if (fieldErrors.isNotEmpty ||
-        lineErrors.any((Map<PurchaseLineField, String> e) => e.isNotEmpty) ||
-        paymentErrors.any((Map<PurchasePaymentField, String> e) => e.isNotEmpty)) {
-      throw PurchaseDraftInvalid(fieldErrors, lineErrors, paymentErrors);
-    }
+    final PurchaseDraftInvalid? failure = purchaseDraftFailure(draft);
+    if (failure != null) throw failure;
 
     final int stamp = now ?? DateTime.now().millisecondsSinceEpoch;
 
-    final Document document = Document(
-      id: newId(),
-      // 占位号：主机路径由 `_prepare` 换成正式单号
-      docNo: '${Document.pendingDocNoPrefix}${draft.hashCode}',
-      docType: DocType.purchase,
-      status: DocStatus.confirmed,
-      partyId: draft.partyId,
-      totalAmount: draft.totalCents,
-      occurredAt: draft.occurredAt,
-      createdAt: stamp,
-      updatedAt: stamp,
-      remark: draft.remark.trim().isEmpty ? null : draft.remark.trim(),
-    );
-
-    final List<DocumentLine> lines = <DocumentLine>[
-      for (final PurchaseLineDraft line in draft.lines)
-        if (!line.isEmpty)
-          // v3：quantity = 换算后的最小单位数量；amount = 真相（含让价）；
-          // entry_* 记录入原文（§BD·三 第 1/2/6 条）
-          DocumentLine.create(
-            documentId: document.id,
-            productId: line.productId,
-            quantity: line.baseQuantityValue!,
-            amount: line.amountCents!,
-            entryQuantity: line.entryQuantityValue!,
-            entryUnit: line.entryUnitValue,
-            discountAmount: line.discountCents ?? 0,
-          ),
-    ];
-
-    // §AY·四（与销售同构）：落库走**封顶后**的金额 —— 多付的部分是找回，不落库。
-    final List<int> recorded = draft.recordedPaymentCents;
-    final List<PaymentEntry> payments = <PaymentEntry>[
-      for (int i = 0; i < draft.payments.length; i++)
-        if (!draft.payments[i].isBlank && recorded[i] > 0)
-          PaymentEntry(
-            accountId: draft.payments[i].accountId,
-            amount: recorded[i],
-          ),
-    ];
+    // B3a：构造抽到 `document_build.dart`（与 QueueSink 共用一份，行为零变化）
+    final DocumentBuild build = buildPurchaseDocument(draft, now: stamp);
 
     final RuleOutcome outcome = _engine.dispatch(
-      document: document,
-      lines: lines,
-      immediatePayments: payments,
+      document: build.document,
+      lines: build.lines,
+      immediatePayments: build.payments,
       now: stamp,
     );
 

@@ -47,6 +47,8 @@ void main() {
   late DeliveryService service;
   late ProductService products;
   late PartyService parties;
+  // B3b：页面提交改吃 Sink —— 桌面语义 = ServiceSink（与直连逐字同行为）
+  late DocumentSink sink;
 
   setUp(() {
     box = Directory.systemTemp.createTempSync('shensuanzi_delivery_page_');
@@ -54,6 +56,11 @@ void main() {
     service = DeliveryService(engine: RuleEngine(db), queries: QueryDao(db));
     products = ProductService(db);
     parties = PartyService(PartyDao(db));
+    sink = ServiceSink(
+      sales: SaleService(engine: RuleEngine(db), queries: QueryDao(db)),
+      purchases: PurchaseService(engine: RuleEngine(db), queries: QueryDao(db)),
+      deliveries: service,
+    );
 
     final Product product = Product(
       id: newId(),
@@ -92,6 +99,7 @@ void main() {
         service: service,
         productService: products,
         partyService: parties,
+        sink: sink,
       ),
     ),
   );

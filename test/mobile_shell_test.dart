@@ -94,4 +94,56 @@ void main() {
     expect(find.text('版本与反馈'), findsOneWidget);
     expect(find.textContaining(AppVersion.display), findsOneWidget);
   });
+  // ============================================ 三态条（B3b·§CA 裁定 ④）
+
+  testWidgets('三态条：未注入 sync ⇒ 不显示（摆放层零依赖）', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    expect(find.text('已同步'), findsNothing);
+  });
+
+  testWidgets('三态条：注入 sync + 空队列 ⇒ 「已同步」；tab 间常驻', (
+    WidgetTester tester,
+  ) async {
+    final Directory syncBox = Directory.systemTemp.createTempSync(
+      'shensuanzi_syncbar_',
+    );
+    addTearDown(() {
+      try {
+        syncBox.deleteSync(recursive: true);
+      } catch (_) {
+        // 镜像库可能还开着 —— 删不掉不影响结论（同既有测试的兜底）
+      }
+    });
+    final MobileSyncService sync = MobileSyncService(
+      mirrorPath: p.join(syncBox.path, 'mirror', 'shensuanzi_mirror.db'),
+      pairingStore: PairingStore(File(p.join(syncBox.path, 'pairing.json'))),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MobileShell(
+          shell: AppShell(
+            dataDirectory: '/tmp/data',
+            backupDirectory: '/tmp/backup',
+            schemaVersion: 3,
+            databaseReady: false,
+            configStore: store,
+            onConfigChanged: (AppConfig config) {},
+            mobileSync: sync,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 空队列 =「已同步」（裁定 ④：已同步 ≠ 队列为空，但没有 pending/failed 就该这么说）
+    expect(find.text('已同步'), findsOneWidget);
+
+    // tab 之间常驻（切到「我的」再回来看，它还在）
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('概览'));
+    await tester.pumpAndSettle();
+    expect(find.text('已同步'), findsOneWidget);
+  });
 }
+

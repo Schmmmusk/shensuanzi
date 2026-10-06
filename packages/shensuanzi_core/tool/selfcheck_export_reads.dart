@@ -156,14 +156,14 @@ void main() {
     seedDocuments(3);
     insertDocument('d-sale-0001', docNo: 'XS20260925-001', type: 'sale');
     check(
-      'type 过滤在导出路径上同样生效',
+      'types 过滤在导出路径上同样生效',
       DocumentDao(db).listDocumentsForExport().length == 4 &&
           DocumentDao(db)
-                  .listDocumentsForExport(type: DocType.sale)
+                  .listDocumentsForExport(types: <DocType>{DocType.sale})
                   .length ==
               1 &&
           DocumentDao(db)
-                  .listDocumentsForExport(type: DocType.purchase)
+                  .listDocumentsForExport(types: <DocType>{DocType.purchase})
                   .length ==
               3,
     );

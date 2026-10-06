@@ -70,6 +70,7 @@ class DriveInfo {
     required this.root,
     this.kind = DriveKind.unknown,
     this.freeBytes,
+    this.volumeLabel,
   });
 
   /// 形如 `D:\`
@@ -79,6 +80,10 @@ class DriveInfo {
 
   /// 剩余字节；`null` = 未知
   final int? freeBytes;
+
+  /// 卷标（用户在「此电脑」里给盘起的名字）；`null` = 没起名 / 没查到。
+  /// 展示用 —— 让用户认得出「这是我的哪块盘」（§BK·二）。
+  final String? volumeLabel;
 
   /// 低于这个值就不建议用来存经营数据（数据库 + WAL + 备份要留余地）
   static const int minimumFreeBytes = 200 * 1024 * 1024;
@@ -345,6 +350,7 @@ DriveEnumeration mapRawDrives(List<RawDrive> raw) {
         root: '${drive.letter}:\\',
         kind: kind,
         freeBytes: drive.freeBytes,
+        volumeLabel: drive.volumeLabel,
       ),
     );
   }

@@ -432,5 +432,102 @@ void main() {
       final List<Account> accounts = service.activeAccounts();
       expect(accounts.map((Account a) => a.id), contains(acc));
     });
+    // ============================================================ §审查 BUG-04
+    //
+    // 退货冲减必须反映到「真实未收」：赊销 60 → 收 40 → 退 12 ⇒ 真实未收 8。
+    // （v0.1.0 发布包实测：退 12 后单据仍显示未收 20、收清 8 后仍显示未收 12，
+    //   导致用户多收 12 —— 这是本次审查的 P1。）
+    test('BUG-04 回归：赊 60 → 收 40 → 退 12 ⇒ 真实未收 8；退清后可结清', () {
+      final String p = createProduct();
+      final String acc = createAccount();
+      final String party = createParty();
+      final Document sale = saleOnCredit(p, party, 6000);
+      final ReturnService returns = ReturnService(
+        engine: engine,
+        queries: QueryDao(db),
+      );
+
+      // 赊销 60 ⇒ 未收 60
+      expect(service.unsettledCentsOf(sale.id), 6000);
+
+      // 先退 12（挂账冲减）
+      returns.create(
+        ReturnDraft(
+          refDocId: sale.id,
+          originalDocType: DocType.sale,
+          partyId: party,
+          partyName: '老王批发',
+          lines: <ReturnLineDraft>[
+            ReturnLineDraft(
+              productId: p,
+              productName: '商品',
+              quantity: '1',
+              amount: '12.00',
+              baseUnit: '件',
+              originalQuantity: 1,
+              originalAmountCents: 6000,
+              packageSize: null,
+            ),
+          ],
+        ),
+      );
+
+      // 退货冲减必须立刻反映：未收 60 − 12 = 48
+      expect(service.unsettledCentsOf(sale.id), 4800, reason: '退货冲减未扣 = BUG-04');
+
+      // 收 40 ⇒ 未收 8（不是 20！）
+      service.settle(
+        targetDocId: sale.id,
+        accountId: acc,
+        amountCents: 4000,
+        now: now(),
+      );
+      expect(service.unsettledCentsOf(sale.id), 800, reason: '真实未收 = 60 − 40 − 12');
+
+      // 收清真实余款 8 ⇒ 0；展示态即可显示「已结清」
+      service.settle(
+        targetDocId: sale.id,
+        accountId: acc,
+        amountCents: 800,
+        now: now(),
+      );
+      expect(service.unsettledCentsOf(sale.id), 0);
+      final Document after = documents.findById(sale.id)!;
+      expect(
+        SettlementService.displayStatus(after, 0),
+        DocStatus.settled,
+        reason: '已确认 + 真实未收 0 ⇒ 展示为已结清（BUG-04 的状态联动）',
+      );
+    });
+
+    test('BUG-04 回归：退货额只算退货单，别的单不计入；作废态不被展示态改写', () {
+      final String p = createProduct();
+      final String party = createParty();
+      final Document sale = saleOnCredit(p, party, 5000);
+      // 另一张无关单据不该被算进来
+      saleOnCredit(p, party, 7000);
+
+      expect(documents.returnedAgainst(sale.id), 0);
+      // 批量版：没退货的单据不在 map 里
+      expect(
+        documents.returnedAgainstMany(<String>[sale.id]).containsKey(sale.id),
+        isFalse,
+      );
+      // cancelled / inTransit 的语义不被展示态改写
+      final Document cancelled = Document(
+        id: newId(),
+        docNo: 'SH-X',
+        docType: DocType.delivery,
+        status: DocStatus.cancelled,
+        totalAmount: 100,
+        occurredAt: now(),
+        createdAt: now(),
+        updatedAt: now(),
+      );
+      expect(
+        SettlementService.displayStatus(cancelled, 0),
+        DocStatus.cancelled,
+      );
+    });
   });
 }

@@ -25,8 +25,11 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart'
+    show MobileGuideTopic, mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'mobile_guidance_dialog.dart';
 import 'entry_unit_hints.dart';
 import 'product_form_dialog.dart';
 
@@ -37,9 +40,24 @@ class DeliveryPage extends StatefulWidget {
     required this.service,
     required this.productService,
     required this.partyService,
+    required this.sink,
+    this.onSubmitted,
+    this.readOnlyMasterData = false,
   });
 
+  /// 开单页**查询**用（选择器 / 库存快照 —— 读）。
   final DeliveryService service;
+
+  /// 提交**出口**（B3b·§CA）：页面对 [DocumentSink] 编程，**不出现
+  /// 「是不是客户端」的分支**。桌面 = `ServiceSink`；手机 = `QueueSink`。
+  final DocumentSink sink;
+
+  /// 提交成功回调（B3b）。手机端注入 = 刷新三态条 + 触发自动推送（裁定 ③）。
+  final void Function(DocumentSubmitResult result)? onSubmitted;
+
+  /// 手机端**主数据禁建**（C2·§CC）：`true` 时「新建客户 / 新建商品」入口
+  /// **保留但点击后弹引导对话框**。桌面缺省 `false` = 现状零变化。
+  final bool readOnlyMasterData;
 
   /// 商品搜索与「＋新建商品」复用商品建档。
   final ProductService productService;
@@ -275,19 +293,23 @@ class _DeliveryPageState extends State<DeliveryPage> {
     });
   }
 
-  /// `create` 是**同步**的（库操作进程内完成，无 IO 等待）。
+  /// `sink.submitDelivery` 是**同步**的（库操作 / 入队进程内完成，无 IO 等待）。
   void _save() {
     if (_saving) return;
     final DeliveryDraft draft = _draft;
     setState(() => _saving = true);
     try {
-      final DeliverySaved saved = widget.service.create(draft);
-      _afterSaved(saved);
-    } on DeliveryDraftInvalid catch (error) {
-      setState(() {
-        _invalid = error;
-        _saving = false;
-      });
+      // B3b：提交走 Sink（桌面 = 落库+规则；手机 = 入队）——页面无分支
+      final DocumentSubmitResult result = widget.sink.submitDelivery(draft);
+      if (result.isFailure) {
+        // 校验失败（裁定 ⑥）：带着原始的 DeliveryDraftInvalid 标红字段
+        setState(() {
+          _invalid = result.error! as DeliveryDraftInvalid;
+          _saving = false;
+        });
+        return;
+      }
+      _afterSaved(result);
     } catch (error) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -306,7 +328,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
   ///
   /// ⚠️ 送货单**没有收款** ⇒ 落库后必然是「全额欠款 + 待签收」，
   /// 所以 SnackBar 不该说「已结清」那一套，而要说清**下一步做什么**。
-  void _afterSaved(DeliverySaved saved) {
+  void _afterSaved(DocumentSubmitResult result) {
     setState(() {
       for (final _RowCtl row in _rows) {
         row.dispose();
@@ -317,13 +339,29 @@ class _DeliveryPageState extends State<DeliveryPage> {
       _saving = false;
     });
 
-    final String partyDue = saved.partyDueCents > 0
-        ? '；$_partyName 累计欠款 ¥${Money.formatGrouped(saved.partyDueCents)}'
+    // B3b：提交成功回调（手机端装配 = 刷新三态条 + 自动推送；桌面为 null）
+    widget.onSubmitted?.call(result);
+
+    // 裁定 ②：入队成功的文案在 core（`queuedNotice`），UI 不造句。
+    // ⚠️ 手机入队路径**不能**走下面的「库存已扣」文案 —— 本地没扣（叠加显示
+    // 由 `stockViewOf` 负责），「到单据详情点签收」也不适用（单在队列里）。
+    if (result.isQueued) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.queuedNotice!),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+      return;
+    }
+
+    final String partyDue = (result.partyDueCents ?? 0) > 0
+        ? '；$_partyName 累计欠款 ¥${Money.formatGrouped(result.partyDueCents!)}'
         : '';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '单号 ${saved.docNo} 已保存 ¥${Money.formatGrouped(saved.totalCents)}'
+          '单号 ${result.finalDocNo} 已保存 ¥${Money.formatGrouped(result.totalCents)}'
           '，库存已扣（待签收）$partyDue｜客户签收后，到单据详情点「签收」',
         ),
         duration: const Duration(seconds: 6),
@@ -397,6 +435,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
       builder: (BuildContext sheetContext) => _ProductPickerSheet(
         service: widget.productService,
         recentProducts: widget.service.recentlyDelivered(),
+        readOnly: widget.readOnlyMasterData,
       ),
     );
   }
@@ -409,6 +448,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
       builder: (BuildContext sheetContext) => _CustomerPickerSheet(
         service: widget.service,
         partyService: widget.partyService,
+        readOnly: widget.readOnlyMasterData,
       ),
     );
   }
@@ -852,10 +892,17 @@ class _LineCard extends StatelessWidget {
 
 /// 客户选择器：搜索 + 最近往来 + 「＋新建客户」（走 `ensureParty`）。
 class _CustomerPickerSheet extends StatefulWidget {
-  const _CustomerPickerSheet({required this.service, required this.partyService});
+  const _CustomerPickerSheet({
+    required this.service,
+    required this.partyService,
+    this.readOnly = false,
+  });
 
   final DeliveryService service;
   final PartyService partyService;
+
+  /// 手机端主数据禁建（C2·§CC）：`true` = 「新建客户」点击后弹引导。
+  final bool readOnly;
 
   @override
   State<_CustomerPickerSheet> createState() => _CustomerPickerSheetState();
@@ -887,6 +934,11 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
   }
 
   Future<void> _create() async {
+    // C2·§CC：手机端主数据禁建 —— 保留入口，点击后引导
+    if (widget.readOnly) {
+      await showMobileGuideDialog(context, MobileGuideTopic.newParty);
+      return;
+    }
     // 搜索框里已有的文字就是客户名称；空名必须拦（P-7 同款）
     final String name = _query.text.trim();
     setState(() => _creating = true);
@@ -955,7 +1007,9 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
                 ? Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text(
-                      _searched
+                      widget.readOnly
+                          ? mirrorEmptyMessage('客户列表')
+                          : _searched
                           ? '没有匹配的客户，可以在下面新建。'
                           : '还没有往来的客户，直接在搜索框输入名称新建。',
                       textAlign: TextAlign.center,
@@ -991,12 +1045,16 @@ class _ProductPickerSheet extends StatefulWidget {
   const _ProductPickerSheet({
     required this.service,
     required this.recentProducts,
+    this.readOnly = false,
   });
 
   final ProductService service;
 
   /// 空查询时展示的「最近送货」列表 —— 由页面查好传入。
   final List<Product> recentProducts;
+
+  /// 手机端主数据禁建（C2·§CC）：`true` = 「新建商品」点击后弹引导。
+  final bool readOnly;
 
   @override
   State<_ProductPickerSheet> createState() => _ProductPickerSheetState();
@@ -1024,6 +1082,11 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
   }
 
   Future<void> _createProduct() async {
+    // C2·§CC：手机端主数据禁建 —— 保留入口，点击后引导
+    if (widget.readOnly) {
+      await showMobileGuideDialog(context, MobileGuideTopic.newProduct);
+      return;
+    }
     final Product? created = await showProductFormDialog(
       context,
       service: widget.service,
@@ -1068,7 +1131,11 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
                 ? Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text(
-                      _searched ? '没有匹配的商品，可以点下面新建。' : '还没有销售记录，直接搜索或新建。',
+                      widget.readOnly
+                          ? mirrorEmptyMessage('商品列表')
+                          : _searched
+                          ? '没有匹配的商品，可以点下面新建。'
+                          : '还没有销售记录，直接搜索或新建。',
                       textAlign: TextAlign.center,
                       style: const TextStyle(height: 1.6),
                     ),

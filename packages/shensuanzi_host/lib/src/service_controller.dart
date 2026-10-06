@@ -5,7 +5,6 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'auth.dart';
 import 'http_server.dart';
 import 'local_ip.dart';
-import 'pairing.dart';
 
 /// 主机服务的启停状态（`docs/reply_review.md` §AH · AH-A）。
 enum HostServiceState {

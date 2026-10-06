@@ -107,11 +107,42 @@ class SettlementService {
       SettlementDao(_db).settlementsOfTarget(targetDocId);
 
   /// 未收 / 未付额 = `total_amount − SUM(settlements.amount)`
+  /// 该单**真实未收付额** = 单据金额 − 已核销 − **已发生的退货冲减**。
+  ///
+  /// ⚠️ 第三项是 §审查 BUG-04 的修复：退货走 `party_ledger` 冲减往来，
+  /// 原单的 `paid_amount` 只累计 `settlements` —— 不减退货的话，
+  /// 「未收」永远比真相多、单据永远结不清，用户会**多收/多付**。
+  /// 退货额用派生查询（`DocumentDao.returnedAgainst`），不动 `documents` 表。
   int unsettledCentsOf(String documentId) {
-    final Document? doc = DocumentDao(_db).findById(documentId);
+    final DocumentDao documents = DocumentDao(_db);
+    final Document? doc = documents.findById(documentId);
     if (doc == null) return 0;
-    return doc.totalAmount - SettlementDao(_db).settledAmountOf(documentId);
+    return doc.totalAmount -
+        SettlementDao(_db).settledAmountOf(documentId) -
+        documents.returnedAgainst(documentId);
   }
+
+  /// 该单**发生过哪些退货**（§审查 2026-10-05）—— 详情页「退货记录」区块。
+  ///
+  /// 转 `DocumentDao`：详情页只拿得到服务（拿不到 DAO），这里是它唯一的查询面
+  /// —— 与 [summaryOf] / [linesOf] / [settledBy] 同款。
+  List<DocumentSummary> returnsAgainst(String documentId) =>
+      DocumentDao(_db).returnsAgainst(documentId);
+
+  /// 该单产生的**库存流水差额**（商品 → 带符号数量）—— 盘点单详情页算
+  /// 「账面 / 差额」用（§审查 OBS-09②）。同样是详情页的查询面转发。
+  Map<String, int> stockFlowOf(String documentId) =>
+      DocumentDao(_db).stockFlowByProductOf(documentId);
+
+  /// 展示态（**只用于界面**，不改库）：已确认且真实未收付 ≤ 0 ⇒ 显示「已结清」。
+  ///
+  /// 状态列是引擎写的缓存（依据 `paid_amount`），退货冲减后它不会自己变 ——
+  /// §审查 BUG-04 要求界面用「真实未收」判断，且**只在 `confirmed` 上做这一层
+  /// 覆盖**：`cancelled` / `in_transit` / `delivered` 各有自己的语义，不许被改写。
+  static DocStatus displayStatus(Document doc, int trueUnsettledCents) =>
+      doc.status == DocStatus.confirmed && trueUnsettledCents <= 0
+      ? DocStatus.settled
+      : doc.status;
 
   /// 这单核销时是「收款」还是「付款」；`null` = **不能核销**
   static bool? isInbound(DocType type) => switch (type) {
@@ -215,8 +246,10 @@ class SettlementService {
       throw SettlementInvalid('「${target.docType.label}」这类单据不能核销。');
     }
 
-    final int unsettled =
-        target.totalAmount - SettlementDao(_db).settledAmountOf(targetDocId);
+    // ⚠️ **必须与 `unsettledCentsOf` 同一口径**（金额 − 已核销 − 退货冲减）：
+    // 界面上的「收款 ¥45」按钮与这里封顶用的数必须是同一个，否则会出现
+    // 「按钮说 45、输入 60 也照收」的分叉（§审查 BUG-04 的收尾）。
+    final int unsettled = unsettledCentsOf(targetDocId);
     if (amountCents <= 0) {
       throw const SettlementInvalid('金额要大于 0。');
     }
@@ -261,17 +294,14 @@ class SettlementService {
 
     // ⚠️ 按 id **重读**（outcome 里的对象是刷新前的，见 SaleService 同款注）
     final Document? stored = DocumentDao(_db).findById(applied.id);
-    final Document? targetAfter = DocumentDao(_db).findById(targetDocId);
 
     return SettlementSaved(
       docId: stored?.id ?? applied.id,
       docNo: stored?.docNo ?? applied.docNo,
       amountCents: recorded,
       inbound: inbound,
-      targetUnsettledAfterCents: targetAfter == null
-          ? 0
-          : targetAfter.totalAmount -
-                SettlementDao(_db).settledAmountOf(targetDocId),
+      // 与守卫同一个函数 —— 「收完后还欠多少」不可能与「收之前欠多少」分叉
+      targetUnsettledAfterCents: unsettledCentsOf(targetDocId),
       changeCents: over.changeCents,
     );
   }

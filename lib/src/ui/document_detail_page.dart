@@ -70,6 +70,13 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
   List<DocumentLine> _lines = const <DocumentLine>[];
   List<SettlementView> _links = const <SettlementView>[];
 
+  /// 这张单被退过什么（§审查 2026-10-05）—— 「为什么 60 的单收 40 就结清了」
+  List<DocumentSummary> _returns = const <DocumentSummary>[];
+
+  /// 这张单产生的**库存流水差额**（商品 → 带符号数量）。
+  /// 只有盘点单用：账面 = 实盘 − 差额（§审查 OBS-09②）。
+  Map<String, int> _stockFlow = const <String, int>{};
+
   @override
   void initState() {
     super.initState();
@@ -84,9 +91,17 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     if (summary == null) {
       _lines = const <DocumentLine>[];
       _links = const <SettlementView>[];
+      _returns = const <DocumentSummary>[];
+      _stockFlow = const <String, int>{};
       return;
     }
     _lines = widget.settlements.linesOf(widget.documentId);
+    _returns = widget.settlements.returnsAgainst(widget.documentId);
+    // §审查 OBS-09②：盘点单的行是**实盘数**，光看行看不出「盘之前是多少」——
+    // 差额只能从该单的库存流水反推
+    _stockFlow = summary.document.docType == DocType.stocktake
+        ? widget.settlements.stockFlowOf(widget.documentId)
+        : const <String, int>{};
     // 收款 / 付款单 → 这笔钱核销了哪些单；被核销单 → 被哪些收款核销过
     final bool isMoneyDoc =
         summary.document.docType == DocType.receipt ||
@@ -135,6 +150,26 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
         duration: const Duration(seconds: 3),
       ),
     );
+  }
+
+  /// 打开另一张单（「退货记录」点进去看那张退货单）。
+  ///
+  /// 复用同一个页面与同一批服务 —— 退货单的详情页结构与本页完全一样。
+  Future<void> _openDoc(String id) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => DocumentDetailPage(
+          documentId: id,
+          settlements: widget.settlements,
+          deliveries: widget.deliveries,
+          products: widget.products,
+          returnService: widget.returnService,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(_load);
+    widget.onChanged?.call();
   }
 
   void _copyDocNo() {
@@ -194,6 +229,11 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                       _linesTable(theme),
                       const SizedBox(height: 20),
                     ],
+                    // §审查 2026-10-05：退过货才显示（没退过的单不该多一块空白）
+                    if (_returns.isNotEmpty) ...<Widget>[
+                      _returnsSection(theme),
+                      const SizedBox(height: 20),
+                    ],
                     _linksSection(theme, summary),
                   ],
                 ),
@@ -247,7 +287,9 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
 
   Widget _amountCard(ThemeData theme, DocumentSummary summary) {
     final Document doc = summary.document;
-    final int unsettled = doc.totalAmount - doc.paidAmount;
+    // §审查 BUG-04：真实未收 = 金额 − 已核销 − 该单累计退货冲减
+    final int unsettled = widget.settlements.unsettledCentsOf(widget.documentId);
+    final bool isCancelled = doc.status == DocStatus.cancelled;
     final bool isMoneyDoc =
         doc.docType == DocType.receipt || doc.docType == DocType.payment;
 
@@ -261,9 +303,23 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
             // 收付款单自身没有「已收/未收」（它**就是**那笔钱），只对被核销单显示
             if (!isMoneyDoc && doc.paidAmount != 0)
               _kv(theme, '已${_moneyVerb(doc)}', '¥${Money.formatGrouped(doc.paidAmount)}'),
-            if (!isMoneyDoc && unsettled != 0)
+            // §审查 2026-10-05：退过货就把冲减额摆出来 —— 否则用户会问
+            // 「单子明明 60，为什么给 40 就说结清了」。作废单也显示（它是事实）。
+            if (!isMoneyDoc && summary.returnedCents != 0)
+              _kv(
+                theme,
+                '已退货',
+                '−¥${Money.formatGrouped(summary.returnedCents)}',
+              ),
+            // §审查 BUG-05：已作废的单不显示「未收」——避免对着废单收款的诱导
+            if (!isMoneyDoc && !isCancelled && unsettled != 0)
               _kv(theme, '未${_moneyVerb(doc)}', '¥${Money.formatGrouped(unsettled)}'),
-            _kv(theme, '状态', docStatusLabel(doc.status)),
+            // §审查 BUG-04：状态展示用真实未收判定（已确认且结清 ⇒ 显示已结清）
+            _kv(
+              theme,
+              '状态',
+              docStatusLabel(SettlementService.displayStatus(doc, unsettled)),
+            ),
           ],
         ),
       ),
@@ -289,7 +345,14 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
       children.add(const SizedBox(height: 12));
     }
 
-    if (inbound != null && unsettled > 0) {
+    // §审查 BUG-05：已作废（如客户拒收）不得保留收款 / 付款入口
+    final bool disabled = doc.status == DocStatus.cancelled;
+    // §审查 OBS-07：**退货单是冲减方**，不该有「未收 / 未付」概念，
+    // 也不给收款 / 付款入口（该退的钱在退货那一刻就记过了 —— 会生成退款单）
+    final bool isReturnDoc =
+        doc.docType == DocType.saleReturn ||
+        doc.docType == DocType.purchaseReturn;
+    if (inbound != null && unsettled > 0 && !disabled && !isReturnDoc) {
       children.add(
         Align(
           alignment: Alignment.centerLeft,
@@ -303,10 +366,35 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
           ),
         ),
       );
-    } else {
+    } else if (isReturnDoc && !disabled) {
+      children.add(
+        Text(
+          '退货单不用收付款 —— 该退 / 该收的钱在退货那一刻就记过了。',
+          style: TextStyle(
+            height: 1.6,
+            color: theme.textTheme.bodySmall?.color,
+          ),
+        ),
+      );
+    } else if (!disabled) {
       children.add(
         Text(
           inbound == null ? '这类单据不需要收付款。' : '这张单已经结清了。',
+          style: TextStyle(
+            height: 1.6,
+            color: theme.textTheme.bodySmall?.color,
+          ),
+        ),
+      );
+    }
+    // ⚠️ 作废单**不再补一句「不用收付款」**（§审查 2026-10-05）：
+    // 送货单的作废原因由 `_deliverRow` 说（「已作废（客户拒收，货已退回）」），
+    // 非送货的作废单才需要在这里说一句。旧代码是「三行并列」——
+    // 已作废 + 不用收付款 + 已签收，同一屏上自相矛盾（真机截图）。
+    if (disabled && !isDelivery) {
+      children.add(
+        Text(
+          '这张单已作废，不用收付款。',
           style: TextStyle(
             height: 1.6,
             color: theme.textTheme.bodySmall?.color,
@@ -318,7 +406,9 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     // ---- 送货单：**拒收的出口**（§BI R2 —— 手册承诺兑现，不再是开发中占位）----
     // 拒收 = 全量 `sale_return` ref delivery（预填全部可退量），原送货单
     // 同事务置 cancelled（裁定 2）。已签收的送货单走普通退货。
-    if (isDelivery && widget.returnService != null) {
+    if (isDelivery &&
+        widget.returnService != null &&
+        doc.status != DocStatus.cancelled) {
       children.add(const SizedBox(height: 8));
       if (doc.status == DocStatus.inTransit) {
         children.add(
@@ -343,7 +433,9 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     }
 
     // ---- 退货入口（§BI R2）：原单类型可退 且 服务已接 ----
+    // §审查 OBS-07：退货单**不能再退**（只列可退的原单类型）
     if (widget.returnService != null &&
+        !isReturnDoc &&
         (doc.docType == DocType.sale ||
             doc.docType == DocType.purchase ||
             (isDelivery && doc.status != DocStatus.inTransit)) &&
@@ -386,6 +478,13 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
 
   /// 送货单的「签收」行（`in_transit` 才有按钮）。
   Widget _deliverRow(ThemeData theme, Document doc) {
+    // §审查 BUG-05：客户拒收 ⇒ 已作废，不能说「已签收」
+    if (doc.status == DocStatus.cancelled) {
+      return Text(
+        '这张送货单已作废（客户拒收，货已退回）。',
+        style: TextStyle(height: 1.6, color: theme.colorScheme.error),
+      );
+    }
     if (doc.status != DocStatus.inTransit) {
       return Text(
         '这张送货单已签收。',
@@ -479,6 +578,9 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                       ),
                     ],
                   ),
+                  // §审查 OBS-09②：盘点单要看得见「盘之前是多少、差多少」——
+                  // 只有实盘数的话，用户没法判断这次盘点动了什么
+                  if (_stockFlow.isNotEmpty) _stocktakeDiffLine(theme, i),
                   // v3：有让价的行显示一行小字 —— 原始报价与让价额都可追溯
                   //（amount 是真相；原始报价 = (amount + discount) / entry_quantity）
                   if (_lines[i].discountAmount > 0)
@@ -502,9 +604,125 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     );
   }
 
+  /// 盘点单某一行的「账面 / 差额」小字（§审查 OBS-09②）。
+  ///
+  /// 账面 = 实盘 − 差额。差额来自该单的 `stock_ledger` 流水（引擎在事务内写的
+  /// ±数量），**不是**从行上读的 —— 行的 `quantity` 是盘点后的**实际数量**。
+  Widget _stocktakeDiffLine(ThemeData theme, int index) {
+    final DocumentLine line = _lines[index];
+    final int diff = _stockFlow[line.productId] ?? 0;
+    final int actual = line.quantity;
+    final int book = actual - diff;
+    // 盘亏取绝对值 —— 否则印出「盘亏 -3」两个负号
+    final String diffText = diff == 0
+        ? '无变化'
+        : diff > 0
+              ? '盘盈 +${Money.formatGrouped(diff)}'
+              : '盘亏 ${Money.formatGrouped(diff.abs())}';
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Text(
+        '账面 ${Money.formatGrouped(book)} → 实盘 ${Money.formatGrouped(actual)}'
+        '（$diffText）',
+        style: TextStyle(
+          height: 1.6,
+          color: theme.textTheme.bodySmall?.color,
+        ),
+      ),
+    );
+  }
+
   String _productLabel(DocumentLine line) {
     final Product? product = widget.products?.byId(line.productId);
     return product?.name ?? '商品 ${line.productId.substring(0, 8)}';
+  }
+
+  /// 「退货记录」区块（§审查 2026-10-05）。
+  ///
+  /// 为什么要有它：这张单退过货之后，「未收」会比「金额」小 —— 用户会问
+  /// 「单子要 60，怎么后来给 40 就结清了」。把每一次退货摆出来就自洽了。
+  /// 整单拒收的退货单**不在列表里单独出现**（见 `DocumentDao._summaries`），
+  /// 但在这里一定看得到 —— 它是原单的一部分历史，不是另一个入口。
+  Widget _returnsSection(ThemeData theme) {
+    final int total = _returns.fold<int>(
+      0,
+      (int sum, DocumentSummary e) => sum + e.document.totalAmount,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _sectionTitle(theme, '退货记录'),
+        const SizedBox(height: 6),
+        Text(
+          '这张单退过 ${_returns.length} 次，共 ¥${Money.formatGrouped(total)}。'
+          '收款 / 付款按扣掉退货后的金额算。',
+          style: TextStyle(
+            height: 1.8,
+            color: theme.textTheme.bodySmall?.color,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Card(
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: <Widget>[
+              for (int i = 0; i < _returns.length; i++) ...<Widget>[
+                if (i > 0) const Divider(height: 1),
+                InkWell(
+                  key: Key('return-row-${_returns[i].document.id}'),
+                  onTap: () => _openDoc(_returns[i].document.id),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(
+                                _returns[i].document.docNo,
+                                style: const TextStyle(height: 1.6),
+                              ),
+                              Text(
+                                '${_returns[i].document.docType.label} · '
+                                '${formatDate(_returns[i].document.occurredAt)}',
+                                style: TextStyle(
+                                  height: 1.6,
+                                  color: theme.textTheme.bodySmall?.color,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          '−¥${Money.formatGrouped(_returns[i].document.totalAmount)}',
+                          style: const TextStyle(
+                            height: 1.6,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: <FontFeature>[
+                              FontFeature.tabularFigures(),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.chevron_right,
+                          size: 18,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _linksSection(ThemeData theme, DocumentSummary summary) {

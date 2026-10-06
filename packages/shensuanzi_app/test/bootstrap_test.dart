@@ -128,6 +128,40 @@ void main() {
       expect(restored.databasePath, p.join(created.directory, 'shensuanzi.db'));
     });
 
+    test('BUG-03 回归：目录与标记都在、但库文件损坏 → resolved() 为 null', () {
+      final AppBootstrap bootstrap = bootstrapIn(box);
+      final DataLocation created = bootstrap.prepare(sandboxPath(box, 'data'));
+      // 把库文件写成垃圾文本（模拟「not a database」）
+      File(created.databasePath).writeAsStringSync('not a database');
+
+      // 修复前：resolved() 仍返回该位置 ⇒ 反复打开坏库、永远停在错误页
+      expect(
+        bootstrap.resolved(),
+        isNull,
+        reason: '库打不开就不该解析成「可用位置」（§审查 BUG-03）',
+      );
+
+      // §审查 2026-10-05 真机：**必须能认出「是哪个目录坏了」** ——
+      // 否则启动流程会把它当成「首次启动」弹向导，而向导会覆盖 config，
+      // 用户原来的目录（实测 `D://fed`）就再也切不回去了。
+      final DataLocation? broken = bootstrap.unusableConfigured();
+      expect(broken, isNotNull, reason: '知道是哪个目录坏 —— 与「没配过」区分开');
+      expect(broken!.directory, created.directory);
+    });
+
+    test('没配过 / 位置合法 ⇒ unusableConfigured() 为 null（不误报「坏了」）', () {
+      final AppBootstrap bootstrap = bootstrapIn(box);
+
+      // ① 根本没配过
+      expect(bootstrap.unusableConfigured(), isNull);
+
+      // ② 配过且库好着（新建的空库也是有效 SQLite 文件）
+      final DataLocation created = bootstrap.prepare(sandboxPath(box, 'data'));
+      Db.open(created.databasePath).close();
+      expect(bootstrap.unusableConfigured(), isNull, reason: '好库不算「坏」');
+      expect(bootstrap.resolved(), isNotNull, reason: '好库要能解析出来');
+    });
+
     test('配置被清理软件删掉 → null（走向导，但数据还在原地）', () {
       final AppBootstrap bootstrap = bootstrapIn(box);
       final String dir = sandboxPath(box, 'data');
@@ -301,6 +335,142 @@ void main() {
       final Db db = bootstrap.open(location);
       expect(db.foreignKeysEnabled, isTrue);
       db.close();
+    });
+  });
+
+  // ============================================================ 启动场景判定
+  //
+  // §审查「启动路径健壮性」批次：六个场景收在一次判定里（`startup.dart`）。
+  // 判错的代价是**用户的目录从配置里消失**（真机踩过），所以逐条钉住。
+  group('启动场景判定（startupDecision）', () {
+    /// 默认位置落在**沙箱里**：没有可用的非系统盘 ⇒ 退到 `<home>/神算子数据`。
+    /// （绝不能让它去真 D 盘建目录。）
+    AppBootstrap boot() => bootstrapIn(
+      box,
+      environment: machine(home: box.path, drives: <DriveInfo>[]),
+    );
+
+    test('没配过 + 默认位置**没有**数据 ⇒ welcome（可以正常说「欢迎」）', () {
+      final AppBootstrap b = boot();
+      expect(b.startupDecision().scenario, StartupScenario.welcome);
+      // 提前把「默认位置是什么」钉住，免得将来换夹具时这条测试失去意义
+      expect(
+        b.policy.defaultDataDirectory(),
+        p.join(box.path, '神算子数据'),
+        reason: '没有可用的非系统盘 ⇒ 退到 <home>/神算子数据（沙箱内）',
+      );
+    });
+
+    test('没配过 + 默认位置**已有数据** ⇒ firstRunWithData（OBS-11 前半）', () {
+      final AppBootstrap b = boot();
+      // 造「上次装过、这次重装」的现场：默认位置有标记 + 真库，但**没有配置**
+      final String dir = b.policy.defaultDataDirectory();
+      Directory(dir).createSync(recursive: true);
+      DataMarker.write(dir, schemaVersion: Schema.version, now: 1700000000000);
+      Db.open(p.join(dir, AppBootstrap.databaseFileName)).close();
+
+      final StartupDecision decision = b.startupDecision();
+      expect(decision.scenario, StartupScenario.firstRunWithData);
+      expect(
+        decision.defaultPath,
+        dir,
+        reason: '要告诉用户「是哪个位置已有数据」',
+      );
+    });
+
+    test('配过 + 库能打开 ⇒ openExisting', () {
+      final AppBootstrap b = boot();
+      final DataLocation created = b.prepare(sandboxPath(box, 'data'));
+      Db.open(created.databasePath).close();
+
+      final StartupDecision decision = b.startupDecision();
+      expect(decision.scenario, StartupScenario.openExisting);
+      expect(decision.location!.directory, created.directory);
+    });
+
+    test('配过 + **库打不开** ⇒ brokenDatabase（错误页，绝不走向导）', () {
+      final AppBootstrap b = boot();
+      final DataLocation created = b.prepare(sandboxPath(box, 'data'));
+      File(created.databasePath).writeAsStringSync('这不是一个有效的 SQLite 库');
+
+      final StartupDecision decision = b.startupDecision();
+      expect(decision.scenario, StartupScenario.brokenDatabase);
+      expect(
+        decision.location!.directory,
+        created.directory,
+        reason: '错误页要说清是**哪个**目录打不开',
+      );
+    });
+
+    test('配过 + 目录被删 ⇒ recoverLocation（带上「上次用的路径」）', () {
+      final AppBootstrap b = boot();
+      final DataLocation created = b.prepare(sandboxPath(box, 'data'));
+      Directory(created.directory).deleteSync(recursive: true);
+
+      final StartupDecision decision = b.startupDecision();
+      expect(decision.scenario, StartupScenario.recoverLocation);
+      expect(
+        decision.previousPath,
+        created.directory,
+        reason: '§AG 遗漏 1：要能说「上次用的是这个路径，现在找不到了」',
+      );
+    });
+
+    test('配置被截断 + 抢救得到 + 库能开 ⇒ salvageConfig（用户无感）', () {
+      final AppBootstrap b = boot();
+      final DataLocation created = b.prepare(sandboxPath(box, 'data'));
+      Db.open(created.databasePath).close();
+      // 写到一半断电：JSON 截断，但 data_directory 那段还在
+      File(p.join(box.path, 'config.json')).writeAsStringSync(
+        '{\n  "data_directory": ${jsonEncode(created.directory)},\n  "ui_sca',
+      );
+
+      final StartupDecision decision = b.startupDecision();
+      expect(decision.scenario, StartupScenario.salvageConfig);
+      expect(decision.location!.directory, created.directory);
+    });
+
+    test('配置被截断 + 抢救不到 ⇒ recoverLocation（previousPath 为空）', () {
+      final AppBootstrap b = boot();
+      File(p.join(box.path, 'config.json')).writeAsStringSync('{ 根本不是 JSON');
+
+      final StartupDecision decision = b.startupDecision();
+      expect(decision.scenario, StartupScenario.recoverLocation);
+      expect(decision.previousPath, isNull, reason: '读不出路径就别编一个');
+    });
+
+    test('defaultDataDirectory 注入：**只替换那一个值**，判定照走真实文件系统', () {
+      final AppBootstrap b = boot();
+
+      // 「注入的默认位置」真的建在磁盘上（有标记 + 真库）——判定必须真的读盘
+      final String injected = sandboxPath(box, '注入的默认位置');
+      Directory(injected).createSync(recursive: true);
+      DataMarker.write(injected, schemaVersion: Schema.version, now: 1700000000000);
+      Db.open(p.join(injected, AppBootstrap.databaseFileName)).close();
+
+      // ① 注入了，而且那个位置**真的有**数据 ⇒ firstRunWithData
+      final StartupDecision withData = b.startupDecision(
+        defaultDataDirectory: injected,
+      );
+      expect(withData.scenario, StartupScenario.firstRunWithData);
+      expect(withData.defaultPath, injected);
+
+      // ② 不注入 ⇒ 回到机器算出来的那个（沙箱内、没有数据）⇒ welcome
+      //    —— **生产行为一个字都不变**（§BR·补 2 Case 3）
+      expect(
+        b.startupDecision().scenario,
+        StartupScenario.welcome,
+        reason: '不注入时不该有任何差别',
+      );
+
+      // ③ 配置里有路径之后，注入值**不参与任何判定**（裁定写死的边界）
+      final DataLocation created = b.prepare(sandboxPath(box, 'data'));
+      Db.open(created.databasePath).close();
+      expect(
+        b.startupDecision(defaultDataDirectory: injected).scenario,
+        StartupScenario.openExisting,
+        reason: '§BR·补 2：注入只影响「真·第一次启动」那一支',
+      );
     });
   });
 }

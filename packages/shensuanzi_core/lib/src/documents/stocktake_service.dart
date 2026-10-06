@@ -108,7 +108,8 @@ class StocktakeService {
       occurredAt: stamp,
       createdAt: stamp,
       updatedAt: stamp,
-      remark: '期初录入（店内已有货建账）',
+      // §审查 OBS-09①：备注由草稿给（期初录入 / 重新清点），不再写死
+      remark: draft.remark,
     );
 
     final RuleOutcome outcome = _engine.dispatch(

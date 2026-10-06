@@ -40,6 +40,10 @@ class SettingsPage extends StatefulWidget {
     this.dataPathsNote,
     this.hostSyncNote,
     this.onExportBackup,
+    this.onMigrateData,
+    this.mobileSync,
+    this.onScanPair,
+    this.onSyncNow,
     required this.onChanged,
   });
 
@@ -78,6 +82,21 @@ class SettingsPage extends StatefulWidget {
   /// 宿主实现（SAF 选位置 → 拷贝 db 文件），返回给用户看的结果文案；
   /// `null` = 不显示入口（桌面备份在兄弟目录，直接可拷）。
   final Future<String> Function()? onExportBackup;
+
+  /// 「更改数据位置」（§BK·三，2026-10-05 裁定）：完整流程（选位置 → 确认 →
+  /// 进度 → 迁移 → 重开库）都在宿主（`app.dart`）。`null` = 不显示按钮
+  /// （Android 私有目录改不了 / 测试单跑）。
+  final Future<void> Function()? onMigrateData;
+
+  /// 手机端同步服务（§BL·三）。非 `null` ⇒ 多设备区显示**移动面板**
+  /// （扫码 / 已连接信息 / 立即同步），取代桌面端的 hostService 面板。
+  final MobileSyncService? mobileSync;
+
+  /// 「扫码连接主机」（宿主：推扫码页 + 完成后重建页面）
+  final Future<void> Function()? onScanPair;
+
+  /// 「立即同步」（宿主：遮罩 + syncNow + 完成后重建页面 —— 裁定 ⑦）
+  final Future<void> Function()? onSyncNow;
 
   /// 任何修改都会回调（宿主据此热应用缩放 / 店名）
   final void Function(AppConfig config) onChanged;
@@ -289,6 +308,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       label: '数据位置',
                       path: _current.dataDirectory!,
                       onOpen: () => _openFolder(_current.dataDirectory!),
+                      onChange: widget.onMigrateData,
                     ),
                     if (widget.backupDirectory != null) ...<Widget>[
                       const SizedBox(height: 8),
@@ -381,9 +401,15 @@ class _SettingsPageState extends State<SettingsPage> {
               _Section(
                 title: '多设备同步',
                 children: <Widget>[
-                  // §BH·六 B1c：Android 是**客户端**，不做主机 —— 显示引导
-                  // 而不是 Windows 同款二维码（真机反馈，2026-10-04）
-                  if (widget.hostSyncNote != null)
+                  // §BL·三：手机端 = 客户端面板（扫码 / 已连接 / 立即同步）——
+                  // 取代 B1c 时代的纯文案引导（当时功能还没到，现在是真功能）
+                  if (widget.mobileSync != null)
+                    _MobileSyncPanel(
+                      service: widget.mobileSync!,
+                      onScanPair: widget.onScanPair,
+                      onSyncNow: widget.onSyncNow,
+                    )
+                  else if (widget.hostSyncNote != null)
                     Text(
                       widget.hostSyncNote!,
                       style: TextStyle(
@@ -415,11 +441,15 @@ class _FolderRow extends StatelessWidget {
     required this.label,
     required this.path,
     required this.onOpen,
+    this.onChange,
   });
 
   final String label;
   final String path;
   final VoidCallback onOpen;
+
+  /// 「更改」（§BK·三）；`null` = 不显示（备份位置跟随数据目录走，v1 不单独改）
+  final VoidCallback? onChange;
 
   @override
   Widget build(BuildContext context) {
@@ -442,10 +472,128 @@ class _FolderRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
+        if (onChange != null) ...<Widget>[
+          OutlinedButton.icon(
+            onPressed: onChange,
+            icon: const Icon(Icons.drive_file_move_outline, size: 18),
+            label: const Text('更改'),
+          ),
+          const SizedBox(width: 8),
+        ],
         OutlinedButton.icon(
           onPressed: onOpen,
           icon: const Icon(Icons.folder_open, size: 18),
           label: const Text('打开'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 手机端「多设备同步」面板（§BL·三）。
+///
+/// 三态：未配对（扫码按钮）→ 已配对（主机信息 + 立即同步 + 忘记主机）。
+/// 同步/扫码的**流程与进度**在宿主（app.dart），本面板只摆放与转发 ——
+/// 结果文案经 SnackBar 展示（宿主 `_toast`）。
+///
+/// ⚠️ 是 **StatefulWidget**：「忘记这台主机」清掉 pairing.json 后必须
+/// `setState` 重读 —— StatelessWidget 没人触发重建，界面会「仍然记得」
+/// （真机踩过：§BL·落地·补 1）。
+class _MobileSyncPanel extends StatefulWidget {
+  const _MobileSyncPanel({
+    required this.service,
+    this.onScanPair,
+    this.onSyncNow,
+  });
+
+  final MobileSyncService service;
+  final Future<void> Function()? onScanPair;
+  final Future<void> Function()? onSyncNow;
+
+  @override
+  State<_MobileSyncPanel> createState() => _MobileSyncPanelState();
+}
+
+class _MobileSyncPanelState extends State<_MobileSyncPanel> {
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final PairingInfo? pairing = widget.service.pairingStore.load();
+    if (pairing == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            '把手机变成随身开单终端：扫一次电脑上的二维码，'
+            '商品 / 往来方 / 库存就同步过来了。',
+            style: TextStyle(height: 1.6),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: widget.onScanPair,
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text('扫码连接主机'),
+          ),
+        ],
+      );
+    }
+    final String lastSync = pairing.lastSyncAt == null
+        ? '还没同步过'
+        : '上次同步：${formatDateTime(pairing.lastSyncAt!)}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          '已连接主机（${pairing.ip}:${pairing.port}）',
+          style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          lastSync,
+          style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: <Widget>[
+            FilledButton.icon(
+              onPressed: widget.onSyncNow,
+              icon: const Icon(Icons.sync, size: 18),
+              label: const Text('立即同步'),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () async {
+                // 二次确认（断开是用户可感知的状态变化）
+                final bool? sure = await showDialog<bool>(
+                  context: context,
+                  builder: (BuildContext context) => AlertDialog(
+                    title: const Text('忘记这台主机？'),
+                    content: const Text(
+                      '手机上的数据副本会保留，但不再与电脑同步。'
+                      '之后可以重新扫码连接。',
+                      style: TextStyle(height: 1.6),
+                    ),
+                    actions: <Widget>[
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('取消'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('忘记'),
+                      ),
+                    ],
+                  ),
+                );
+                if (sure == true) {
+                  widget.service.forgetHost();
+                  // ⚠️ 不重建 = 「仍然记得」（真机踩过）
+                  if (mounted) setState(() {});
+                }
+              },
+              child: const Text('忘记这台主机'),
+            ),
+          ],
         ),
       ],
     );

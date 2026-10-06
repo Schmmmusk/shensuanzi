@@ -27,6 +27,10 @@
 library;
 
 import 'package:flutter/material.dart';
+// §BL·一：`PairingPayload` 是**同步协议**的 wire 格式，已迁进 `shensuanzi_core`
+// —— host 只是 re-export。这里**直接依赖源头**（`import_guard` 会要求）：
+// 用 `show` 限定，避免与 host 桶里的同名 re-export 撞在一起。
+import 'package:shensuanzi_core/shensuanzi_core.dart' show PairingPayload;
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 
 /// 项目统一的**内联提示色**（与开单页/核销页同款：橙色 ≠ 错误红，

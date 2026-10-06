@@ -29,6 +29,30 @@ RuleEngine 落地                 本地镜像（权威状态的副本，FK 关�
 **开单 UI 不受此限** —— 开单只推 `Document`，不跑规则；由此派生的离线显示
 （权威镜像 + 未同步影响）必须标注为**估算**。
 
+### 客户端开单流程（B3，2026-10-06）
+
+开单提交走 **`DocumentSink`** 抽象 —— UI 只对接口编程，**不出现「是不是客户端」的分支**：
+
+| 实现 | 行为 |
+|---|---|
+| 主机 `ServiceSink` | 落库 + 跑 `RuleEngine`（与单机版**逐字同行为**） |
+| 客户端 `QueueSink` | `Draft` 校验（与主机**共用同一份**校验，失败不入队）→ 本地 UUIDv7 + `待同步-` 占位单号 → `SyncQueueDao.enqueue` —— **不落库、不跑规则** |
+
+端到端：`QueueSink` 入队 →（异步、不阻塞 UI、互斥 + 尾随合并）自动 `push` 一次；
+失败**静默留在队列**（`failed` / 退避由既有规则管），三态条显示，不弹窗打扰连续开单 →
+主机 `createDocument` 换正式单号 → pull 确认后条目删除。
+三态条判定：**「已同步」= 没有 `pending` 和 `failed`**（`sent` 主机已收下，不显示）；
+「待同步 N 条」= `pending` 数；「失败 M 条」= `failed` 数，与待同步**并列**不覆盖。
+UI 显示的 SnackBar 文案按 `DocumentSubmitResult.isQueued` 区分（裁定 ②）；
+`partyDueCents` 在入队路径恒为 `null`（客户端算不出累计欠款，UI 省略该段，不显示 0 冒充真相）。
+
+**手机端主数据策略（C2·§CC，2026-10-06）：禁建 + 引导。**
+手机端本机建主数据（客户 / 供应商 / 商品）后，引用它的单据推到主机会被外键拒绝 ——
+所以主数据的「新建 / 编辑 / 停用」只在主机做；手机端**保留入口 + 点击引导**
+（不隐藏 —— `Agents.md` 4.3），文案见 `mobile_guidance.dart`。
+手机端读面 = 镜像库（含 `stockViewOf` 的权威 + 未同步叠加）；镜像只读，写入仅通过 pull
+（`data_model.md` §4.4 第 3 条）。
+
 **信任边界**：家庭 / 店铺局域网。详见 `threat_model.md`。
 
 ## 二、幂等键
@@ -513,6 +537,10 @@ GET    /api/party_ledger?party_id=&since=
 3. 显示二维码：`shensuanzi://pair?host_id=<uuid>&ip=<lan_ip>&port=<port>&token=<token>&v=1`
 4. Android 扫码，存 `host_id` / `ip` / `port` / `token`
 5. 后续请求带 `Authorization: Bearer <token>`
+
+> **载荷的权威实现**：`PairingPayload`（编解码）在 **`packages/shensuanzi_core/lib/src/sync/pairing_payload.dart`**
+> （§BL·一，2026-10-05 裁定：两端协议归 core —— host 生成、客户端解析，而包边界裁定 app 不依赖 host；
+> host 通过 re-export 保持旧导入路径）。`PairingQr`（二维码数据生成）仍在 host —— 渲染侧的事。
 
 ### 9.2 IP 变化处理
 

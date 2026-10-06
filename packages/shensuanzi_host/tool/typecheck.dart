@@ -26,6 +26,7 @@ import 'selfcheck_client_server.dart' as selfcheck_client_server;
 import 'selfcheck_host.dart' as selfcheck_host;
 // ignore: unused_import
 import 'selfcheck_service.dart' as selfcheck_service;
+import 'selfcheck_queue_sink.dart' as selfcheck_queue_sink;
 import 'selfcheck_sync.dart' as selfcheck_sync;
 
 void main() {
@@ -41,6 +42,7 @@ void main() {
     selfcheck_client_server.main,
     selfcheck_host.main,
     selfcheck_service.main,
+    selfcheck_queue_sink.main,
     selfcheck_sync.main,
   ];
   print(

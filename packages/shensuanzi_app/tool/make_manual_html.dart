@@ -24,8 +24,18 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 String _esc(String text) =>
     const HtmlEscape(HtmlEscapeMode.element).convert(text);
 
-/// 把一段文本里的 `\n` 变成 `<br>`（先转义再替换，顺序不能反）。
-String _lines(String text) => _esc(text).replaceAll('\n', '<br>\n      ');
+/// 把手册正文里的 `**加粗**` 变成 `<strong>`（§审查：以前是**原样印成星号**的 ——
+/// 手册里 8 处强调在页面上就是字面 `**`，用户看得到）。
+///
+/// ⚠️ 必须在 `_esc` **之后**做：`*` 不需要 HTML 转义，而且顺序反了会把
+/// 生成的 `<strong>` 也一起转义掉。
+String _md(String text) => _esc(text).replaceAllMapped(
+  RegExp(r'\*\*(.+?)\*\*'),
+  (Match m) => '<strong>${m.group(1)}</strong>',
+);
+
+/// 把一段文本里的 `\n` 变成 `<br>`（先转义/加粗再替换，顺序不能反）。
+String _lines(String text) => _md(text).replaceAll('\n', '<br>\n      ');
 
 void _renderBlock(ManualBlock block, StringBuffer out) {
   switch (block) {
@@ -34,7 +44,7 @@ void _renderBlock(ManualBlock block, StringBuffer out) {
     case ManualSteps(:final items):
       out.writeln('    <ol>');
       for (final String item in items) {
-        out.writeln('      <li>${_esc(item)}</li>');
+        out.writeln('      <li>${_md(item)}</li>');
       }
       out.writeln('    </ol>');
     case ManualNote(:final text, :final warning):

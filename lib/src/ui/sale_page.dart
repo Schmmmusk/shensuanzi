@@ -20,8 +20,11 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart'
+    show MobileGuideTopic, mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'mobile_guidance_dialog.dart';
 import 'entry_unit_hints.dart';
 import 'product_form_dialog.dart';
 
@@ -32,9 +35,27 @@ class SalePage extends StatefulWidget {
     required this.service,
     required this.productService,
     required this.partyService,
+    required this.sink,
+    this.onSubmitted,
+    this.readOnlyMasterData = false,
   });
 
+  /// 开单页**查询**用（选择器 / 库存快照 —— 读）。
   final SaleService service;
+
+  /// 提交**出口**（B3b·§CA）：页面对 [DocumentSink] 编程，**不出现
+  /// 「是不是客户端」的分支**。桌面 = `ServiceSink`（落库+规则，与直连
+  /// 逐字同行为）；手机 = `QueueSink`（校验 → 入队）。
+  final DocumentSink sink;
+
+  /// 提交成功回调（B3b）。手机端注入 = 刷新三态条 + 触发自动推送
+  /// （裁定 ③，在 app.dart 装配）；桌面不注入。
+  final void Function(DocumentSubmitResult result)? onSubmitted;
+
+  /// 手机端**主数据禁建**（C2·§CC）：`true` 时「新建客户 / 新建商品」入口
+  /// **保留但点击后弹引导对话框**（不隐藏 —— Agents.md 4.3）。
+  /// 桌面缺省 `false` = 现状零变化。
+  final bool readOnlyMasterData;
 
   /// 商品搜索与「＋新建商品」复用商品建档。
   final ProductService productService;
@@ -439,7 +460,7 @@ class _SalePageState extends State<SalePage> {
     });
   }
 
-  /// `create` 是**同步**的（库操作进程内完成，无 IO 等待）。
+  /// `sink.submitSale` 是**同步**的（库操作 / 入队进程内完成，无 IO 等待）。
   void _save() {
     if (_saving) return;
     _syncSpread();
@@ -447,13 +468,17 @@ class _SalePageState extends State<SalePage> {
     final SaleDraft draft = _draft;
     setState(() => _saving = true);
     try {
-      final SaleSaved saved = widget.service.create(draft);
-      _afterSaved(saved);
-    } on SaleDraftInvalid catch (error) {
-      setState(() {
-        _invalid = error;
-        _saving = false;
-      });
+      // B3b：提交走 Sink（桌面 = 落库+规则；手机 = 入队）——页面无分支
+      final DocumentSubmitResult result = widget.sink.submitSale(draft);
+      if (result.isFailure) {
+        // 校验失败（裁定 ⑥）：带着原始的 SaleDraftInvalid 标红字段，不入库不入队
+        setState(() {
+          _invalid = result.error! as SaleDraftInvalid;
+          _saving = false;
+        });
+        return;
+      }
+      _afterSaved(result);
     } catch (error) {
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -471,7 +496,7 @@ class _SalePageState extends State<SalePage> {
   /// 保存成功：**保留客户与日期**（连续给同一客户开单是常态），
   /// 只清明细与收款（§X 六 / P-3 同款）。
   /// ⚠️ v1 不显示利润（§Z 遗漏 6）—— SnackBar 只报单号与欠款。
-  void _afterSaved(SaleSaved saved) {
+  void _afterSaved(DocumentSubmitResult result) {
     setState(() {
       for (final _RowCtl row in _rows) {
         row.dispose();
@@ -487,27 +512,44 @@ class _SalePageState extends State<SalePage> {
       }
       // 「顾客给了」不持久化：保存即清（§AJ·AI-4）
       _given.clear();
+      // §审查 BUG-07：整单让价也要清 —— 否则下一单悄悄继承上一单的让价
+      _discountAll.clear();
+      _discountError = null;
       _invalid = null;
       _saving = false;
     });
 
-    final String due = saved.dueCents > 0
-        ? '，欠款 ¥${Money.formatGrouped(saved.dueCents)}'
+    // B3b：提交成功回调（手机端装配 = 刷新三态条 + 自动推送；桌面为 null）
+    widget.onSubmitted?.call(result);
+
+    // 裁定 ②：入队成功的文案在 core（`queuedNotice`），UI 不造句
+    if (result.isQueued) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.queuedNotice!),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+      return;
+    }
+
+    final String due = result.dueCents > 0
+        ? '，欠款 ¥${Money.formatGrouped(result.dueCents)}'
         : '（已结清）';
     // §AX·一 的**第二处告知**：SnackBar 再说一次「记了多少、找了多少」。
     // 措辞取自 core 的 `Overpay.savedNoteOf` —— 与提交前的内联提示、
     // 按钮文字**同源**（这里不造句）。
     final String change = Overpay.savedNoteOf(
-      recordedCents: saved.paidCents,
-      changeCents: saved.changeCents,
+      recordedCents: result.paidCents,
+      changeCents: result.changeCents,
     );
-    final String partyDue = saved.partyDueCents > 0
-        ? '；$_partyName 累计欠款 ¥${Money.formatGrouped(saved.partyDueCents)}'
+    final String partyDue = (result.partyDueCents ?? 0) > 0
+        ? '；$_partyName 累计欠款 ¥${Money.formatGrouped(result.partyDueCents!)}'
         : '';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '单号 ${saved.docNo} 已保存 ¥${Money.formatGrouped(saved.totalCents)}'
+          '单号 ${result.finalDocNo} 已保存 ¥${Money.formatGrouped(result.totalCents)}'
           '$due${change.isEmpty ? '' : '，$change'}$partyDue',
         ),
         duration: const Duration(seconds: 6),
@@ -590,6 +632,7 @@ class _SalePageState extends State<SalePage> {
       builder: (BuildContext sheetContext) => _ProductPickerSheet(
         service: widget.productService,
         recentProducts: widget.service.recentlySold(),
+        readOnly: widget.readOnlyMasterData,
       ),
     );
   }
@@ -602,6 +645,7 @@ class _SalePageState extends State<SalePage> {
       builder: (BuildContext sheetContext) => _CustomerPickerSheet(
         service: widget.service,
         partyService: widget.partyService,
+        readOnly: widget.readOnlyMasterData,
       ),
     );
   }
@@ -892,6 +936,9 @@ class _SalePageState extends State<SalePage> {
   /// 现金找零辅助行（§AJ·AI-4）。**只算找零，不记账**：
   /// 「顾客给了」永不出现在草稿里；小于应收显示「不够」但**照常允许提交**
   /// （用户可能只是拿它算个数）。快捷键 = 一次点击完成「算找零」。
+  ///
+  /// ⚠️ 窄屏（手机）快捷 chips 会溢出 44px（C3 真机实测）⇒ LayoutBuilder
+  /// 响应式：宽屏（桌面）单行右对齐**零变化**；窄屏 chips 独立成行。
   Widget _cashChangeRow(ThemeData theme) {
     final int total = _draft.totalCents;
     final int? given = Money.tryParseYuan(_given.text.trim());
@@ -906,70 +953,118 @@ class _SalePageState extends State<SalePage> {
                 Overpay(givenCents: given, dueCents: total).changeCents,
               )}';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Row(
+    final Widget givenField = SizedBox(
+      width: 120,
+      child: TextField(
+        key: const Key('sale-given'),
+        controller: _given,
+        enabled: !_saving,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        onChanged: (_) => setState(() {}),
+        decoration: const InputDecoration(
+          hintText: '选填',
+          isDense: true,
+          border: OutlineInputBorder(),
+          suffixText: '元',
+        ),
+      ),
+    );
+
+    final List<Widget> quickChips = <Widget>[
+      TextButton(
+        onPressed: _saving ? null : () => _quickGiven(_roundUpYuanCents),
+        child: const Text('收整'),
+      ),
+      TextButton(
+        onPressed: _saving ? null : () => _quickGiven(5000),
+        child: const Text('收 50'),
+      ),
+      TextButton(
+        onPressed: _saving ? null : () => _quickGiven(10000),
+        child: const Text('收 100'),
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final List<Widget> content;
+        if (constraints.maxWidth < 480) {
+          // 窄屏（手机）：chips 独立成行右对齐 —— 不再挤爆
+          content = <Widget>[
+            Row(
+              children: <Widget>[
+                Text('顾客给了', style: theme.textTheme.bodySmall),
+                const SizedBox(width: 8),
+                givenField,
+                const SizedBox(width: 12),
+                if (changeText != null)
+                  Flexible(
+                    child: Text(
+                      changeText,
+                      style: TextStyle(
+                        height: 1.6,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: const <FontFeature>[
+                          FontFeature.tabularFigures(),
+                        ],
+                        // 「不够」是提醒不是拦截 —— 用内联橙，错误红只留给真错误
+                        color: notEnough
+                            ? const Color(0xFFB45309)
+                            : theme.colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Wrap(spacing: 4, children: quickChips),
+            ),
+          ];
+        } else {
+          // 宽屏（桌面）：现状单行右对齐，零变化
+          content = <Widget>[
+            Row(
+              children: <Widget>[
+                Text('顾客给了', style: theme.textTheme.bodySmall),
+                const SizedBox(width: 8),
+                givenField,
+                const SizedBox(width: 12),
+                if (changeText != null)
+                  Text(
+                    changeText,
+                    style: TextStyle(
+                      height: 1.6,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: const <FontFeature>[
+                        FontFeature.tabularFigures(),
+                      ],
+                      color: notEnough
+                          ? const Color(0xFFB45309)
+                          : theme.colorScheme.onSurface,
+                    ),
+                  ),
+                const Spacer(),
+                ...quickChips,
+              ],
+            ),
+          ];
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text('顾客给了', style: theme.textTheme.bodySmall),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 120,
-              child: TextField(
-                key: const Key('sale-given'),
-                controller: _given,
-                enabled: !_saving,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  hintText: '选填',
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                  suffixText: '元',
-                ),
+            ...content,
+            const SizedBox(height: 4),
+            Text(
+              '只用于算找零，不用记账 —— 收款框填多少，进账就是多少。',
+              style: TextStyle(
+                height: 1.6,
+                color: theme.textTheme.bodySmall?.color,
               ),
-            ),
-            const SizedBox(width: 12),
-            if (changeText != null)
-              Text(
-                changeText,
-                style: TextStyle(
-                  height: 1.6,
-                  fontWeight: FontWeight.w700,
-                  fontFeatures: const <FontFeature>[
-                    FontFeature.tabularFigures(),
-                  ],
-                  // 「不够」是提醒不是拦截 —— 用内联橙，错误红只留给真错误
-                  color: notEnough
-                      ? const Color(0xFFB45309)
-                      : theme.colorScheme.onSurface,
-                ),
-              ),
-            const Spacer(),
-            TextButton(
-              onPressed: _saving ? null : () => _quickGiven(_roundUpYuanCents),
-              child: const Text('收整'),
-            ),
-            TextButton(
-              onPressed: _saving ? null : () => _quickGiven(5000),
-              child: const Text('收 50'),
-            ),
-            TextButton(
-              onPressed: _saving ? null : () => _quickGiven(10000),
-              child: const Text('收 100'),
             ),
           ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          '只用于算找零，不用记账 —— 收款框填多少，进账就是多少。',
-          style: TextStyle(
-            height: 1.6,
-            color: theme.textTheme.bodySmall?.color,
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -1316,10 +1411,18 @@ class _PayCard extends StatelessWidget {
 
 /// 客户选择器：搜索 + 最近往来 + 最小新建（`ensureParty`，Z-4）。
 class _CustomerPickerSheet extends StatefulWidget {
-  const _CustomerPickerSheet({required this.service, required this.partyService});
+  const _CustomerPickerSheet({
+    required this.service,
+    required this.partyService,
+    this.readOnly = false,
+  });
 
   final SaleService service;
   final PartyService partyService;
+
+  /// 手机端主数据禁建（C2·§CC）：`true` = 「新建客户」点击后弹引导
+  /// （保留入口，不隐藏）；空态文案换成同步引导。
+  final bool readOnly;
 
   @override
   State<_CustomerPickerSheet> createState() => _CustomerPickerSheetState();
@@ -1351,6 +1454,11 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
   }
 
   Future<void> _create() async {
+    // C2·§CC：手机端主数据禁建 —— 保留入口，点击后引导（文案在 app 包）
+    if (widget.readOnly) {
+      await showMobileGuideDialog(context, MobileGuideTopic.newParty);
+      return;
+    }
     // 搜索框里已有的文字就是客户名称；空名必须拦（P-7 同款）
     final String name = _query.text.trim();
     setState(() => _creating = true);
@@ -1419,7 +1527,9 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
                 ? Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text(
-                      _searched
+                      widget.readOnly
+                          ? mirrorEmptyMessage('客户列表')
+                          : _searched
                           ? '没有匹配的客户，可以在下面新建。'
                           : '还没有往来的客户，直接在搜索框输入名称新建。',
                       textAlign: TextAlign.center,
@@ -1455,12 +1565,16 @@ class _ProductPickerSheet extends StatefulWidget {
   const _ProductPickerSheet({
     required this.service,
     required this.recentProducts,
+    this.readOnly = false,
   });
 
   final ProductService service;
 
   /// 空查询时展示的「最近销售」列表 —— 由页面查好传入。
   final List<Product> recentProducts;
+
+  /// 手机端主数据禁建（C2·§CC）：`true` = 「新建商品」点击后弹引导。
+  final bool readOnly;
 
   @override
   State<_ProductPickerSheet> createState() => _ProductPickerSheetState();
@@ -1488,6 +1602,11 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
   }
 
   Future<void> _createProduct() async {
+    // C2·§CC：手机端主数据禁建 —— 保留入口，点击后引导
+    if (widget.readOnly) {
+      await showMobileGuideDialog(context, MobileGuideTopic.newProduct);
+      return;
+    }
     final Product? created = await showProductFormDialog(
       context,
       service: widget.service,
@@ -1532,7 +1651,11 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
                 ? Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text(
-                      _searched ? '没有匹配的商品，可以点下面新建。' : '还没有销售记录，直接搜索或新建。',
+                      widget.readOnly
+                          ? mirrorEmptyMessage('商品列表')
+                          : _searched
+                          ? '没有匹配的商品，可以点下面新建。'
+                          : '还没有销售记录，直接搜索或新建。',
                       textAlign: TextAlign.center,
                       style: const TextStyle(height: 1.6),
                     ),

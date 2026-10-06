@@ -50,6 +50,27 @@ class Db {
   /// ⚠️ **曾经这里写着「迁移失败 → 从迁移前备份恢复」，还配了一个 `_restoreFrom`** ——
   /// 但那条路径**根本走不到**（`backupPath` 在抛异常时不会被赋值），
   /// 属「**文档描述了不存在的功能**」。已按**纪律 17** 删掉。
+  /// 能不能打开这个位置的库并**真读一下文件**（**永不抛**）。
+  ///
+  /// 用途：启动解析时探测「配置里的位置现在还能用吗」（§审查 BUG-03）——
+  /// 目录在、标记在，但库文件可能**坏了 / 被锁 / 是更高 schema**。
+  /// 只做 `SELECT count(*) FROM sqlite_master`（真的读文件头，`SELECT 1` 不读）。
+  ///
+  /// ⚠️ 刻意**不走 [open]**：那会跑迁移链 —— 探测不该有副作用。
+  static bool probe(String path) {
+    try {
+      final Database db = sqlite3.open(path);
+      try {
+        db.select('SELECT count(*) AS c FROM sqlite_master');
+        return true;
+      } finally {
+        db.dispose();
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Db open(String path, {bool foreignKeys = true}) {
     final Database db = sqlite3.open(path);
     try {

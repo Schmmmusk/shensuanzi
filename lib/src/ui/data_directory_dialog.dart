@@ -26,6 +26,8 @@ Future<DataLocation?> showDataDirectoryDialog(
   required DataDirectoryDialogModel model,
   required Future<String?> Function() pickDirectory,
   bool firstRun = false,
+  String? lostLocationNote,
+  String? defaultPath,
 }) => showDialog<DataLocation>(
   context: context,
   // 数据位置是启动前提：点外面关掉会让程序卡在「没有库」的状态
@@ -34,6 +36,8 @@ Future<DataLocation?> showDataDirectoryDialog(
     model: model,
     pickDirectory: pickDirectory,
     firstRun: firstRun,
+    lostLocationNote: lostLocationNote,
+    defaultPath: defaultPath,
   ),
 );
 
@@ -42,10 +46,29 @@ class _DataDirectoryDialog extends StatefulWidget {
     required this.model,
     required this.pickDirectory,
     required this.firstRun,
+    this.lostLocationNote,
+    this.defaultPath,
   });
 
   final DataDirectoryDialogModel model;
   final Future<String?> Function() pickDirectory;
+
+  /// 覆盖「机器给的默认位置」（**仅供测试注入**，§BR·补 2 方案 B）；
+  /// `null` = 用 `model.open()` 自己解析出来的真实默认位置。
+  /// ⚠️ 必须与 `startupDecision(defaultDataDirectory:)` 的注入值一致（见 `open` 的注释）。
+  final String? defaultPath;
+
+  /// 替换掉「欢迎」那一句的说明；`null` = 显示默认内容。
+  ///
+  /// 三种来源（都与 [firstRun] 互斥 —— 它们出现的场景**都不是**「第一次启动」）：
+  ///
+  /// 1. §审查 OBS-15：配置**读不懂**（`locationLost`）—— 说「数据没丢，
+  ///    只是我记不住位置了」，并给找回的路；
+  /// 2. §AG 遗漏 1：位置**记着**但那文件夹现在用不了（被搬走 / 盘符变了）
+  ///    —— 说清「上次用的是哪个、该怎么办」；
+  /// 3. §审查 OBS-11 前半：首启撞上「默认位置已有数据」，用户选了「新位置」
+  ///    —— 说清「那份数据不会被删」（免得他以为被覆盖了）。
+  final String? lostLocationNote;
 
   /// **是不是真的第一次启动**（还没有任何配置）。
   ///
@@ -68,7 +91,7 @@ class _DataDirectoryDialogState extends State<_DataDirectoryDialog> {
   void initState() {
     super.initState();
     // 首次打开：用**默认位置**起步（不弹目录框，用户直接确认或更改）
-    if (_model.path.isEmpty) _model.open();
+    if (_model.path.isEmpty) _model.open(defaultPath: widget.defaultPath);
   }
 
   Future<void> _onPick() async {
@@ -146,6 +169,18 @@ class _DataDirectoryDialogState extends State<_DataDirectoryDialog> {
                   '这是第一次启动。请告诉神算子把你的数据放在哪 —— '
                   '数据存在你自己电脑里，不会上传。',
                   style: const TextStyle(height: 1.6),
+                ),
+                const SizedBox(height: 16),
+              ],
+              // §审查 OBS-15：配置读不懂时替换掉「欢迎」的位置 ——
+              // 说的是「数据还在，只是我记不住位置了」，并给一条找回的路
+              if (widget.lostLocationNote != null) ...<Widget>[
+                Text(
+                  widget.lostLocationNote!,
+                  style: const TextStyle(
+                    height: 1.6,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 16),
               ],
