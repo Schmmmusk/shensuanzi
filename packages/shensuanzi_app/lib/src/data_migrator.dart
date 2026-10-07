@@ -73,19 +73,31 @@ class MigrationProgress {
 }
 
 /// 迁移结果。**失败时旧目录一定原样**（见 [DataMigrator.execute] 的退路）。
+///
+/// ⚠️ **「数据搬过去了」与「说明文件写成功了」是两件事**（2026-10-07 修复，
+/// `docs/reply.md` §6 的 #10）：说明文件写失败**不算迁移失败** —— 旧目录里
+/// 只是少一份给用户看的指引；而报「失败」会让应用层把配置切回旧路径，
+/// 用户面对**两份数据**且不知道哪份在生效（旧代码就是这样：`renameSync`
+/// 成功之后写说明抛异常，被同一个 `catch` 当成了搬迁失败）。
 class DataMigrationResult {
-  const DataMigrationResult.ok(this.legacyNotePath)
+  const DataMigrationResult.ok(this.legacyNotePath, {this.warning})
     : error = null;
 
-  const DataMigrationResult.failed(this.error) : legacyNotePath = null;
+  const DataMigrationResult.failed(this.error)
+    : legacyNotePath = null,
+      warning = null;
 
   bool get ok => error == null;
 
   /// 失败原因（给用户的原话；成功为 `null`）
   final String? error;
 
-  /// 旧目录里说明文件的路径（成功才有）
+  /// 旧目录里说明文件的路径（成功**且写成功**才有）
   final String? legacyNotePath;
+
+  /// **数据已搬成功、但说明文件没写成**时的说明（成功才可能有；可空）。
+  /// 是给用户的原话：「不影响使用」+ 为什么。
+  final String? warning;
 }
 
 /// 迁移执行器。
@@ -209,14 +221,35 @@ class DataMigrator {
 
       // 说明文件 —— 成功后才写（失败时旧目录连一个字节都不该多）。
       // 备份同位时**不给旧备份目录写** —— 它没被迁走，仍是现役备份目录。
-      final String notePath = _writeLegacyNote(
-        directory: dataDirectory,
-        newDataDirectory: newDataDirectory,
-      );
-      if (!backupInPlace) {
-        _writeLegacyNote(directory: backupDirectory, newDataDirectory: newDataDirectory);
+      //
+      // ⚠️ **写说明失败不算迁移失败**（2026-10-07，`docs/reply.md` §6 的 #10）：
+      // 数据此刻**已经在新位置**（上面的 rename 成功了），报「失败」会让应用层
+      // 切回旧路径 —— 用户就有两份数据、且不知道哪份在生效。所以这里各自
+      // try/catch，失败只记进 [DataMigrationResult.warning]。
+      String? notePath;
+      String? noteWarning;
+      try {
+        notePath = _writeLegacyNote(
+          directory: dataDirectory,
+          newDataDirectory: newDataDirectory,
+        );
+      } catch (error) {
+        noteWarning = '数据已经搬好了，只是旧文件夹里没能留下「已迁移」说明'
+            '（$error）。不影响使用 —— 但**先别删旧文件夹**，确认新位置好用再说。';
       }
-      return DataMigrationResult.ok(notePath);
+      if (!backupInPlace) {
+        try {
+          _writeLegacyNote(
+            directory: backupDirectory,
+            newDataDirectory: newDataDirectory,
+          );
+        } catch (_) {
+          // 旧备份目录的说明文件同样只是指引；上面主目录那条已经报过了
+          noteWarning ??= '数据已经搬好了，只是旧文件夹里没能留下「已迁移」说明。'
+              '不影响使用 —— 但**先别删旧文件夹**，确认新位置好用再说。';
+        }
+      }
+      return DataMigrationResult.ok(notePath, warning: noteWarning);
     } catch (error) {
       // 退路：只删**自己建的**暂存目录。用户在目标位置已有的任何文件不碰
       //（目标非空在选位置时就被拒了；这里连空的都不留——改名失败时清掉）

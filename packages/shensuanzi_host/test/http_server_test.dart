@@ -359,10 +359,14 @@ void main() {
         json.keys.toSet().difference(<String>{
           ...SyncPullResult.entityNames,
           'next_cursors',
+          // 2026-10-07（docs/reply.md §1）：分页「还有没有下一页」的显式信号
+          'has_more',
         }),
         isEmpty,
-        reason: '响应体只允许 9 个实体 + next_cursors',
+        reason: '响应体只允许 9 个实体 + next_cursors + has_more',
       );
+      // 空库 ⇒ 每路都空 ⇒ 不可能还有下一页
+      expect(json['has_more'], isFalse);
       final Map<String, Object?> cursors =
           Map<String, Object?>.from(json['next_cursors']! as Map);
       expect(cursors.keys.toSet(), SyncCursorKeys.all.toSet());

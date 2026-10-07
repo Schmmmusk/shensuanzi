@@ -309,6 +309,7 @@ GET /api/sync/pull
   &parties_since=1700000000000|0192…
   &accounts_since=1700000000000|0192…
   &limit=100
+  &doc_updated_since=1759…   # 可选：最近更新窗口的下界（毫秒），见下
 Authorization: Bearer <token>
 Response: {
   "documents": [...],
@@ -326,7 +327,8 @@ Response: {
     "products_since": "1700000000000|0192…",
     "parties_since": "1700000000000|0192…",
     "accounts_since": "1700000000000|0192…"
-  }
+  },
+  "has_more": false
 }
 ```
 
@@ -386,6 +388,35 @@ Response: {
 **wire 值的形态**：**列名 = 数据库列名（snake_case），值 = `toRow()` 的形态** ——
 布尔用 `1` / `0`，时间用 UTC 毫秒整数，金额用整数分。
 这样 wire ↔ DB row 之间**没有转换层**，也就没有转换漂移。
+
+**⭐ `has_more` 与「最近更新窗口」（2026-10-07 增加，`docs/reply_review.md` §CL）**：
+
+```text
+GET /api/sync/pull?...&limit=500&doc_updated_since=1759…
+Response: { …9 个实体…, "next_cursors": {…}, "has_more": true }
+```
+
+| 项 | 语义 |
+|---|---|
+| `has_more` | 任一**分页实体**本页取满 `limit` ⇒ `true`。客户端**循环拉到 `false` 才算拉完**；没拉完时 UI **不许**说「同步完成」（从前只拉一页就报完成，首次同步的镜像因此是残缺的） |
+| `doc_updated_since` | **客户端传**（毫秒，= 本地现在 − 窗口，默认 7 天）。主机额外返回 `updated_at > 该值` 的主单，与主分页**并进同一个 `documents` 数组**（同名实体、按 `id` 幂等 upsert，不新增实体） |
+
+**为什么需要窗口**：`documents` 的游标列是**不可变**的 `created_at`，而主机事后会改
+`status` / `paid_amount` / `updated_at`（签收 / 拒收 / 收款核销）——
+已拉过的单**永远不会再推给手机**，手机会一直显示旧状态。
+把游标改成 `(updated_at, id)` 被**否决**（同步基石不动；旧代码漏刷新 `updated_at` 会漏单），
+所以走「主分页一个字不变 + 另加一段窗口」的增量方案。
+
+三条落地约束：
+
+- 窗口**只带主单、不带明细**（明细没变；新单的明细由后续常规分页补齐）
+- 窗口**只有一轮同步的第一页带**（每页都带会让窗口取满从而永远报「还有」）
+- 窗口取满**不置 `has_more`** —— 它是尽力而为的补齐，下一次同步会重新覆盖窗口；
+  拿它当分页信号会让「一周内动过很多单」的店每次同步都拉不完
+
+**队列清理时机**：`sync_queue` 里 `sent` 条目的清除**只在一轮 `pull` 拉到底时**做
+（从前每页都清：主单排在后面的页时，条目先被清掉、单据后到，且「未同步影响」的叠加
+提前消失 ⇒ 库存显示少计）。
 
 **⚠️ 客户端要持久化什么**：`sync_queue`（待推送的 op）与 **8 个游标**
 （`sync_cursor`）。前者见 `data_model.md` §4.1，后者见 §4.3 ——

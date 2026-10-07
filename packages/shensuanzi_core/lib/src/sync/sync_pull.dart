@@ -92,7 +92,11 @@ class SyncCursor {
 /// 理由：明细没有时间列（`data_model.md` §3.2），且与主单在同一事务里写入、
 /// 永不单独存在。这正是 §8.2 只给了 `doc_since` 的原因。
 class SyncPullResult {
-  const SyncPullResult({required this.entities, required this.nextCursors});
+  const SyncPullResult({
+    required this.entities,
+    required this.nextCursors,
+    this.hasMore = false,
+  });
 
   /// 解析 §8.2 的响应体。
   ///
@@ -103,6 +107,9 @@ class SyncPullResult {
   ///
   /// 游标值必须是**字符串**（§8.2 的响应示例就是字符串）。
   /// 不接受数字：那会掩盖「主机换成了非字符串游标」这类契约变更。
+  ///
+  /// [hasMore] 缺失 ⇒ `false`（旧主机不带这个字段，**按"可能没了"处理**——
+  /// 与旧客户端忽略未知字段对称：新客户端对旧主机退化为旧行为）。
   factory SyncPullResult.fromJson(Map<String, Object?> json) {
     final Object? rawCursors = json['next_cursors'];
     if (rawCursors is! Map) {
@@ -132,7 +139,12 @@ class SyncPullResult {
             throw FormatException('实体 $name 的元素必须是对象'),
       ];
     }
-    return SyncPullResult(entities: entities, nextCursors: cursors);
+    final Object? rawHasMore = json['has_more'];
+    return SyncPullResult(
+      entities: entities,
+      nextCursors: cursors,
+      hasMore: rawHasMore is bool && rawHasMore,
+    );
   }
 
   /// 响应体里的 9 个实体（顺序即 §8.2 的字段顺序）。
@@ -164,10 +176,19 @@ class SyncPullResult {
   /// `documents` 与主数据是 `"<时间戳>|<id>"` 复合游标。
   final Map<String, String> nextCursors;
 
+  /// 主机是否**还有下一页**（任一实体的本页取满了 `limit`）。
+  ///
+  /// 起因（2026-10-07，`docs/reply.md` §1）：客户端一次 `pull` 只取一页，
+  /// 却对用户显示「同步完成」—— 首次同步（镜像为空）几乎必然只拉了一部分，
+  /// 库存与往来都是**残缺的镜像**照着算出来的。
+  /// 现在客户端据此**循环拉到 `false`**，过程中不许报「完成」。
+  final bool hasMore;
+
   int countOf(String entity) => entities[entity]?.length ?? 0;
 
   Map<String, Object?> toJson() => <String, Object?>{
     ...entities,
     'next_cursors': nextCursors,
+    'has_more': hasMore,
   };
 }

@@ -336,6 +336,33 @@ void main() {
     expect(find.textContaining('客户拒收'), findsNothing);
   });
 
+  testWidgets('退货单：显示「未退款」+ [退款给客户] 入口（2026-10-07，reply.md §2）', (
+    WidgetTester tester,
+  ) async {
+    // 挂账退货（`partialReturn` 造的 `th-1` 没有立即退款）⇒ 该退 ¥4.00 还没退。
+    // 从前这里只有一句「退货单不用收付款」，客户的钱没有出口。
+    final ({String saleId, String retId}) fixture = partialReturn();
+    await tester.pumpWidget(page(fixture.retId));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('refund-button')), findsOneWidget);
+    expect(find.textContaining('退款给客户 ¥4.00'), findsOneWidget);
+    expect(find.text('未退款'), findsOneWidget);
+    expect(find.text('应退金额'), findsOneWidget);
+    expect(
+      find.byKey(const Key('settle-button')),
+      findsNothing,
+      reason: '退货单走退款入口，不是普通收款 / 付款按钮',
+    );
+
+    // 点开对话框：文案也是退款口径（不是「付款 / 未付」）
+    await tester.tap(find.byKey(const Key('refund-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('退款给客户'), findsWidgets);
+    expect(find.textContaining('未退款：'), findsOneWidget);
+    expect(find.textContaining('客户：李姐'), findsOneWidget);
+  });
+
   testWidgets('没退过货的单不显示「退货记录」区块', (WidgetTester tester) async {
     final Document doc = sellOnCredit();
     await tester.pumpWidget(page(doc.id));

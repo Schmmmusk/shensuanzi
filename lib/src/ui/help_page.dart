@@ -69,9 +69,10 @@ class HelpPage extends StatelessWidget {
               const SizedBox(height: 16),
 
               // ---- §BH·五 B1b 裁定 3（2026-10-04）：卸载即全丢，必须告知 ----
-              // Android 的数据和备份都在应用私有目录：备份只防数据库损坏，
-              // 不防设备丢失 / 卸载。文字用裁定原文（「导出备份（v1.1 开放）」
-              // —— 入口落地后由 B1c 改为直接引导到设置页）。
+              // Android 的数据在应用私有目录：卸载 = 全丢。
+              // ⚠️ 入口已落地 ⇒ 文案改成**直接引导到设置页**（2026-10-07 按
+              // `docs/reply.md` §4 B 方案改口径：不叫「备份」——权威数据在
+              // 电脑主机上；手机端真正会丢的是**还没推给主机的单**）。
               if (Platform.isAndroid)
                 Container(
                   margin: const EdgeInsets.only(bottom: 16),
@@ -82,8 +83,10 @@ class HelpPage extends StatelessWidget {
                     border: Border.all(color: const Color(0xFFB45309)),
                   ),
                   child: const Text(
-                    'Android 版数据存在应用私有目录。卸载应用会删除全部数据，'
-                    '包括备份。如需保留，请在设置页导出备份（v1.1 开放）。',
+                    'Android 版数据存在应用私有目录。卸载应用会删除全部数据。\n'
+                    '你的账本一直在电脑主机上，手机丢了不影响账；'
+                    '真正会丢的是还没传给电脑的那几张单 —— '
+                    '在设置页「导出本机数据文件」可以把它们发给电脑。',
                     style: TextStyle(height: 1.6, color: Color(0xFF92400E)),
                   ),
                 ),

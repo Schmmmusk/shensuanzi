@@ -55,6 +55,7 @@ class FakeHost {
     _server = server;
     // listen 返回订阅（不是 Future）—— 服务生命周期 = 进程，不单独管理
     server.listen((HttpRequest request) async {
+      try {
         final String path = request.uri.path;
         int status = 200;
         Object? body;
@@ -69,7 +70,12 @@ class FakeHost {
           await Future<void>.delayed(pushDelay);
           status = pushStatus;
           body = <String, Object?>{'results': <Object?>[]};
-          await request.drain<void>();
+          // ⚠️ 把请求体读干净（否则客户端等回执时会被自己的管道卡住）。
+          // **客户端在收尾时断开是正常的**（`tearDown` 里 `close(force: true)`）
+          // —— 那时这次 drain 会抛 `HttpException: Connection closed`，
+          // 而它发生在**测试结束之后**，测试运行器会把它算到最后一个用例头上
+          // （真实现象：整套跑红、单跑绿）。所以这类断开必须容忍。
+          await request.drain<void>().catchError((Object _) {});
         } else {
           status = 404;
         }
@@ -78,7 +84,10 @@ class FakeHost {
         response.headers.contentType = ContentType.json;
         response.add(utf8.encode(jsonEncode(body)));
         await response.close();
-      });
+      } catch (_) {
+        // 收尾期的断开不影响任何断言（本文件断言的是「发了几次请求」）
+      }
+    });
   }
 
   Future<void> close() async {
@@ -299,5 +308,107 @@ void main() {
 
     // 尾随：第一轮结束后自动再推一次（连接开三单 = 两轮请求的约定）
     await waitFor(() => host.pushRequests >= 2);
+  });
+
+  // ============================================ 分页拉到底（2026-10-07 裁定）
+
+  test('has_more 一直为真 ⇒ 不许说「同步完成」（如实报「只同步了一部分」）', () async {
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
+    );
+    // 主机永远说「还有下一页」—— 客户端有页数上限，必须**终止并如实上报**，
+    // 既不能无限转圈，也不能假装拉完了（审查 #9 / Android 报告 ③）
+    host.pullBody['has_more'] = true;
+
+    final SyncOutcome outcome = await service.syncNow();
+
+    expect(outcome.kind, SyncOutcomeKind.error, reason: outcome.message);
+    expect(outcome.message, contains('只同步了一部分'));
+  });
+
+  test('has_more 缺省（旧主机）⇒ 当作到底，仍报成功', () async {
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
+    );
+    host.pullBody.remove('has_more'); // 旧主机不带这个字段
+
+    final SyncOutcome outcome = await service.syncNow();
+
+    expect(outcome.kind, SyncOutcomeKind.ok, reason: outcome.message);
+    expect(outcome.message, contains('同步完成'));
+  });
+
+  // ================================== 换主机重置（2026-10-07 裁定 #3 / Android ②）
+
+  test('扫到**另一台主机** ⇒ 重建镜像 + 挂起未同步队列', () async {
+    // 先配 h-1 并同步一次（镜像里留下 h-1 的数据）
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
+    );
+    host.pullBody['products'] = <Object?>[
+      <String, Object?>{
+        'id': 'p-old', 'code': 'P0009', 'name': '旧主机的货', 'unit': '瓶',
+        'cost_price': 100, 'sell_price': 200, 'safety_stock': 0,
+        'is_active': 1, 'created_at': 1, 'updated_at': 1,
+      },
+    ];
+    await service.syncNow();
+    final Db mirror = service.openMirror();
+    expect(mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n'], 1);
+
+    // 离线开了一单（还没推给 h-1）
+    enqueueOne('q-offline');
+
+    // 换主机：host_id 变了
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-2&ip=127.0.0.1&port=${host.baseUri.port}&token=tok2&v=1',
+    );
+
+    expect(
+      mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n'],
+      0,
+      reason: '镜像必须清掉 —— 否则两台主机的数据混在一张表里',
+    );
+    expect(
+      mirror.raw.select('SELECT COUNT(*) AS n FROM sync_cursor').first['n'],
+      0,
+      reason: '游标必须清零 —— 否则会从新主机的中间位置开始拉，前半截永远拉不到',
+    );
+    final List<SyncQueueEntry> left = SyncQueueDao(mirror).all();
+    expect(left, hasLength(1), reason: '队列**不能删**（那是用户刚开的单）');
+    expect(
+      left.single.status,
+      SyncQueueStatus.failed,
+      reason: '挂起 ⇒ 不再自动推给新主机，等用户确认',
+    );
+    expect(left.single.lastError, contains('上一台主机'));
+    expect(service.lastHostSwitchHeldEntries, 1);
+  });
+
+  test('同一台主机重新扫码（host_id 不变）⇒ **不清镜像**（只换令牌）', () async {
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
+    );
+    host.pullBody['products'] = <Object?>[
+      <String, Object?>{
+        'id': 'p-keep', 'code': 'P0010', 'name': '留着', 'unit': '瓶',
+        'cost_price': 100, 'sell_price': 200, 'safety_stock': 0,
+        'is_active': 1, 'created_at': 1, 'updated_at': 1,
+      },
+    ];
+    await service.syncNow();
+    final Db mirror = service.openMirror();
+
+    // 主机重新生成配对码（host_id 不变）⇒ 只是换个令牌，数据是同一份
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok-new&v=1',
+    );
+
+    expect(
+      mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n'],
+      1,
+      reason: '同一台主机不该被当成换主机 —— 否则每次重扫码都要全量重拉',
+    );
+    expect(service.lastHostSwitchHeldEntries, 0);
   });
 }

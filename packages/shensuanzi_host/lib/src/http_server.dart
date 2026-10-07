@@ -186,6 +186,10 @@ class _HostRoutes {
               accountsSince: q[SyncCursorKeys.accounts] ?? '',
               limit:
                   int.tryParse(q['limit'] ?? '') ?? SyncServer.defaultPullLimit,
+              // 最近更新窗口（2026-10-07，`docs/reply.md` §1 甲方案）：
+              // 客户端传「现在 − 窗口天数」，拿了之后按 updated_at 再取一遍
+              // 动过的主单（签收 / 拒收 / 收款的状态变化）。缺省不传 = 旧行为。
+              docUpdatedSince: int.tryParse(q['doc_updated_since'] ?? ''),
             )
             .toJson(),
       );

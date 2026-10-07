@@ -590,6 +590,203 @@ void main() {
     });
   });
 
+  // ============================================ 核销门槛（2026-10-07，docs/reply.md §3）
+
+  group('核销门槛（#5 求和上限 / #6 方向 + 往来方）', () {
+    test('同一目标拆两条 allocation → 合计超上限被拒（#5 老洞）', () {
+      final String productId = createProduct();
+      final String partyId = createParty();
+      final String accountId = createAccount();
+
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: partyId,
+        totalAmount: 10000,
+      );
+      engine.dispatch(
+        document: sale,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: sale.id,
+            productId: productId,
+            quantity: 10,
+            unitPrice: 1000,
+          ),
+        ],
+        now: now(),
+      );
+
+      // 单看每一条都是 ¥60 ≤ 未收 ¥100 —— 旧实现逐条比，两条都放过
+      final Document receipt = doc(
+        type: DocType.receipt,
+        partyId: partyId,
+        accountId: accountId,
+        totalAmount: 12000,
+      );
+      final RuleOutcome outcome = engine.dispatch(
+        document: receipt,
+        allocations: <Allocation>[
+          Allocation(targetDocId: sale.id, amount: 6000),
+          Allocation(targetDocId: sale.id, amount: 6000),
+        ],
+        now: now(),
+      );
+
+      expect(outcome.status, RuleStatus.rejected);
+      expect(outcome.reason, contains('超过被核销单未收金额'));
+      expect(documents.findById(sale.id)!.paidAmount, 0);
+      expect(
+        db.raw
+            .select('SELECT COUNT(*) AS c FROM settlements')
+            .first['c'],
+        0,
+      );
+    });
+
+    test('付款单不能核销销售单（#6 方向）', () {
+      final String productId = createProduct();
+      final String partyId = createParty();
+      final String accountId = createAccount();
+
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: partyId,
+        totalAmount: 5000,
+      );
+      engine.dispatch(
+        document: sale,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: sale.id,
+            productId: productId,
+            quantity: 10,
+            unitPrice: 500,
+          ),
+        ],
+        now: now(),
+      );
+
+      final RuleOutcome outcome = engine.dispatch(
+        document: doc(
+          type: DocType.payment,
+          partyId: partyId,
+          accountId: accountId,
+          totalAmount: 5000,
+        ),
+        allocations: <Allocation>[
+          Allocation(targetDocId: sale.id, amount: 5000),
+        ],
+        now: now(),
+      );
+
+      expect(outcome.status, RuleStatus.rejected);
+      expect(outcome.reason, contains('只接受'));
+      expect(documents.findById(sale.id)!.paidAmount, 0);
+      expect(money.balanceOf(accountId), 0, reason: '资金不得动');
+    });
+
+    test('收款单不能核销采购单（#6 方向，反向）', () {
+      final String productId = createProduct();
+      final String partyId = createParty();
+      final String accountId = createAccount();
+
+      final Document purchase = doc(
+        type: DocType.purchase,
+        partyId: partyId,
+        totalAmount: 5000,
+      );
+      engine.dispatch(
+        document: purchase,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: purchase.id,
+            productId: productId,
+            quantity: 10,
+            unitPrice: 500,
+          ),
+        ],
+        now: now(),
+      );
+
+      final RuleOutcome outcome = engine.dispatch(
+        document: doc(
+          type: DocType.receipt,
+          partyId: partyId,
+          accountId: accountId,
+          totalAmount: 5000,
+        ),
+        allocations: <Allocation>[
+          Allocation(targetDocId: purchase.id, amount: 5000),
+        ],
+        now: now(),
+      );
+
+      expect(outcome.status, RuleStatus.rejected);
+      expect(outcome.reason, contains('只接受'));
+      expect(documents.findById(purchase.id)!.paidAmount, 0);
+    });
+
+    test('拿客户 B 的收款核销客户 A 的单 → 拒绝（#6 往来方）', () {
+      final String productId = createProduct();
+      final String partyA = createParty(name: '客户甲');
+      final String partyB = createParty(name: '客户乙');
+      final String accountId = createAccount();
+
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: partyA,
+        totalAmount: 5000,
+      );
+      engine.dispatch(
+        document: sale,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: sale.id,
+            productId: productId,
+            quantity: 10,
+            unitPrice: 500,
+          ),
+        ],
+        now: now(),
+      );
+
+      final RuleOutcome outcome = engine.dispatch(
+        document: doc(
+          type: DocType.receipt,
+          partyId: partyB,
+          accountId: accountId,
+          totalAmount: 5000,
+        ),
+        allocations: <Allocation>[
+          Allocation(targetDocId: sale.id, amount: 5000),
+        ],
+        now: now(),
+      );
+
+      expect(outcome.status, RuleStatus.rejected);
+      expect(outcome.reason, contains('往来方不一致'));
+      expect(documents.findById(sale.id)!.paidAmount, 0);
+    });
+
+    test('预收 / 预付（target_doc_id = null）不受方向与往来方校验影响', () {
+      final String partyId = createParty();
+      final String accountId = createAccount();
+
+      final RuleOutcome outcome = engine.dispatch(
+        document: doc(
+          type: DocType.receipt,
+          partyId: partyId,
+          accountId: accountId,
+          totalAmount: 1000,
+        ),
+        allocations: <Allocation>[const Allocation(targetDocId: null, amount: 1000)],
+        now: now(),
+      );
+
+      expect(outcome.status, RuleStatus.applied, reason: '${outcome.reason}');
+    });
+  });
+
   // ============================================================ 互斥
 
   group('payload 互斥（docs/sync_protocol.md §8.1）', () {

@@ -36,6 +36,21 @@ enum StartupScenario {
   /// **绝不覆盖配置** —— 覆盖就等于把用户的目录从配置里抹掉。
   brokenDatabase,
 
+  /// 配置有路径、目录与标记都在，但**库文件本身不见了**（2026-10-07 新增，
+  /// `docs/reply.md` §6 的 #1）。
+  ///
+  /// ⚠️ **为什么必须与 [brokenDatabase] 分开**：[brokenDatabase] 是「文件在、
+  /// 读不出来」，这一条是「文件没了」。混在一起时走的是 [recoverLocation] →
+  /// 向导 → 用户的目录可能被配置抹掉；而若用户重选**同一个**目录，
+  /// `Db.open` 见到 `user_version = 0` 会**直接建一套空表** —— 他会在毫无提示
+  /// 的情况下对着一本空账簿继续开单（审计报告 #1：误删 `.db` 是常见事故，
+  /// 标记文件还在，软件却「照常可用」）。
+  ///
+  /// 处置：停在错误页，把「从备份恢复」的办法摆出来，并给一个明确的
+  /// 「新建一本空账」出口 —— **由人选**，不替他决定（备份恢复 UI 仍是 v1
+  /// 有意不做的，所以这里只给指引，不做自动恢复）。
+  missingDatabase,
+
   /// 配置**读不懂**，但从原始文本里**抢救**出了原位置、且它可用
   /// ⇒ 直接进主界面（用户甚至察觉不到出过问题）。
   salvageConfig,
@@ -78,6 +93,10 @@ class StartupDecision {
 
   const StartupDecision.brokenDatabase(DataLocation location)
     : this.withLocation(StartupScenario.brokenDatabase, location);
+
+  /// [missingDatabase]：**哪个目录里缺库文件**（提示里要说出路径）。
+  const StartupDecision.missingDatabase(DataLocation location)
+    : this.withLocation(StartupScenario.missingDatabase, location);
 
   const StartupDecision.salvageConfig(DataLocation location)
     : this.withLocation(StartupScenario.salvageConfig, location);

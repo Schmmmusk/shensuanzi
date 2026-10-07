@@ -128,12 +128,25 @@ void main() {
   // ============================================================ 方向判定
 
   group('SettlementService.isInbound', () {
-    test('sale / sale_return / delivery → 收款；purchase 系 → 付款', () {
+    // ⚠️ **退货两行于 2026-10-07 改了**（`docs/reply.md` §2 / 台账 §CL·三点五）：
+    // 退货单「结清」= 把钱**真的付出去 / 收回来**，方向与原单**相反** ——
+    // 销售退货 ⇒ 我方付钱（`false`）、采购退货 ⇒ 我方收钱（`true`）。
+    // 旧断言写的是反的（把 `sale_return` 当成收款），照它做退款单会生成
+    // `receipt`，把付出去的钱记成收进来的钱。
+    test('sale / delivery → 收款；purchase → 付款；**退货与原单相反**', () {
       expect(SettlementService.isInbound(DocType.sale), isTrue);
-      expect(SettlementService.isInbound(DocType.saleReturn), isTrue);
       expect(SettlementService.isInbound(DocType.delivery), isTrue);
       expect(SettlementService.isInbound(DocType.purchase), isFalse);
-      expect(SettlementService.isInbound(DocType.purchaseReturn), isFalse);
+      expect(
+        SettlementService.isInbound(DocType.saleReturn),
+        isFalse,
+        reason: '销售退货 = 我方退钱给客户（付款）',
+      );
+      expect(
+        SettlementService.isInbound(DocType.purchaseReturn),
+        isTrue,
+        reason: '采购退货 = 供应商退钱给我（收款）',
+      );
     });
 
     test('盘点 / 收付款单自身 / 调拨 → null（不能核销）', () {

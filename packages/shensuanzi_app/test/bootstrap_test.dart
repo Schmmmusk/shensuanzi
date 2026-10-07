@@ -402,7 +402,65 @@ void main() {
       );
     });
 
-    test('配过 + 目录被删 ⇒ recoverLocation（带上「上次用的路径」）', () {
+    test('配过 + **库文件被删** ⇒ missingDatabase（不许静默建空库）', () {
+      // 审计报告 #1：标记还在、库被误删 ⇒ 从前会一路走到「新建空库」，
+      // 用户对着空账簿继续开单（2026-10-07 裁定，docs/reply.md §6 的 #1）
+      final AppBootstrap b = boot();
+      final DataLocation created = b.prepare(sandboxPath(box, 'data'));
+      Db.open(created.databasePath).close();
+      File(created.databasePath).deleteSync();
+
+      final StartupDecision decision = b.startupDecision();
+
+      expect(decision.scenario, StartupScenario.missingDatabase);
+      expect(
+        decision.location!.directory,
+        created.directory,
+        reason: '要告诉用户是**哪个**目录缺库文件（提示里得写出路径）',
+      );
+      expect(
+        File(created.databasePath).existsSync(),
+        isFalse,
+        reason: '判定本身**绝不许**顺手把空库建出来',
+      );
+    });
+
+    test('missingDatabase 与 brokenDatabase 必须分得开（同目录两种病）', () {
+      final AppBootstrap b = boot();
+      final DataLocation created = b.prepare(sandboxPath(box, 'data'));
+
+      // ① 文件在、内容不是 SQLite ⇒ brokenDatabase（可「重试」）
+      File(created.databasePath).writeAsStringSync('这不是一个有效的 SQLite 库');
+      expect(
+        b.startupDecision().scenario,
+        StartupScenario.brokenDatabase,
+      );
+
+      // ② 文件没了 ⇒ missingDatabase（要教从备份恢复）
+      File(created.databasePath).deleteSync();
+      expect(
+        b.startupDecision().scenario,
+        StartupScenario.missingDatabase,
+      );
+    });
+
+    test('createEmptyDatabase：只在确实没有文件时建，绝不覆盖', () {
+      final AppBootstrap b = boot();
+      final DataLocation created = b.prepare(sandboxPath(box, 'data'));
+
+      // ① 没有文件 ⇒ 建出一份能打开的库
+      b.createEmptyDatabase(created);
+      expect(File(created.databasePath).existsSync(), isTrue);
+      expect(b.startupDecision().scenario, StartupScenario.openExisting);
+
+      // ② 已经有文件（用户刚拷回来的真库）⇒ 明确拒绝，不覆盖
+      expect(
+        () => b.createEmptyDatabase(created),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('配过 + **目录被删** ⇒ recoverLocation（带上「上次用的路径」）', () {
       final AppBootstrap b = boot();
       final DataLocation created = b.prepare(sandboxPath(box, 'data'));
       Directory(created.directory).deleteSync(recursive: true);

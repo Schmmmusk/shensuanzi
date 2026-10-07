@@ -434,6 +434,16 @@ class SyncServer {
   /// 对称地，明细也**不会越过本页**：`limit=1` 时只返回那 1 张主单的明细。
   /// 「不截断」与「不越界」是两件事 —— 前者指本页明细全给，后者指页边界一致。
   ///
+  /// ## `has_more`（2026-10-07 新增，`docs/reply.md` §1）
+  ///
+  /// 任一**分页实体**本页取满 `limit` ⇒ `has_more = true`。客户端据此循环拉到底，
+  /// 不再把「拉了一页」当「同步完成」（审查 #9 / Android 报告 ③）。
+  ///
+  /// [docUpdatedSince]（毫秒）= **最近更新窗口**的下界：非 `null` 时额外返回
+  /// `updated_at > docUpdatedSince` 的主单（签收 / 拒收 / 收款后的状态变化），
+  /// 与主分页并进同一个 `documents` 数组。窗口**只带主单、不带明细**——
+  /// 明细没变；新单的明细由后续常规分页补齐。见 [pull] 里的说明。
+  ///
   /// [limit] 对**每个分页实体独立生效**，各自推进：某一个先拉完不影响其它。
   SyncPullResult pull({
     String stockSince = '0',
@@ -445,10 +455,12 @@ class SyncServer {
     String partiesSince = '',
     String accountsSince = '',
     int limit = defaultPullLimit,
+    int? docUpdatedSince,
   }) {
     final Map<String, List<Map<String, Object?>>> entities =
         <String, List<Map<String, Object?>>>{};
     final Map<String, String> next = <String, String>{};
+    bool hasMore = false;
 
     void bySeqNo(String table, String key, String since) {
       final int from = _parseSeqNoCursor(since, key);
@@ -458,6 +470,7 @@ class SyncServer {
       );
       entities[table] = rows;
       next[key] = rows.isEmpty ? '$from' : '${rows.last['seq_no']! as int}';
+      if (rows.length == limit) hasMore = true;
     }
 
     /// `(column, id)` 复合游标分页。
@@ -480,6 +493,7 @@ class SyncServer {
               rows.last[column]! as int,
               rows.last['id']! as String,
             ).wire;
+      if (rows.length == limit) hasMore = true;
     }
 
     bySeqNo(Schema.stockLedger, SyncCursorKeys.stock, stockSince);
@@ -500,6 +514,43 @@ class SyncServer {
       for (final Map<String, Object?> doc in entities[Schema.documents]!)
         doc['id']! as String,
     ]);
+
+    // ---- 最近更新窗口（2026-10-07，`docs/reply.md` §1「甲方案」）----
+    //
+    // **为什么需要它**：`documents` 的游标列是 `created_at`（不可变），
+    // 而主机事后会改 `status` / `paid_amount` / `updated_at`（签收 / 拒收 /
+    // 收款核销）。已拉过的单因此**永远不会再被推给手机** —— 手机一直显示
+    // 「未收 / 在途」的旧态（审查报告 #7 / Android 测试报告 ④）。
+    //
+    // 改游标为 `(updated_at, id)` 被**明确否决**（同步基石不动、旧数据漏刷新
+    // `updated_at` 会漏单）。所以：主分页**一个字不变**，另按 `updated_at`
+    // 拉一段「最近动过的单」，与主分页**并进同一个 `documents` 数组**
+    // （客户端按 id 幂等 upsert，两条路径都对同一行说同一件事）。
+    final List<Map<String, Object?>> pageDocs = entities[Schema.documents]!;
+    if (docUpdatedSince != null) {
+      final Set<String> mainIds = <String>{
+        for (final Map<String, Object?> doc in pageDocs) doc['id']! as String,
+      };
+      final List<Map<String, Object?>> window = _select(
+        'SELECT * FROM ${Schema.documents} WHERE updated_at > ? '
+        'ORDER BY updated_at, id LIMIT ?',
+        <Object?>[docUpdatedSince, limit],
+      );
+      // ⚠️ **窗口取满不置 `has_more`**：它是「尽力而为的补齐」，不是协议分页。
+      // 客户端每轮同步都重算窗口（`现在 − 窗口长度`），这次没带上的下一次会带上；
+      // 若在这里置 `has_more`，一周内动过「≥ limit 张单」的店会**每次同步都
+      // 拉不完**（而主分页其实早就拉到底了）—— 那是假信号。
+      final List<Map<String, Object?>> fresh = <Map<String, Object?>>[
+        for (final Map<String, Object?> row in window)
+          if (!mainIds.contains(row['id'])) row,
+      ];
+      // 上限内合并：主分页优先，窗口行补在后面（超出的留给下一轮同步）
+      final int room = limit - pageDocs.length;
+      if (room > 0 && fresh.isNotEmpty) {
+        final int take = fresh.length <= room ? fresh.length : room;
+        pageDocs.addAll(fresh.sublist(0, take));
+      }
+    }
 
     // 主数据（R-13 方案 A）：软删行**照常返回**（客户端据此在本地标记删除），
     // 列**全给** —— 客户端要 `sync_version` 做下次更新的 `base_version`、
@@ -523,7 +574,11 @@ class SyncServer {
       accountsSince,
     );
 
-    return SyncPullResult(entities: entities, nextCursors: next);
+    return SyncPullResult(
+      entities: entities,
+      nextCursors: next,
+      hasMore: hasMore,
+    );
   }
 
   /// 取「本页 `documents` 的全部明细」。谓词与主单页边界**完全一致**。

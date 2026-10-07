@@ -1243,6 +1243,149 @@ void main() {
         throwsFormatException,
       );
     });
+
+    // ---- has_more（2026-10-07，docs/reply.md §1 / §2）----
+
+    test('has_more：本页取满 limit ⇒ true；**一路拉到底** ⇒ false', () {
+      final String p = syncProduct(code: 'P950');
+      final String party = syncParty();
+      syncPurchase(p, party, 1, 100);
+      syncPurchase(p, party, 1, 100);
+
+      final SyncPullResult full = server.pull(limit: 1);
+      expect(
+        full.hasMore,
+        isTrue,
+        reason: 'stock_ledger 有两行、limit=1 ⇒ 还有下一页',
+      );
+
+      // ⚠️ **不要硬编码「推哪几路」**（我第一版就错在这里）：一次采购同时写
+      // `stock_ledger` + `party_ledger`，还有主数据等多路，各自独立推进。
+      // 真正要钉的是**契约**：按 `next_cursors` 循环拉，`has_more` 必须在
+      // 有限步内收敛为 false（客户端的终止条件就是它）。
+      Map<String, String> cursors = full.nextCursors;
+      bool hasMore = full.hasMore;
+      int steps = 0;
+      while (hasMore && steps < 20) {
+        final SyncPullResult page = server.pull(
+          stockSince: cursors[SyncCursorKeys.stock]!,
+          moneySince: cursors[SyncCursorKeys.money]!,
+          partySince: cursors[SyncCursorKeys.party]!,
+          settleSince: cursors[SyncCursorKeys.settle]!,
+          docSince: cursors[SyncCursorKeys.doc]!,
+          productsSince: cursors[SyncCursorKeys.products]!,
+          partiesSince: cursors[SyncCursorKeys.parties]!,
+          accountsSince: cursors[SyncCursorKeys.accounts]!,
+          limit: 1,
+        );
+        cursors = page.nextCursors;
+        hasMore = page.hasMore;
+        steps++;
+      }
+
+      expect(
+        hasMore,
+        isFalse,
+        reason: '按游标循环一定能在有限步内拉到底（共 $steps 步）—— 否则客户端会永远「同步中」',
+      );
+      expect(steps, greaterThan(0), reason: '确实翻过页，不是一步就完');
+    });
+
+    test('has_more 对每个分页实体独立判定（任一取满即为真）', () {
+      final String p = syncProduct(code: 'P951');
+      final String party = syncParty();
+      syncPurchase(p, party, 1, 100);
+      syncPurchase(p, party, 1, 100);
+
+      // limit=2：两张主单刚好取满 ⇒ 说「还有」
+      final SyncPullResult result = server.pull(limit: 2);
+      expect(result.countOf('documents'), 2);
+      expect(result.hasMore, isTrue);
+    });
+
+    // ---- 最近更新窗口（docs/reply.md §1 甲方案，2026-10-07）----
+
+    test('窗口：签收 / 收款只改 updated_at，主分页看不见，窗口能看见', () {
+      final String p = syncProduct(code: 'P952');
+      final String party = syncParty();
+      syncPurchase(p, party, 1, 100);
+
+      final SyncPullResult first = server.pull();
+      final Map<String, Object?> doc = first.entities['documents']!.single;
+      final String docId = doc['id']! as String;
+      final int createdAt = doc['created_at']! as int;
+      // 客户端已拉到这张单 ⇒ 它的 created_at 就是游标
+      final String docCursor = first.nextCursors[SyncCursorKeys.doc]!;
+
+      // 主机事后收款（只改 status / paid_amount / updated_at）
+      final int later = createdAt + 60000;
+      db.raw.execute(
+        'UPDATE documents SET status = ?, paid_amount = ?, updated_at = ? '
+        'WHERE id = ?',
+        <Object?>['settled', 100, later, docId],
+      );
+
+      // ① 不带窗口：主分页按 created_at，**看不到**这次变化（老行为）
+      final SyncPullResult plain = server.pull(
+        stockSince: first.nextCursors[SyncCursorKeys.stock]!,
+        docSince: docCursor,
+      );
+      expect(
+        plain.countOf('documents'),
+        0,
+        reason: 'created_at 没变 ⇒ 老协议确实感知不到状态变化（审查 #7 的根因）',
+      );
+
+      // ② 带窗口：按 updated_at 取回这一行
+      final SyncPullResult windowed = server.pull(
+        stockSince: first.nextCursors[SyncCursorKeys.stock]!,
+        docSince: docCursor,
+        docUpdatedSince: later - 1000,
+      );
+      final Map<String, Object?> refreshed =
+          windowed.entities['documents']!.single;
+      expect(refreshed['id'], docId);
+      expect(refreshed['status'], 'settled');
+      expect(refreshed['paid_amount'], 100);
+    });
+
+    test('窗口不产生重复行：主分页与窗口同时命中同一单只出现一次', () {
+      final String p = syncProduct(code: 'P953');
+      final String party = syncParty();
+      syncPurchase(p, party, 1, 100);
+
+      // 无 docSince（全量）+ 窗口覆盖这张单 ⇒ 两条路径都命中
+      final SyncPullResult withWindow = server.pull(docUpdatedSince: 0);
+      final List<Map<String, Object?>> docs =
+          withWindow.entities['documents']!;
+      expect(docs, hasLength(1), reason: '按 id 去重，不许同一单出现两次');
+
+      // ⚠️ **反向验证**（2026-10-07）：窗口是「尽力而为的补齐」，**不许**它成为
+      // 分页信号 —— 否则一周内动过 ≥limit 张单的店会每次同步都「拉不完」。
+      // 主分页已全部取完（docSince 推到最新）+ 窗口也覆盖 ⇒ has_more 必须是 false。
+      final SyncPullResult steady = server.pull(
+        stockSince: withWindow.nextCursors[SyncCursorKeys.stock]!,
+        moneySince: withWindow.nextCursors[SyncCursorKeys.money]!,
+        partySince: withWindow.nextCursors[SyncCursorKeys.party]!,
+        settleSince: withWindow.nextCursors[SyncCursorKeys.settle]!,
+        docSince: withWindow.nextCursors[SyncCursorKeys.doc]!,
+        productsSince: withWindow.nextCursors[SyncCursorKeys.products]!,
+        partiesSince: withWindow.nextCursors[SyncCursorKeys.parties]!,
+        accountsSince: withWindow.nextCursors[SyncCursorKeys.accounts]!,
+        docUpdatedSince: 0, // 窗口仍然覆盖那张单
+        limit: 1, // 窗口里那张单足以「取满」一页
+      );
+      expect(
+        steady.entities['documents'],
+        hasLength(1),
+        reason: '窗口仍然把这条最近动过的单带回来（状态变化要能同步到手机）',
+      );
+      expect(
+        steady.hasMore,
+        isFalse,
+        reason: '窗口取满**不置** has_more —— 它只是补齐，下一次同步会重新覆盖窗口',
+      );
+    });
   });
 
   // ============================================================ JSON 契约

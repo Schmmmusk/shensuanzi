@@ -113,14 +113,28 @@ class SettlementService {
   /// 原单的 `paid_amount` 只累计 `settlements` —— 不减退货的话，
   /// 「未收」永远比真相多、单据永远结不清，用户会**多收/多付**。
   /// 退货额用派生查询（`DocumentDao.returnedAgainst`），不动 `documents` 表。
+  ///
+  /// ⚠️ **退货单本身读作「未退款额」**（2026-10-07，`docs/reply.md` §2）：
+  /// 退货单是**冲减方**，它身上的 `settlements` 是「已经退给客户的钱」
+  /// （由 `payment` 单核销它产生，见 `RuleEngine._settle` 的退货口径注释），
+  /// 所以不再叠加「被别人退货冲减」那一项 —— 它自己的 `total_amount`
+  /// 就是该退的钱（`returnedAgainst` 也只统计**别的**单据对它的冲减）。
   int unsettledCentsOf(String documentId) {
     final DocumentDao documents = DocumentDao(_db);
     final Document? doc = documents.findById(documentId);
     if (doc == null) return 0;
-    return doc.totalAmount -
-        SettlementDao(_db).settledAmountOf(documentId) -
-        documents.returnedAgainst(documentId);
+    final int settled = SettlementDao(_db).settledAmountOf(documentId);
+    if (isReturnType(doc.docType)) return doc.totalAmount - settled;
+    return doc.totalAmount - settled - documents.returnedAgainst(documentId);
   }
+
+  /// 是不是退货单（方向与语义都和普通单据相反的那一类）。
+  ///
+  /// `sale_return` 该退钱给客户（`payment` 核销它）；
+  /// `purchase_return` 该收供应商退回的钱（`receipt` 核销它）——
+  /// 与 [isInbound] 的判定同源（销售系 = `receipt` 方向）。
+  static bool isReturnType(DocType type) =>
+      type == DocType.saleReturn || type == DocType.purchaseReturn;
 
   /// 该单**发生过哪些退货**（§审查 2026-10-05）—— 详情页「退货记录」区块。
   ///
@@ -144,10 +158,28 @@ class SettlementService {
       ? DocStatus.settled
       : doc.status;
 
-  /// 这单核销时是「收款」还是「付款」；`null` = **不能核销**
+  /// 这单**结清时钱往哪个方向走**：`true` = 我方收钱（`receipt`）、
+  /// `false` = 我方付钱（`payment`）；`null` = **不能核销**。
+  ///
+  /// | 单据 | 方向 | 为什么 |
+  /// |---|---|---|
+  /// | `sale` / `delivery` | 收（`true`） | 客户欠我 |
+  /// | `purchase` | 付（`false`） | 我欠供应商 |
+  /// | **`saleReturn`** | **付（`false`）** | **我方退钱给客户**（2026-10-07 修正，`docs/reply.md` §2） |
+  /// | **`purchaseReturn`** | **收（`true`）** | **供应商退钱给我** |
+  ///
+  /// ⚠️ **退货两行原先写反了**（`saleReturn` 记成收）。退货单本身由 RULE-007
+  /// 冲减往来，它「结清」= **把钱真的付出去/收回来**，所以方向与它冲减的原单
+  /// **相反**。写反的后果不是显示问题：退款入口会生成 `receipt`，
+  /// 把「付出去的钱」记成「收进来的钱」（门禁实测抓到，见 §CL·三点五）。
+  ///
+  /// ⚠️ 另注意：字段名 `inbound` 在**退货单**上读作「这单结清时钱进不进来」，
+  /// 而 `RuleEngine._return` 里的 `moneyOut: inbound`（`inbound` = 是不是
+  /// `saleReturn`）说的是**退货开单那一刻的立即退款**方向 —— 两者各自正确、
+  /// 不要互相套用（一个是「核销这单」，一个是「开这单时顺手退款」）。
   static bool? isInbound(DocType type) => switch (type) {
-    DocType.sale || DocType.saleReturn || DocType.delivery => true,
-    DocType.purchase || DocType.purchaseReturn => false,
+    DocType.sale || DocType.delivery || DocType.purchaseReturn => true,
+    DocType.purchase || DocType.saleReturn => false,
     _ => null,
   };
 

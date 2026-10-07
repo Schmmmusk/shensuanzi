@@ -78,9 +78,11 @@ class SettingsPage extends StatefulWidget {
   /// 显示「到电脑上开主机、手机扫码」的引导）。`null` = 桌面（hostService 面板）。
   final String? hostSyncNote;
 
-  /// 「导出备份到手机文件」（§BH·六 B1c；裁定：v1.1 之前必须有）。
-  /// 宿主实现（SAF 选位置 → 拷贝 db 文件），返回给用户看的结果文案；
-  /// `null` = 不显示入口（桌面备份在兄弟目录，直接可拷）。
+  /// 「导出本机数据文件」（§BH·六 B1c 的入口；**2026-10-07 按 `docs/reply.md`
+  /// §4 B 方案改口径** —— 改名为「导出本机数据文件」、带上未同步队列、
+  /// 并在副标题里说清「账本在电脑主机上」）。
+  /// 宿主实现（打包含镜像库 + 队列清单 → 交给系统分享面板），
+  /// 返回给用户看的结果文案；`null` = 不显示入口（桌面备份在兄弟目录，直接可拷）。
   final Future<String> Function()? onExportBackup;
 
   /// 「更改数据位置」（§BK·三，2026-10-05 裁定）：完整流程（选位置 → 确认 →
@@ -119,7 +121,7 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 「立即备份」进行中（遗漏 11：禁用 + 文案，先给反馈再谈并发）
   bool _backupBusy = false;
 
-  /// 「导出备份」进行中（§BH·六 B1c；与备份按钮同款「先禁用再谈并发」）
+  /// 「导出本机数据文件」进行中（§BH·六 B1c；与备份按钮同款「先禁用再谈并发」）
   bool _exporting = false;
 
   @override
@@ -145,8 +147,8 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// 「导出备份到手机文件」（§BH·六 B1c）。宿主实现（SAF 选位置 → 拷贝
-  /// db 文件），返回的文案直接进 SnackBar（与「立即备份」同款反馈）。
+  /// 「导出本机数据文件」（§BH·六 B1c 的入口；文案与打包内容见宿主
+  /// `_exportBackupMobile`）。返回的文案直接进 SnackBar（与「立即备份」同款反馈）。
   Future<void> _exportBackup() async {
     final Future<String> Function()? run = widget.onExportBackup;
     if (run == null || _exporting) return;
@@ -350,8 +352,10 @@ class _SettingsPageState extends State<SettingsPage> {
                       ],
                     ),
                   ],
-                  // §BH·六 B1c（裁定：v1.1 之前必须有）：卸载 = 数据全丢，
-                  // Android 上唯一的保留手段就是导出备份
+                  // §BH·六 B1c 的入口；**2026-10-07 按 `docs/reply.md` §4
+                  // B 方案改口径**：卸载 = 手机侧数据全丢，但账本的权威副本
+                  // 在电脑主机上 —— 手机端真正保命的是「还没推给主机的单」，
+                  // 所以这个出口带上队列，且**不叫备份**
                   if (widget.onExportBackup != null) ...<Widget>[
                     const SizedBox(height: 4),
                     ListTile(
@@ -365,11 +369,14 @@ class _SettingsPageState extends State<SettingsPage> {
                             )
                           : const Icon(Icons.upload_file_outlined),
                       title: Text(
-                        _exporting ? '导出中…' : '导出备份到手机文件',
+                        _exporting ? '导出中…' : '导出本机数据文件',
                         style: const TextStyle(height: 1.6),
                       ),
                       subtitle: Text(
-                        '把备份文件存到你选的位置（可发微信 / 存网盘）',
+                        // B 方案（2026-10-07，docs/reply.md §4）：**不叫备份** ——
+                        // 叫备份会让用户以为「手机上有备份，电脑坏了也没事」
+                        '你的账本在电脑主机上，手机丢了不影响账。\n'
+                        '这个文件只用来排查问题；里面会带上还没传过去的单。',
                         style: TextStyle(
                           height: 1.6,
                           color: theme.textTheme.bodySmall?.color,

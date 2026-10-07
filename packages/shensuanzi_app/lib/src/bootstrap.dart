@@ -122,6 +122,24 @@ class AppBootstrap {
     return Db.probe(location.databasePath) ? null : location;
   }
 
+  /// 「配置里的位置**目录与标记都在，但库文件不见了**」时返回那个位置。
+  ///
+  /// ⚠️ **必须与 [unusableConfigured] 分开判**（2026-10-07，`docs/reply.md` §6 的 #1）：
+  /// 库**文件在但读不出来**（损坏 / 被占用 / 是更高版本）走错误页的「重试」；
+  /// 库**文件没了**是另一回事 —— 那多半是误删 / 杀毒软件 / 换盘，用户需要的是
+  /// 「从备份恢复」的办法，而不是「重试」。更关键的是：**缺文件时若走向导，
+  /// 用户重选同一个目录就会静默建出一本空账**（`Db.open` 见 `user_version = 0`
+  /// 直接建全量表），他会在毫无提示的情况下对着空账簿继续开单。
+  DataLocation? missingConfigured() {
+    final DataLocation? location = _configuredLocation();
+    if (location == null) return null;
+    if (File(location.databasePath).existsSync()) return null;
+    // ⚠️ **绝对不许在这里 probe** ── `Db.probe` 对不存在的文件是「创建」，
+    // 一次判定就会把用户的空库**建出来**（门禁实测：这条判断本身成了 bug）。
+    // 本方法只回答「文件在不在」，一个字节都不写盘。
+    return location;
+  }
+
   /// 配置文件的读取状态（§审查 OBS-15）—— `absent` 才是真·第一次启动。
   AppConfigLoadStatus configStatus() => configStore.status();
 
@@ -151,8 +169,15 @@ class AppBootstrap {
     final AppConfigLoadStatus status = configStore.status();
 
     if (status == AppConfigLoadStatus.ok) {
-      // ⚠️ **复用** [resolved] / [unusableConfigured] —— 不在这里再写一遍
-      // 「库能不能打开」的判断：那样就有两处并行，早晚漂移（纪律 17）。
+      // ⚠️ **顺序与判据都不能随便动**（2026-10-07 门禁实测踩到）：
+      //
+      // ① `resolved()` 内部的 `Db.probe` 对**不存在**的文件是「**创建**」
+      //    （SQLite 的语义：打开即建库）——所以它**不能**用来回答「库在不在」，
+      //    而它一旦跑过，文件就已经存在了，后面的判断全被它带偏。
+      // ② 因此「缺库」必须在**碰库之前**由 `File.existsSync` 判，
+      //    而且要在 `resolved()` **之前**判（否则 probe 已经把空库建出来了）。
+      final DataLocation? missing = missingConfigured();
+      if (missing != null) return StartupDecision.missingDatabase(missing);
       final DataLocation? existing = resolved();
       if (existing != null) return StartupDecision.openExisting(existing);
       final DataLocation? broken = unusableConfigured();
@@ -277,6 +302,21 @@ class AppBootstrap {
       backupDirectory: policy.backupDirectoryFor(directory),
       exportDirectory: policy.exportDirectoryFor(directory),
     );
+  }
+
+  /// 用户明确选择「新建一本空账」时调用（2026-10-07，`docs/reply.md` §6 的 #1）。
+  ///
+  /// 场景：目录与标记都在、库文件没了，而用户确认没有备份可恢复。
+  /// **必须由用户点**——软件自动建空库等于让他对着空账簿继续开单。
+  ///
+  /// ⚠️ 这里**只负责建那份空库**，不碰 `config.json`（路径本来就对）；
+  /// 已经存在同名文件时**不覆盖**（那是用户刚拷回来的真库）。
+  void createEmptyDatabase(DataLocation location) {
+    final File db = File(location.databasePath);
+    if (db.existsSync()) {
+      throw StateError('${location.databasePath} 已经存在了 —— 不覆盖，请先确认那份文件是哪来的');
+    }
+    Db.open(location.databasePath).close();
   }
 
   /// 打开数据目录里的数据库（主机端：外键**开启**，主机是权威）。

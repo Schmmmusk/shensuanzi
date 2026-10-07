@@ -41,6 +41,8 @@ class SyncClient {
     int Function()? clock,
     this.pageLimit = 500,
     this.batchLimit = 200,
+    this.docUpdateWindow = const Duration(days: 7),
+    this.maxPullPages = 200,
   })     : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
        cursors = SyncCursorDao(db),
        queue = SyncQueueDao(db),
@@ -75,6 +77,24 @@ class SyncClient {
 
   /// 一次 `push` 最多推送的条目数
   final int batchLimit;
+
+  /// **最近更新窗口**的长度（`docs/reply.md` §1 甲方案，2026-10-07）。
+  ///
+  /// `null` = 不请求窗口（旧行为，测试里也用得上）。非 `null` 时每次 `pull`
+  /// 都请主机额外返回「`updated_at` 在窗口内」的主单 —— 签收 / 拒收 / 收款
+  /// 只改 `status` / `paid_amount` / `updated_at`，而 `documents` 的游标列是
+  /// 不可变的 `created_at`，不这样取的话手机**永远看不到**这些变化。
+  ///
+  /// 7 天是「够长到覆盖手机离线一阵子，又短到不会让每页都拖一大坨」的折中；
+  /// 窗口边缘漏掉的行会在下一次同步的窗口里被补上（每次都是**开区间**查询）。
+  final Duration? docUpdateWindow;
+
+  /// `pull` 一次最多循环多少页（防主机分页出错时**无限循环**）。
+  ///
+  /// 200 页 × `pageLimit` 500 = 10 万行/实体，远超个体户的年度体量。
+  /// 到顶仍 `has_more` ⇒ 结果如实标 `hasMore: true`，让 UI 说「还没同步完」
+  /// —— 与「假装完成」相比，这是唯一诚实的处置。
+  final int maxPullPages;
 
   final int Function() _clock;
 
@@ -280,17 +300,74 @@ class SyncClient {
 
   // ---------------------------------------------------------------- 拉取
 
-  /// 增量拉取（§8.2）。
+  /// 增量拉取（§8.2）。**循环拉到底**（见下方 ⚠️）。
   ///
   /// **行与游标在同一个事务内落库**（R-14 §4.3）。崩溃点只有两种：
   ///
   /// - 「应用了行、没写游标」→ 下次重复拉（幂等 upsert，**无害**）
   /// - 「写了游标、没应用行」→ **静默丢数据**
   ///
-  /// 同事务保证**永远不会出现后者**。
+  /// 同事务保证**永远不会出现后者** —— **每页**一个事务。
   Future<SyncPullReport> pull({int? limit}) async {
+    // ⚠️ **循环拉到 `has_more == false`**（2026-10-07，`docs/reply.md` §1）：
+    // 从前只拉一页就返回，于是「首次同步」几乎必然只拉了前 500 行流水，
+    // 而调用方对用户显示「同步完成」—— 库存与往来是照着**残缺镜像**算出来的
+    // （审查 #8/#9、Android 报告 ③）。
+    //
+    // 「每页一个事务」是刻意的：页与页之间**已落库 + 游标已推进**，
+    // 中断只需重跑（幂等 upsert + 开区间游标），不会退回去。
+    final Map<String, int> totals = <String, int>{};
+    int pages = 0;
+    int cleared = 0;
+    bool hasMore = true;
+    while (hasMore) {
+      final SyncPullReport page = await _pullPage(
+        limit: limit,
+        firstPage: pages == 0,
+      );
+      pages++;
+      hasMore = page.hasMore;
+      cleared += page.confirmedQueueEntries;
+      page.entities.forEach((String entity, int count) {
+        totals[entity] = (totals[entity] ?? 0) + count;
+      });
+      if (pages >= maxPullPages) {
+        // 跑了这么多页还没到底 ⇒ 主机侧分页有问题，**如实报告为「没拉完」**
+        // 而不是假装完成（宁可诚实地说「还没同步完」，也不要看起来精确的错误）
+        hasMore = true;
+        break;
+      }
+    }
+
+    return SyncPullReport(
+      entities: totals,
+      nextCursors: cursors.getAll(),
+      confirmedQueueEntries: cleared,
+      pages: pages,
+      hasMore: hasMore,
+    );
+  }
+
+  /// 一页 `pull`（协议层：请求 → 落库 → 存游标），由 [pull] 循环驱动。
+  ///
+  /// [firstPage] 决定**要不要带最近更新窗口**。窗口是「当前时刻 − 窗口长度」，
+  /// 每页都带会出两个问题（都实测得到）：
+  ///
+  /// - 窗口本身取满一页 ⇒ `has_more` **永远是 true** ⇒ 稳态同步永远「拉不完」
+  /// - 窗口取到的是**最新**那一批，若每页都带，后页会把早先跳过的行重复带回来
+  ///
+  /// 所以**只有第一页带窗口**：窗口是「这一轮同步开始时，最近动过的单据」，
+  /// 一轮只要取一次就够（它本来就是拿来补 `created_at` 感知不到的状态变化）。
+  Future<SyncPullReport> _pullPage({int? limit, bool firstPage = true}) async {
     final int now = _clock();
     final Map<String, String> since = cursors.getAll();
+
+    // 最近更新窗口的下界 = 「现在 − [docUpdateWindow]」。传绝对毫秒（不传天数）：
+    // 客户端本地时钟可以歪，但歪的是**窗口边缘**，漏掉一行会在下一次同步的
+    // 窗口里被补回来；而「主机时间」客户端拿不到，硬要反而要额外一次握手。
+    final int? docUpdatedSince = docUpdateWindow == null || !firstPage
+        ? null
+        : now - docUpdateWindow!.inMilliseconds;
 
     final TransportResponse response = await transport.send(
       TransportRequest(
@@ -299,6 +376,8 @@ class SyncClient {
           queryParameters: <String, String>{
             ...since,
             'limit': '${limit ?? pageLimit}',
+            if (docUpdatedSince != null)
+              'doc_updated_since': '$docUpdatedSince',
           },
         ),
         headers: _headers(),
@@ -328,8 +407,14 @@ class SyncClient {
       }
       // 游标：原样保存主机返回值，**不解析**
       cursors.upsertAll(result.nextCursors, now: now);
-      // 已推送且**本次实际见到**的条目 → 清除（见 clearConfirmed 的注释）
-      cleared = queue.clearConfirmed(applied);
+      // ⚠️ **队列清理只在「这一轮拉到底」时做**（2026-10-07，`docs/reply.md` §2）：
+      // 从前每页都清 —— 主单排在后面的页时，队列条目先被清掉、单据后到，
+      // 而且清早了会让「未同步影响」的叠加提前消失 ⇒ 库存显示**少计**
+      // （Android 测试报告 ⑤）。`applied` 是**本轮已落镜像**的 id 集合，
+      // `clearConfirmed` 只删「已 sent 且确实见到」的条目，其余照留。
+      if (!result.hasMore) {
+        cleared = queue.clearConfirmed(applied);
+      }
     });
 
     return SyncPullReport(
@@ -339,6 +424,8 @@ class SyncClient {
       },
       nextCursors: result.nextCursors,
       confirmedQueueEntries: cleared,
+      pages: 1,
+      hasMore: result.hasMore,
     );
   }
 
@@ -446,9 +533,11 @@ class SyncPullReport {
     required this.entities,
     required this.nextCursors,
     this.confirmedQueueEntries = 0,
+    this.pages = 1,
+    this.hasMore = false,
   });
 
-  /// 每个实体本次落库的行数
+  /// 每个实体本次落库的行数（**本次 `pull` 全部页的合计**）
   final Map<String, int> entities;
 
   /// 主机返回的新游标（已原样存进 `sync_cursor`）
@@ -456,6 +545,15 @@ class SyncPullReport {
 
   /// 本次清除的队列条目数（`sent` 且已确认）
   final int confirmedQueueEntries;
+
+  /// 本次实际请求了几页（1 = 一页就到底）
+  final int pages;
+
+  /// **还没拉完**（`_pullPage` 的 `has_more`，或循环撞上 `maxPullPages`）。
+  ///
+  /// 调用方**不许**在它为 `true` 时说「同步完成」—— 镜像只是部分权威，
+  /// 库存 / 往来都是残缺的（2026-10-07 裁定，`docs/reply.md` §1）。
+  final bool hasMore;
 
   int get totalRows => entities.values.fold<int>(0, (int a, int b) => a + b);
 }

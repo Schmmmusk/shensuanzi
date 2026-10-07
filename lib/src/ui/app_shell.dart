@@ -169,7 +169,9 @@ class AppShell extends StatefulWidget {
   /// 主机 —— 真机反馈 2026-10-04）。`null` = 桌面（hostService 面板）。
   final String? hostSyncNote;
 
-  /// 设置页「导出备份到手机文件」（§BH·六 B1c；仅移动端注入）。
+  /// 设置页「导出本机数据文件」（原「导出备份到手机文件」；**2026-10-07 按
+  /// `docs/reply.md` §4 的 B 方案改口径** —— 手机端**不叫备份**：权威数据在
+  /// 主机上，叫备份会让用户以为「电脑坏了也没事」。仅移动端注入）。
   /// `null` = 不显示入口（桌面零变化）。
   final Future<String> Function()? onExportBackup;
 

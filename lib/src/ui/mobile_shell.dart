@@ -95,7 +95,11 @@ class _MobileShellState extends State<MobileShell> {
           ),
         ),
       Text(
-        '开单后自动推送到电脑（断网时先记在待同步队列，联网自动补传）——'
+        // 2026-10-07 裁定（`docs/reply.md` §一）：自动补传 = 开单后 + **回前台**
+        // + 手动按钮。**不许再承诺「联网自动补传」** —— 那是暗行为，
+        // 而且（没有网络监听时）根本不成立（M02 报告的问题）。
+        '开单后会自动推送到电脑；断网时先记在待同步队列，'
+        '回到这个界面时再自动试一次，也可以点「立即同步」——'
         '先到「我的 → 设置」扫码连接电脑。',
         style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
       ),

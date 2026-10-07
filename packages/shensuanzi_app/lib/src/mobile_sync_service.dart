@@ -36,6 +36,8 @@ import 'package:shensuanzi_core/shensuanzi_core.dart'
         SyncHttpException,
         SyncPullReport,
         SyncPushReport,
+        SyncQueueDao,
+        SyncQueueEntry,
         Transport,
         TransportRequest,
         TransportResponse;
@@ -120,6 +122,53 @@ class MobileSyncService {
   /// 「忘记这台主机」/ 配对失效后的重置
   void forgetHost() {
     pairingStore.clear();
+  }
+
+  /// **换主机 = 重置同步状态**（2026-10-07 裁定，审计报告 #3 / Android 报告 ②）。
+  ///
+  /// ## 为什么必须重置
+  ///
+  /// 镜像 + 游标 + 队列都是**针对某一台主机**的状态：
+  /// 游标说「这台主机已交付到哪里」，镜像是这台主机的权威快照。
+  /// 换主机后继续用它们，会出现两件事故：
+  ///
+  /// - **漏数据**：新主机的 `seq_no` / 时间戳与旧主机毫无关系，旧游标会让
+  ///   pull 从「新主机的某个中间位置」开始 ⇒ 前半截永远拉不到
+  /// - **交错数据**：旧主机的镜像行还在本地，与新主机行混在一张表里
+  /// - **推错机器**：离线队列里是「本来要发给旧主机」的单，
+  ///   自动推送会把它发给新主机（账就记到别人店里去了）
+  ///
+  /// ## 怎么重置
+  ///
+  /// - 镜像：`rebuildMirror()`（drop 九表 + 重建 + 游标清零；`sync_queue` 不动）
+  /// - 队列：**既不推也不删** —— 挂起（`failed` + 说清原因），等用户决定
+  ///   （用户刚开的单是手机端唯一真正会丢的数据，见 `docs/reply.md` §4）
+  ///
+  /// [previousHostId] 只用于**给用户看的说明**（「原本要发给 XX 号主机」）。
+  /// 返回被挂起的条目数。
+  int resetForNewHost({String? previousHostId}) {
+    final Db mirror = openMirror();
+    // 先把队列挂起，再重建镜像 —— 顺序反了也一样（rebuildMirror 不碰队列），
+    // 但「先挂起」保证任何中途失败都不会留下"仍会自动推给新主机"的条目
+    final SyncQueueDao queue = SyncQueueDao(mirror);
+    int held = 0;
+    for (final SyncQueueEntry entry in queue.unsent()) {
+      queue.markHeld(
+        entry.id,
+        reason: '这条单是在连接上一台主机时开的'
+            '${previousHostId == null ? '' : '（主机 $previousHostId）'}'
+            '，还没有同步给它。为避免记到别的店里，已暂停自动上传 —— '
+            '确认要发给现在这台主机，就在「同步队列」里点重试。',
+      );
+      held++;
+    }
+    SyncClient(
+      db: mirror,
+      transport: transport ?? HttpTransport(),
+      baseUri: Uri.parse('http://127.0.0.1:1'), // 重建不需要网络
+      token: '',
+    ).rebuildMirror();
+    return held;
   }
 
   /// 一次完整同步：health（连通 + 主机 schema 版本）→ 需要则重建镜像
@@ -211,6 +260,18 @@ class MobileSyncService {
       final int now = _clock() ?? DateTime.now().millisecondsSinceEpoch;
       pairingStore.save(pairing.withLastSyncAt(now));
       final int entities = pulled.entities.values.fold(0, (int a, int b) => a + b);
+      // ⚠️ **没拉完就不许说「同步完成」**（2026-10-07，`docs/reply.md` §1）：
+      // 循环拉到底已由 `SyncClient.pull` 负责；到这里仍 `hasMore` 说明
+      // 撞上了页数上限（主机分页异常）—— 镜像只是部分权威，如实告知并让用户
+      // 再点一次，而不是让他以为看到的是全部（审查 #9 / Android 报告 ③）。
+      if (pulled.hasMore) {
+        return SyncOutcome(
+          SyncOutcomeKind.error,
+          '这次只同步了一部分（已拉 $entities 条，共 ${pulled.pages} 页）'
+          '—— 请再点一次「立即同步」把剩下的拉完',
+          rebuilt: rebuilt,
+        );
+      }
       return SyncOutcome.ok(
         rebuilt
             ? '同步完成（镜像已重建）：拉取 $entities 条'
@@ -298,16 +359,34 @@ class MobileSyncService {
 
   /// 解析扫码结果：合法配对码 → 存 `pairing.json` 并返回主机信息；
   /// 非法 → 抛 `FormatException`（文案由 [PairingPayload.parse] 给，UI 不造句）。
-  PairingInfo pairFromCode(String raw) {    final PairingPayload payload = PairingPayload.parse(raw.trim());
+  ///
+  /// ⚠️ **扫到的是另一台主机时，先重置同步状态**（2026-10-07 裁定，
+  /// 审计报告 #3 / Android 报告 ②）—— 镜像 / 游标 / 队列都是**按主机**成立的，
+  /// 不重置就会漏数据、交错数据、甚至把离线单推到错的店里。
+  ///
+  /// 判定用 `host_id`（配对载荷里有，主机自己生成的）：
+  /// **同一台主机重新生成配对码（`hostId` 不变）不该清镜像** —— 那只是换个令牌。
+  PairingInfo pairFromCode(String raw) {
+    final PairingPayload payload = PairingPayload.parse(raw.trim());
     final PairingInfo info = PairingInfo(
       hostId: payload.hostId,
       ip: payload.ip,
       port: payload.port,
       token: payload.token,
     );
+    final PairingInfo? previous = pairingStore.load();
+    lastHostSwitchHeldEntries = previous != null && previous.hostId != info.hostId
+        ? resetForNewHost(previousHostId: previous.hostId)
+        : 0;
     pairingStore.save(info);
     return info;
   }
+
+  /// 上一次 [pairFromCode] 因**换主机**而挂起的队列条目数（0 = 没换主机）。
+  ///
+  /// UI 用它决定要不要多说一句「有 N 条单已暂停上传」—— 那几条是用户
+  /// 自己开的单，不说清楚他会以为还在自动补传。
+  int lastHostSwitchHeldEntries = 0;
 
   SyncOutcome _authExpired() => const SyncOutcome(
     SyncOutcomeKind.authExpired,

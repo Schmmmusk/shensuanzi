@@ -298,6 +298,48 @@ void main() {
       expect(money.balanceOf(accountId), 75000);
     });
 
+    test('挂账退货的「未退款额」可被后续 payment 单结清（2026-10-07 补口）', () {
+      // 从前这里没有出口：开退货时没填立即退款 ⇒ 客户的钱永远挂在账上，
+      // 而详情页只显示一句「退货单不用收付款」（审计报告 #4 的入口部分）。
+      final String refDocId = sell3Boxes();
+      final ReturnSaved saved = returns.create(
+        ReturnDraft(
+          refDocId: refDocId,
+          originalDocType: DocType.sale,
+          partyId: customerId,
+          partyName: '客户甲',
+          lines: <ReturnLineDraft>[boxLine(qty: '1', amount: '250.00')],
+        ),
+      );
+      final String returnId = idOf(saved.docNo);
+      final SettlementService settle = SettlementService(db: db, engine: engine);
+
+      // ① 退货单读作「未退款额 = 该退的钱」—— 与「未收」同一套函数，
+      //    但**不减**它自己造成的冲减（否则永远是 0，入口就出不来）
+      expect(settle.unsettledCentsOf(returnId), 25000);
+
+      // ② 退款 = 一张 payment 单核销这张退货单（方向由 doc_type 决定）
+      final SettlementSaved refunded = settle.settle(
+        targetDocId: returnId,
+        accountId: accountId,
+        amountCents: 25000,
+      );
+
+      expect(refunded.inbound, isFalse, reason: '销售退货是**我方付钱出去**');
+      expect(refunded.changeCents, 0);
+      expect(refunded.targetUnsettledAfterCents, 0);
+      // 钱从账户出去
+      expect(money.balanceOf(accountId), 75000 - 25000);
+      // 退货单的 paid_amount 读作「已退款额」，状态落 settled
+      final Document after = documents.findById(returnId)!;
+      expect(after.paidAmount, 25000);
+      expect(after.status, DocStatus.settled);
+      // 分录仍挂在**独立收付款单**下（纪律 11），方向是「钱出去」
+      final Document refundDoc = documents.findById(refunded.docId)!;
+      expect(refundDoc.docType, DocType.payment);
+      expect(refundDoc.refDocId, isNull, reason: '手动核销单的 ref_doc_id 为空（会进单据列表）');
+    });
+
     test('立即退款 ⇒ 生成 payment 单（资金流出）', () {
       final String refDocId = sell3Boxes();
 

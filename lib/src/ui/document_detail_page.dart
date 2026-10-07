@@ -15,6 +15,7 @@
 /// | `purchase` 系（有供应商） | 未付 > 0 | **[付款]**（RULE-005） |
 /// | `delivery` | `in_transit` | **[签收]**（1b）+ **[客户拒收（整单退回）]**（§BI） |
 /// | `sale` / `purchase` / 已签收 `delivery` | 服务已接 | **[退货]**（RULE-007/008，§BI） |
+/// | `sale_return` / `purchase_return` | **未退款 > 0** | **[退款给客户 / 收供应商退款]**（2026-10-07，`docs/reply.md` §2：走同一套核销流程，生成独立收付款单） |
 /// | `receipt` / `payment` | — | 只读 + **核销去向** |
 /// | 全部 | — | **[复制单号]** |
 ///
@@ -125,6 +126,11 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     final int unsettled = widget.settlements.unsettledCentsOf(
       widget.documentId,
     );
+    // 退货单走同一套流程，只把词换成「退款」——
+    // 「付款 / 未付」对着退货单读会让人懵（2026-10-07，`docs/reply.md` §2）
+    final bool isReturn = SettlementService.isReturnType(
+      summary.document.docType,
+    );
     final SettlementSaved? saved = await showSettlementDialog(
       context,
       service: widget.settlements,
@@ -132,6 +138,13 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
       unsettledCents: unsettled,
       inbound: inbound,
       partyLabel: _partyLabel,
+      verbOverride: isReturn
+          ? SettlementVerb(
+              action: _refundVerb(summary.document),
+              unsettledLabel: '未退款',
+              partyLabel: '客户',
+            )
+          : null,
     );
     if (!mounted || saved == null) return;
 
@@ -139,12 +152,14 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     widget.onChanged?.call();
 
     final String tail = saved.targetUnsettledAfterCents <= 0
-        ? '这张单已结清。'
-        : '还欠 ¥${Money.formatGrouped(saved.targetUnsettledAfterCents)}。';
+        ? (isReturn ? '这张退货单退清了。' : '这张单已结清。')
+        : (isReturn
+              ? '还差 ¥${Money.formatGrouped(saved.targetUnsettledAfterCents)} 没退。'
+              : '还欠 ¥${Money.formatGrouped(saved.targetUnsettledAfterCents)}。');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '已${saved.inbound ? '收' : '付'} '
+          '${isReturn ? '已退' : '已${saved.inbound ? '收' : '付'}'} '
           '¥${Money.formatGrouped(saved.amountCents)}（${saved.docNo}）。$tail',
         ),
         duration: const Duration(seconds: 3),
@@ -292,6 +307,8 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     final bool isCancelled = doc.status == DocStatus.cancelled;
     final bool isMoneyDoc =
         doc.docType == DocType.receipt || doc.docType == DocType.payment;
+    // 退货单：金额/未结清两行的口径是「该退的钱 / 还没退的钱」
+    final bool isReturnDoc = SettlementService.isReturnType(doc.docType);
 
     return Card(
       child: Padding(
@@ -299,10 +316,20 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            _kv(theme, '金额', '¥${Money.formatGrouped(doc.totalAmount)}', big: true),
-            // 收付款单自身没有「已收/未收」（它**就是**那笔钱），只对被核销单显示
+            _kv(
+              theme,
+              isReturnDoc ? '应退金额' : '金额',
+              '¥${Money.formatGrouped(doc.totalAmount)}',
+              big: true,
+            ),
+            // 收付款单自身没有「已收/未收」（它**就是**那笔钱），只对被核销单显示。
+            // 退货单上这一行读作「已退款」（`docs/reply.md` §2 的口径）
             if (!isMoneyDoc && doc.paidAmount != 0)
-              _kv(theme, '已${_moneyVerb(doc)}', '¥${Money.formatGrouped(doc.paidAmount)}'),
+              _kv(
+                theme,
+                isReturnDoc ? '已退款' : '已${_moneyVerb(doc)}',
+                '¥${Money.formatGrouped(doc.paidAmount)}',
+              ),
             // §审查 2026-10-05：退过货就把冲减额摆出来 —— 否则用户会问
             // 「单子明明 60，为什么给 40 就说结清了」。作废单也显示（它是事实）。
             if (!isMoneyDoc && summary.returnedCents != 0)
@@ -313,7 +340,11 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
               ),
             // §审查 BUG-05：已作废的单不显示「未收」——避免对着废单收款的诱导
             if (!isMoneyDoc && !isCancelled && unsettled != 0)
-              _kv(theme, '未${_moneyVerb(doc)}', '¥${Money.formatGrouped(unsettled)}'),
+              _kv(
+                theme,
+                isReturnDoc ? '未退款' : '未${_moneyVerb(doc)}',
+                '¥${Money.formatGrouped(unsettled)}',
+              ),
             // §审查 BUG-04：状态展示用真实未收判定（已确认且结清 ⇒ 显示已结清）
             _kv(
               theme,
@@ -329,6 +360,14 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
   /// 「已收 / 未收」用词按方向（销售类 = 收，采购类 = 付）
   String _moneyVerb(Document doc) =>
       SettlementService.isInbound(doc.docType) == false ? '付' : '收';
+
+  /// 退货单的动词（2026-10-07，`docs/reply.md` §2）。
+  ///
+  /// 销售退货 = 我方**退钱给客户**；采购退货 = 我方**收供应商退回来的钱**。
+  /// 方向与 [_moneyVerb] 同源（`isInbound`），只是动词不同 —— 用「收款 / 付款」
+  /// 会让用户对着退货单发懵（真机反馈的同一类问题）。
+  String _refundVerb(Document doc) =>
+      doc.docType == DocType.saleReturn ? '退款给客户' : '收供应商退款';
 
   Widget _actionRow(ThemeData theme, DocumentSummary summary) {
     final Document doc = summary.document;
@@ -367,9 +406,33 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
         ),
       );
     } else if (isReturnDoc && !disabled) {
+      // 2026-10-07（`docs/reply.md` §2）：退货**该退的钱**必须能付出去 ——
+      // 从前这里只有一句「不用收付款」，于是「开退货时没填立即退款」的单
+      // 永远没有退款入口，客户的钱挂在账上无从结清。
+      // 处置：同一套核销流程（选账户 + 填金额）生成独立的收付款单
+      // —— 守住「任何资金流动都挂在一张收付款单下」（纪律 11）。
+      if (unsettled > 0) {
+        children.add(
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              key: const Key('refund-button'),
+              onPressed: _settle,
+              icon: const Icon(Icons.payments_outlined),
+              label: Text(
+                '${_refundVerb(doc)} ¥${Money.formatGrouped(unsettled)}',
+              ),
+            ),
+          ),
+        );
+        children.add(const SizedBox(height: 8));
+      }
       children.add(
         Text(
-          '退货单不用收付款 —— 该退 / 该收的钱在退货那一刻就记过了。',
+          unsettled > 0
+              ? '这张退货单还有 ¥${Money.formatGrouped(unsettled)} 没退 —— '
+                    '点上面的按钮，钱从哪个账户出去就在这里选。'
+              : '这张退货单的钱已经退清了。',
           style: TextStyle(
             height: 1.6,
             color: theme.textTheme.bodySmall?.color,

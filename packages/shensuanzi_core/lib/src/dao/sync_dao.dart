@@ -101,6 +101,29 @@ class SyncQueueDao {
     <Object?>[SyncQueueStatus.pending.wire, id],
   );
 
+  /// **挂起**（换主机时对「原本要发给别的主机」的条目，2026-10-07 裁定）：
+  /// 转到 `failed`（UI 显示为「失败 M 条」）+ 写清原因 + 重试计数顶格
+  /// （`maxRetries` 之上）⇒ **不再自动推送**，等用户自己决定要不要发给新主机
+  /// （`requeue` 就放回队列）。
+  ///
+  /// 为什么不直接删：队列里是**用户刚开的单**，是手机端唯一真正会丢的数据
+  /// （`docs/reply.md` §4）；推到**错的主机**才是真事故 —— 所以既不推也不删。
+  void markHeld(String id, {required String reason}) => _raw.execute(
+    'UPDATE ${Schema.syncQueue} SET status = ?, retry_count = 99, '
+    'last_error = ?, next_retry_at = 0 WHERE id = ?',
+    <Object?>[SyncQueueStatus.failed.wire, reason, id],
+  );
+
+  /// 全部**还没被主机收下**的条目（`pending` + `failed`）—— 换主机时要逐个挂起。
+  List<SyncQueueEntry> unsent() => _raw
+      .select(
+        'SELECT * FROM ${Schema.syncQueue} WHERE status != ? '
+        'ORDER BY created_at, id',
+        <Object?>[SyncQueueStatus.sent.wire],
+      )
+      .map(SyncQueueEntry.fromRow)
+      .toList(growable: false);
+
   SyncQueueEntry? findById(String id) {
     final ResultSet rows = _raw.select(
       'SELECT * FROM ${Schema.syncQueue} WHERE id = ?',

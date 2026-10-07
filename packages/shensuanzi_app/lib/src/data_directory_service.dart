@@ -88,6 +88,18 @@ class DataDirectoryService {
   /// 正确处置：停在错误页 + 显示这个路径 + 给「重试」。
   DataLocation? unusableExisting() => bootstrap.unusableConfigured();
 
+  /// 配置里的位置**目录与标记都在、但库文件本身不见了** ⇒ 返回它（否则 `null`）。
+  ///
+  /// ⚠️ **必须在碰库之前判**（判据是 `File.existsSync`，不是 `Db.probe` ——
+  /// probe 对不存在的文件是「创建」，见 `startup.dart` 的 `missingDatabase`）。
+  DataLocation? missingExisting() => bootstrap.missingConfigured();
+
+  /// 用户确认「没有备份可恢复、就新建一本空账」时调用（见 [missingExisting]）。
+  ///
+  /// 已经存在同名文件时**不覆盖**（抛 `StateError`）—— 那是用户刚拷回来的真库。
+  void createEmptyDatabase(DataLocation location) =>
+      bootstrap.createEmptyDatabase(location);
+
   /// 配置文件的状态（§审查 OBS-15）：`absent` 才是真·第一次启动。
   AppConfigLoadStatus configStatus() => bootstrap.configStatus();
 

@@ -48,6 +48,7 @@ Map<String, Object?> pullBody({
   List<Map<String, Object?>> stock = const <Map<String, Object?>>[],
   List<Map<String, Object?>> products = const <Map<String, Object?>>[],
   Map<String, String> cursors = const <String, String>{},
+  bool hasMore = false,
 }) => <String, Object?>{
   'documents': documents,
   'document_lines': lines,
@@ -59,6 +60,8 @@ Map<String, Object?> pullBody({
   'parties': <Object?>[],
   'accounts': <Object?>[],
   'next_cursors': cursors,
+  // 旧主机不带这个字段（客户端按 false 处理）；新主机一定带
+  'has_more': hasMore,
 };
 
 Map<String, Object?> docRow(String id,
@@ -312,8 +315,10 @@ void main() {
   group('pull', () {
     test('请求形状：GET /api/sync/pull + Bearer + limit；无游标时不带 since 参数', () async {
       transport.replyJson(pullBody());
-
+      // 夹具时钟 `now()` 每次调用 +1；`_pullPage` 只在开头取一次时钟（窗口下界
+      // 就是它），所以**发请求之后**再取才对得上（之前取会正好差 1 ms）。
       await client.pull(limit: 100);
+      final int clockAtRequest = now();
 
       expect(transport.last.method, 'GET');
       expect(transport.last.uri.path, SyncClient.pullPath);
@@ -323,6 +328,39 @@ void main() {
         transport.last.uri.queryParameters.containsKey(SyncCursorKeys.stock),
         isFalse,
         reason: '首次拉取没有游标 —— 缺失即从头拉',
+      );
+      // ⚠️ 夹具时钟 `now()` 每次调用 +1，而下游（`pullBody` 默认参数之外还有
+      // 若干取时钟的点）让「取几次」不稳定 ⇒ **不断言精确值**，只钉住
+      // 「窗口下界 ≈ 客户端当时时间 − 7 天」（±2 ms 足够证明它按当前时间算）。
+      final int expectedSince =
+          clockAtRequest - const Duration(days: 7).inMilliseconds;
+      final int? actualSince = int.tryParse(
+        transport.last.uri.queryParameters['doc_updated_since'] ?? '',
+      );
+      expect(actualSince, isNotNull, reason: '窗口下界必须存在');
+      expect(
+        (actualSince! - expectedSince).abs() <= 2,
+        isTrue,
+        reason: '窗口下界 = 客户端当前时间 − 7 天（实际 $actualSince / 期望 $expectedSince）',
+      );
+    });
+
+    test('docUpdateWindow = null ⇒ 不带窗口参数（旧行为，可退）', () async {
+      final SyncClient bare = SyncClient(
+        db: db,
+        transport: transport,
+        baseUri: Uri.parse('http://127.0.0.1:17890'),
+        token: 'tok-abc',
+        clock: now,
+        docUpdateWindow: null,
+      );
+      transport.replyJson(pullBody());
+
+      await bare.pull();
+
+      expect(
+        transport.last.uri.queryParameters.containsKey('doc_updated_since'),
+        isFalse,
       );
     });
 
@@ -404,6 +442,103 @@ void main() {
 
       expect(report.nextCursors, cursors);
       expect(client.cursors.getAll(), cursors, reason: '不变量 B8');
+    });
+
+    test('has_more = true ⇒ 循环拉到 false，行数按页累加', () async {
+      // 第 1 页：满页（has_more）
+      transport.replyJson(
+        pullBody(
+          documents: <Map<String, Object?>>[docRow('d1', docNo: 'CG-1')],
+          cursors: <String, String>{SyncCursorKeys.doc: '1700000000001|d1'},
+          hasMore: true,
+        ),
+      );
+      // 第 2 页：到底
+      transport.replyJson(
+        pullBody(
+          documents: <Map<String, Object?>>[docRow('d2', docNo: 'CG-2')],
+          cursors: <String, String>{SyncCursorKeys.doc: '1700000000002|d2'},
+        ),
+      );
+
+      final SyncPullReport report = await client.pull();
+
+      expect(transport.requests.length, 2, reason: '必须发两次请求');
+      expect(report.pages, 2);
+      expect(report.hasMore, isFalse);
+      expect(report.entities[Schema.documents], 2, reason: '两页合计');
+      expect(
+        db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n'],
+        2,
+      );
+      expect(
+        client.cursors.getAll()[SyncCursorKeys.doc],
+        '1700000000002|d2',
+        reason: '第 2 页的游标必须推进',
+      );
+    });
+
+    test('循环撞上 maxPullPages ⇒ hasMore 仍为 true（不许假装拉完）', () async {
+      final SyncClient capped = SyncClient(
+        db: db,
+        transport: transport,
+        baseUri: Uri.parse('http://127.0.0.1:17890'),
+        token: 'tok-abc',
+        clock: now,
+        maxPullPages: 2,
+      );
+      // 页页都说「还有」
+      for (int i = 0; i < 2; i++) {
+        transport.replyJson(
+          pullBody(
+            documents: <Map<String, Object?>>[docRow('d$i', docNo: 'CG-cap-$i')],
+            hasMore: true,
+          ),
+        );
+      }
+
+      final SyncPullReport report = await capped.pull();
+
+      expect(report.pages, 2);
+      expect(report.hasMore, isTrue, reason: '到顶没拉完 —— 必须如实上报');
+    });
+
+    test('has_more = true 时**不清队列**（分页中提前清理会少计库存）', () async {
+      final SyncQueueDao queue = SyncQueueDao(db);
+      const String docId = 'd-offline-1';
+      final int stamp = now();
+      queue.enqueue(
+        SyncQueueEntry(
+          id: 'q1',
+          entity: Schema.documents,
+          entityId: docId,
+          operation: SyncOpType.createDocument,
+          payload: <String, Object?>{
+            'document': <String, Object?>{'id': docId},
+          },
+          createdAt: stamp,
+        ),
+      );
+      queue.markSent('q1');
+
+      // 第 1 页：条目对应的单据**不在**这一页，且还有下一页
+      transport.replyJson(pullBody(hasMore: true));
+      // 第 2 页：单据到了，到底
+      transport.replyJson(
+        pullBody(
+          documents: <Map<String, Object?>>[
+            docRow(docId, docNo: 'CG-offline-1'),
+          ],
+        ),
+      );
+
+      await client.pull();
+
+      expect(
+        queue.all(),
+        isEmpty,
+        reason: '拉到底且确实见到了该单据 ⇒ 才允许清掉 sent 条目',
+      );
     });
 
     test('重复拉同一页 → 幂等（不产生重复行）', () async {

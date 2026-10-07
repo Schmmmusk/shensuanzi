@@ -98,12 +98,44 @@ class RuleEngine {
   late final CostPolicy _cost;
 
   /// 可作为核销目标的单据类型（`docs/data_model.md` §3.6）
+  ///
+  /// ⚠️ **`saleReturn` / `purchaseReturn` 不移出**（2026-10-07 二次裁定，
+  /// `docs/reply.md` §二）：它们**代表真实债务** —— 客户退回货 ⇒ 我方欠他钱，
+  /// 那张 `payment` 单必须有核销目标，否则「这笔退货的退款义务已履行」记不下来，
+  /// 退货单会永远显示「未退款 50」。移出还会**同时堵死 R04（退款入口）的修复路径**。
+  /// 真正该修的是校验（见 [settleDirections] 与 `_settle` 的 party 校验）。
   static const Set<DocType> allocatableTargetTypes = <DocType>{
     DocType.sale,
     DocType.purchase,
     DocType.saleReturn,
     DocType.purchaseReturn,
     DocType.delivery,
+  };
+
+  /// 各类单据**能接受哪个方向**的核销（`docs/reply.md` §3 的「立刻加校验」）。
+  ///
+  /// 判据：**能「结清」这张单的那张收付款单是什么类型**。
+  ///
+  /// | 目标单 | 接受 | 为什么 |
+  /// |---|---|---|
+  /// | `sale` / `delivery` | `receipt` | 应收：收钱把它冲平 |
+  /// | `purchase` | `payment` | 应付：付钱把它冲平 |
+  /// | **`saleReturn`** | **`payment`** | 我方欠客户的钱（该退的）⇒ **付钱**把它冲平（2026-10-07 修正） |
+  /// | **`purchaseReturn`** | **`receipt`** | 供应商欠我的钱 ⇒ **收钱**把它冲平（同上） |
+  ///
+  /// ⚠️ 与 `SettlementService.isInbound` **同一份判断的两个视角**，必须一致：
+  /// [isInbound] 说「这张单结清时钱往哪走」（退货与原单**相反**），
+  /// 本表说「哪种收付款单能核销它」—— 退货两行原先写成 `receipt`/`payment` 的反面，
+  /// 于是「给客户退款」被规则层拒掉（门禁实测，见 §CL·三点五）。
+  ///
+  /// 不在表里的类型（收付款单自身 / 盘点 / 调拨）本就不能做核销目标
+  /// （见 [allocatableTargetTypes]）。
+  static const Map<DocType, DocType> settleDirections = <DocType, DocType>{
+    DocType.sale: DocType.receipt,
+    DocType.delivery: DocType.receipt,
+    DocType.purchase: DocType.payment,
+    DocType.saleReturn: DocType.payment,
+    DocType.purchaseReturn: DocType.receipt,
   };
 
   /// 退货单 → 它**可以**指向的原单类型（`docs/rules.md`）
@@ -456,6 +488,22 @@ class RuleEngine {
   ///
   /// [allocations] 来自同步 payload（R-1 裁定）；`target_doc_id = null` 表示预收/预付。
   /// 收付款单**创建即 `status = settled`**，此后不再变更。
+  ///
+  /// ## 五道门槛（后三道 = 2026-10-07 补齐，`docs/reply.md` §3）
+  ///
+  /// 1. 收付款单必须有 `account_id` / `party_id`
+  /// 2. 目标存在、且 `doc_type` 在 [allocatableTargetTypes] 里
+  /// 3. **方向**：目标类型必须接受本单方向（[settleDirections]）——「拿采购款
+  ///    核销销售单」这种只有同步通道造得出来的请求，此前会真的落库
+  ///    ⚠️ 判据是「**哪种收付款单能结清它**」，**不是**「它属于哪个系列」：
+  ///    退货与原单**相反**（销售退货由 `payment` 结清、采购退货由 `receipt` 结清），
+  ///    因为退货是「我方欠客户 / 供应商欠我」——这条别按 2026-10-07 裁定原文
+  ///    里那句「销售系只接受 receipt」简化掉，那会**掐死退款入口**（R04）。
+  /// 4. **往来方**：两边都有 `party_id` 时必须相同
+  /// 5. **上限**：按目标**求和后**再比（拆两条绕过上限的老洞）
+  ///
+  /// 界面（`SettlementService`）本来就挡住了方向，但 `SyncServer` 只过
+  /// `doc_type` 白名单 —— 规则层不设防时，非法组合能从同步通道进来。
   RuleOutcome _settle(
     Document doc,
     List<Allocation> allocations, {
@@ -470,6 +518,11 @@ class RuleEngine {
     }
 
     int requested = 0;
+
+    // 目标 → **本次请求**要核销的合计（`target_doc_id` 为 null 的预收/预付不入此表）。
+    // 用于「同一目标拆成多条 allocation」时的总额上限校验（见下方求和处）。
+    final Map<String, int> incoming = <String, int>{};
+
     for (final Allocation allocation in allocations) {
       if (allocation.amount <= 0) {
         throw StateError('核销金额必须为正数，实际 ${allocation.amount}');
@@ -486,11 +539,56 @@ class RuleEngine {
       if (!allocatableTargetTypes.contains(target.docType)) {
         throw StateError('${target.docType.wire} 不可作为核销目标');
       }
-      final int already = _settlements.settledAmountOf(targetId);
-      if (already + allocation.amount > target.totalAmount) {
+
+      // ---- 方向校验（2026-10-07 裁定，`docs/reply.md` §3）----
+      // 用收付款单**自己**的方向（`_settle` 的 `moneyOut` 由 doc_type 决定），
+      // 而不是让调用方传「我以为的方向」：这样「拿采购款核销销售单」在
+      // 规则层就被拦死，不依赖 UI 是否摆对了按钮。
+      final DocType? required = settleDirections[target.docType];
+      final DocType own = moneyOut ? DocType.payment : DocType.receipt;
+      if (required != null && required != own) {
+        throw StateError(
+          '${own.wire} 单不能核销「${target.docType.label}」'
+          '（${target.docNo}）—— 这类单据只接受 ${required.wire} 单',
+        );
+      }
+
+      // ---- 往来方校验（同上）----
+      // 我方不可能用客户 B 的收款去销客户 A 的单：两边都有 party 时必须一致。
+      // 任一边为空（散客 / 散采）不是错 —— 与 `_insertPartyLedger` 的
+      // `requireParty: true` 不冲突：那里只要求收付款单自己有 party。
+      final String? targetParty = target.partyId;
+      if (targetParty != null &&
+          doc.partyId != null &&
+          targetParty != doc.partyId) {
+        throw StateError(
+          '往来方不一致：收款 / 付款单属于「${doc.partyId}」，'
+          '被核销单 ${target.docNo} 却属于「$targetParty」—— 不能用这位客户的钱销那位客户的单',
+        );
+      }
+
+      // ⚠️ **必须按目标求和**，不能逐条比（2026-10-07 修复）：
+      // 「同一张单拆两条 ¥60」时逐条都 ≤ 未收额 ¥100，合计 ¥120 却超了。
+      // `_settlements` 里此刻还没有本事务的行，所以 `already` 读到的只是历史值
+      // —— 分子必须由 `incoming` 自己累加。
+      incoming[targetId] = (incoming[targetId] ?? 0) + allocation.amount;
+    }
+
+    // 逐目标校验上限：已核销 + **本次全部**分配额 ≤ 单据总额
+    //
+    // ⚠️ **退货单的口径是「已退款」**（2026-10-07，`docs/reply.md` §2）：
+    // 它创建时没有立即退款的话，欠客户的钱还挂在那里；此时给客户**付款**
+    // （`payment` 单核销该退货单）就是「把该退的钱退给他」，上限自然仍是
+    // `total_amount`。于是 `paid_amount` 对退货单读作「已退款额」，
+    // 界面据此显示「未退款」（见 `SettlementService.unsettledCentsOf`）。
+    for (final MapEntry<String, int> entry in incoming.entries) {
+      final Document? target = _docs.findById(entry.key);
+      if (target == null) continue; // 上面已判过，这里只为取号与总额
+      final int already = _settlements.settledAmountOf(entry.key);
+      if (already + entry.value > target.totalAmount) {
         throw StateError(
           '核销额超过被核销单未收金额：${target.docNo} 已收 $already / 总额 ${target.totalAmount}，'
-          '本次请求 ${allocation.amount}',
+          '本次请求 ${entry.value}',
         );
       }
     }
@@ -738,6 +836,12 @@ class RuleEngine {
       );
       return;
     }
+
+    // ⚠️ **作废单不回退**（2026-10-07）：退货单的 `paid_amount` 现在是
+    // 「已退款额」（见 [_settle] 的口径），而作废的退货单仍可能被退款 ——
+    // 不设这道门，一次退款会把 `cancelled` 悄悄改回 `confirmed`
+    // （送货分支早就有同样的保护，这里补齐）。
+    if (doc.status == DocStatus.cancelled) return;
 
     final DocStatus status = doc.totalAmount > 0 && paid >= doc.totalAmount
         ? DocStatus.settled

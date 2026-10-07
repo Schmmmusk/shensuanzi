@@ -104,7 +104,8 @@ class ShensuanziApp extends StatefulWidget {
   State<ShensuanziApp> createState() => _ShensuanziAppState();
 }
 
-class _ShensuanziAppState extends State<ShensuanziApp> {
+class _ShensuanziAppState extends State<ShensuanziApp>
+    with WidgetsBindingObserver {
   /// 真机事实只探测一次（盘符 / 环境变量）。
   ///
   /// **刻意不注入、保持真实**：启动流程要验证的恰恰是「真实机器 + 沙箱配置」
@@ -245,6 +246,12 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
   /// 等于把原目录连同里面的真数据一起放弃（实测踩过：`D://fed` 切不回去）。
   String? _brokenDirectory;
 
+  /// 「库文件**不见了**」的那个目录（2026-10-07，`docs/reply.md` §6 的 #1）。
+  ///
+  /// 有值时错误页多一个「新建一本空账」——由用户点，不由软件替他决定
+  /// （自动建空库 = 让他在毫无提示的情况下对着一本空账簿继续开单）。
+  String? _missingDatabaseDirectory;
+
   /// 单实例锁（§审查 OBS-14）—— 同一个数据目录只允许一个实例开着库。
   final InstanceLock _instanceLock = InstanceLock();
 
@@ -267,12 +274,16 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     // ⚠️ 必须用解析后的 `_configStore`：`widget.configStore` 在生产里是 null，
     // 用它读会永远拿到默认配置，缩放 / 店名 / 首启判定全部失效（§AI-1）
     _config = _configStore.load();
+    // 2026-10-07 裁定（`docs/reply.md` §一）：自动补传 = **开单后 + 回前台 + 手动**
+    // —— 回前台这条要观察生命周期（零新依赖，用 `WidgetsBindingObserver`）
+    WidgetsBinding.instance.addObserver(this);
     // 首帧之后再弹对话框：此时才有可用的 Navigator
     WidgetsBinding.instance.addPostFrameCallback((_) => _prepare());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     // 主机服务可能正听着端口 —— 退出时**主动关掉**，不要把 socket 留给下一次
     // 启动（`stop()` 是异步的，这里不 await：dispose 不能挂起，进程退出会收尾）
     final HostServiceController? host = _hostService;
@@ -282,6 +293,36 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     // §审查 OBS-14：放锁（其实进程退出操作系统也会收，显式放更干净）
     _instanceLock.release();
     super.dispose();
+  }
+
+  /// **回到前台时补传一次**（2026-10-07 裁定，`docs/reply.md` §一「B」）。
+  ///
+  /// ## 为什么是「回前台」而不是网络监听 / 定时
+  ///
+  /// 裁定原文三条理由：① 与 `ui_principles.md` §1.1 一致 —— 中老年用户
+  /// **不会主动探索**，也理解不了「App 在后台悄悄同步」，所以触发点必须是
+  /// **用户可感知、可预测**的；② 定时（`WorkManager` / 前台服务）会被
+  /// Android 的 Doze 与后台限制砍掉，还要引依赖，违反「core 零新依赖」；
+  /// ③ 网络恢复要装 `connectivity_plus` 并为移动网络做省电策略，收益不匹配成本。
+  ///
+  /// ## 静默是刻意的
+  ///
+  /// 结果**只给三态条**（`setState` 触发它重查），不弹 SnackBar：
+  /// 用户切回来一次就弹一句「已推送 3 条」是打扰，而三态条本来就常驻在顶部。
+  /// 「没有待同步条目」也算正常（`autoPush` 自己会返回那个结果）。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed) return;
+    if (!mounted) return;
+    setState(() {}); // 先让三态条反映当前队列（可能已过期）
+    final MobileSyncService? sync = _mobileSyncService;
+    if (sync == null) return; // 桌面 / 未拿到私有目录
+    unawaited(
+      sync.autoPush().then((SyncOutcome _) {
+        if (mounted) setState(() {}); // 失败也刷新：条目可能进了退避 / 死信
+      }),
+    );
   }
 
   Future<void> _prepare() async {
@@ -331,6 +372,15 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         setState(() {
           _brokenDirectory = decision.location!.directory;
           _dbFailure = _brokenDatabaseMessage(decision.location!.directory);
+        });
+        return;
+
+      case StartupScenario.missingDatabase:
+        // 同样的理由（不走向导），但**文案与出路不同**：这不是"坏"，是"没了"
+        // ⇒ 先教怎么从备份 / before-vN 找回来，最后才给「新建一本空账」。
+        setState(() {
+          _missingDatabaseDirectory = decision.location!.directory;
+          _dbFailure = _missingDatabaseMessage(decision.location!.directory);
         });
         return;
 
@@ -561,6 +611,22 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       '也可能是被别的程序占用着。\n'
       '修好之后点「重试」；也可以点「换一个文件夹」换个位置。';
 
+  /// 数据文件**不见了**时的说辞（2026-10-07，`docs/reply.md` §6 的 #1）。
+  ///
+  /// 与 [brokenDatabase] 的区别必须在文案里说清楚：这里不是"坏"，是"没了"。
+  /// 所以**先给找回的办法**（备份 + before-vN），最后才提"新建一本空账"，
+  /// 且由用户点按钮决定 —— 软件替他建空库就等于让他对着空账簿继续开单。
+  String _missingDatabaseMessage(String directory) =>
+      '$directory 里的数据文件（shensuanzi.db）不见了。\n'
+      '常见原因：被误删、被清理软件或杀毒软件删掉、换过盘。\n'
+      '数据多半还能找回来：数据文件夹旁边的「神算子备份」里有自动备份'
+      '（名字形如 shensuanzi-schema3-20261007-0930.db），'
+      '同一个文件夹里也可能有升级前留的 shensuanzi.db.before-v2 这类文件。\n'
+      '把这些文件里的任意一份改名成 shensuanzi.db、放回上面这个文件夹，'
+      '再点「重试」，账就回来了。\n'
+      '如果确实没有备份，点「新建一本空账」—— 注意：那会从零开始，'
+      '里面不会有以前的单据。';
+
   /// 错误页的**重试**（§审查 2026-10-05 真机）。
   ///
   /// 不碰 `config.json`：只是把启动流程重跑一遍 —— 库修好了就原样回到原目录。
@@ -568,9 +634,35 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     setState(() {
       _dbFailure = null;
       _brokenDirectory = null;
+      _missingDatabaseDirectory = null;
       _alreadyRunning = false;
     });
     await _prepare();
+  }
+
+  /// 「新建一本空账」（只在「库文件不见了」时出现，2026-10-07）。
+  ///
+  /// 路径本来就对（目录 + 标记都在），所以**不碰 `config.json`**，只是在那份
+  /// 标记所在的目录里建一份空库，然后把启动流程重跑一遍 —— 走的是
+  /// 「目录与标记都在、库能打开」这条路，于是它和普通启动共用同一段代码。
+  Future<void> _createEmptyDatabase() async {
+    final String? directory = _missingDatabaseDirectory;
+    if (directory == null) return;
+    try {
+      // ⚠️ 用 `DataDirectoryService` 的**转发面**（本类不含逻辑，见其文件头）：
+      // `ensureInitialized` 就是底层的 `prepare` —— 它会认出「目录里有标记」⇒ 复用，
+      // 不会重复写标记、也不会动 config（路径没变）
+      final DataLocation location = _service.ensureInitialized(
+        directory,
+        acceptForeignDirectory: true,
+      );
+      _service.createEmptyDatabase(location);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _dbFailure = '没能新建空账：$error\n请把这句话告诉技术支持。');
+      return;
+    }
+    await _retry();
   }
 
   /// 数据打不开时的出路：**直接弹目录选择框**（不经过自动解析）。
@@ -588,6 +680,7 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     setState(() {
       _dbFailure = null;
       _brokenDirectory = null;
+      _missingDatabaseDirectory = null;
       _alreadyRunning = false;
       _location = null;
       _db = null;
@@ -966,7 +1059,13 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       _configStore.save(updated);
       setState(() => _config = updated);
       _openDatabase(_service.ensureInitialized(target));
-      _toast('数据已迁移到 $target。原目录保留着，确认好用后可自行删除。');
+      // 说明文件没写成**不算迁移失败**（2026-10-07，`docs/reply.md` §6 的 #10）：
+      // 数据已经在新位置了，这里只是把「旧文件夹里没留说明」如实说一句
+      _toast(
+        result.warning == null
+            ? '数据已迁移到 $target。原目录保留着，确认好用后可自行删除。'
+            : '数据已迁移到 $target。${result.warning}',
+      );
     } else {
       _openDatabase(current); // 旧位置原样 —— 立刻恢复可用
       _toast('没能搬过去（${result.error}）。数据还在原位置，软件已恢复。');
@@ -1128,29 +1227,127 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
     _refreshBackupStatus();
   }
 
-  /// 「导出备份到手机文件」（§BH·六 B1c —— 裁定：v1.1 之前必须有）。
+  /// **「导出本机数据文件」**（原「导出备份到手机文件」；2026-10-07 按
+  /// `docs/reply.md` §4 **B 方案**改口径）。
   ///
-  /// ⚠️ file_selector 的「选保存位置」在 Android 上**官方不支持**
-  /// （能力表 ❌，真机实测：点了只转圈）⇒ 用**系统分享面板**（share_plus）：
-  /// 用户可选「保存到文件」「发微信」「发邮箱」—— 正合裁定
-  /// 「发微信 / 存网盘」的出路。桌面不注入此回调（备份在兄弟目录，直接可拷）。
+  /// ## 为什么不能叫「备份」（这一条是这次改动的全部理由）
+  ///
+  /// 手机是**移动开单终端**，权威数据在 Windows 主机上。叫「备份」会让用户
+  /// 以为「手机上有备份，电脑坏了也没事」——而真正会丢的只有一样东西：
+  /// **`sync_queue` 里还没推给主机的单**（`docs/reply.md` §4 原文）。
+  /// 所以这个出口改名、挪到设置页深处，并把队列如实打包进去。
+  ///
+  /// ## 打进去什么
+  ///
+  /// 1. `shensuanzi_mirror.db` —— 镜像业务数据（可用任何 SQLite 工具打开，
+  ///    符合「面向用户的输出优先开放格式」）
+  /// 2. `shensuanzi.db` —— 主库（手机上通常是空壳，仍带上以便排查）
+  /// 3. `未同步单据.txt` —— 队列里的人话清单 + 【重要】那句提示
+  ///
+  /// ⚠️ 两个库都**先 `wal_checkpoint(TRUNCATE)` 再拷**（与 `BackupService`
+  /// 同一条纪律：WAL 模式下直接拷 `.db` 会丢未 checkpoint 的事务）。
+  /// 打出来的文件放**应用私有目录下的 `export/`**（`file_selector` 在 Android
+  /// 不支持「选保存位置」，所以只能先生成再交给系统分享面板）。
   Future<String> _exportBackupMobile() async {
     final DataLocation? location = _location;
-    final Db? db = _db;
-    if (location == null || db == null) {
+    if (location == null) {
       return '数据文件还没打开，暂时不能导出';
     }
+    final MobileSyncService? sync = _mobileSyncService;
+    final Directory outDir = Directory(p.join(location.directory, '本机数据'));
+    try {
+      if (outDir.existsSync()) outDir.deleteSync(recursive: true);
+      outDir.createSync(recursive: true);
+    } catch (error) {
+      return '建不了导出文件夹（$error）—— 请检查手机存储空间';
+    }
+
+    final List<XFile> files = <XFile>[];
+    String queueText = '这次没有未同步的单据 —— 刚开的单都已经推给电脑了。\n';
+    try {
+      if (sync != null) {
+        final Db mirror = sync.openMirror();
+        final List<SyncQueueEntry> unsent = SyncQueueDao(mirror).unsent();
+        queueText = _unsentQueueText(unsent);
+        _checkpoint(mirror);
+        await _copyForExport(
+          File(sync.mirrorPath),
+          File(p.join(outDir.path, 'shensuanzi_mirror.db')),
+        );
+      }
+      // 主库：真机历史上它可能是空壳，但排查时它是第一现场
+      final File main = File(location.databasePath);
+      if (main.existsSync()) {
+        await _copyForExport(main, File(p.join(outDir.path, 'shensuanzi.db')));
+      }
+      final File note = File(p.join(outDir.path, '未同步单据.txt'));
+      await note.writeAsString(queueText, flush: true);
+      files.add(XFile(note.path));
+      for (final String name in <String>[
+        'shensuanzi_mirror.db',
+        'shensuanzi.db',
+      ]) {
+        final File f = File(p.join(outDir.path, name));
+        if (f.existsSync()) files.add(XFile(f.path));
+      }
+    } catch (error) {
+      return '导出失败（$error）—— 请把这句话告诉技术支持';
+    }
+
     final ShareResult result = await SharePlus.instance.share(
       ShareParams(
-        files: <XFile>[XFile(location.databasePath)],
-        subject: '神算子备份-${formatFileDate(DateTime.now())}',
+        files: files,
+        subject: '神算子本机数据-${formatFileDate(DateTime.now())}',
       ),
     );
     return switch (result.status) {
-      ShareResultStatus.success => '已唤起分享 —— 选「保存到文件」或发给微信即可保留',
+      ShareResultStatus.success =>
+        '已唤起分享 —— 选「保存到文件」或发给微信即可。\n'
+            '提醒：你的账本永远在电脑主机上，手机丢了不影响账；'
+            '这里真正要紧的是还没传过去的单。',
       ShareResultStatus.dismissed => '已取消分享',
       ShareResultStatus.unavailable => '此设备暂不支持分享，请把这句话告诉技术支持',
     };
+  }
+
+  /// 导出前的落盘：WAL 中的事务必须先 checkpoint 回主库文件，
+  /// 否则拷出来的 `.db` 会缺最新数据（`Agents.md` §四「备份模式」同一条纪律）。
+  void _checkpoint(Db db) {
+    try {
+      db.raw.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch (error) {
+      _log.write('导出前 checkpoint 失败（$error）—— 继续导出，可能缺最新几笔');
+    }
+  }
+
+  /// 异步拷贝（**在 UI 线程之外做文件 IO**：镜像库可能几十上百 MB，
+  /// 同步拷会卡住界面；`BackupService` 那边是桌面后台，不必这么做）。
+  Future<void> _copyForExport(File from, File to) async {
+    await to.writeAsBytes(await from.readAsBytes(), flush: true);
+  }
+
+  /// 未同步单据的人话清单（也进分享的文件，用户拿它就能对账）。
+  String _unsentQueueText(List<SyncQueueEntry> entries) {
+    final StringBuffer buffer = StringBuffer()
+      ..writeln('未同步单据清单')
+      ..writeln('生成时间：${DateTime.now()}')
+      ..writeln('共 ${entries.length} 条还没传给电脑。')
+      ..writeln()
+      ..writeln('【重要】这些单只存在这台手机上。电脑主机上还没有它们 ——')
+      ..writeln('手机丢了 / 卸载了，这部分就没了。请把左边的分享窗口发给')
+      ..writeln('电脑（微信 / 邮件都行），然后在电脑上照着重新开一遍。')
+      ..writeln();
+    if (entries.isEmpty) {
+      buffer.writeln('（没有未同步的单据）');
+      return buffer.toString();
+    }
+    for (final SyncQueueEntry entry in entries) {
+      buffer.writeln(
+        '- 单号 ${entry.entityId}｜${entry.operation.wire}｜'
+        '${entry.status.wire}｜开单时间 ${DateTime.fromMillisecondsSinceEpoch(entry.createdAt)}',
+      );
+    }
+    return buffer.toString();
   }
 
   /// 「立即备份」（设置页按钮 / 概览橙卡共用）。返回结果供页面弹 SnackBar。
@@ -1245,6 +1442,9 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       );
     }
     if (_dbFailure != null) {
+      // 「库文件不见了」有**三条**出路：找回备份（重试）/ 换一个文件夹 /
+      // 明确放弃、新建一本空账（2026-10-07，`docs/reply.md` §6 的 #1）。
+      final String? missing = _missingDatabaseDirectory;
       return _StartupPage(
         message: _dbFailure!,
         actionLabel: '换一个文件夹',
@@ -1256,6 +1456,8 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
         // 不必放弃那个目录。不知道是哪个目录时不显示。
         retryLabel: _brokenDirectory == null ? null : '重试',
         onRetry: _brokenDirectory == null ? null : _retry,
+        extraLabel: missing == null ? null : '新建一本空账',
+        onExtra: missing == null ? null : _createEmptyDatabase,
       );
     }
 
@@ -1391,15 +1593,16 @@ class _ShensuanziAppState extends State<ShensuanziApp> {
       // §BH·六 B1c（真机反馈 2026-10-04）：Android 设置页 —— 私有目录路径
       // 打不开、主机二维码不适用（Android 是客户端），均换友好文案
       dataPathsNote: _shellKind == ShellKind.mobile
-          ? '数据存在应用私有目录（由系统管理）。卸载应用会删除全部数据，'
-              '包括备份 —— 请定期用下面的「导出备份」保留一份。'
+          ? '数据存在应用私有目录（由系统管理）。卸载应用会删除全部数据 —— '
+              '账本在电脑主机上，手机丢了不影响账；还没传过去的单可以用下面的'
+              '「导出本机数据文件」发给电脑。'
           : null,
       hostSyncNote: _shellKind == ShellKind.mobile
           ? '手机版不做「主机」—— 与电脑连接这样用：\n'
               '一、到电脑上打开「设置 → 多设备同步」；\n'
               '二、用手机扫电脑上的二维码；\n'
-              '三、连接后手机开单会自动推送到电脑'
-              '（断网时先记在待同步队列，联网自动补传）。'
+              '三、连接后手机开单会自动推送到电脑（断网时先记在待同步队列，'
+              '回到这个界面会自动再试一次，也可以点「立即同步」）。'
           : null,
       onExportBackup: _shellKind == ShellKind.mobile ? _exportBackupMobile : null,
       // §BK·三：更改数据位置 —— 桌面专属（Android 私有目录改不了）
@@ -1437,6 +1640,8 @@ class _StartupPage extends StatelessWidget {
     required this.onAction,
     this.retryLabel,
     this.onRetry,
+    this.extraLabel,
+    this.onExtra,
   });
 
   final String message;
@@ -1446,6 +1651,11 @@ class _StartupPage extends StatelessWidget {
   /// 可选的第二动作（如「重试」）；两个都为 `null` 时只显示主按钮
   final String? retryLabel;
   final VoidCallback? onRetry;
+
+  /// 可选的第三动作（「库文件不见了」时才有的「新建一本空账」）——
+  /// 由用户点，软件不替他决定（2026-10-07，`docs/reply.md` §6 的 #1）
+  final String? extraLabel;
+  final VoidCallback? onExtra;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -1467,6 +1677,8 @@ class _StartupPage extends StatelessWidget {
                 if (retryLabel != null && onRetry != null)
                   OutlinedButton(onPressed: onRetry, child: Text(retryLabel!)),
                 FilledButton(onPressed: onAction, child: Text(actionLabel)),
+                if (extraLabel != null && onExtra != null)
+                  TextButton(onPressed: onExtra, child: Text(extraLabel!)),
               ],
             ),
           ],

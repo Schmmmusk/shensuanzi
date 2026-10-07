@@ -188,10 +188,15 @@ void main() {
   });
 
   testWidgets('场景 2：配置过且目录可用 → 不弹对话框，直接进主界面', (WidgetTester tester) async {
-    // 造一个真实存在的目录 + 有效标记，写进沙箱配置
+    // 造一个真实存在的目录 + 有效标记 + **真实的库文件**，写进沙箱配置
+    //
+    // ⚠️ **库文件是必须的**（2026-10-07）：只写标记、不建库，正好命中新的
+    // `missingDatabase` 场景（那是「库被误删」，停在提示页而不是进主界面）。
+    // 真实机器上「配置过且可用」一定有库文件 —— 夹具必须照真实场景造。
     final String dataDir = p.join(box.path, 'data');
     Directory(dataDir).createSync(recursive: true);
     DataMarker.write(dataDir, schemaVersion: 1, now: 1700000000000);
+    Db.open(p.join(dataDir, AppBootstrap.databaseFileName)).close();
     store.save(AppConfig(dataDirectory: dataDir));
 
     var picked = 0;
@@ -206,6 +211,41 @@ void main() {
     expect(dialog, findsNothing);
     expect(find.byType(AppShell), findsOneWidget);
     expect(picked, 0);
+  });
+
+  testWidgets('场景 2c：**库文件被删** ⇒ 停在提示页，绝不静默建空库（2026-10-07）', (
+    WidgetTester tester,
+  ) async {
+    // 审计报告 #1：标记还在、库被误删。从前会一路走到 `Db.open` ⇒ **静默建一套空表**，
+    // 用户对着空账簿继续开单。现在必须停在提示页，并教他从备份恢复。
+    final String dataDir = p.join(box.path, 'data2c');
+    Directory(dataDir).createSync(recursive: true);
+    DataMarker.write(dataDir, schemaVersion: 1, now: 1700000000000);
+    final File dbFile = File(p.join(dataDir, AppBootstrap.databaseFileName));
+    Db.open(dbFile.path).close();
+    dbFile.deleteSync(); // 误删
+    store.save(AppConfig(dataDirectory: dataDir));
+
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AppShell), findsNothing, reason: '不许直接进主界面');
+    expect(
+      find.textContaining('数据文件（shensuanzi.db）不见了'),
+      findsWidgets,
+      reason: '要说清「不见了」而不是「打不开」',
+    );
+    expect(
+      find.textContaining('神算子备份'),
+      findsWidgets,
+      reason: '要给出从备份恢复的办法',
+    );
+    expect(find.text('新建一本空账'), findsOneWidget, reason: '给一条明确的出路，但由用户点');
+    expect(
+      dbFile.existsSync(),
+      isFalse,
+      reason: '**判定本身绝不许把空库建出来**（这正是本场景要防的事）',
+    );
   });
 
   testWidgets('场景 3：选了目录 → 对话框消失，进入主界面', (WidgetTester tester) async {
@@ -424,6 +464,8 @@ void main() {
     final String dataDir = p.join(box.path, 'data6');
     Directory(dataDir).createSync(recursive: true);
     DataMarker.write(dataDir, schemaVersion: 1, now: 1700000000000);
+    // 同上：**空库 ≠ 没有库**。建一份空库（v0 建全表），才是「空库启动」。
+    Db.open(p.join(dataDir, AppBootstrap.databaseFileName)).close();
     store.save(AppConfig(dataDirectory: dataDir));
 
     await tester.pumpWidget(app());

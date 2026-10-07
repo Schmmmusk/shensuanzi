@@ -16,6 +16,11 @@ import 'package:flutter/material.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 /// 打开核销对话框。用户取消 / 直接关闭 → 返回 `null`。
+///
+/// [verbOverride]（2026-10-07，`docs/reply.md` §2）：退货单的退款入口也用本对话框
+/// —— 方向没有区别（照样是一张独立收付款单），但「付款 / 未付」对着退货单读
+/// 会让人懵，所以允许调用方给一组更贴切的词（如「退款给客户 / 未退款」）。
+/// **只改文案，不改分录**：钱怎么记完全由 `SettlementService` 决定。
 Future<SettlementSaved?> showSettlementDialog(
   BuildContext context, {
   required SettlementService service,
@@ -23,6 +28,7 @@ Future<SettlementSaved?> showSettlementDialog(
   required int unsettledCents,
   required bool inbound,
   required String partyLabel,
+  SettlementVerb? verbOverride,
 }) => showDialog<SettlementSaved>(
   context: context,
   builder: (BuildContext dialogContext) => _SettlementDialog(
@@ -31,8 +37,27 @@ Future<SettlementSaved?> showSettlementDialog(
     unsettledCents: unsettledCents,
     inbound: inbound,
     partyLabel: partyLabel,
+    verbOverride: verbOverride,
   ),
 );
+
+/// 一组动作词（标题 / 按钮 / 输入框 / 「未…」行共用，避免四处各写一遍）。
+class SettlementVerb {
+  const SettlementVerb({
+    required this.action,
+    required this.unsettledLabel,
+    required this.partyLabel,
+  });
+
+  /// 「收款」/「付款」/「退款给客户」——标题与按钮
+  final String action;
+
+  /// 「未收」/「未付」/「未退款」
+  final String unsettledLabel;
+
+  /// 「客户」/「供应商」/「客户」（退款也是给客户）
+  final String partyLabel;
+}
 
 class _SettlementDialog extends StatefulWidget {
   const _SettlementDialog({
@@ -41,6 +66,7 @@ class _SettlementDialog extends StatefulWidget {
     required this.unsettledCents,
     required this.inbound,
     required this.partyLabel,
+    this.verbOverride,
   });
 
   final SettlementService service;
@@ -54,6 +80,9 @@ class _SettlementDialog extends StatefulWidget {
 
   /// 对方名（散客 / 散采已由 `documentPartyLabel` 转成文字）
   final String partyLabel;
+
+  /// 动作词覆盖（退货单的退款入口用；`null` = 按 [inbound] 取默认词）
+  final SettlementVerb? verbOverride;
 
   @override
   State<_SettlementDialog> createState() => _SettlementDialogState();
@@ -84,7 +113,17 @@ class _SettlementDialogState extends State<_SettlementDialog> {
     super.dispose();
   }
 
-  String get _verb => widget.inbound ? '收款' : '付款';
+  /// 标题 / 按钮 / 输入框用的动作词（退货单可覆盖，见 [SettlementVerb]）
+  String get _verb =>
+      widget.verbOverride?.action ?? (widget.inbound ? '收款' : '付款');
+
+  /// 「未收 / 未付 / 未退款」那一行
+  String get _unsettledLabel =>
+      widget.verbOverride?.unsettledLabel ?? '未${widget.inbound ? '收' : '付'}';
+
+  /// 「客户 / 供应商」那一行
+  String get _partyWord =>
+      widget.verbOverride?.partyLabel ?? (widget.inbound ? '客户' : '供应商');
 
   /// **硬错误**（拦住提交）：填了但不是数字 / ≤ 0。逻辑在 core。
   String? get _error => SettlementService.amountError(
@@ -171,12 +210,12 @@ class _SettlementDialogState extends State<_SettlementDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(
-                '${widget.inbound ? '客户' : '供应商'}：${widget.partyLabel}',
+                '$_partyWord：${widget.partyLabel}',
                 style: const TextStyle(height: 1.6),
               ),
               const SizedBox(height: 4),
               Text(
-                '未${widget.inbound ? '收' : '付'}：'
+                '$_unsettledLabel：'
                 '¥${Money.formatGrouped(widget.unsettledCents)}',
                 style: theme.textTheme.titleMedium,
               ),
@@ -201,7 +240,7 @@ class _SettlementDialogState extends State<_SettlementDialog> {
                   suffixText: '元',
                   // 内联提示走 errorText（挂在输入框下面，不弹窗）
                   errorText: notice,
-                  helperText: _resultLine ?? '可以只收一部分，剩下的下次再收。',
+                  helperText: _resultLine ?? '可以只$_verb一部分，剩下的下次再$_verb。',
                   helperMaxLines: 2,
                   border: const OutlineInputBorder(),
                 ),
@@ -247,7 +286,9 @@ class _SettlementDialogState extends State<_SettlementDialog> {
               Text(
                 widget.inbound
                     ? '记 1 张收款单：这笔钱进账户，客户的欠款相应减少。'
-                    : '记 1 张付款单：这笔钱出账户，欠供应商的款相应减少。',
+                    : (widget.verbOverride == null
+                          ? '记 1 张付款单：这笔钱出账户，欠供应商的款相应减少。'
+                          : '记 1 张付款单：这笔钱从账户里退出去，这张退货单就结清了。'),
                 style: TextStyle(
                   height: 1.6,
                   color: theme.textTheme.bodySmall?.color,
