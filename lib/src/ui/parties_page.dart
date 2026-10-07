@@ -329,27 +329,28 @@ class _PartyRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
+                  // C3·真机反馈：名字与角色标签同行时，标签把名字挤到强制折行
+                  // —— 名字独占一行，标签 / 停用标记下移（任何缩放档不折名字）
+                  Text(
+                    party.name,
+                    style: TextStyle(
+                      height: 1.6,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: party.isActive
+                          ? theme.colorScheme.onSurface
+                          : theme.hintColor,
+                    ),
+                  ),
                   Row(
                     children: <Widget>[
                       Flexible(
                         child: Text(
-                          party.name,
+                          roleLabels,
                           style: TextStyle(
                             height: 1.6,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: party.isActive
-                                ? theme.colorScheme.onSurface
-                                : theme.hintColor,
+                            color: theme.textTheme.bodySmall?.color,
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        roleLabels,
-                        style: TextStyle(
-                          height: 1.6,
-                          color: theme.textTheme.bodySmall?.color,
                         ),
                       ),
                       if (!party.isActive)

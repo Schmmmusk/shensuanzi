@@ -408,7 +408,14 @@ class _StockRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 4),
-          Row(
+          // C3·真机反馈：成本行原为 Row + Spacer —— 窄屏 / 大字档下
+          // 「成本（均价）+ 金额」固定组溢出。改 Wrap + spaceBetween：
+          // 宽屏两项两端对齐（视觉同旧）；放不下自动换行，永不溢出。
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            alignment: WrapAlignment.spaceBetween,
+            spacing: 8,
+            runSpacing: 2,
             children: <Widget>[
               Text(
                 '账面 $book · 在途 $inTransit',
@@ -417,7 +424,6 @@ class _StockRow extends StatelessWidget {
                   color: theme.textTheme.bodySmall?.color,
                 ),
               ),
-              const Spacer(),
               // AA-4：成本（均价）+ 口径说明；负值红色（与负库存联动）
               Tooltip(
                 message: '按历史加权平均成本计算。\n进价变化时可能与最近一次进价不同。',

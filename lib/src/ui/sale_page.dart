@@ -24,6 +24,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart'
     show MobileGuideTopic, mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'keyboard_reveal.dart';
 import 'mobile_guidance_dialog.dart';
 import 'entry_unit_hints.dart';
 import 'product_form_dialog.dart';
@@ -662,24 +663,27 @@ class _SalePageState extends State<SalePage> {
       },
       child: Focus(
         autofocus: true,
-        child: Scaffold(
-          body: SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  _headerRow(theme),
-                  const Divider(height: 24),
-                  _linesSection(theme),
-                  _totalBar(theme),
-                  const Divider(height: 24),
-                  _paymentSection(theme),
-                  const SizedBox(height: 16),
-                  _remarkField(),
-                  const SizedBox(height: 24),
-                  _actions(theme),
-                ],
+        // C3·真机反馈 ④：键盘（含输入法候选栏）高度变化时，把焦点字段滚回可视区
+        child: KeyboardReveal(
+          child: Scaffold(
+            body: SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    _headerRow(theme),
+                    const Divider(height: 24),
+                    _linesSection(theme),
+                    _totalBar(theme),
+                    const Divider(height: 24),
+                    _paymentSection(theme),
+                    const SizedBox(height: 16),
+                    _remarkField(),
+                    const SizedBox(height: 24),
+                    _actions(theme),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1022,7 +1026,9 @@ class _SalePageState extends State<SalePage> {
             ),
           ];
         } else {
-          // 宽屏（桌面）：现状单行右对齐，零变化
+          // 宽屏（桌面）：chips 与找零文本同行右对齐。结构与窄屏**同源**
+          //（Flexible 找零文本 + Wrap chips）—— 最大缩放下也不溢出
+          //（C3·Windows 反馈：最大档位款项行超出绘制边界，宽屏分支此前无防护）。
           content = <Widget>[
             Row(
               children: <Widget>[
@@ -1031,21 +1037,27 @@ class _SalePageState extends State<SalePage> {
                 givenField,
                 const SizedBox(width: 12),
                 if (changeText != null)
-                  Text(
-                    changeText,
-                    style: TextStyle(
-                      height: 1.6,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: const <FontFeature>[
-                        FontFeature.tabularFigures(),
-                      ],
-                      color: notEnough
-                          ? const Color(0xFFB45309)
-                          : theme.colorScheme.onSurface,
+                  Flexible(
+                    child: Text(
+                      changeText,
+                      style: TextStyle(
+                        height: 1.6,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: const <FontFeature>[
+                          FontFeature.tabularFigures(),
+                        ],
+                        color: notEnough
+                            ? const Color(0xFFB45309)
+                            : theme.colorScheme.onSurface,
+                      ),
                     ),
                   ),
-                const Spacer(),
-                ...quickChips,
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Wrap(spacing: 4, children: quickChips),
+                  ),
+                ),
               ],
             ),
           ];
@@ -1618,7 +1630,13 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
   @override
   Widget build(BuildContext context) => SafeArea(
     child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        16,
+        16,
+        // C3·真机反馈 ④：键盘补偿（客户 picker 既有模式，商品 picker 此前漏了）
+        16 + MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,

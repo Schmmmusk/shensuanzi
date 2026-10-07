@@ -159,7 +159,40 @@ void main() {
     expect(docNo.startsWith(Document.pendingDocNoPrefix), isFalse);
     expect(find.text('店内销售'), findsOneWidget, reason: 'doc_type 的中文标签');
     expect(find.text('欠款 +¥100.00'), findsOneWidget);
-    expect(find.textContaining('功能开发中'), findsOneWidget);
+    // C3·§CJ·补 1：底部文案两版 —— 默认宽表面（800×600）走桌面版
+    expect(find.textContaining('在「单据」页找到对应单号'), findsOneWidget);
+    expect(find.textContaining('功能开发中'), findsNothing);
+  });
+
+  testWidgets('窄屏（<600）流水页：两行卡片 + 「到电脑上」底部说明（B1′）', (
+    WidgetTester tester,
+  ) async {
+    final Party customer = createCustomer('甲客户');
+    creditSale(customer, 100);
+
+    tester.view.physicalSize = const Size(500, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PartyFlowPage(party: customer, service: service),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 行重排：类型标签 / 金额 / 单号 / 日期 都在（两行卡片）
+    expect(find.text('店内销售'), findsOneWidget);
+    expect(find.text('欠款 +¥100.00'), findsOneWidget);
+    expect(
+      find.text(service.flowsOf(customer.id).single.docNo),
+      findsOneWidget,
+    );
+    // 窄屏底部文案（引导到电脑 —— 手机无「单据」页入口）
+    expect(find.textContaining('到电脑上打开「单据」页'), findsOneWidget);
+    expect(find.textContaining('功能开发中'), findsNothing);
   });
 
   testWidgets('编辑资料：改名保存成功；流水与角色不受影响', (WidgetTester tester) async {
@@ -249,9 +282,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // AF-2：说清导的是「该往来方的全部流水」
+    // AF-2 语义改由页面上下文承载（本页只有这一方的流水）——
+    // C3·裁定：按钮收窄为「导出流水」（原长文案在窄屏把标题挤成一字）
     expect(find.byKey(const Key('export-party-flow')), findsOneWidget);
-    expect(find.text('导出该往来方的全部流水'), findsOneWidget);
+    expect(find.text('导出流水'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('export-party-flow')));
     await tester.pumpAndSettle();

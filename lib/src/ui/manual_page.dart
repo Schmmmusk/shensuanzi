@@ -150,9 +150,11 @@ class _Block extends StatelessWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
+                    // C3·真机反馈：编号圆圈是固定尺寸，最大缩放下内部数字
+                    // （textScaler 放大）会戳出圆圈边界 —— 圆圈随缩放一起变大
                     Container(
-                      width: 22,
-                      height: 22,
+                      width: MediaQuery.textScalerOf(context).scale(22),
+                      height: MediaQuery.textScalerOf(context).scale(22),
                       margin: const EdgeInsets.only(top: 3),
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
@@ -162,7 +164,7 @@ class _Block extends StatelessWidget {
                       child: Text(
                         '${i + 1}',
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: MediaQuery.textScalerOf(context).scale(12),
                           fontWeight: FontWeight.w700,
                           color: theme.colorScheme.primary,
                         ),

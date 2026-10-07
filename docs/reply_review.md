@@ -7323,3 +7323,149 @@ B3 功能面闭环（开单入队 → 自动推 → 主机正式单号 → 三�
 
 **教训（进备忘）**：① Flutter 层批量改私有组件，**构造参数与字段必须成对核对**（本侧编译不到，
 "字段加了构造漏了"必然漏网）；② **public 字段判空不提升** —— 要传非空参数就先落局部变量。
+---
+
+## §CG C3 反馈 ④ 修复落地：`KeyboardReveal`（2026-10-07 上午）
+
+> 工具环境恢复可信（git 基线核验通过：工作区干净、基线 = 已验收提交 253666f）。
+
+| 文件 | 改动 |
+|---|---|
+| root `keyboard_reveal.dart`（新） | 键盘高度变化（弹出/收起/输入法候选栏伸缩）时把**当前焦点字段**滚回可视区：`didChangeMetrics` + `View.of(context).viewInsets`（原始窗口值，不受 Scaffold 裁剪影响）+ post-frame `Scrollable.ensureVisible(primaryFocus, alignment: 0.25)`；inset 归零不动作（不抢用户滚动） |
+| 三页 sale/purchase/delivery | build 的 `Focus > Scaffold` 之间包 `KeyboardReveal`（整体 +2 缩进重排）；商品 picker 的 padding 补 `viewInsets.bottom`（客户 picker 既有模式，商品 picker 三处此前漏了 —— 这是「输入界面在键盘下方」的另一半来源） |
+
+**验证**：`git diff` 逐行核验（3 文件 +88/−58，与新设计一致）+ Read 抽查；`flutter analyze` / `flutter test`
+与**真机复测 IME 场景**由用户执行（重点：开单页/商品 picker/客户 picker 用输入法打字，字段应始终在键盘上方可见）。
+
+---
+
+## §CH 提案：主数据入队（方案 2 细化）+ 标题缩放限幅（🟡 待裁定，未动代码）
+
+### 提案 A：主数据入队（回应 C3 反馈 ②「手机建档是刚需」）
+
+真机反馈：急着开单 / 电脑不在身边 / 不会用电脑 ⇒ 方案 1 的「禁建 + 引导」在真实场景痛点明显。
+方案 2 细化如下：
+
+1. **通道**：协议**已有的** `createMasterData` / `updateMasterData` op（§8.1 白名单，无需协议变更）。
+2. **id 与幂等**：客户端 UUIDv7，幂等键 = id（§二 既有裁定，零新增）。
+3. **code 生成与冲突**：客户端从镜像 `max(code)+1` 生成；**主机端同 code 异 id ⇒ 主机改派 code**
+   （主数据本就允许 UPDATE + 乐观锁），pull 回写镜像 —— 用户无感。两台手机并发建档同理，先后改派都成功。
+4. **可见性（关键裁定点）**：**乐观写镜像** —— 主数据入队时同步把行写进镜像。
+   依据：主数据行**客户端全知**（用户填什么就是什么），与单据本质不同（金额/状态权威值由主机规则算出，
+   不能乐观写）。⚠️ 这要修订 `data_model.md` §4.4 第 3 条「镜像只读」：九表增加
+   「**pending 主数据乐观写**」例外 —— **需裁定**。
+5. **rejected 处理**：push 回执 rejected ⇒ 删镜像乐观行 + 三态条「失败」明细提示「请到电脑上重新建」
+   （推送失败 ≠ rejected：失败只是没送到，条目继续重试 —— 清理时机明确）。
+6. **编辑 / 停用**：`updateMasterData`（base_version 乐观锁，镜像行自带 sync_version）。
+7. **期初录入**：仍不做（盘点 delta 客户端算不出 —— 诚实，不变）。
+8. **UI**：`readOnlyMasterData` 语义从「弹引导」替换为「**本地建档 + 入队**」—— 三页与往来页表单恢复可用；
+   引导对话框仅期初录入保留。
+9. **拆段**：D1 core（SyncServer.createMasterData 的 code 改派 + updateMasterData 通路，纯 Dart 可真跑）
+   → D2 app（QueueSink 扩展 `enqueueMasterData` + 乐观写 + UI 恢复表单）→ D3 真机。
+10. **风险**：code 改派期间手机端展示的 code 短暂过期（pull 修正）；乐观行清理依赖 push 回执
+   （主机长期不可达时乐观行一直在 —— 但这恰好等于「本地可用」，符合刚需场景）。
+
+### 提案 B：标题截断 + 流水行错乱（回应 C3 反馈 ③）—— 补图已定位 ✅
+
+**截图定位（往来方流水页 `party_flow_page.dart`）**，两个病灶：
+
+1. **AppBar「平⋯」**：`title: Text('${party.name} 的流水')` 被 actions 里**超长导出按钮**
+   （「导出该往来方的全部流水」）挤压 —— 大字缩放下只剩 1 字（37-50 行）。
+2. **流水行断号错位**：`ListTile(title: Row[Expanded(docNo), 类型标签], trailing: 金额)`
+   —— 大字下金额（17 号加粗 + tabular）占宽 ~150px，docNo 的 Expanded 被挤到不足，
+   **单号从中间硬折行**（XS2026100 / 3-003），类型标签错位挤在断口（84-127 行）。
+
+**方案（推荐 B1′ = 限幅 + 行重排 + 按钮收窄，三件事）**：
+
+1. **流水页整页限幅**（用户「下调该场景缩放」诉求的直接落实）：
+   `MediaQuery.withClampedTextScaling(maxFactor: 1.0)` 包页体 —— 页内全是单号 / 数字，
+   放大收益低、破坏布局代价高；金额已有 17 号放大加粗，可读性不受损。
+   ⚠️ 裁定点：限幅**仅窄屏**（LayoutBuilder < 600，桌面大字档不受影响）还是**全端**。
+2. **行重排**（限幅兜底）：ListTile 改自定义两行 ——
+   行 1：`[类型标签(灰小字), Spacer, 金额(大字加粗)]`；行 2：`[docNo(加粗, 独占整行), 日期(灰)]` ——
+   docNo 不再与标签 / 金额抢宽，折行也整齐。
+3. **AppBar**：导出按钮窄屏收窄为「导出」（完整说明保留在 Tooltip）；title 局部限幅。
+
+**范围**：`party_flow_page.dart`（手机可达：往来 tab → 流水）；`documents_page` 手机壳无入口
+（C2 摸底），不在本批。桌面同页共用 —— 裁定点 1 决定桌面是否受影响。
+
+**待裁定**：① 限幅仅窄屏 or 全端；② 方案 B1′ 是否照此执行。
+---
+
+## §CI C3 反馈 ②③ 处理（2026-10-07 上午，Windows 端复测中）
+
+> 承接 §CG/§CH；用户全量门禁已过（④ IME 修复无回归），真机复测进行中。
+
+| # | 反馈 | 处理 |
+|---|---|---|
+| ① | **款项行超出绘制边界（Windows 最大缩放档）** | ✅ 已修：`_cashChangeRow` 的**宽屏分支**此前无防护（上轮只防了 <480 窄屏分支）—— 宽屏分支改为与窄屏**同源**的防溢出结构（`Flexible` 找零文本 + `Expanded(Align(Wrap))` chips），桌面满宽下视觉不变（chips 仍单行右对齐）。`_PayCard` 核查为全 `Expanded` 结构，本就不可能溢出 |
+| ② | **流水页底部文案过时**：「想查看单据详情？在「单据」页…（功能开发中）」 | ✅ 已修（纪律 17）：「功能开发中」是遗漏 6 时代的旧话 —— 单据页 / 单据详情页**早已实现**；且**手机壳无「单据」页入口**，照旧文案找会扑空。改为两版：桌面「在「单据」页找到对应单号。」/ 窄屏「到电脑上打开「单据」页就能看到 —— 手机开单会自动同步过去。」 |
+| ③ | **图标不随缩放设置缩放**（用户主动提出的改进点） | 🟡 并入 §CH 缩放话题待裁定：机制 = 图标尺寸乘 `textScalerOf`（或 MaterialApp `iconTheme.size × factor`，运行时随设置重建）；牵涉所有显式 `size:` 的 Icon 调用点，范围需裁定（全局 / 仅高频图标） |
+
+**D1（主数据入队 core 段）摸底完成，实现下轮**：
+- `ProductService.create` 在 91 行（`_codes.next()` 事务内生成）→ 加 `preferredCode` 可选参数 + `resolvePreferredCode`（改派唯一出处 = ProductService，裁定 §二②）；
+- `SyncServer._createMasterData` 通路**已存在**（284 行，判重 / 主机写三列 / 白名单守卫齐备）→ 仅 products 分支调 `resolvePreferredCode` 替换 payload code；
+- **pull 已是 UPSERT**（`_upsertRow` = `ON CONFLICT(id) DO UPDATE`，sync_client.dart:352）→ 裁定 ④ 现有行为满足，补测试钉住「乐观行与 pull 同 id 收敛」断言（裁定 ⑧）；
+- `latestCode()` 已按 `LENGTH(code) DESC, code DESC` 同序（product_dao.dart:101）→ 裁定 ① 现有实现满足，补测试钉住；
+- `ProductDao` 无 byCode/codeExists → 新增 `codeExists`。
+- B1′（流水页限幅 + 行重排 + 「导出流水」按钮）裁定「修改后照此执行」，与 D1 同批落地（都是小改动，下轮）。
+---
+
+## §CJ C3 反馈 ④⑤⑥⑦ 处理：UI 布局修复批（2026-10-07 上午三）
+
+> 用户真机复测：④ IME 修复**成功**；新反馈 = B1′ 待落地确认 + 三个标准缩放布局问题 + 图标缩放催办。
+
+| # | 反馈 | 处理 |
+|---|---|---|
+| ④ | IME 修复成功 | ✅ 真机验证通过（KeyboardReveal） |
+| ⑤ | **流水页**缩放问题（标题截断 / 导出按钮太长）= B1′ 范围 | ✅ **B1′ 落地**：`party_flow_page` 整页重写 —— 窄屏（<600）`withClampedTextScaling(maxFactor: 1.15)` + 流水行重排（行 1 类型标签+金额 / 行 2 单号独占+日期，`_NarrowFlowCard`）+ 导出按钮改「导出流水」（Tooltip 兜底已否决 —— ui_principles §1.1 隐藏入口）；宽屏 `_WideFlowTile` 现状零变化 |
+| ⑥ | **往来方页名字强制折行**（标准缩放，用户疑似与角色标签冲突） | ✅ 猜测正确：`_PartyRow` 名字行 = `Row[Flexible(名字), roleLabels(无弹性), 停用标记]`，标签把名字挤折。修：名字独占一行，roleLabels / 停用标记**下移一行**（全端统一 —— 桌面视觉变化轻微：标签在第二行） |
+| ⑦ | **库存页渲染边界（标准缩放）** | ✅ 定位：`_StockRow` 成本行 = `Row[账面·在途, Spacer, 成本标签+金额(无弹性固定组)]` —— 窄屏/长金额时固定组溢出。修：`Wrap(spaceBetween)`（宽屏两项两端对齐 = 视觉同旧；放不下自动换行，永不溢出） |
+| ⑧ | **手册编号溢出圆圈**（最大缩放） | ✅ 定位：编号圆圈 22×22 固定容器 + 内部数字被 textScaler 放大 → 数字戳出圆圈。修：圆圈尺寸与字号随 `textScalerOf` 缩放 |
+| ⑨ | **图标不随缩放**（再次催办） | 🟡 维持 §CH 待裁定（机制：IconTheme size × textScaler / 逐点 scale；范围全局 or 高频图标需裁定） |
+
+**验证**：`git diff` 核验（4 文件 UI 批 + 此前 §CG 三页，累计 +716/−298 跨 9 文件）；`flutter analyze` /
+`flutter test` + 真机复测由用户执行（重点：Android 流水页 / 往来方页 / 库存页 / 手册页，标准与最大缩放各看一遍）。
+
+**D1（主数据入队 core 段）**：摸底已完成（§CI），实现顺延下一轮 —— 用户真机复测与此并行不冲突。
+---
+
+## §CJ·补 1 用户门禁反馈修复：B1′ 重写两处笔误（2026-10-07 上午四）
+
+| # | 错 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | `themeOf(context)` undefined（_footerNote） | **臆造 API 名** —— 正确是 `Theme.of(context)`；重写整页时底部说明被提为顶层函数，主题取法写错 | 改 `Theme.of(context)` |
+| 2 | `withClampedTextScaling(maxFactor:)` 无此命名参数 | **API 参数名记错** —— 实际签名是 `maxScaleFactor`（media_query.dart:1368） | 改 `maxScaleFactor: 1.15` |
+
+**整文件通读复核**（Read 工具，258 行全量）：`themeOf` / `maxFactor:` 零残留；其余符号
+（`Theme.of` / `LayoutBuilder` / `PartyFlowEntry.docType.label` / `Money.formatGrouped` /
+`PartyFlowPage._fmtDate` 静态跨类访问）逐一核对无误。文档注释同步修正。
+**教训**：整页重写（非补丁式编辑）后必须**全文件通读**，不能只看 diff —— 臆造 API 名只出现在新写的行里。
+---
+
+## §CJ·补 2 用户门禁反馈修复：B1′ 断言面清扫漏网（2026-10-07 上午五）
+
+两条测试红（parties_page_test 162 / 254）—— **都是裁定授权的文案变更，测试断言未同步**（§CJ 落地时
+analyze 已过但**断言面清扫只扫了生产代码文案、漏了测试目录**）：
+
+| # | 红 | 修复 |
+|---|---|---|
+| 1 | `find.textContaining('功能开发中')` 期望 1 实得 0（162 行） | 改断言为桌面版新文案「在「单据」页找到对应单号」+ **反向断言**「功能开发中」findsNothing |
+| 2 | `find.text('导出该往来方的全部流水')` 期望 1 实得 0（254 行） | 改断言为「导出流水」+ AF-2 注释更新（语义由页面上下文承载） |
+
+**新增**：窄屏变体测试（`tester.view.physicalSize = Size(500, 900)`）—— 覆盖 B1′ 窄屏分支
+（两行卡片 + 「到电脑上打开」底部说明 + 限幅不炸），此前窄屏分支零测试覆盖。
+
+全测试目录 grep 确认旧文案零残留。**教训（并纪修炼）**：断言面清扫的 grep 范围必须**同时含 test/**
+——「改文案 → 扫生产代码」漏掉「测试锚定文案」这半边，与「同义措辞」漏扫同源。
+---
+
+## §CK 开发机迁移交接（2026-10-07 上午，紧急）
+
+> 用户迁移开发机：当前机 push → GitHub → 旧开发机 pull。**交接文档 = `docs/handoff-2026-10-07.md`**
+> （随本提交入库），状态快照 / 门禁复跑清单 / 待办队列都在里面。本节只记增量：
+>
+> - **D1 实现**：因迁移紧急任务**中止于摸底完成态**（结论见 §CI），未写任何实现代码 —— 旧机接手从 D1 起步。
+> - **本提交未经人工门禁复跑**（§CJ·补 2 断言修复后用户未及复跑）—— 旧机拉取后第一件事 = 复跑全量门禁。
+> - `flutter_01.png`（仓库根的测试截图）**不入库**，提交时排除。
+> - 迁移后本会话的工作上下文由 `docs/reply_review.md`（§CA – §CK）+ handoff 文档承载。
