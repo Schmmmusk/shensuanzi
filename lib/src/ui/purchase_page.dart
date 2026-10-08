@@ -33,6 +33,7 @@ import 'keyboard_reveal.dart';
 import 'mobile_guidance_dialog.dart';
 import 'product_form_dialog.dart';
 import 'entry_unit_hints.dart';
+import 'entry_fields_row.dart';
 
 /// 采购入库开单页。
 ///
@@ -44,6 +45,7 @@ class PurchasePage extends StatefulWidget {
     required this.productService,
     required this.sink,
     this.onSubmitted,
+    this.onStorageFailure,
     this.readOnlyMasterData = false,
   });
 
@@ -56,6 +58,13 @@ class PurchasePage extends StatefulWidget {
 
   /// 提交成功回调（B3b）。手机端注入 = 刷新三态条 + 触发自动推送（裁定 ③）。
   final void Function(DocumentSubmitResult result)? onSubmitted;
+
+  /// 保存失败时把**原始异常**交给宿主记日志（M15，2026-10-08）。
+  ///
+  /// 界面只显示 [storageFailureNote] 的分类文案 —— `SqliteException` 的文本
+  /// 带着整条 SQL 与绑定参数（等于把这张单的 payload 印给用户看）。
+  /// `null` = 不记（测试）；生产由 `app.dart` 接到 `AppLog`。
+  final void Function(Object error, StackTrace stack)? onStorageFailure;
 
   /// 手机端**主数据禁建**（C2·§CC）：`true` 时「新建供应商 / 新建商品」入口
   /// **保留但点击后弹引导对话框**。桌面缺省 `false` = 现状零变化。
@@ -367,15 +376,15 @@ class _PurchasePageState extends State<PurchasePage> {
         return;
       }
       _afterSaved(result);
-    } catch (error) {
+    } catch (error, stack) {
       setState(() => _saving = false);
+      // M15（2026-10-08）：界面只给**分类文案**，原始异常交给宿主记日志 ——
+      // `SqliteException` 的文本带着整条 SQL 与绑定参数（等于把这张单印出来）
+      widget.onStorageFailure?.call(error, stack);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            '没能保存（$error）。'
-            '请检查内容后重试；如果一直这样，请把这句话告诉技术支持。',
-          ),
-          duration: const Duration(seconds: 6),
+          content: Text(storageFailureNote(error)),
+          duration: const Duration(seconds: 8),
         ),
       );
     }
@@ -442,12 +451,18 @@ class _PurchasePageState extends State<PurchasePage> {
   /// （`ui_principles.md` §1.2「给『我错了也能补救』的信心」）。
   ///
   /// 本页是导航内容区的一部分（不是独立路由），「离开」即回到初始状态。
+  /// 草稿是否有内容 —— **取消确认**与**返回拦截**（M09）共用同一判据。
+  ///
+  /// ⚠️ M11（2026-10-08）：**备注也算内容**。以前只填备注时点取消会直接清空，
+  /// 用户白打了一行字（三种表单都如此，报告实测）。
+  bool get _hasContent =>
+      _partyId != null ||
+      _rows.any((_RowCtl row) => !row.isEmpty) ||
+      _pays.any((_PayCtl pay) => !pay.isBlank) ||
+      _remark.text.trim().isNotEmpty;
+
   Future<void> _cancel() async {
-    final bool hasContent =
-        _partyId != null ||
-        _rows.any(( _RowCtl row) => !row.isEmpty) ||
-        _pays.any((_PayCtl pay) => !pay.isBlank);
-    if (hasContent) {
+    if (_hasContent) {
       final bool? confirmed = await showDialog<bool>(
         context: context,
         builder: (BuildContext dialogContext) => AlertDialog(
@@ -542,7 +557,15 @@ class _PurchasePageState extends State<PurchasePage> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    return CallbackShortcuts(
+    // M09（2026-10-08）：**返回键也要走放弃确认** —— AppBar 返回箭头（手机壳的
+    // 整屏开单页）与系统返回都绕过下面绑定的 Escape，以前填了数量点返回直接丢草稿。
+    return PopScope(
+      canPop: !_hasContent,
+      onPopInvokedWithResult: (bool didPop, Object? result) {
+        if (didPop) return;
+        _cancel();
+      },
+      child: CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
         const SingleActivator(LogicalKeyboardKey.escape): _cancel,
@@ -574,6 +597,7 @@ class _PurchasePageState extends State<PurchasePage> {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -688,12 +712,15 @@ class _PurchasePageState extends State<PurchasePage> {
     child: Row(
       children: <Widget>[
         Text('合计', style: theme.textTheme.titleMedium),
-        const Spacer(),
-        Text(
-          '¥ ${Money.formatGrouped(_draft.totalCents)}',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.w700,
-            fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            '¥ ${Money.formatGrouped(_draft.totalCents)}',
+            textAlign: TextAlign.right,
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+            ),
           ),
         ),
       ],
@@ -787,24 +814,34 @@ class _PurchasePageState extends State<PurchasePage> {
     ],
   );
 
+  /// 备注框。
+  ///
+  /// ⚠️ `onChanged` 只为**触发重建**：返回拦截（M09）的 `canPop` 在 build 时求值，
+  /// 备注变了不重建的话，「只填备注 + 按返回」仍会直接走掉（M11）。
   Widget _remarkField() => TextField(
     controller: _remark,
     enabled: !_saving,
     maxLines: 2,
+    onChanged: (_) => setState(() {}),
     decoration: const InputDecoration(
       labelText: '备注（可选）',
       border: OutlineInputBorder(),
     ),
   );
 
-  Widget _actions(ThemeData theme) => Row(
-    mainAxisAlignment: MainAxisAlignment.end,
+  /// ⚠️ M13（2026-10-08）：用 `Wrap` 而不是 `Row` —— 小屏 + 超大字号下
+  /// 「取消 + 保存（文案可能很长）」会横向溢出，**保存按钮越出屏幕**（点不到）。
+  /// `Wrap` 放不下就换行；`spacing` 取代原来的 `SizedBox`。
+  Widget _actions(ThemeData theme) => Wrap(
+    alignment: WrapAlignment.end,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    spacing: 16,
+    runSpacing: 8,
     children: <Widget>[
       TextButton(
         onPressed: _saving ? null : _cancel,
         child: const Text('取消 (Esc)'),
       ),
-      const SizedBox(width: 16),
       FilledButton.icon(
         // ⚠️ **稳定 Key**：按钮文案会随「有没有找回」变（§AY·四），
         // 测试**不要**按文案找它 —— 按 Key 找。
@@ -892,28 +929,64 @@ class _LineCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: TextField(
-                    key: const Key('purchase-qty'),
-                    controller: row.quantity,
-                    enabled: enabled,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textInputAction: TextInputAction.next,
-                    // P-6：Enter 到下一格（桌面端没有虚拟键盘，要显式切焦点）
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                    onChanged: (_) => onChanged(),
-                    decoration: InputDecoration(
-                      labelText: row.entryUnitDisplay.isEmpty
-                          ? '数量'
-                          : '数量（${row.entryUnitDisplay}）',
-                      isDense: true,
-                      errorText: errors?[PurchaseLineField.quantity],
-                    ),
-                  ),
+            // M10（2026-10-08）：数量 / 单价 / 小计交给共用控件（宽屏并排、
+            // 窄屏 + 超大字号堆叠）。⚠️ 单位 chips 与单位错误**移到行卡下方** ——
+            // 原先它们是 Row 的直接子项，会挤压两个输入框（与销售/送货页的
+            // 摆放也不一致）。
+            EntryFieldsRow(
+              quantityField: TextField(
+                key: const Key('purchase-qty'),
+                controller: row.quantity,
+                enabled: enabled,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
                 ),
+                textInputAction: TextInputAction.next,
+                // P-6：Enter 到下一格（桌面端没有虚拟键盘，要显式切焦点）
+                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                onChanged: (_) => onChanged(),
+                decoration: InputDecoration(
+                  labelText: row.entryUnitDisplay.isEmpty
+                      ? '数量'
+                      : '数量（${row.entryUnitDisplay}）',
+                  isDense: true,
+                  errorText: errors?[PurchaseLineField.quantity],
+                ),
+              ),
+              priceField: TextField(
+                key: const Key('purchase-price'),
+                controller: row.unitPrice,
+                enabled: enabled,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                onChanged: (_) {
+                  // §BG 方案 A ①：显式布尔记「手改过」——编辑（非空）= true，清空 = false
+                  row.priceTouched = row.unitPrice.text.trim().isNotEmpty;
+                  row.entryPriceKept = false; // 重新输入 ⇒ 「保留」告知失效
+                  onChanged();
+                },
+                decoration: InputDecoration(
+                  labelText: row.priceLabel,
+                  isDense: true,
+                  errorText: errors?[PurchaseLineField.unitPrice],
+                ),
+              ),
+              amount: Text(
+                row.product == null
+                    ? ''
+                    : '¥ ${Money.formatGrouped(row.amountCents ?? 0)}',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  height: 1.6,
+                  fontFeatures: const <FontFeature>[
+                    FontFeature.tabularFigures(),
+                  ],
+                ),
+              ),
+            ),
             // v3 单位切换（§BD·三 第 3 条）：只在**成对启用**时出现
             if (row.canSwitchPackage && enabled) ...<Widget>[
               const SizedBox(height: 8),
@@ -952,47 +1025,6 @@ class _LineCard extends StatelessWidget {
                 ),
               ),
             ],
-
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: TextField(
-                    key: const Key('purchase-price'),
-                    controller: row.unitPrice,
-                    enabled: enabled,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                    onChanged: (_) {
-                      // §BG 方案 A ①：显式布尔记「手改过」——编辑（非空）= true，清空 = false
-                      row.priceTouched = row.unitPrice.text.trim().isNotEmpty;
-                      row.entryPriceKept = false; // 重新输入 ⇒ 「保留」告知失效
-                      onChanged();
-                    },
-                    decoration: InputDecoration(
-                      labelText: row.priceLabel,
-                      isDense: true,
-                      errorText: errors?[PurchaseLineField.unitPrice],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                SizedBox(
-                  width: 96,
-                  child: Text(
-                    row.product == null ? '' : '¥ ${Money.formatGrouped(row.amountCents ?? 0)}',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      height: 1.6,
-                      fontFeatures: const <FontFeature>[
-                        FontFeature.tabularFigures(),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
             // §BG 方案 A ②③：切到包装才显示换算说明；除不尽保留原价的橙色告知
             ...entryUnitHints(
               theme: theme,

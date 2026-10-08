@@ -225,6 +225,9 @@ class _SyncStatusBar extends StatefulWidget {
 class _SyncStatusBarState extends State<_SyncStatusBar> {
   SyncQueueTriage? _triage;
 
+  /// M04（2026-10-08）：链接态（配对 / 首同步）——**队列之外的前置判定**。
+  SyncLinkState _link = SyncLinkState.notPaired;
+
   @override
   void initState() {
     super.initState();
@@ -241,18 +244,70 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
     final MobileSyncService? sync = widget.sync;
     if (sync == null) return;
     try {
-      // 首次会建空镜像库 —— 空队列 =「已同步」，诚实
-      setState(() => _triage = SyncQueueDao(sync.openMirror()).counts());
+      // M04（2026-10-08）：队列之外**先看配对与首同步** —— 没配对时队列
+      // 天然是空的，只看队列会把「还没连上」显示成「已同步」（信任问题）
+      final PairingInfo? pairing = sync.pairingStore.load();
+      final SyncQueueTriage triage = SyncQueueDao(sync.openMirror()).counts();
+      setState(() {
+        _link = syncLinkStateOf(
+          paired: pairing != null,
+          everSynced: pairing?.lastSyncAt != null,
+        );
+        _triage = triage;
+      });
     } catch (_) {
       // 镜像打不开就不显示这一行 —— 三态条是辅助信息，不能把壳挡死
       setState(() => _triage = null);
     }
   }
 
+  /// 未连接 / 没同步过时点开三态条 —— **说清「怎么连上电脑」**，
+  /// 不让「尚未连接电脑」变成一个点不动的死标签（M04）。
+  Future<void> _showLinkHint() async {
+    final bool notPaired = _link == SyncLinkState.notPaired;
+    final String title = notPaired ? '这台手机还没连接电脑' : '还没有成功同步过';
+    final String body = notPaired
+        ? '到「我的 → 设置 → 多设备同步」扫描电脑上显示的二维码，'
+              '就能把商品和客户同步到这台手机。\n\n'
+              '在连上之前，你在手机上开的单会先存在本机，不会丢。'
+        : '已经配对过，但还没有成功同步。请确认电脑上的「神算子」开着、'
+              '手机和电脑连的是同一个 Wi-Fi，然后到「我的 → 设置」点「立即同步」。';
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (BuildContext sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(body, style: const TextStyle(height: 1.6)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _showDetail() async {
     final SyncQueueTriage? triage = _triage;
     final MobileSyncService? sync = widget.sync;
-    if (triage == null || triage.isSynced || sync == null) return;
+    if (triage == null || sync == null) return;
+    // M04：没连上 / 没同步过时，点开要说清「怎么连上」
+    if (_link != SyncLinkState.linked) {
+      await _showLinkHint();
+      return;
+    }
+    if (triage.isSynced) return;
     final SyncQueueDao dao = SyncQueueDao(sync.openMirror());
     final List<SyncQueueEntry> pending = dao.withStatus(SyncQueueStatus.pending);
     final List<SyncQueueEntry> failed = dao.withStatus(SyncQueueStatus.failed);
@@ -304,18 +359,13 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
     if (triage == null) return const SizedBox.shrink();
 
     final ColorScheme colors = Theme.of(context).colorScheme;
-    final String label = triage.isSynced
-        ? '已同步'
-        : <String>[
-            if (triage.pendingCount > 0) '待同步 ${triage.pendingCount} 条',
-            if (triage.failedCount > 0) '失败 ${triage.failedCount} 条',
-          ].join(' · ');
-    // 红色只留给错误（ui_principles §二）；待同步用主色，已同步用弱化色
-    final Color color = triage.failedCount > 0
-        ? colors.error
-        : triage.pendingCount > 0
-        ? colors.primary
-        : colors.outline;
+    // M04：文案与色调都由纯 Dart 判定（`syncBarLabel` / `syncBarToneOf`）
+    final String label = syncBarLabel(link: _link, triage: triage);
+    final Color color = switch (syncBarToneOf(link: _link, triage: triage)) {
+      SyncBarTone.error => colors.error,
+      SyncBarTone.active => colors.primary,
+      SyncBarTone.neutral => colors.outline,
+    };
 
     return Align(
       alignment: Alignment.topRight,

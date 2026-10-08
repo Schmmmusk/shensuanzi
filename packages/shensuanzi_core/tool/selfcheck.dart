@@ -489,6 +489,43 @@ void main() {
     // Windows 上文件可能还被占用 —— 不影响结论
   }
 
+  // ============================================================ 存储失败分类（M15）
+  //
+  // 与 `test/storage_error_test.dart` 镜像：判据是**结果码**不是异常文本。
+  section('存储失败分类（storage_error.dart）');
+  check(
+      '按结果码分类：锁 / 满 / 只读 / 损坏 / 打不开',
+      classifyStorageFailure(SqliteException(5, 'x')) ==
+              StorageFailureKind.locked &&
+          classifyStorageFailure(SqliteException(13, 'x')) ==
+              StorageFailureKind.full &&
+          classifyStorageFailure(SqliteException(8, 'x')) ==
+              StorageFailureKind.readOnly &&
+          classifyStorageFailure(SqliteException(26, 'x')) ==
+              StorageFailureKind.corrupted &&
+          classifyStorageFailure(SqliteException(14, 'x')) ==
+              StorageFailureKind.unopenable);
+  check('扩展码回到主码（READONLY_RECOVERY 264 ⇒ readOnly）',
+      classifyStorageFailure(SqliteException(264, 'x')) ==
+          StorageFailureKind.readOnly);
+  check('非 SqliteException ⇒ unknown（不抛、不猜）',
+      classifyStorageFailure(StateError('x')) == StorageFailureKind.unknown &&
+          classifyStorageFailure('boom') == StorageFailureKind.unknown);
+  check(
+      '给用户的文案**不含 SQL / 参数 / 类型名**',
+      !storageFailureNote(SqliteException(
+        5,
+        'while executing INSERT',
+        null,
+        'INSERT INTO documents (id) VALUES (?)',
+        <Object?>['d-1'],
+      )).contains('INSERT'));
+  check('已知类别都说了「内容还在」',
+      <int>[5, 13, 8, 11, 14].every((int c) =>
+          storageFailureNote(SqliteException(c, 'x')).contains('还在')));
+  check('只读走「重新打开」（重试当前连接必然再失败）',
+      storageFailureNote(SqliteException(8, 'x')).contains('重新打开'));
+
   db.close();
   check('close() 后可用', !db.inTransaction);
 

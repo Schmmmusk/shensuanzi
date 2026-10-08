@@ -40,7 +40,15 @@ export 'src/instance_lock.dart'
     show InstanceLock, InstanceLockResult, instanceLockFileName;
 export 'src/http_transport.dart' show HttpTransport;
 export 'src/mobile_sync_service.dart'
-    show MobileSyncService, SyncOutcome, SyncOutcomeKind;
+    show
+        MobileSyncService,
+        SyncBarTone,
+        SyncLinkState,
+        SyncOutcome,
+        SyncOutcomeKind,
+        syncBarLabel,
+        syncBarToneOf,
+        syncLinkStateOf;
 export 'src/mirror_view.dart' show MirrorView;
 export 'src/mobile_guidance.dart'
     show MobileGuideTopic, mirrorEmptyMessage, mobileGuideMessage, mobileGuideTitle;
@@ -74,7 +82,7 @@ export 'src/backup.dart'
         weekKeyOf;
 export 'src/typography.dart' show AppTypography;
 export 'src/version.dart' show AppVersion;
-export 'src/shell_kind.dart' show ShellKind, shellKindFor;
+export 'src/shell_kind.dart' show ShellKind, overviewNavHint, shellKindFor;
 export 'src/manual_content.dart' show
     ManualBlock,
     ManualNote,
@@ -118,3 +126,7 @@ export 'src/format.dart'
         partyRoleLabel,
         partyRolesLabel;
 export 'src/fs.dart' show ensureWritableDirectory;
+export 'src/entry_layout.dart'
+    show entryFieldsMinWidth, entryFieldsShouldStack;
+export 'src/scan_error.dart'
+    show ScanFailureKind, scanFailureKindOf, scanFailureMessage;

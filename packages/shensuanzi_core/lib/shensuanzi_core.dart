@@ -28,6 +28,8 @@ library;
 export 'src/db/database.dart' show Db;
 export 'src/db/schema.dart'
     show Schema, MissingMigrationException, SchemaTooNewException;
+export 'src/db/storage_error.dart'
+    show StorageFailureKind, classifyStorageFailure, storageFailureNote;
 
 // 工具
 export 'src/util/ids.dart' show newId;

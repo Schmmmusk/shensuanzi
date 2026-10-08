@@ -15,3 +15,12 @@ enum ShellKind { desktop, mobile }
 /// 按操作系统名判壳。⚠️ 判定**只有一条**：`android` ⇒ 移动，其余 ⇒ 桌面。
 ShellKind shellKindFor({required String operatingSystem}) =>
     operatingSystem == 'android' ? ShellKind.mobile : ShellKind.desktop;
+
+/// 概览页「从这里开始」的指路文案（M05，2026-10-08）。
+///
+/// 桌面壳是**左侧常驻导航**，手机壳是**底部导航** —— 同一句话在两套壳里
+/// 说错了地方就是错的（真机：手机上仍写「左边的功能列表」）。摆放由壳给
+/// （`overview_page.dart` 的 `mobileShell` 参数），措辞在这里，`dart test` 钉得住。
+String overviewNavHint({required bool mobileShell}) => mobileShell
+    ? '底部的按钮一直可见：开单、查库存、管商品都在那里。'
+    : '左边的功能列表一直可见：开单、查库存、管商品都在那里。';

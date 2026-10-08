@@ -101,7 +101,36 @@ void main() {
     expect(find.text('已同步'), findsNothing);
   });
 
-  testWidgets('三态条：注入 sync + 空队列 ⇒ 「已同步」；tab 间常驻', (
+  /// 三态条夹具：指向临时目录的同步服务。
+  ///
+  /// [pairing] 传 `null` = **没配对过**（`pairing.json` 不存在）；
+  /// 传值 = 已配对（再带 `lastSyncAt` 才算「同步成功过」）。
+  MobileSyncService syncServiceIn(Directory box, {PairingInfo? pairing}) {
+    final PairingStore pairingStore = PairingStore(
+      File(p.join(box.path, 'pairing.json')),
+    );
+    if (pairing != null) pairingStore.save(pairing);
+    return MobileSyncService(
+      mirrorPath: p.join(box.path, 'mirror', 'shensuanzi_mirror.db'),
+      pairingStore: pairingStore,
+    );
+  }
+
+  Widget shellWith(MobileSyncService sync) => MaterialApp(
+    home: MobileShell(
+      shell: AppShell(
+        dataDirectory: '/tmp/data',
+        backupDirectory: '/tmp/backup',
+        schemaVersion: 3,
+        databaseReady: false,
+        configStore: store,
+        onConfigChanged: (AppConfig config) {},
+        mobileSync: sync,
+      ),
+    ),
+  );
+
+  testWidgets('三态条：**没配对** + 空队列 ⇒ 「尚未连接电脑」（M04：空队列 ≠ 已同步）', (
     WidgetTester tester,
   ) async {
     final Directory syncBox = Directory.systemTemp.createTempSync(
@@ -114,36 +143,53 @@ void main() {
         // 镜像库可能还开着 —— 删不掉不影响结论（同既有测试的兜底）
       }
     });
-    final MobileSyncService sync = MobileSyncService(
-      mirrorPath: p.join(syncBox.path, 'mirror', 'shensuanzi_mirror.db'),
-      pairingStore: PairingStore(File(p.join(syncBox.path, 'pairing.json'))),
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        home: MobileShell(
-          shell: AppShell(
-            dataDirectory: '/tmp/data',
-            backupDirectory: '/tmp/backup',
-            schemaVersion: 3,
-            databaseReady: false,
-            configStore: store,
-            onConfigChanged: (AppConfig config) {},
-            mobileSync: sync,
-          ),
-        ),
-      ),
-    );
+
+    await tester.pumpWidget(shellWith(syncServiceIn(syncBox)));
     await tester.pumpAndSettle();
 
-    // 空队列 =「已同步」（裁定 ④：已同步 ≠ 队列为空，但没有 pending/failed 就该这么说）
-    expect(find.text('已同步'), findsOneWidget);
+    // M04（2026-10-08，`docs/reply.md` §二·1）：**空队列不再等于「已同步」** ——
+    // 没配对过就是什么都没连上，显示「已同步」会让用户以为单已经传给电脑了
+    expect(find.text('尚未连接电脑'), findsOneWidget);
+    expect(find.text('已同步'), findsNothing);
 
     // tab 之间常驻（切到「我的」再回来看，它还在）
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('概览'));
     await tester.pumpAndSettle();
+    expect(find.text('尚未连接电脑'), findsOneWidget);
+  });
+
+  testWidgets('三态条：已配对 + 同步过 + 空队列 ⇒ 「已同步」', (WidgetTester tester) async {
+    final Directory syncBox = Directory.systemTemp.createTempSync(
+      'shensuanzi_syncbar2_',
+    );
+    addTearDown(() {
+      try {
+        syncBox.deleteSync(recursive: true);
+      } catch (_) {
+        // 同上：库还开着时删不掉，不影响结论
+      }
+    });
+
+    await tester.pumpWidget(
+      shellWith(
+        syncServiceIn(
+          syncBox,
+          pairing: PairingInfo.fromPayload(
+            hostId: 'h1',
+            ip: '127.0.0.1',
+            port: 17890,
+            token: 't',
+          ).withLastSyncAt(1700000000000),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 过了前两关，队列的空才有话语权（这就是原来那条断言的正确位置）
     expect(find.text('已同步'), findsOneWidget);
+    expect(find.text('尚未连接电脑'), findsNothing);
   });
 }
 

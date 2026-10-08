@@ -764,13 +764,109 @@ void main() {
   }
 
   stdout.writeln('\n${'=' * 46}');
-  stdout.writeln('通过 $_pass 项，失败 $_fail 项');
+  // （统计输出在**文件末尾** —— 它必须排在所有 section 之后，否则末尾
+  // 新增的断言不会被算进去。2026-10-08 真实踩到：三态条段 6 项跑绿了，
+  // 但统计仍显示旧的 131 项。）
   if (_failures.isNotEmpty) {
     stdout.writeln('失败清单：');
     for (final String name in _failures) {
       stdout.writeln('  - $name');
     }
   }
+  // ============================================================ 三态条判定（M04）
+  //
+  // 与 `test/sync_bar_test.dart` 镜像。核心回归：**没配对过 ⇒ 队列是空的**，
+  // 老判定会把「还没连上电脑」显示成「已同步」（信任问题）。
+  section('三态条判定（M04：未配对 + 空队列 ≠ 已同步）');
+  const SyncQueueTriage emptyTriage = SyncQueueTriage(
+    pendingCount: 0,
+    failedCount: 0,
+  );
+  check(
+      '没配对 ⇒ notPaired（哪怕队列空，everSynced 也不采信）',
+      syncLinkStateOf(paired: false, everSynced: false) ==
+              SyncLinkState.notPaired &&
+          syncLinkStateOf(paired: false, everSynced: true) ==
+              SyncLinkState.notPaired);
+  check('配对过但从没同步成功 ⇒ neverSynced',
+      syncLinkStateOf(paired: true, everSynced: false) ==
+          SyncLinkState.neverSynced);
+  check('配对过且同步成功过 ⇒ linked',
+      syncLinkStateOf(paired: true, everSynced: true) ==
+          SyncLinkState.linked);
+  check('未配对 + 空队列**不是**「已同步」',
+      syncBarLabel(link: SyncLinkState.notPaired, triage: emptyTriage) ==
+          '尚未连接电脑');
+  check('配对过没同步过也说清',
+      syncBarLabel(link: SyncLinkState.neverSynced, triage: emptyTriage) ==
+          '还没同步过');
+  check('linked 之后队列才有话语权（pending / failed 并列）',
+      syncBarLabel(link: SyncLinkState.linked, triage: emptyTriage) ==
+              '已同步' &&
+          syncBarLabel(
+                  link: SyncLinkState.linked,
+                  triage: const SyncQueueTriage(
+                    pendingCount: 2,
+                    failedCount: 1,
+                  )) ==
+              '待同步 2 条 · 失败 1 条');
+  check('未链接恒为中性色（没连上不是错误）',
+      syncBarToneOf(
+              link: SyncLinkState.notPaired,
+              triage: const SyncQueueTriage(
+                pendingCount: 0,
+                failedCount: 3,
+              )) ==
+          SyncBarTone.neutral);
+
+  // ============================================================ P3 收尾（M03 / M05 / M10）
+  //
+  // 与 `test/scan_error_test.dart` / `test/shell_kind_test.dart` /
+  // `test/entry_layout_test.dart` 镜像。
+  section('扫码错误中文解释（M03：不回显英文）');
+  check('permissionDenied 归到「权限被拒」',
+      scanFailureKindOf('permissionDenied') ==
+          ScanFailureKind.permissionDenied);
+  check('unknown 错误码兜底 generic（不抛）',
+      scanFailureKindOf('') == ScanFailureKind.generic &&
+          scanFailureKindOf('某个将来的新码') == ScanFailureKind.generic);
+  check(
+      '权限文案指路系统设置（且**不含**插件英文原文）',
+      scanFailureMessage(ScanFailureKind.permissionDenied).contains('设置') &&
+          scanFailureMessage(ScanFailureKind.permissionDenied).contains('相机') &&
+          !scanFailureMessage(ScanFailureKind.permissionDenied)
+              .contains('Camera'));
+  check(
+      '三类文案都不含英文原文 / 类名',
+      ScanFailureKind.values.every((ScanFailureKind k) {
+        final String msg = scanFailureMessage(k);
+        return !msg.contains('Camera') &&
+            !msg.contains('permission denied') &&
+            !msg.contains('MobileScanner') &&
+            !msg.contains('Exception');
+      }));
+
+  section('概览指路文案随壳（M05）');
+  check('桌面 ⇒ 说「左边」',
+      overviewNavHint(mobileShell: false).contains('左边'));
+  check(
+      '手机 ⇒ 说「底部」且不说「左边」',
+      overviewNavHint(mobileShell: true).contains('底部') &&
+          !overviewNavHint(mobileShell: true).contains('左边'));
+
+  section('明细行并排 / 堆叠判定（M10）');
+  check('宽屏 + 标准字号 ⇒ 并排',
+      !entryFieldsShouldStack(maxWidth: 800, textScale: 1));
+  check('真机场景：360 宽 + 2 倍字号 ⇒ 堆叠',
+      entryFieldsShouldStack(maxWidth: 360, textScale: 2));
+  check('阈值边界：340 恰好并排、339 堆叠',
+      !entryFieldsShouldStack(maxWidth: entryFieldsMinWidth, textScale: 1) &&
+          entryFieldsShouldStack(maxWidth: 339, textScale: 1));
+  check('无界宽度 ⇒ 不堆叠（横向滚动容器没有「太窄」）',
+      !entryFieldsShouldStack(maxWidth: double.infinity, textScale: 2));
+
+  // ⚠️ 统计输出必须在**所有** section 之后 —— 详见上文那条注释。
+  stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   stdout.writeln('=' * 46);
   exit(_fail == 0 ? 0 : 1);
 }

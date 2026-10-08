@@ -33,6 +33,7 @@ class OverviewPage extends StatefulWidget {
     this.backupReminder,
     this.onBackupNow,
     this.locationNote,
+    this.mobileShell = false,
   });
 
   /// 数据目录（用户选的，数据库就放在这里）
@@ -60,6 +61,10 @@ class OverviewPage extends StatefulWidget {
   /// 打不开，显示友好文案而非具体路径；路径挪到帮助页「关于」小字）。
   /// `null` = 显示真实路径（桌面行为，零变化）。
   final String? locationNote;
+
+  /// 手机壳（底部导航）—— 只影响「从这里开始」那句指路文案
+  /// （M05：手机上不能写「左边的功能列表」）。默认 `false` = 桌面。
+  final bool mobileShell;
 
   @override
   State<OverviewPage> createState() => _OverviewPageState();
@@ -205,7 +210,9 @@ class _OverviewPageState extends State<OverviewPage> {
         Text('从这里开始', style: theme.textTheme.titleMedium),
         const SizedBox(height: 8),
         Text(
-          '左边的功能列表一直可见：开单、查库存、管商品都在那里。',
+          // M05（2026-10-08）：措辞随壳走 —— 桌面左侧列表 / 手机底部导航。
+          // 文案在 `shensuanzi_app` 的 `overviewNavHint`（纯 Dart，`dart test` 钉得住）
+          overviewNavHint(mobileShell: widget.mobileShell),
           style: TextStyle(
             height: 1.6,
             color: theme.textTheme.bodySmall?.color,

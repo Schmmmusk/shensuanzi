@@ -44,8 +44,10 @@ class AppShell extends StatefulWidget {
     this.deliveries,
     this.documentSink,
     this.onDocumentSubmitted,
+    this.onStorageFailure,
     this.stockDelta,
     this.readOnlyMasterData = false,
+    this.mobileShell = false,
     this.returns,
     this.onMigrateData,
     this.mobileSync,
@@ -103,6 +105,10 @@ class AppShell extends StatefulWidget {
   /// `isQueued=false`，没有队列这回事。
   final void Function(DocumentSubmitResult result)? onDocumentSubmitted;
 
+  /// 开单保存失败时把**原始异常**交给宿主记日志（M15，2026-10-08）。
+  /// 界面只显示 `storageFailureNote` 的分类文案；`null` = 不记（测试）。
+  final void Function(Object error, StackTrace stack)? onStorageFailure;
+
   /// 库存叠加（C2·§CC 裁定七：权威 + 未同步 + 拆解）。
   /// 手机端注入（镜像队列）；桌面 `null` = 现状零变化。
   final StockDelta? stockDelta;
@@ -111,6 +117,16 @@ class AppShell extends StatefulWidget {
   /// 必被外键拒绝）。`true` 时「新建 / 编辑 / 期初」入口**保留但点击后弹
   /// 引导对话框**（不隐藏 —— Agents.md 4.3）。桌面缺省 `false` = 零变化。
   final bool readOnlyMasterData;
+
+  /// **是不是手机壳**（M05 / M07，2026-10-08）。
+  ///
+  /// 与 [readOnlyMasterData] 同源但**语义不同**，所以不合并：
+  /// 这个说的是「界面形态」（顶部三态条 / 底部导航 / 没有单据详情页），
+  /// 那个说的是「能不能在本机建档」。将来手机放开建档，两者会分开。
+  ///
+  /// 用途：同一份页面代码里，**按壳给不同的指引文案** ——
+  /// 例如送货页原来叫用户「到「单据」详情页点收款」，而手机**没有**那个页面。
+  final bool mobileShell;
 
   /// 退货服务（§BI R2：单据详情页的退货 / 拒收入口；`null` = 入口不可用）
   final ReturnService? returns;
@@ -228,6 +244,8 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
       backupReminder: shell.backupReminder,
       onBackupNow: shell.onBackupNow,
       locationNote: shell.dataLocationNote,
+      // M05：指路文案随壳走（桌面「左边」/ 手机「底部」）
+      mobileShell: shell.mobileShell,
     );
     } else if (destination.id == 'products') {
       // 商品是核心闭环的第一块 —— 已实现，不再是占位页
@@ -246,6 +264,9 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               // B3b：提交走 Sink（桌面/手机同一份页面代码，无分支）
               sink: shell.documentSink!,
               onSubmitted: shell.onDocumentSubmitted,
+              onStorageFailure: shell.onStorageFailure,
+              // M08：本地未同步影响（手机端才有；桌面 null）
+              stockDelta: shell.stockDelta,
               // C2·§CC：手机端主数据禁建（保留入口 + 引导）
               readOnlyMasterData: shell.readOnlyMasterData,
             );
@@ -264,7 +285,11 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               partyService: shell.parties!,
               sink: shell.documentSink!,
               onSubmitted: shell.onDocumentSubmitted,
+              onStorageFailure: shell.onStorageFailure,
+              // M08：本地未同步影响（手机端才有；桌面 null）
+              stockDelta: shell.stockDelta,
               readOnlyMasterData: shell.readOnlyMasterData,
+              mobileShell: shell.mobileShell,
             );
     } else if (destination.id == 'stock') {
       // 库存查询是 RULE-006 的纯聚合读；期初录入入口（§AD）还要引擎
@@ -338,6 +363,7 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               productService: shell.products!,
               sink: shell.documentSink!,
               onSubmitted: shell.onDocumentSubmitted,
+              onStorageFailure: shell.onStorageFailure,
               readOnlyMasterData: shell.readOnlyMasterData,
             );
     } else {

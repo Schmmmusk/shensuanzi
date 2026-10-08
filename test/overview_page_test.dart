@@ -20,6 +20,7 @@ void main() {
   Widget page({
     String? reminder,
     Future<BackupOutcome> Function()? onBackupNow,
+    bool mobileShell = false,
   }) => MaterialApp(
     home: Scaffold(
       body: OverviewPage(
@@ -29,6 +30,7 @@ void main() {
         databaseReady: true,
         backupReminder: reminder,
         onBackupNow: onBackupNow,
+        mobileShell: mobileShell,
       ),
     ),
   );
@@ -143,5 +145,23 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.text('立即备份'), findsOneWidget, reason: '完成后按钮恢复可用');
+  });
+
+  // M05（2026-10-08）：手机上概览页复用桌面页，但**导航形态不同** ——
+  // 桌面是左侧常驻列表，手机是底部导航。同一句话在两套壳里说错地方就是错的。
+  testWidgets('M05：桌面壳 ⇒ 指路「左边」，手机壳 ⇒ 指路「底部」', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    expect(find.textContaining('左边的功能列表'), findsOneWidget);
+    expect(find.textContaining('底部的按钮'), findsNothing);
+
+    await tester.pumpWidget(page(mobileShell: true));
+    expect(find.textContaining('底部的按钮'), findsOneWidget);
+    expect(
+      find.textContaining('左边的功能列表'),
+      findsNothing,
+      reason: '手机上写「左边的功能列表」正是 M05 报的错',
+    );
   });
 }

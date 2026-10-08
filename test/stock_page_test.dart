@@ -130,16 +130,79 @@ void main() {
     );
   }
 
-  Widget page({ExportSink? exports}) => MaterialApp(
+  Widget page({ExportSink? exports, StockDelta? stockDelta}) => MaterialApp(
     home: Scaffold(
       body: StockPage(
         engine: RuleEngine(db),
         products: products,
         queries: queries,
         exports: exports,
+        stockDelta: stockDelta,
       ),
     ),
   );
+
+  /// 一条「卖出 [quantity] 件」的入队条目（payload = createDocument wire 形状）
+  void enqueueSale(String id, String productId, int quantity) {
+    SyncQueueDao(db).enqueue(
+      SyncQueueEntry(
+        id: id,
+        entity: Schema.documents,
+        entityId: 'd-$id',
+        operation: SyncOpType.createDocument,
+        payload: <String, Object?>{
+          'document': <String, Object?>{
+            'id': 'd-$id',
+            'doc_no': '${Document.pendingDocNoPrefix}$id',
+            'doc_type': 'sale',
+            'status': 'confirmed',
+            'occurred_at': 1700000000000,
+          },
+          'lines': <Object?>[
+            <String, Object?>{
+              'id': 'l-$id',
+              'document_id': 'd-$id',
+              'product_id': productId,
+              'quantity': quantity,
+              'unit_price': 500,
+              'amount': quantity * 500,
+            },
+          ],
+        },
+        createdAt: 1700000000000,
+      ),
+    );
+  }
+
+  testWidgets('M14：**只有本地未同步影响**的商品，默认列表里也要看得到', (
+    WidgetTester tester,
+  ) async {
+    // 手机端场景：刚在手机上卖了 1 件，权威账面仍是 0（还没推给电脑）
+    final Product onlyLocal = Product(
+      id: 'p-only-local',
+      code: 'P9999',
+      name: '只在手机上卖过的货',
+      costPrice: 300,
+      sellPrice: 500,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+    );
+    ProductDao(db).insert(onlyLocal);
+    enqueueSale('q-m14', onlyLocal.id, 1);
+
+    await tester.pumpWidget(
+      page(stockDelta: StockDelta(db: db, queue: SyncQueueDao(db))),
+    );
+    await tester.pumpAndSettle();
+
+    // M14（2026-10-08）：本地那一笔也是流水 —— 只按权威过滤会把它**藏起来**，
+    // 负库存风险反而看不见（报告实测：勾「显示全部」才看得到「估算 −1」）
+    expect(
+      find.text('只在手机上卖过的货'),
+      findsOneWidget,
+      reason: '默认列表必须含「只有本地未同步影响」的商品',
+    );
+  });
 
   testWidgets('空库给「怎么办」：两段式空态（§AD-6）+ 首次入口文案（遗漏 2）', (WidgetTester tester) async {
     await tester.pumpWidget(page());

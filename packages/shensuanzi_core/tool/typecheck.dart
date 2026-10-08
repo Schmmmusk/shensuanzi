@@ -52,6 +52,7 @@ import '../test/settlement_service_test.dart' as settlement_service_test;
 import '../test/stocktake_service_test.dart' as stocktake_service_test;
 // ignore: unused_import
 import '../test/stock_delta_test.dart' as stock_delta_test;
+import '../test/storage_error_test.dart' as storage_error_test;
 import '../test/sync_client_test.dart' as sync_client_test;
 // ignore: unused_import
 import '../test/util_test.dart' as util_test;
@@ -121,6 +122,7 @@ void main() {
     settlement_service_test.main,
     stocktake_service_test.main,
     stock_delta_test.main,
+    storage_error_test.main,
     sync_client_test.main,
     util_test.main,
     // tool/

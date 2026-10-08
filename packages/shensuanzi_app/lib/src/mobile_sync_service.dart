@@ -38,6 +38,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart'
         SyncPushReport,
         SyncQueueDao,
         SyncQueueEntry,
+        SyncQueueTriage,
         Transport,
         TransportRequest,
         TransportResponse;
@@ -392,4 +393,80 @@ class MobileSyncService {
     SyncOutcomeKind.authExpired,
     '配对已失效 —— 主机可能重启过或重新生成了配对码，请重新扫码连接',
   );
+}
+
+/// 三态条的**前置链接态**（M04，2026-10-08 · `docs/reply.md` §二·1）。
+///
+/// ## 为什么「队列空」不能等于「已同步」
+///
+/// 原判定是「队列里没有 pending / failed ⇒ 已同步」。而**全新安装、
+/// 从没配对过**的手机，队列**天然是空的** ⇒ 顶栏第一天就写「已同步」，
+/// 用户以为「已经连上电脑了」，他刚开的单其实还躺在本地队列里 ——
+/// 直到某天发现电脑上根本没有这张单。这是**信任问题**，不是显示问题。
+///
+/// ## 判定顺序
+///
+/// 1. 有没有配对（`pairing.json` 在不在）；
+/// 2. 配对过的话，**成功同步过没有**（`lastSyncAt`）；
+/// 3. 只有过了前两关，队列的空 / 非空才有话语权。
+enum SyncLinkState {
+  /// 没配对过 —— 队列空**不代表任何事**
+  notPaired,
+
+  /// 配对过，但一次都没同步成功
+  neverSynced,
+
+  /// 至少成功同步过一次（这时队列才有话语权）
+  linked,
+}
+
+/// 由「是否已配对」与「是否同步成功过」判定链接态（纯函数）。
+SyncLinkState syncLinkStateOf({
+  required bool paired,
+  required bool everSynced,
+}) {
+  if (!paired) return SyncLinkState.notPaired;
+  return everSynced ? SyncLinkState.linked : SyncLinkState.neverSynced;
+}
+
+/// 三态条的颜色语义（UI 只把它映射成主题色）。
+enum SyncBarTone {
+  /// 中性（未连接 / 没同步过 / 已同步）
+  neutral,
+
+  /// 进行中（有待同步）
+  active,
+
+  /// 出错（有失败）
+  error,
+}
+
+/// 顶栏那一句话（**文案在纯 Dart**，UI 只渲染）。
+String syncBarLabel({
+  required SyncLinkState link,
+  required SyncQueueTriage triage,
+}) {
+  switch (link) {
+    case SyncLinkState.notPaired:
+      return '尚未连接电脑';
+    case SyncLinkState.neverSynced:
+      return '还没同步过';
+    case SyncLinkState.linked:
+      if (triage.isSynced) return '已同步';
+      return <String>[
+        if (triage.pendingCount > 0) '待同步 ${triage.pendingCount} 条',
+        if (triage.failedCount > 0) '失败 ${triage.failedCount} 条',
+      ].join(' · ');
+  }
+}
+
+/// 颜色语义。**未链接时恒为中性** —— 没连上不是错误，别用红色吓人。
+SyncBarTone syncBarToneOf({
+  required SyncLinkState link,
+  required SyncQueueTriage triage,
+}) {
+  if (link != SyncLinkState.linked) return SyncBarTone.neutral;
+  if (triage.failedCount > 0) return SyncBarTone.error;
+  if (triage.pendingCount > 0) return SyncBarTone.active;
+  return SyncBarTone.neutral;
 }

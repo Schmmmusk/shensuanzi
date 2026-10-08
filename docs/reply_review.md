@@ -23,7 +23,7 @@
 > | CSV 导出（§AF）                                                    | ✅ 五页接线 + 三层测试闭环                                                                                                                                                                                                   |
 > | **首发准备（§AG）**                                                  | ✅ Release 已构建（30.8 MB → 压缩 **12.8 MB**）；版本号 / 文件属性 / LICENSE / 图标 / 日志 / 同步入口占位 / README / 打包文档 / **发布包脚本**均已落地；**14 步清单已在新机器实测：12/14（2026-09-29）→ 两处根因修复（§AI）+ 三口子落地（§AJ）后重新打包复测 → 14/14 全过（2026-09-30），首发验证闭环** |
 > | **Android（§AH）**                                               | ✅ **B1 起已落地并真机验收**：B1a/B1b 首启直达（§BH·五）· B2 扫码配对 + 首拉镜像（§BL）· **B3 手机开单 → 队列 → 自动推 → 三态条 → 库存叠加 → 引导**（§CA / §CB / §CD / §CE 落地，**§CF 真机 ①–⑦ 全过**）· C3 复验进行中。⚠️ 本提交（§CJ·补 2 后）**未经人工复跑门禁** |
-> | **待办**                                                         | 👉 **唯一权威入口 = §AR「当前待办总览」**（头部这一行只是指针）。**当前队列**（2026-10-07，§CK / `handoff-2026-10-07.md`）：① **复跑全量门禁**（本提交未复跑）② **D1 主数据入队 core 段**（裁定已下，§CI 摸底完，**实现未写**）③ C3 真机复验收尾（③ 标题缩放待裁定 · ④① 待复验）④ README 能力表（B3 收尾后）。**本行原有三件**（v3 批次 / Android / `DocumentDraft`）**均已挪后或已落地**：v3 段 1a·1b ✅（§BD），Android B1–B3 ✅，`DocumentDraft` 仍等形状稳定（§BE·二） |
+> | **待办**                                                         | 👉 **唯一权威入口 = §AR「当前待办总览」**（头部这一行只是指针）。**当前队列**（2026-10-07，§CK / `handoff-2026-10-07.md`）：① **复跑全量门禁**（本提交未复跑）② **D1 主数据入队 core 段**（裁定已下，§CI 摸底完，**实现未写**）③ C3 真机复验收尾（③ 标题缩放待裁定 · ④① 待复验）④ README 能力表（B3 收尾后）。**本行原有三件**（v3 批次 / Android / `DocumentDraft`）**均已挪后或已落地**：v3 段 1a·1b ✅（§BD），Android B1–B3 ✅，`DocumentDraft` 仍等形状稳定（§BE·二）。**另：外部测试报告带来的 M 系列（§CO–§CR）✅ 已全部闭环（2026-10-08）** |
 > | **有意识不做（首发范围外）**                                               | 欢迎浮层（§六 已收紧为一屏对话框，欢迎语两行随 §AG 遗漏 1 进对话框）· 备份恢复 UI / 加密（AE-6）· 单据分页（SC-3）· mDNS（v1.5）· 退货 / 利润显示（§Z 七）· 备份目录 README.txt（AE 遗漏 10）。**注：两处已移出本列** —— 送货单（批次 1b，§AP）、**折扣抹零**（2026-10-02 裁定：v1 就做，转 v3 批次，§BA·一）       |
 >
 > 对应 `Agents.md` §七「开发顺序」九步：**1–5、7 的逻辑层已完成**，6（Windows UI）**11 入口全通**，  
@@ -104,6 +104,11 @@
 > §CK **开发机迁移交接**（本提交未经人工门禁复跑 —— 旧机拉取后第一件事 = 复跑）（**2026-10-07**） │  
 > §CL **两类审查报告 16 项落地**（`docs/reply.md` 裁定 → 核销门槛 / 分页拉到底 / 状态回传窗口 / 换主机重置 / 缺库不静默建库 / 迁移失败口径 / Android 导出改口径 / 退货退款入口；**门禁 6 项全绿**）（**2026-10-07**） │  
 > §CM **两项二次裁定落地**：自动补传三触发（**开单后 + 回前台 + 手动**，不引依赖）+ `saleReturn`/`purchaseReturn` **不移出白名单**（`reply.md` §一/§二）（**2026-10-07 夜**）
+> §CN **外部测试报告核对结论**（5 份材料逐项 grep/读码核对：16 项 ✅ 已修 · 桌面 BUG/OBS 除 **BUG-06** 外闭环 · 移动端 M 系列多为未处理；**待裁定优先级**）（**2026-10-08**）
+> §CO **M 系列第一批（P1）落地**：BUG-06/M07 文案（按壳分）+ M15 存储异常分类 + M04 未配对不显示「已同步」（**2026-10-08**）
+> §CP **M 系列第二批（P2）落地**：草稿保护（M09+M11+M12）+ M16 两步修（镜像打开移出 build 期 + 失败页重试）（**2026-10-08**）
+> §CQ **M 系列第三批（P2）落地**：库存离线视图（M08+M14）+ 窄屏适配（M13）；**六** 复跑红修复（局部函数先引用后声明）（**2026-10-08**）
+> §CR **M 系列 P3 收尾落地**：M03 相机权限中文 + M05 壳相关导航文案 + M10 窄屏单位提示（新增 `scan_error` / `entry_layout` / `EntryFieldsRow`）（**2026-10-08**）
 >
 > 📦 **已归档的节**（`~~删除线~~` 表示已移出本文件）：§0-§7 → `reply_review_archive_v1.md`；  
 > **§F / §G / §I / §J / §K 与 §H 的落地记录部分** → `reply_review_archive_v2.md`（2026-09-28）。  
@@ -7702,4 +7707,309 @@ workspace-write 下无法给子进程建管道与信号监听）：
 | core / host / app `dart test` | ✅ 492 / 135 / 289 |
 | `import_guard` / `flutter analyze` | ✅ 0 处缺导入 / 0 issues |
 | `flutter test` | ✅ 148 |
+
+---
+
+## §CN 外部测试报告核对结论（2026-10-08）
+
+> **来源**：用户提交 5 份材料 —— ① 代码审查报告（10 项）② Android 报告摘要（6 项）
+> ③ `test-report-2026-10-07-mobile.md`（四轮 / 23 项）④ `test-report-2026-10-07-storage.md`（M15·M16）
+> ⑤ `测试报告-神算子v0.1.0.md`（桌面：BUG-01~07 + OBS-05~15）。
+> **方法**：在 HEAD `d41bcb7` 逐项 **grep / 读码**核对（**不采信台账结论**）；**未改任何代码**。
+> **用途**：回答「问题是否存在 / 是否真实 / 修复情况 / 最小复现 / 修复方案」。
+
+### 一、①+②（16 项）—— ✅ 全部**真实存在**且**已修**，代码可验证
+
+| 报告项 | HEAD 代码证据 |
+|---|---|
+| ① 缺库静默建空库 | `StartupScenario.missingDatabase` / `AppBootstrap.missingConfigured()`(:133) / `createEmptyDatabase()`(:314)；`DataDirectoryService.missingExisting()`(:95) |
+| ② 同父目录账套共用备份 | 改文档：`data_directory.md` §8.1 |
+| ③ 换主机复用旧同步数据 | `MobileSyncService.resetForNewHost()`(:149) + `markHeld()`(:156) + 调用点(:379)；`SyncQueueDao.unsent()`/`markHeld()`(sync_dao.dart:111/118) |
+| ④ 挂账退货无退款入口 | 详情页「退款给客户 / 收供应商退款」+「应退金额 / 已退款 / 未退款」(document_detail_page.dart:321/345/370)（⚠️ 报告「退款方向写反」是**误判**，见 §CL·一） |
+| ⑤ 重复分配破下限 | `RuleEngine.settleDirections`(rule_engine.dart:133) + 聚合校验 + 方向校验(:543-547) |
+| ⑥ 核销未校验往来方/方向 | 同上（校验含 `party_id` 一致性） |
+| ⑦ 单据后续状态不同步 | `doc_updated_since` 最近更新窗口(sync_client.dart:380) |
+| ⑧ 分页致库存漏算 | 队列清理**只在拉到底**时执行(sync_client.dart:415) |
+| ⑨ 未拉完却报完成 | `has_more` + `while(hasMore)` 循环(:322-347) + `maxPullPages=200`(:45) 到顶如实报 |
+| ⑩ 迁移说明文件写失败 | `DataMigrationResult.warning` 通道(data_migrator.dart) |
+| ②报告·备份为空 | Android 导出改口径（镜像库 + 主库 + 未同步清单） |
+| ②报告·自动补传 | §CM 三触发：开单后 + **回前台**(app.dart:314 `didChangeAppLifecycleState`) + 手动 |
+
+### 二、⑤ 桌面 v0.1.0 报告 —— 除 **BUG-06** 外全部闭环
+
+| 项 | 状态 |
+|---|---|
+| BUG-01 日期中英混杂 | ✅ `flutter_localizations` + `locale: zh`(app.dart:1408)，§BK·一 |
+| BUG-02 无「更改位置」 | ✅ 设置页「更改数据位置」+ 迁移全流程(settings_page.dart:88) |
+| BUG-03 损坏库恢复死锁 | ✅ `Db.probe` + `resolved()` 探测 + 失败页强制弹目录框，§BM |
+| BUG-04 退货冲减未反映原单 | ✅ `unsettledCentsOf` 减 `returnedAgainst`(settlement_service.dart:128) |
+| BUG-05 废单仍可收款 | ✅ cancelled ⇒ 隐藏「未收」与收付款入口(document_detail_page.dart:341/387) |
+| **BUG-06 送货页文案过时** | ❌ **台账称已修，实际未修** —— `delivery_page.dart:644` 仍为「（退货功能开发中）」，而退货功能已上线 |
+| BUG-07 让价未清空 | ✅ §BM |
+| OBS-05~15 | ✅ 全部关闭（§BQ 第八节；OBS-05 后半 §BR、OBS-15 §BO） |
+
+### 三、③④ 报告中的 **M 系列**（不在 16 项内）—— 多数**未处理**
+
+| 编号 | 状态 | 判据（HEAD） |
+|---|---|---|
+| M03 相机权限英文提示 | ❌ 未修 | `pairing_scan_page.dart` 无 errorBuilder / 中文拒权限分支 |
+| M04 未配对却显示「已同步」 | ❌ 未修 | `mobile_shell.dart:308` 仅按 `triage.isSynced`（队列空即已同步） |
+| **M05 手机概览用桌面导航文案** | ❌ 未修 | `mobile_shell.dart:162` → `app_shell.dart:222` → 复用 `OverviewPage`；`overview_page.dart:208`「左边的功能列表一直可见」 |
+| M06 无最近销售误报同步中 | ✅ 不复现 | 全仓已无「还在同步 / 尚未同步」文案 |
+| M07 送货页文案（= BUG-06） | ❌ 未修 | 同上；且手机无「单据详情」入口 |
+| M08 开单页库存未含本地队列 | 🟡 部分 | `delivery_page.dart:879` 已标「（打开本页时）」，但**未叠加本地队列影响** |
+| M09 返回保护缺失 | ❌ 未修 | 三开单页 + `mobile_shell.dart` **无 `PopScope`/`WillPopScope`** |
+| M10 单位提示截断（P3） | ❌ 未修 | 明细行字段固定横向比例 |
+| M11 备注不触发取消确认 | ❌ 未修 | `hasContent` 三处**都不含备注**（sale_page.dart:563 / purchase_page.dart:446 / delivery_page.dart:375） |
+| M12 数量变化不重算让价 | ❌ 未修 | `_syncSpread()` 只在删行(:327) / 折扣框(:829) / 保存(:467) 调用，**行数量 onChanged 不触发**(:1211/:1402) |
+| M13 开单页溢出（小屏/大金额） | ❌ 未修 | `sale_page.dart:808` 合计 `Row[Text, Spacer, Text]`、`:1093` 按钮 `Row` —— 均无 `Flexible`/`Wrap` |
+| M14 库存默认过滤不含本地影响 | ❌ 未修 | `stock_page.dart:203-215` 仍「默认只显示有流水」+「显示全部」开关 |
+| M15 异常提示含 SQL 与业务参数 | ❌ 未修 | `delivery_page.dart:314-320` `'没能保存（$error）'` 直接拼异常对象（三页同款） |
+| M16 镜像打不开无重试页 | 🟡 部分 | `_prepareMobile`(app.dart:415) 只处理 `DataDirectoryRejected`；`openMirror()` 在 build 期调用(:1481) 仍可能抛 |
+
+### 四、给下轮的优先级建议（**待裁定，未动手**）
+
+1. **P1**：BUG-06 / M07 文案（一句话，但直接误导用户）；M15（异常提示泄露 SQL + 遮挡页面）
+2. **P2**：M11（输入丢失）、M09（草稿丢失）、M12（金额预览与实际不一致）、M13（关键按钮/金额不可读）
+3. **P2**：M04（状态误导）、M16（无出路）、M05（文案错位）、M14（风险商品被隐藏）
+4. **P3**：M03、M08、M10（文案与提示）
+
+---
+
+## §CO 第一批（P1）落地：BUG-06/M07 文案 + M15 异常提示 + M04 未配对显示（2026-10-08）
+
+> **来源**：`docs/reply.md`（用户对 §CN 核对结论的裁定）。按裁定第四节，
+> **P1 = BUG-06/M07 + M15 + M04（从 P2 提 P1 —— 信任问题）**。
+>
+> ⚠️ **报备一处不一致**：裁定第三节建议「错误提示友好化 = M03+M15+M16 合批」，
+> 但第四节表格与第五节收束把三者分到 P1 / P2 / P3，且收束段只确认了「草稿保护」
+> 与「库存离线视图」两组合并 ⇒ **本批按第四节执行**（M15 在 P1；M16 留 P2、M03 留 P3）。
+
+### 一、M04：未配对 + 空队列 ≠「已同步」（信任问题）
+
+| 项 | 落点 |
+|---|---|
+| 判定（纯函数） | `shensuanzi_app` 新增 `SyncLinkState`（`notPaired` / `neverSynced` / `linked`）+ `syncLinkStateOf` + `syncBarLabel` + `syncBarToneOf` |
+| 接线 | `mobile_shell.dart` 的 `_SyncStatusBar._load()` 读 `pairingStore.load()`（用 `lastSyncAt` 判「首同步成功过」）；未链接时点开走新增的 `_showLinkHint()`（说清「怎么连电脑 / 怎么触发同步」） |
+| 口径 | **未链接恒为中性色** —— 没连上不是错误，不用红色吓人 |
+
+### 二、M15：存储失败提示 —— 分类文案 + 原始异常进日志
+
+| 项 | 落点 |
+|---|---|
+| core（新文件） | `lib/src/db/storage_error.dart`：`StorageFailureKind` + `classifyStorageFailure`（**按结果码**，不按异常文本）+ `storageFailureNote`（中文结论 + 怎么办，**不含 SQL / 参数 / 类型名**） |
+| 三页 | `sale_page` / `purchase_page` / `delivery_page` 的 catch ⇒ `Text(storageFailureNote(error))`（6s → 8s）+ 新增 `onStorageFailure` 回调 |
+| 日志 | `app_shell` → `app.dart` 的 `_onStorageFailure` → `_log.crash(..., label: '保存失败')` |
+| 文案口径 | 每类都告诉用户「**你填的内容还在**」；**只读**明说要「重新打开软件」（当前连接重试必然再失败） |
+
+### 三、BUG-06 / M07：送货页文案（过时 + 指了手机走不通的路）
+
+| 项 | 内容 |
+|---|---|
+| 旧文案 | 「客户拒收：请改用「销售退货」把货退回来（**退货功能开发中**）」—— 退货早已上线（RULE-007/008），文案过时 |
+| 新文案 | 桌面：「客户拒收：到这张送货单的详情页点「客户拒收」（整单退回）。」；**手机：「请在电脑上打开这张送货单…」** |
+| 壳类型 | 新增 `mobileShell` 参数（`app_shell` ← `app.dart` 的 `_shellKind == ShellKind.mobile`）—— 与 `readOnlyMasterData` **同源但语义不同**，故不合并 |
+
+### 四、本侧验证（`dart run` 通道）
+
+core typecheck **43 入口** ✓ · core selfcheck **111 项**（+6）✓ ·
+app typecheck **25 入口** ✓ · app selfcheck **138 项 0 失败**（+7）✓ ·
+新增测试 `storage_error_test.dart`（11 条）· `sync_bar_test.dart`（9 条）
+
+⚠️ **自检抓到我自己两处**：
+1. `corrupted` 类文案漏了「你填的内容还在」（断言要求每类都有）；
+2. `selfcheck_app` 的**统计输出位置**在文件末尾之前 ⇒ 我新加的 6 项跑绿了却**不进统计**。
+   已把统计移到文件末尾，并在原处留注释防下一个人踩。
+
+⚠️ `import_guard` 本侧跑不动（`CreateFile failed 231`，环境缺陷，按纪律停止重试）——**移交用户复跑**。
+
+### 五、待用户复跑
+
+`flutter analyze` / `flutter test` / 两包 `dart test` —— 本批动了根 `lib/` 四个文件
+（`sale_page` / `purchase_page` / `delivery_page` / `mobile_shell` / `app_shell` / `app`），
+而我侧对根 `lib/` **无编译门禁**（只做了语法 + 插值 + 桶导入的人工核对）。
+
+### 六、复跑反馈修复（2026-10-08）
+
+用户复跑报 **`app_shell.dart:285` `duplicate_named_argument`**（`onStorageFailure` 写了两次），
+阻塞 `mobile_shell_test` / `startup_test` / `widget_test` 三个文件的编译（其余全过）。
+
+- **根因**：我先用**整段替换**给 DeliveryPage 那处加了 `onStorageFailure`，随后又用
+  **`replace_all`** 给所有 `onSubmitted: shell.onDocumentSubmitted,` 加同一参数
+  ⇒ 送货页那处被写了两遍。
+- **修法**：删掉重复行；grep 核对 `onStorageFailure` 全部 17 处出现
+  （定义 / 字段 / 3 个传参点 / 3 个 catch 调用）——无其他重复 ✓
+- **教训**：**用 `replace_all` 前必须确认目标处是否已被改过**。这类错我侧**无门禁可抓**
+  （`dart format --output=none` 只查语法；试过 `dart analyze lib/`，同样被
+  `CreateFile failed 231` 挡住）⇒ 只能靠「改完 grep 参数名的**出现次数**」人工核对。
+
+### 七、复跑第二处：`mobile_shell_test` 三态条断言 —— **按 M04 更新断言，不是掩盖缺陷**
+
+用户复跑报 `mobile_shell_test.dart:139` 红：夹具注入了 sync，但**没有写 `pairing.json`**
+（即未配对），而旧断言要求显示「已同步」。
+
+- **判定**：这是 **M04 裁定的预期行为变化**。旧断言建立在「**空队列 ⇒ 已同步**」的旧口径上，
+  而裁定明确「**未配对不得显示已同步**」（信任问题）⇒ **应更新断言**，
+  而不是改生产代码去迎合旧断言（纪律 12：测试红不是改生产代码的授权；反向亦然 ——
+  这里是**断言与已裁定语义不一致**）。
+- **改法**：拆成两条，覆盖两个分支 ——
+  ① **没配对** + 空队列 ⇒ 「尚未连接电脑」（+ 保留原有的 tab 常驻断言）；
+  ② **已配对 + 同步过** + 空队列 ⇒ 「已同步」（把旧断言挪到它**该在**的位置，覆盖不丢）。
+- 顺带抽出两个局部夹具（`syncServiceIn` / `shellWith`），后续三态条用例可直接复用。
+
+---
+
+## §CP 第二批（P2）落地：草稿保护（M09+M11+M12）+ M16（2026-10-08）
+
+> **来源**：`docs/reply.md` 裁定的**第二批** —— `M09 + M11 + M12`（按根因合并为「草稿保护」）
+> + `M16`（**架构 + 体验两步修**）。
+
+### 一、M09 + M11：草稿保护（三页同构）
+
+| 项 | 落点 |
+|---|---|
+| **M11：备注算内容** | 三页把 `_cancel` 里的局部 `hasContent` 提为 **getter `_hasContent`**，并**纳入 `_remark`**（以前只填备注点「取消」会直接清空，用户白打一行字） |
+| **M09：返回拦截** | 三页 build 外层包 `PopScope(canPop: !_hasContent, onPopInvokedWithResult: → _cancel())` —— AppBar 返回箭头（手机壳的整屏开单页）与系统返回**都绕过** Escape 绑定，以前直接丢草稿 |
+| ⚠️ **衔接（自查发现）** | `canPop` 在 **build 时**求值，而**备注框原来没有 `onChanged`** ⇒ 只填备注不触发重建 ⇒ 返回仍不拦。已给三页备注框加 `onChanged: (_) => setState(() {})` —— **它就是为这个衔接而加** |
+
+### 二、M12：改数量后让价重新分摊（销售页）
+
+- 行卡回调 `onChanged: () => setState(() => _invalid = null)` → 新方法 **`_onRowChanged()`**（清错误 + `_syncSpread()`）
+- 以前：改完数量，合计 / 各行小计 /「全款」读到的仍是**旧**分摊，而保存时会重算 ⇒ **界面显示的和实际提交的不一致**
+
+### 三、M16：镜像打不开（**两步修**，按裁定）
+
+| 步 | 内容 |
+|---|---|
+| **架构** | `openMirror()` 从 **build 期**移到 **`_prepareMobile()`**（build 只该做纯布局）；打开后 `openMirror()` 返回缓存，build 期不再有 I/O |
+| **体验** | 新增 `_mirrorFailure` + 捕获（原始异常走 `_log.crash`）⇒ build 早期给 `_StartupPage`（中文原因 + **重试**）。原来是冒到框架的异常页：无导航、无重试，用户只能重启 |
+
+### 四、新增测试（4 条）
+
+- `delivery_page_test`：**M09**（填数量 → `Navigator.maybePop()` → 弹确认）+ **M11**（只填备注 → 返回 / 取消两条路都要确认）
+- `sale_page_test`：**M12**（1 × ¥5.00 让价 ¥1.00 ⇒ ¥4.00；数量改 2 ⇒ **¥9.00**，不重算则仍是 ¥4.00）
+
+### 五、本侧验证与两处如实报备
+
+语法 ✓ · 新代码无 `$` 插值 ✓ · 三页 `PopScope` / `_hasContent` 各 **1 处**（无重复 —— 吸取 §CO·六 的教训）·
+`replace_all` 影响面已核对（只命中新增行）· 三页 import 齐备（core / app 桶）
+
+⚠️ `import_guard` / `flutter analyze` 仍被 `CreateFile failed 231` 挡住 ⇒ **移交用户复跑**。
+⚠️ **文案差异（实测）**：送货页的放弃对话框标题是「**放弃这次送货？**」（销售 / 采购才是「放弃这次开单？」），
+按钮是「**继续填**」—— 测试按**实际文案**写。
+
+---
+
+## §CQ 第三批（P2）落地：库存离线视图（M08+M14）+ 窄屏适配（M13）（2026-10-08）
+
+> **来源**：`docs/reply.md` 裁定的**第三批** —— `M08 + M14`（合并为「库存离线视图」，
+> 共用 `StockDelta.stockViewOf` 的同一口径）+ `M13`（窄屏适配）。
+
+### 一、M14：库存页默认过滤**计入本地未同步影响**
+
+- `stock_page.dart` 的 `hasFlow` 加第三条：`(unsyncedByProduct[product.id] ?? 0) != 0`
+- 以前：权威账面 0 + 在途 0 ⇒ 默认**隐藏** —— 而「手机上刚卖了 1 件、估算 −1」
+  正是**最该看到**的那种商品（报告实测：勾「显示全部」才看得到）
+
+### 二、M08：开单页库存提示改为「权威 + 本地未同步」
+
+- 两页（销售 / 送货）新增 `stockDelta` 注入 + `_unsyncedDelta`（**打开时算一次**，保持 Z-2 快照语义）
+- 行卡新增 `unsyncedOfProduct`；**估算 = 权威 + 本地**，**负库存判定也改用估算**
+- 提示：无本地影响 → 旧文案不变；有 → `当前库存 X（打开本页时；权威 A，本地未同步 ±N）`
+- `app_shell` 给两页接线（桌面 `stockDelta == null` ⇒ 行为零变化）
+
+### 三、M13：窄屏 + 超大字号不溢出（销售 / 采购同构）
+
+| 处 | 改法 |
+|---|---|
+| 合计行 | `Row[Text, Spacer, Text]` → `Row[Text, SizedBox(12), Expanded(Text(textAlign: right))]` —— 放得下视觉同旧，放不下自动换行（原来大金额被裁掉） |
+| 按钮行 | `Row` → `Wrap(alignment: end, spacing: 16, runSpacing: 8)` —— 原来的「保存」按钮会**越出屏幕**（点不到） |
+
+### 四、新增测试（2 条）
+
+- `stock_page_test`：**M14** —— 「只有本地未同步影响」的商品默认列表里要看得到（造一条 sale 队列条目）
+- `sale_page_test`：**M08** —— 注入 `StockDelta` 后，提示含「本地未同步」
+
+### 五、本侧验证
+
+语法 ✓ · 新插值标识符（`snapshot` / `local` / `estimated`）逐个核对 ✓ ·
+`stockDelta` 接线分布核对（`app_shell` 5 / 两页各 3）✓ · 无重复命名参数 ✓
+
+⚠️ `import_guard` / `flutter analyze` 仍被 `CreateFile failed 231` 挡住 ⇒ **移交用户复跑**。
+
+### 六、复跑修复：局部函数「先引用后声明」（2026-10-08）
+
+- **症状**：`flutter test` 报 `Local variable 'pickFirstProduct' can't be referenced
+  before it is declared`（`sale_page_test.dart:137`，阻塞整文件加载）。
+- **根因**：本批新增的 **M08 用例**排在 `pickFirstProduct` **声明之前** —— Dart 的局部函数
+  按局部变量处理，**声明点之前不可见**（不是 JS 那种提升）。
+- **修复**：把 `pickFirstProduct` 整体移到**首个使用点之前**（紧跟 `enqueueSale` 之后），
+  并就地注明这条约束。
+- **全文件核对**：`page`(84→149) · `enqueueSale`(97→146) · `pickFirstProduct`(132→152) ·
+  `stockUp`(164→223) · `fillRow`(184→227) · `tapFinder`(192→206) —— **声明全部早于首次使用** ✓。
+- **同批排查**：`stock_page_test.dart` 的 `enqueueSale`(146→191) / `page`(133→194) 顺序正常 ✓。
+
+---
+
+## §CR P3 收尾落地：M03 相机权限文案 + M05 壳相关导航文案 + M10 窄屏单位提示（2026-10-08）
+
+### 一、M03 相机权限（英文 → 中文 + 「怎么办」）
+
+- **根因**：`MobileScanner` 未提供 `errorBuilder` ⇒ 权限被拒时显示插件自带的**英文**页
+  （「Camera permission denied.」）。
+- **落地**：
+  - **纯 Dart** 新增 `packages/shensuanzi_app/lib/src/scan_error.dart`：
+    `ScanFailureKind` + `scanFailureKindOf(String)` + `scanFailureMessage(kind)`。
+    ⚠️ 入参是 `MobileScannerErrorCode.name`（**字符串**）—— app 包是纯 Dart，刻意
+    **不依赖 `mobile_scanner`**（插件 import Flutter，进来就破纯 Dart 边界、`dart test`
+    跑不起来）。未知错误码兜底 `generic`（宁可笼统，也不给一条照做无效的指引）。
+  - UI（`pairing_scan_page.dart`）加 `errorBuilder: _scanError`：中文解释 + 图标 +
+    「重新试一次」（回到扫码前的说明页 ⇒ 再点「开始扫码」会重新请求权限）。
+  - **原始英文异常进日志**：`showPairingScanPage` 新增可选 `AppLog? log`（`app.dart` 传 `_log`）
+    —— 界面一个字都不回显英文（与 M15 同一条纪律）。
+
+### 二、M05 手机概览的「左边」文案
+
+- **根因**：手机壳经 `app_shellPage` 复用桌面 `OverviewPage`，其「左边的功能列表一直可见」
+  在手机上不成立（手机是**底部导航**）。
+- **落地**：纯 Dart 新增 `overviewNavHint({required bool mobileShell})`（`shell_kind.dart`）；
+  `OverviewPage` 加 `mobileShell`（默认 `false` = 桌面，行为零变化）；
+  `app_shell` 传 `shell.mobileShell`。
+
+### 三、M10 窄屏下单价单位提示被截断
+
+- **根因**：明细行**固定横向比例**（数量 flex 1 / 单价 flex 2 / 小计固定 96px）——
+  窄屏 + 200% 字号时「单价（元/箱）」放不下 ⇒ 系统截成省略号。
+- **落地**：
+  - 纯 Dart 新增 `entryFieldsShouldStack({maxWidth, textScale})` + `entryFieldsMinWidth = 340`
+    （阈值随字号**线性**放宽；无界宽度不堆叠）。
+  - 新增共用控件 `lib/src/ui/entry_fields_row.dart`：宽屏并排（**与旧版一致**）、
+    窄屏堆叠（数量 / 单价各占满宽，小计另起一行右对齐）。
+  - **销售 / 采购 / 送货三页**都改用它（三处原先各写一份）。
+- ⚠️ **顺带纠正 purchase 页一处摆放漂移（报备）**：单位 chips 与单位错误**原先写在 `Row` 的
+  直接子项里**（非 `Expanded`）⇒ 会挤压两个输入框；而销售/送货页一直是放在行卡**下方**的。
+  本批把 purchase 也移到行下方，三页摆放统一。
+
+### 四、测试与验证
+
+| 层 | 新增 |
+|---|---|
+| app 包测试 | `test/scan_error_test.dart`（含**反向断言**：文案不许含 `Camera` / `MobileScanner` / `Exception`）· `test/entry_layout_test.dart` · `shell_kind_test.dart` 扩 `overviewNavHint` 3 条 |
+| app 自检镜像 | `selfcheck_app.dart` 新增 3 个 section（**+10 项**） |
+| 根 widget 测试 | `overview_page_test` M05 ×1 · `sale_page_test` M10 ×2（窄屏堆叠 / 宽屏仍并排） |
+
+- 本侧验证：app typecheck **27 入口** ✓ · **selfcheck_app 148 项 0 失败** ✓ · 语法 ✓ ·
+  根 `lib/` 交付清单（桶导入 / `$` 插值 / 新增 import）✓
+- ⚠️ `dart test` 仍被 `CreateFile failed 231` 挡住（实测：dartdev 起 `frontend_server` 失败）
+  ⇒ 移交用户复跑。
+- ✅ **用户复跑全过（2026-10-08）**：`flutter analyze` 0 issues + `flutter test` + 两包 `dart test`
+  全绿 ⇒ **M 系列 P1/P2/P3（§CO–§CR）全部闭环**。
+
+### 五、纪律 16 的又一次真实踩点（如实记录）
+
+上一批复跑红过一次 **「局部函数先引用后声明」**（`sale_page_test` 的 M08 用例排在
+`pickFirstProduct` 声明之前）。这正是 `docs/testing.md` §L「根层交付清单」的**第 1 项**，
+而我当时**只做了语法 + `$` 插值两项**，漏了第 1 项 ⇒ 漏到用户侧。
+§BC（2026-10-03）已裁定「**不做**静态检查工具」，改用**纪律 16 + 根层交付清单**——
+本节记录为该清单**第 1 项**的**再次发生**（§AR·三 的触发条件「再出现 ≥2 次」据此计数）。
 

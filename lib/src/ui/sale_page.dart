@@ -27,6 +27,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'keyboard_reveal.dart';
 import 'mobile_guidance_dialog.dart';
 import 'entry_unit_hints.dart';
+import 'entry_fields_row.dart';
 import 'product_form_dialog.dart';
 
 /// 店内销售开单页。
@@ -38,6 +39,8 @@ class SalePage extends StatefulWidget {
     required this.partyService,
     required this.sink,
     this.onSubmitted,
+    this.onStorageFailure,
+    this.stockDelta,
     this.readOnlyMasterData = false,
   });
 
@@ -53,10 +56,21 @@ class SalePage extends StatefulWidget {
   /// （裁定 ③，在 app.dart 装配）；桌面不注入。
   final void Function(DocumentSubmitResult result)? onSubmitted;
 
+  /// 保存失败时把**原始异常**交给宿主记日志（M15，2026-10-08）。
+  ///
+  /// 界面只显示 [storageFailureNote] 的分类文案 —— `SqliteException` 的文本
+  /// 带着整条 SQL 与绑定参数（等于把这张单的 payload 印给用户看）。
+  /// `null` = 不记（测试）；生产由 `app.dart` 接到 `AppLog`。
+  final void Function(Object error, StackTrace stack)? onStorageFailure;
+
   /// 手机端**主数据禁建**（C2·§CC）：`true` 时「新建客户 / 新建商品」入口
   /// **保留但点击后弹引导对话框**（不隐藏 —— Agents.md 4.3）。
   /// 桌面缺省 `false` = 现状零变化。
   final bool readOnlyMasterData;
+
+  /// **未同步库存影响**（M08，2026-10-08）：手机端注入（镜像队列）；
+  /// 桌面 `null` = 不叠加 —— 桌面的权威库就是本机，没有「未同步」这回事。
+  final StockDelta? stockDelta;
 
   /// 商品搜索与「＋新建商品」复用商品建档。
   final ProductService productService;
@@ -240,6 +254,11 @@ class _SalePageState extends State<SalePage> {
   /// 不重查不校验 —— 负库存本来就允许，保存必然放行。
   late final Map<String, int> _stockSnapshot = widget.service.stockSnapshot();
 
+  /// 打开本页时的**未同步影响**（M08）：手机刚开的单还没推到电脑，
+  /// 权威快照里没有它们 —— 提示要说清「其中本地未同步 N 件」。
+  late final Map<String, int> _unsyncedDelta =
+      widget.stockDelta?.unsyncedDelta() ?? const <String, int>{};
+
   /// 保存失败的字段级原因（用户改任何输入后清掉）
   SaleDraftInvalid? _invalid;
 
@@ -361,6 +380,18 @@ class _SalePageState extends State<SalePage> {
     }
   }
 
+  /// 明细行里的字段变了（数量 / 单价）—— 清错误 + **重算整单让价分摊**。
+  ///
+  /// M12（2026-10-08）：以前只 `setState`。改完数量，合计 / 各行小计 /「全款」
+  /// 读到的还是**旧**分摊，而保存时会重算 ⇒ 界面显示的和实际提交的不一致。
+  /// （报告实测：3×20 + 2×20 让价 30，把第二行数量改成 1 后预览仍是 60，应为 50。）
+  void _onRowChanged() {
+    setState(() {
+      _invalid = null;
+      _syncSpread();
+    });
+  }
+
   void _addPayment() {
     setState(() {
       _pays.add(
@@ -480,15 +511,15 @@ class _SalePageState extends State<SalePage> {
         return;
       }
       _afterSaved(result);
-    } catch (error) {
+    } catch (error, stack) {
       setState(() => _saving = false);
+      // M15（2026-10-08）：界面只给**分类文案**，原始异常交给宿主记日志 ——
+      // `SqliteException` 的文本带着整条 SQL 与绑定参数（等于把这张单印出来）
+      widget.onStorageFailure?.call(error, stack);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            '没能保存（$error）。'
-            '请检查内容后重试；如果一直这样，请把这句话告诉技术支持。',
-          ),
-          duration: const Duration(seconds: 6),
+          content: Text(storageFailureNote(error)),
+          duration: const Duration(seconds: 8),
         ),
       );
     }
@@ -559,12 +590,18 @@ class _SalePageState extends State<SalePage> {
   }
 
   /// 取消：空表单直接清；有内容先确认「确定要放弃吗」
+  /// 草稿是否有内容 —— **取消确认**与**返回拦截**（M09）共用同一判据。
+  ///
+  /// ⚠️ M11（2026-10-08）：**备注也算内容**。以前只填备注时点取消会直接清空，
+  /// 用户白打了一行字（三种表单都如此，报告实测）。
+  bool get _hasContent =>
+      _partyId != null ||
+      _rows.any((_RowCtl row) => !row.isEmpty) ||
+      _pays.any((_PayCtl pay) => !pay.isBlank) ||
+      _remark.text.trim().isNotEmpty;
+
   Future<void> _cancel() async {
-    final bool hasContent =
-        _partyId != null ||
-        _rows.any((_RowCtl row) => !row.isEmpty) ||
-        _pays.any((_PayCtl pay) => !pay.isBlank);
-    if (hasContent) {
+    if (_hasContent) {
       final bool? confirmed = await showDialog<bool>(
         context: context,
         builder: (BuildContext dialogContext) => AlertDialog(
@@ -656,7 +693,15 @@ class _SalePageState extends State<SalePage> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    return CallbackShortcuts(
+    // M09（2026-10-08）：**返回键也要走放弃确认** —— AppBar 返回箭头（手机壳的
+    // 整屏开单页）与系统返回都绕过下面绑定的 Escape，以前填了数量点返回直接丢草稿。
+    return PopScope(
+      canPop: !_hasContent,
+      onPopInvokedWithResult: (bool didPop, Object? result) {
+        if (didPop) return;
+        _cancel();
+      },
+      child: CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
         const SingleActivator(LogicalKeyboardKey.escape): _cancel,
@@ -688,6 +733,7 @@ class _SalePageState extends State<SalePage> {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -783,9 +829,15 @@ class _SalePageState extends State<SalePage> {
           stockOfProduct: _rows[i].product == null
               ? null
               : _stockSnapshot[_rows[i].product!.id],
+          // M08：本地未同步影响（同一商品的队列 Δ）
+          unsyncedOfProduct: _rows[i].product == null
+              ? null
+              : _unsyncedDelta[_rows[i].product!.id],
           enabled: !_saving,
           onPickProduct: () => _pickProduct(i),
-          onChanged: () => setState(() => _invalid = null),
+          // M12（2026-10-08）：行内字段变了要**重算整单让价分摊** ——
+          // 以前只清错误，改完数量后合计 /「全款」读到的还是旧分摊（保存时才重算）
+          onChanged: _onRowChanged,
           onRemove: _rows.length > 1 ? () => _removeRow(i) : null,
         ),
       Align(
@@ -805,17 +857,24 @@ class _SalePageState extends State<SalePage> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
+        // M13（2026-10-08）：**窄屏 + 大金额不溢出** —— 原来是
+        // `Row[Text, Spacer, Text]`：金额那格没有弹性，小屏 + 超大字号下
+        // 「¥ 9,999,990」会被裁掉（报告实测）。改成「合计 + Expanded(右对齐金额)」：
+        // 放得下视觉同旧，放不下自动换行。
         Row(
           children: <Widget>[
             Text('合计', style: theme.textTheme.titleMedium),
-            const Spacer(),
-            Text(
-              '¥ ${Money.formatGrouped(_draft.totalCents)}',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-                fontFeatures: const <FontFeature>[
-                  FontFeature.tabularFigures(),
-                ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '¥ ${Money.formatGrouped(_draft.totalCents)}',
+                textAlign: TextAlign.right,
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const <FontFeature>[
+                    FontFeature.tabularFigures(),
+                  ],
+                ),
               ),
             ),
           ],
@@ -1080,24 +1139,34 @@ class _SalePageState extends State<SalePage> {
     );
   }
 
+  /// 备注框。
+  ///
+  /// ⚠️ `onChanged` 只为**触发重建**：返回拦截（M09）的 `canPop` 在 build 时求值，
+  /// 备注变了不重建的话，「只填备注 + 按返回」仍会直接走掉（M11）。
   Widget _remarkField() => TextField(
     controller: _remark,
     enabled: !_saving,
     maxLines: 2,
+    onChanged: (_) => setState(() {}),
     decoration: const InputDecoration(
       labelText: '备注（可选）',
       border: OutlineInputBorder(),
     ),
   );
 
-  Widget _actions(ThemeData theme) => Row(
-    mainAxisAlignment: MainAxisAlignment.end,
+  /// ⚠️ M13（2026-10-08）：用 `Wrap` 而不是 `Row` —— 小屏 + 超大字号下
+  /// 「取消 + 保存（文案可能很长）」会横向溢出，**保存按钮越出屏幕**（点不到）。
+  /// `Wrap` 放不下就换行；`spacing` 取代原来的 `SizedBox`。
+  Widget _actions(ThemeData theme) => Wrap(
+    alignment: WrapAlignment.end,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    spacing: 16,
+    runSpacing: 8,
     children: <Widget>[
       TextButton(
         onPressed: _saving ? null : _cancel,
         child: const Text('取消 (Esc)'),
       ),
-      const SizedBox(width: 16),
       FilledButton.icon(
         // ⚠️ **稳定 Key**：按钮文案会随「有没有找零」变（§AX·一），
         // 测试**不要**按文案找它 —— 按 Key 找（`test/sale_page_test.dart`）。
@@ -1130,6 +1199,7 @@ class _LineCard extends StatelessWidget {
     required this.index,
     required this.errors,
     required this.stockOfProduct,
+    this.unsyncedOfProduct,
     required this.enabled,
     required this.onPickProduct,
     required this.onChanged,
@@ -1142,6 +1212,9 @@ class _LineCard extends StatelessWidget {
 
   /// 该商品的**库存快照**（打开本页时）；没选商品 / 无流水时为 `null`（按 0 理解）
   final int? stockOfProduct;
+
+  /// 该商品的**本地未同步影响**（M08）：`null` = 没有 / 桌面端
+  final int? unsyncedOfProduct;
   final bool enabled;
   final VoidCallback onPickProduct;
   final VoidCallback onChanged;
@@ -1152,8 +1225,13 @@ class _LineCard extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     final int? qty = row.quantityValue;
     final int snapshot = stockOfProduct ?? 0;
+    // M08（2026-10-08）：**估算库存 = 权威快照 + 本地未同步影响** ——
+    // 手机上刚开的单还没推给电脑，权威快照不含它们；只报权威值
+    // 会让老板按「还有 7 件」判断缺货，而实际只剩 6 件。
+    final int local = unsyncedOfProduct ?? 0;
+    final int estimated = snapshot + local;
     final bool negativeStock =
-        row.product != null && qty != null && qty > snapshot;
+        row.product != null && qty != null && qty > estimated;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -1196,69 +1274,62 @@ class _LineCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: TextField(
-                    key: const Key('sale-qty'),
-                    controller: row.quantity,
-                    enabled: enabled,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textInputAction: TextInputAction.next,
-                    // P-6：Enter 到下一格（桌面端要显式切焦点）
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                    onChanged: (_) => onChanged(),
-                    decoration: InputDecoration(
-                      labelText: row.entryUnitDisplay.isEmpty
-                          ? '数量 *'
-                          : '数量（${row.entryUnitDisplay}）*',
-                      isDense: true,
-                      errorText: errors?[SaleLineField.quantity],
-                    ),
-                  ),
+            // M10（2026-10-08）：数量 / 单价 / 小计的摆放交给共用控件 ——
+            // 宽屏并排（与旧版一致），窄屏 + 超大字号自动堆叠，
+            // 否则单价框的「单价（元/箱）」label 会被截成省略号。
+            EntryFieldsRow(
+              quantityField: TextField(
+                key: const Key('sale-qty'),
+                controller: row.quantity,
+                enabled: enabled,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: TextField(
-                    key: const Key('sale-price'),
-                    controller: row.unitPrice,
-                    enabled: enabled,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                    onChanged: (_) {
-                      // §BG 方案 A ①：显式布尔记「手改过」——编辑（非空）= true，清空 = false
-                      row.priceTouched = row.unitPrice.text.trim().isNotEmpty;
-                      row.entryPriceKept = false; // 重新输入 ⇒ 「保留」告知失效
-                      onChanged();
-                    },
-                    decoration: InputDecoration(
-                      labelText: '${row.priceLabel}*',
-                      isDense: true,
-                      errorText: errors?[SaleLineField.unitPrice],
-                    ),
-                  ),
+                textInputAction: TextInputAction.next,
+                // P-6：Enter 到下一格（桌面端要显式切焦点）
+                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                onChanged: (_) => onChanged(),
+                decoration: InputDecoration(
+                  labelText: row.entryUnitDisplay.isEmpty
+                      ? '数量 *'
+                      : '数量（${row.entryUnitDisplay}）*',
+                  isDense: true,
+                  errorText: errors?[SaleLineField.quantity],
                 ),
-                const SizedBox(width: 12),
-                SizedBox(
-                  width: 96,
-                  child: Text(
-                    row.product == null
-                        ? ''
-                        : '¥ ${Money.formatGrouped(row.amountCents ?? 0)}',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      height: 1.6,
-                      fontFeatures: const <FontFeature>[
-                        FontFeature.tabularFigures(),
-                      ],
-                    ),
-                  ),
+              ),
+              priceField: TextField(
+                key: const Key('sale-price'),
+                controller: row.unitPrice,
+                enabled: enabled,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
                 ),
-              ],
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                onChanged: (_) {
+                  // §BG 方案 A ①：显式布尔记「手改过」——编辑（非空）= true，清空 = false
+                  row.priceTouched = row.unitPrice.text.trim().isNotEmpty;
+                  row.entryPriceKept = false; // 重新输入 ⇒ 「保留」告知失效
+                  onChanged();
+                },
+                decoration: InputDecoration(
+                  labelText: '${row.priceLabel}*',
+                  isDense: true,
+                  errorText: errors?[SaleLineField.unitPrice],
+                ),
+              ),
+              amount: Text(
+                row.product == null
+                    ? ''
+                    : '¥ ${Money.formatGrouped(row.amountCents ?? 0)}',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  height: 1.6,
+                  fontFeatures: const <FontFeature>[
+                    FontFeature.tabularFigures(),
+                  ],
+                ),
+              ),
             ),
             // v3 单位切换（§BD·三 第 3 条）：只在**成对启用**时出现；
             // chips 是唯一入口 —— 文字标签必须有（UI 基线），不用图标猜
@@ -1316,8 +1387,11 @@ class _LineCard extends StatelessWidget {
                 alignment: Alignment.centerLeft,
                 child: Text(
                   negativeStock
-                      ? '当前库存 $snapshot（打开本页时），本单会按负库存记账（成本按最近入库价）'
-                      : '当前库存 $snapshot（打开本页时）',
+                      ? '当前库存 $estimated（打开本页时），本单会按负库存记账（成本按最近入库价）'
+                      : local == 0
+                      ? '当前库存 $snapshot（打开本页时）'
+                      : '当前库存 $estimated（打开本页时；权威 $snapshot，'
+                            '本地未同步 ${local > 0 ? '+' : ''}$local）',
                   style: TextStyle(
                     height: 1.6,
                     color: negativeStock

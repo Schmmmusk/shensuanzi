@@ -239,6 +239,12 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 开库失败的原因（含「怎么办」）
   String? _dbFailure;
 
+  /// 手机端**镜像打不开**的原因（M16，2026-10-08）。
+  ///
+  /// 与 [_dbFailure] 分开：镜像坏了主库可能是好的，但手机**没有镜像就用不了**
+  /// （开单要入队、库存要看叠加值）⇒ 同样要拦住并给一条出路。
+  String? _mirrorFailure;
+
   /// 打不开的那个数据目录（§审查 2026-10-05 真机）。
   ///
   /// 非 `null` 时错误页多给一个「重试」—— 库修好（或占用它的程序关掉）之后，
@@ -412,6 +418,14 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 私有目录用户选不了（scoped storage，真机实测 `/storage/emulated/0` 写不进、
   /// 还会建议 `C:\` 这种 Windows 路径），数据直接落在 `<私有目录>/data`
   /// （兄弟目录算法自动生成 神算子备份 / 神算子导出）。
+  /// 开单保存失败（M15，2026-10-08）：**原始异常进日志**。
+  ///
+  /// 界面由三张开单页显示 `storageFailureNote(error)` 的分类文案 ——
+  /// `SqliteException.toString()` 带着整条 SQL 与绑定参数（= 这张单的 payload），
+  /// 直接给用户看既不可读、也把开单内容摊在了屏上。
+  void _onStorageFailure(Object error, StackTrace stack) =>
+      _log.crash(error, stack, label: '保存失败');
+
   void _prepareMobile() {
     final String? root = widget.dataRoot;
     if (root == null) {
@@ -423,10 +437,24 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     }
     try {
       _openDatabase(_service.ensureInitialized(p.join(root, 'data')));
+      // M16（2026-10-08）：**镜像在这里打开，不要留给 build** ——
+      // build 期该只做纯布局；在那里做 I/O，失败会炸成框架异常页
+      // （无导航、无重试，用户被困 —— Android 报告 M16 实测）。
+      // 打开后 `openMirror()` 返回缓存，build 期不再有 I/O。
+      _mobileSyncService?.openMirror();
     } on DataDirectoryRejected catch (error) {
       // 私有目录被拒（系统占位 / 只读）—— 诚实展示，不兜圈子
       setState(() {
         _dbFailure = '${error.reason}。${error.howTo ?? '请重新安装后再试。'}';
+      });
+    } catch (error, stack) {
+      // 镜像打不开：给**中文原因 + 重试出口**；原始异常只进日志
+      _log.crash(error, stack, label: '打开手机镜像失败');
+      setState(() {
+        _mirrorFailure =
+            '手机上的数据文件打不开（可能被清理软件删了、或存储空间不够）。'
+            '点下面「重试」再看一次；如果一直这样，请把软件的日志发给技术支持 —— '
+            '你在手机上开的单还在，不会丢。';
       });
     }
   }
@@ -770,6 +798,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         _location = location;
         _db = db;
         _schemaVersion = schemaVersion;
+        // M16：主库开成功 ⇒ 清掉上一次的镜像失败（重试成功后不再停在错误页）
+        _mirrorFailure = null;
         _queries = QueryDao(db);
         _backup = backup;
         _exports = exports;
@@ -1098,7 +1128,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     if (service == null) return;
     final BuildContext? context = _navigatorKey.currentContext;
     if (context == null || !context.mounted) return;
-    final String? message = await showPairingScanPage(context, service);
+    final String? message = await showPairingScanPage(context, service, log: _log);
     if (!mounted) return;
     setState(() {}); // 裁定 ⑦：镜像可能变了，全部页面重查
     if (message != null) _toast(message);
@@ -1461,6 +1491,17 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       );
     }
 
+    if (_mirrorFailure != null) {
+      // M16（2026-10-08）：镜像打不开 —— 给**可操作的重试**。
+      // 以前是在 build 期直接调 `openMirror()`，异常冒到框架 ⇒ 异常页，
+      // 既没有导航也没有重试，用户只能重启（重启也可能还是坏的）。
+      return _StartupPage(
+        message: _mirrorFailure!,
+        actionLabel: '重试',
+        onAction: _prepareMobile,
+      );
+    }
+
     final DataLocation? location = _location;
     if (location == null) {
       return _StartupPage(
@@ -1541,10 +1582,14 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       onDocumentSubmitted: _shellKind == ShellKind.mobile
           ? _onDocumentSubmitted
           : null,
+      // M15（2026-10-08）：开单保存失败 → 原始异常进日志，界面只给分类文案
+      onStorageFailure: _onStorageFailure,
       stockDelta: stockDelta,
       // ⚠️ 按壳类型判定，不按 mirror 是否取到 —— 手机上禁建必须恒真
       //（mirror 万一没建好时退回主库服务，但建档依旧不许）
       readOnlyMasterData: _shellKind == ShellKind.mobile,
+      // M05 / M07（2026-10-08）：同一份页面代码按壳给不同指引文案
+      mobileShell: _shellKind == ShellKind.mobile,
       accounts: shellAccounts,
       parties: shellParties,
       queries: shellQueries,

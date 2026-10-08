@@ -20,12 +20,15 @@ import '../test/mobile_sync_service_test.dart' as mobile_sync_service_test;
 import '../test/mirror_view_test.dart' as mirror_view_test;
 import '../test/instance_lock_test.dart' as instance_lock_test;
 import '../test/dialog_model_test.dart' as dialog_model_test;
+import '../test/entry_layout_test.dart' as entry_layout_test;
 import '../test/environment_test.dart' as environment_test;
 import '../test/export_test.dart' as export_test;
 import '../test/log_test.dart' as log_test;
 import '../test/manual_test.dart' as manual_test;
 import '../test/navigation_test.dart' as navigation_test;
+import '../test/scan_error_test.dart' as scan_error_test;
 import '../test/shell_kind_test.dart' as shell_kind_test;
+import '../test/sync_bar_test.dart' as sync_bar_test;
 import '../test/typography_test.dart' as typography_test;
 import 'make_manual_html.dart' as make_manual_html;
 import 'selfcheck_app.dart' as selfcheck_app;
@@ -49,12 +52,15 @@ void main() {
     mirror_view_test.main,
     instance_lock_test.main,
     dialog_model_test.main,
+    entry_layout_test.main,
     environment_test.main,
     export_test.main,
     log_test.main,
     manual_test.main,
     navigation_test.main,
+    scan_error_test.main,
     shell_kind_test.main,
+    sync_bar_test.main,
     typography_test.main,
     // tool/
     make_manual_html.main,

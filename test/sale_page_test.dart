@@ -81,16 +81,84 @@ void main() {
     }
   });
 
-  Widget page() => MaterialApp(
+  Widget page({StockDelta? stockDelta}) => MaterialApp(
     home: Scaffold(
       body: SalePage(
         service: service,
         productService: products,
         partyService: partyService,
         sink: sink,
+        stockDelta: stockDelta,
       ),
     ),
   );
+
+  /// 一条「卖出 1 件」的入队条目（M08 用；payload = createDocument wire 形状）
+  void enqueueSale(String id, String productId) {
+    SyncQueueDao(db).enqueue(
+      SyncQueueEntry(
+        id: id,
+        entity: Schema.documents,
+        entityId: 'd-$id',
+        operation: SyncOpType.createDocument,
+        payload: <String, Object?>{
+          'document': <String, Object?>{
+            'id': 'd-$id',
+            'doc_no': '${Document.pendingDocNoPrefix}$id',
+            'doc_type': 'sale',
+            'status': 'confirmed',
+            'occurred_at': 1700000000000,
+          },
+          'lines': <Object?>[
+            <String, Object?>{
+              'id': 'l-$id',
+              'document_id': 'd-$id',
+              'product_id': productId,
+              'quantity': 1,
+              'unit_price': 500,
+              'amount': 500,
+            },
+          ],
+        },
+        createdAt: 1700000000000,
+      ),
+    );
+  }
+
+  /// 选中第一行的商品（先搜索再点选 —— 空查询是「最近销售」，首跑为空）
+  //
+  // ⚠️ 声明必须排在**首个使用点之前**：Dart 的局部函数按局部变量处理，
+  //    声明点之前不可见（2026-10-08 真实踩到：M08 用例在它之前调用 ⇒ 编译不过）。
+  Future<void> pickFirstProduct(WidgetTester tester) async {
+    await tester.tap(find.text('点此选商品'));
+    await tester.pumpAndSettle();
+
+    // ⚠️ 搜索框必须用 Key：`byType(TextField).first` 会命中弹层底下页面的输入框
+    await tester.enterText(find.byKey(const Key('picker-search')), '红富士');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('红富士苹果').first);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('M08：开单页的库存提示**含本地未同步影响**（不只是权威值）', (
+    WidgetTester tester,
+  ) async {
+    enqueueSale('q-m08', productId);
+
+    await tester.pumpWidget(
+      page(stockDelta: StockDelta(db: db, queue: SyncQueueDao(db))),
+    );
+    await tester.pumpAndSettle();
+    await pickFirstProduct(tester);
+
+    // M08（2026-10-08）：手机上刚开的单还没推给电脑 —— 只说权威值会让老板
+    // 误判缺货（「还有 7 件」而实际只剩 6 件）。提示必须说明本地影响。
+    expect(
+      find.textContaining('本地未同步'),
+      findsOneWidget,
+      reason: '库存提示要说清「权威值 + 本地未同步多少」',
+    );
+  });
 
   /// 先采购 10 件建立正库存（页外直接走服务层）
   void stockUp() {
@@ -111,18 +179,6 @@ void main() {
       ),
       now: 1700000000000,
     );
-  }
-
-  /// 选中第一行的商品（先搜索再点选 —— 空查询是「最近销售」，首跑为空）
-  Future<void> pickFirstProduct(WidgetTester tester) async {
-    await tester.tap(find.text('点此选商品'));
-    await tester.pumpAndSettle();
-
-    // ⚠️ 搜索框必须用 Key：`byType(TextField).first` 会命中弹层底下页面的输入框
-    await tester.enterText(find.byKey(const Key('picker-search')), '红富士');
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('红富士苹果').first);
-    await tester.pumpAndSettle();
   }
 
   Future<void> fillRow(WidgetTester tester, {String qty = '10'}) async {
@@ -532,5 +588,83 @@ void main() {
     expect(priceField().controller!.text, '2.50');
     expect(find.text('单价（元/瓶）*'), findsOneWidget);
     expect(find.text('1 箱 = 12 瓶，入库按 12 瓶记。'), findsNothing);
+  });
+
+  // ============================================ M12：改数量后让价重算（2026-10-08）
+
+  testWidgets('M12：改数量后整单让价**重新分摊**（预览与提交一致）', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    await pickFirstProduct(tester);
+
+    // 1 × ¥5.00，让价 ¥1.00 ⇒ 合计 ¥4.00
+    await tester.enterText(find.byKey(const Key('sale-qty')), '1');
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('sale-discount')), '1');
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('¥ 4.00'),
+      findsWidgets,
+      reason: '1 × 5.00 减让价 1.00',
+    );
+
+    // 数量改成 2 ⇒ 折前 ¥10.00，让价 ¥1.00 ⇒ **¥9.00**。
+    // 不重算的话各行小计还按 1 件算 ⇒ 合计仍是 ¥4.00（报告实测的 M12：
+    // 界面显示的和保存时算出来的不一样）。
+    await tester.enterText(find.byKey(const Key('sale-qty')), '2');
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('¥ 9.00'),
+      findsWidgets,
+      reason: 'M12：改数量后让价必须重新分摊',
+    );
+  });
+
+  // M10（2026-10-08）：明细行原先是**固定横向比例** —— 窄屏 + 超大字号时
+  // 单价框放不下「单价（元/箱）」这个 label，被系统截成省略号。
+  // 现在宽屏并排（桌面零变化）、窄屏 + 大字号改成上下堆叠。
+  testWidgets('M10：窄屏 + 2 倍字号 ⇒ 数量/单价**上下堆叠**', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 不用选商品：行卡的数量 / 单价框一开始就在
+    final Finder qty = find.byKey(const Key('sale-qty'));
+    final Finder price = find.byKey(const Key('sale-price'));
+    expect(qty, findsOneWidget);
+    expect(price, findsOneWidget);
+
+    expect(
+      tester.getBottomLeft(qty).dy <= tester.getTopLeft(price).dy,
+      isTrue,
+      reason: 'M10：窄屏 + 大字号必须堆叠（数量在上、单价在下）',
+    );
+  });
+
+  testWidgets('M10：宽屏 + 标准字号 ⇒ 仍**并排**（桌面零变化）', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    final Finder qty = find.byKey(const Key('sale-qty'));
+    final Finder price = find.byKey(const Key('sale-price'));
+
+    // 并排 ⇒ 两个框在**同一水平带**（中心 y 基本相同）
+    expect(
+      (tester.getCenter(qty).dy - tester.getCenter(price).dy).abs() < 1,
+      isTrue,
+      reason: '宽屏必须还是并排，不能把桌面布局改坏',
+    );
   });
 }

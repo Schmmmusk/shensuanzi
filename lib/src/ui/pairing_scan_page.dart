@@ -20,15 +20,27 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
 /// 返回值：配对 + 首拉都成功时的提示语；取消/失败返回 `null`。
-Future<String?> showPairingScanPage(BuildContext context, MobileSyncService service) =>
-    Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(builder: (BuildContext context) => PairingScanPage(service: service)),
-    );
+///
+/// [log] 可选 —— 只为把插件抛出的**原始英文异常**留进日志（M03：界面只给
+/// 中文，原文进日志），没有日志时也不影响功能。
+Future<String?> showPairingScanPage(
+  BuildContext context,
+  MobileSyncService service, {
+  AppLog? log,
+}) => Navigator.of(context).push<String>(
+  MaterialPageRoute<String>(
+    builder: (BuildContext context) =>
+        PairingScanPage(service: service, log: log),
+  ),
+);
 
 class PairingScanPage extends StatefulWidget {
-  const PairingScanPage({super.key, required this.service});
+  const PairingScanPage({super.key, required this.service, this.log});
 
   final MobileSyncService service;
+
+  /// 原始异常只进日志（M03）—— 界面上一个字都不回显英文。
+  final AppLog? log;
 
   @override
   State<PairingScanPage> createState() => _PairingScanPageState();
@@ -104,6 +116,53 @@ class _PairingScanPageState extends State<PairingScanPage> {
     });
   }
 
+  /// 相机打不开时的页内提示（M03）。
+  ///
+  /// ⚠️ 界面**只给中文**；插件的原始英文异常送进日志（有日志时）。
+  Widget _scanError(BuildContext context, MobileScannerException error) {
+    widget.log?.crash(
+      error,
+      StackTrace.current,
+      label: '扫码相机打不开',
+    );
+    final ThemeData theme = Theme.of(context);
+    final String message = scanFailureMessage(
+      scanFailureKindOf(error.errorCode.name),
+    );
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              Icons.no_photography_outlined,
+              size: 48,
+              color: theme.colorScheme.outline,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(height: 1.6),
+            ),
+            const SizedBox(height: 20),
+            // 权限类错误「去设置里打开」之后需要回到本页重试 —— 给一个明确
+            // 的入口：回到扫码前的说明页，用户点「开始扫码」会再请求一次权限。
+            OutlinedButton.icon(
+              onPressed: () => setState(() {
+                _scanning = false;
+                _error = null;
+              }),
+              icon: const Icon(Icons.refresh),
+              label: const Text('重新试一次'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -136,6 +195,11 @@ class _PairingScanPageState extends State<PairingScanPage> {
                     Expanded(
                       child: MobileScanner(
                         onDetect: (BarcodeCapture capture) => _onDetect(capture),
+                        // M03（2026-10-08）：插件自带的错误页是**英文**的
+                        // （「Camera permission denied.」）。换成本地的中文解释 +
+                        // 「怎么办」—— 归类与措辞在纯 Dart 的 `scan_error.dart`
+                        // （`dart test` 钉得住），这里只摆放。
+                        errorBuilder: _scanError,
                       ),
                     ),
                     Padding(

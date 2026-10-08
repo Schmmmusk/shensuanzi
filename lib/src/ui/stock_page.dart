@@ -115,9 +115,15 @@ class _StockPageState extends State<StockPage> {
             )
             .toList();
 
-    /// 有流水 = 账面不为 0 或在途不为 0（遗漏 5 的「有意义的数字」）
+    /// 有流水 = 账面 / 在途 / **本地未同步影响** 任一不为 0（遗漏 5 的「有意义的数字」）。
+    ///
+    /// ⚠️ M14（2026-10-08）：**本地未同步影响也算流水**。手机上刚开的单还没推到
+    /// 电脑，权威账面仍是 0 —— 只按权威过滤会把「已经卖了 1 件、估算 −1」的商品
+    /// **默认藏起来**，负库存风险反而看不见（报告实测）。
     bool hasFlow(Product product) =>
-        (book[product.id] ?? 0) != 0 || (inTransit[product.id] ?? 0) != 0;
+        (book[product.id] ?? 0) != 0 ||
+        (inTransit[product.id] ?? 0) != 0 ||
+        (unsyncedByProduct[product.id] ?? 0) != 0;
 
     final List<Product> shown = _showAll
         ? matched

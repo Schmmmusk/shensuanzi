@@ -299,4 +299,56 @@ void main() {
     expect(find.text('单价（元/瓶）*'), findsOneWidget);
     expect(find.text('1 箱 = 12 瓶，入库按 12 瓶记。'), findsNothing);
   });
+
+  // ============================================ M09 / M11：草稿保护（2026-10-08）
+
+  testWidgets('M09：填了数量后按**返回** → 先问「放弃这次送货？」（以前直接丢草稿）', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('delivery-qty')), '1');
+    await tester.pumpAndSettle();
+
+    // 模拟返回：AppBar 返回键与系统返回**都走这条路**（route 的 popDisposition）。
+    // 以前页面没接 PopScope ⇒ 直接 pop、草稿无声丢失（报告 M09 实测）。
+    await tester.state<NavigatorState>(find.byType(Navigator)).maybePop();
+    await tester.pumpAndSettle();
+
+    expect(find.text('放弃这次送货？'), findsOneWidget);
+  });
+
+  testWidgets('M11：**只填了备注**，按返回 / 点取消都要先确认（以前直接清空）', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 备注框没有 Key，按 label 定位
+    final Finder remark = find.byWidgetPredicate(
+      (Widget w) => w is TextField && w.decoration?.labelText == '备注（可选）',
+    );
+    await tester.enterText(remark, '给老王家留两箱');
+    await tester.pumpAndSettle();
+
+    // ① 走**返回**这条路（`canPop` 在 build 时求值 ⇒ 备注框必须有 onChanged
+    //    触发重建，否则这一步会直接 pop 掉 —— 断言就是钉这个衔接）
+    await tester.state<NavigatorState>(find.byType(Navigator)).maybePop();
+    await tester.pumpAndSettle();
+    expect(
+      find.text('放弃这次送货？'),
+      findsOneWidget,
+      reason: 'M11：备注也算「有内容」，返回时不能直接丢',
+    );
+
+    // ② 「继续填」之后再走「取消」这条路 —— 两条路一个判据
+    await tester.tap(find.text('继续填'));
+    await tester.pumpAndSettle();
+    final Finder cancel = find.text('取消 (Esc)');
+    await tester.ensureVisible(cancel);
+    await tester.tap(cancel);
+    await tester.pumpAndSettle();
+    expect(find.text('放弃这次送货？'), findsOneWidget);
+  });
 }
