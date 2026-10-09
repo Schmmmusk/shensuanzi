@@ -460,6 +460,104 @@ void main() {
     });
   });
 
+  // ============================================================ 编码改派（D1）
+  //
+  // 手机离线建档按自己镜像的 max(code)+1 生成编码（reply_review.md §CH 提案 A §3）；
+  // 主机的并发现实是「这个码可能已经被别的商品占了」⇒ 主机改派，
+  // 客户端靠 pull 回写镜像拿到真码（同一 id，`SyncClient._upsertRow` 覆盖）。
+  group('createMasterData · 商品编码的主机改派（D1）', () {
+    test('客户端编码可用 ⇒ 原样采用（手机显示什么就是什么）', () {
+      final String id = syncProduct(code: 'P777');
+      expect(ProductDao(db).findById(id)!.code, 'P777');
+    });
+
+    test('同 code 异 id ⇒ 主机改派；原占用者**不受影响**', () {
+      final String firstId = syncProduct(code: 'P001');
+
+      final String secondId = newId();
+      final SyncResponse response = server.handle(
+        opMaster('products', secondId, SyncOpType.createMasterData, payload: {
+          'code': 'P001',
+          'name': '商品乙',
+        }),
+        now: now(),
+      );
+
+      // 仍是 applied：改派对客户端**不是错误**，真码由 pull 带回去
+      expect(response.status, SyncStatus.applied, reason: response.reason);
+      expect(response.serverState, isNull, reason: '真码不靠 push 回执传，靠 pull');
+      expect(
+        ProductDao(db).findById(secondId)!.code,
+        isNot('P001'),
+        reason: '被占用 ⇒ 改派',
+      );
+      expect(
+        ProductDao(db).findById(secondId)!.code,
+        'P0002',
+        reason: '顺延自增（补零 4 位）',
+      );
+      expect(
+        ProductDao(db).findById(firstId)!.code,
+        'P001',
+        reason: '原占用者的编码一个字都不许动',
+      );
+    });
+
+    test('两台设备先后推同一 code ⇒ 先后改派，都成功且不撞 UNIQUE', () {
+      final String idA = newId();
+      final String idB = newId();
+
+      final SyncResponse a = server.handle(
+        opMaster('products', idA, SyncOpType.createMasterData, payload: {
+          'code': 'P001',
+          'name': 'A 的商品',
+        }),
+        now: now(),
+      );
+      final SyncResponse b = server.handle(
+        opMaster('products', idB, SyncOpType.createMasterData, payload: {
+          'code': 'P001',
+          'name': 'B 的商品',
+        }),
+        now: now(),
+      );
+
+      expect(a.status, SyncStatus.applied, reason: a.reason);
+      expect(b.status, SyncStatus.applied, reason: b.reason);
+      expect(
+        <String>{
+          ProductDao(db).findById(idA)!.code,
+          ProductDao(db).findById(idB)!.code,
+        },
+        hasLength(2),
+        reason: '两个商品必须拿到不同的编码',
+      );
+    });
+
+    test('code 不是字符串 ⇒ rejected（不静默塞进 TEXT 列）', () {
+      final SyncResponse response = server.handle(
+        opMaster('products', newId(), SyncOpType.createMasterData, payload: {
+          'code': 5,
+          'name': '商品',
+        }),
+        now: now(),
+      );
+
+      expect(response.status, SyncStatus.rejected);
+      expect(response.reason, contains('code'));
+    });
+
+    test('改派只作用于 products：parties 照旧落库', () {
+      final String partyId = syncParty();
+      expect(
+        db.raw
+            .select('SELECT name FROM parties WHERE id = ?', <Object?>[partyId])
+            .first['name'],
+        '往来方',
+      );
+    });
+  });
+
   group('updateMasterData', () {
     test('base_version 匹配 → applied，sync_version + 1', () {
       final String id = syncProduct(code: 'P910');
@@ -515,16 +613,157 @@ void main() {
       expect(response.reason, contains('base_version'));
     });
 
-    test('目标不存在 → rejected', () {
+    // §CV·3 裁定（方案丙，2026-10-08）：不存在 ⇒ **upsert 建档**（不再 `rejected`）。
+    test('目标不存在 ⇒ upsert：用 payload 的 id 建档（返回 applied）', () {
+      final String id = newId();
+      final SyncResponse response = server.handle(
+        opMaster('products', id, SyncOpType.updateMasterData, baseVersion: 0, payload: {
+          'name': '离线建的商品',
+          'sell_price': 350,
+        }),
+        now: now(),
+      );
+
+      expect(response.status, SyncStatus.applied, reason: response.reason);
+      final Product saved = ProductDao(db).findById(id)!;
+      expect(saved.name, '离线建的商品');
+      expect(saved.sellPrice, 350);
+      expect(saved.syncVersion, 0, reason: 'upsert 建档与 create 同：版本从 0 起');
+      expect(saved.code, isNotEmpty, reason: '编码由主机生成（update payload 不带 code）');
+    });
+
+    test('乱序收敛：update 先到 ⇒ 建档；create 后到 ⇒ already_exists，只有一行', () {
+      final String id = newId();
+      // ① update 先到（create 进重试被排到后面 —— 正是 §CV·3 要消除的乱序）
+      final SyncResponse first = server.handle(
+        opMaster('products', id, SyncOpType.updateMasterData, baseVersion: 0, payload: {
+          'name': '张三',
+          'sell_price': 100,
+        }),
+        now: now(),
+      );
+      expect(first.status, SyncStatus.applied, reason: first.reason);
+
+      // ② create 后到 ⇒ 已存在
+      final SyncResponse second = server.handle(
+        opMaster('products', id, SyncOpType.createMasterData, payload: {
+          'name': '张三',
+          'code': 'P0042',
+          'sell_price': 100,
+        }),
+        now: now(),
+      );
+      expect(second.status, SyncStatus.alreadyExists);
+
+      final int rows = db.raw
+          .select('SELECT COUNT(*) AS n FROM products WHERE id = ?', <Object?>[id])
+          .first['n']! as int;
+      expect(rows, 1, reason: 'upsert + already_exists ⇒ 收敛到一行');
+    });
+
+    test('upsert 遇缺必填（name）⇒ rejected 且回执不含 SQL / 表名', () {
       final SyncResponse response = server.handle(
         opMaster('products', newId(), SyncOpType.updateMasterData, baseVersion: 0, payload: {
-          'sell_price': 1,
+          'sell_price': 1, // 缺 name（NOT NULL）
         }),
         now: now(),
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('不存在'));
+      expect(response.reason, isNot(contains('SQL')));
+      expect(response.reason, isNot(contains('products')));
+      expect(response.reason, isNot(contains('UNIQUE')));
+      expect(response.reason, isNot(contains('INSERT')));
+    });
+
+    // §CS·五 裁定 ①（2026-10-08）：**系统生成的字段一律以主机为准**。
+    test('payload 里的 code **一律丢弃**（客户端拿到的是被改派前的过期值）', () {
+      final String keep = syncProduct(code: 'P810');
+      final String other = syncProduct(code: 'P811');
+
+      // 用**别人正在用**的 code 去 update —— 修复前这会撞 `code UNIQUE` ⇒
+      // rejected + 指数退避重试到死信（这张编辑永远补不上）
+      final SyncResponse response = server.handle(
+        opMaster('products', other, SyncOpType.updateMasterData, baseVersion: 0, payload: {
+          'code': 'P810',
+          'sell_price': 999,
+        }),
+        now: now(),
+      );
+
+      expect(response.status, SyncStatus.applied, reason: response.reason);
+      final Product saved = ProductDao(db).findById(other)!;
+      expect(saved.code, 'P811', reason: '系统生成的字段以主机为准');
+      expect(saved.sellPrice, 999, reason: '其它字段照常更新');
+      expect(saved.syncVersion, 1);
+      expect(
+        ProductDao(db).findById(keep)!.code,
+        'P810',
+        reason: '别人的编码一个字都不许动',
+      );
+    });
+  });
+
+  // ============================================================ 内部错误的回执口径
+  //
+  // §CS·五 裁定 ③：领域异常**先分类再回一句中文**；原始异常只进日志。
+  // 修复前是 `'操作失败：$error'` —— `SqliteException.toString()` 带着整条 SQL
+  // 与绑定参数，等于把客户端 payload 原样回传（M15 同一类问题）。
+  group('内部错误的回执口径（§CS·五 ③）', () {
+    test('约束冲突 ⇒ 中文原因；原始异常只走 onInternalError', () {
+      final List<String> labels = <String>[];
+      final List<Object> logged = <Object>[];
+      final SyncServer logging = SyncServer(
+        db,
+        onInternalError: (String label, Object error, StackTrace stack) {
+          labels.add(label);
+          logged.add(error);
+        },
+      );
+
+      // products.name 是 NOT NULL ⇒ 缺 name 触发 SQLITE_CONSTRAINT_NOTNULL
+      final SyncResponse response = logging.handle(
+        opMaster('products', newId(), SyncOpType.createMasterData, payload: {
+          'code': 'P820',
+        }),
+        now: now(),
+      );
+
+      expect(response.status, SyncStatus.rejected);
+      expect(response.reason, contains('不完整或不合法'), reason: response.reason);
+      for (final String leak in <String>[
+        'products',
+        'Sqlite',
+        'constraint',
+        'NOT NULL',
+        'INSERT',
+      ]) {
+        expect(
+          response.reason,
+          isNot(contains(leak)),
+          reason: '回给客户端的话里不该出现「$leak」',
+        );
+      }
+
+      // 原始异常（含 SQL 细节）走日志
+      expect(logged, hasLength(1));
+      expect(
+        logged.single.toString().toLowerCase(),
+        contains('constraint'),
+        reason: '原始异常进日志 —— 那才是排障要看的东西',
+      );
+      expect(labels, hasLength(1));
+    });
+
+    test('没给 onInternalError 也不崩（测试 / 自检默认场景）', () {
+      final SyncResponse response = server.handle(
+        opMaster('products', newId(), SyncOpType.createMasterData, payload: {
+          'code': 'P821',
+        }),
+        now: now(),
+      );
+      expect(response.status, SyncStatus.rejected);
+      expect(response.reason, isNotEmpty);
     });
   });
 

@@ -245,6 +245,59 @@ void main() {
     check('事务外调用编码生成器 → StateError', outside is StateError);
     db3.close();
 
+    // ---- 编码改派（D1：客户端建议的编码，主机说了算）----
+    final Db dbR = Db.openInMemory();
+    final ProductService sR = ProductService(dbR);
+    void seedR(String code) {
+      final int t = now();
+      ProductDao(dbR).insert(
+        Product(
+          id: newId(),
+          code: code,
+          name: '占位-$code',
+          createdAt: t,
+          updatedAt: t,
+        ),
+      );
+    }
+
+    check('没建议（null）⇒ 主机自增',
+        dbR.transaction<String>(() => sR.resolvePreferredCode(null)) == 'P0001');
+    check(
+        '建议可用 ⇒ 原样采用',
+        dbR.transaction<String>(() => sR.resolvePreferredCode('P0042')) ==
+            'P0042');
+    check(
+        '非法编码（非 ^P\\d+\$）⇒ 视同未提供（自增）—— §CV·七 温和收紧',
+        dbR.transaction<String>(() => sR.resolvePreferredCode('ABC-001')) ==
+                'P0001' &&
+            dbR.transaction<String>(() => sR.resolvePreferredCode('PU1')) ==
+                'P0001');
+    seedR('P0042');
+    final String reassigned1 =
+        dbR.transaction<String>(() => sR.resolvePreferredCode('P0042'));
+    final String reassigned2 =
+        dbR.transaction<String>(() => sR.resolvePreferredCode('P0042'));
+    check(
+        '建议被占用 ⇒ 改派（顺延自增：取 max+1，**不补空档**）',
+        reassigned1 == 'P0043',
+        reassigned1);
+    check('改派只「算」不「写」：不插行 ⇒ 同输入同结果',
+        reassigned2 == reassigned1, reassigned2);
+    final Product viaPreferred = sR.create(goodDraft(),
+        now: now(), preferredCode: 'P0500');
+    check('create(preferredCode:) 可用 ⇒ 落库就是这个编码',
+        viaPreferred.code == 'P0500' &&
+            ProductDao(dbR).findById(viaPreferred.id)!.code == 'P0500');
+    final Product reassigned =
+        sR.create(goodDraft(), now: now(), preferredCode: 'P0500');
+    check('create(preferredCode:) 被占用 ⇒ 落库的是改派后的编码',
+        reassigned.code == 'P0501' &&
+            ProductDao(dbR).findById(reassigned.id)!.code == 'P0501');
+    check('改派不动原占用者',
+        ProductDao(dbR).findById(viaPreferred.id)!.code == 'P0500');
+    dbR.close();
+
     // ---- 编辑 / 停用 / 列表 ----
     final Db db4 = Db.openInMemory();
     final ProductService s4 = ProductService(db4);

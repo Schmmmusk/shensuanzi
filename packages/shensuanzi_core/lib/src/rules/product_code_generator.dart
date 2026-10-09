@@ -32,6 +32,13 @@ class ProductCodeGenerator {
   /// 取最大值的 SQL 已按「先长度后字典序」处理，位数变化不会取错（见 `latestCode`）。
   static const int padWidth = 4;
 
+  /// **主机编码格式的唯一定义**：`P` + 数字（`P0001`；超 4 位自然增长，如 `P10000`）。
+  ///
+  /// [next] 按它解析序号；`ProductService.resolvePreferredCode` 按它**验收**
+  /// 客户端建议的编码（§CV·七 温和收紧：不匹配 ⇒ 视同未提供）。
+  /// —— 两处共用**同一个** pattern，将来改前缀只动这里。
+  static final RegExp pattern = RegExp('^$prefix\\d+\$');
+
   String next() {
     if (!db.inTransaction) {
       throw StateError(

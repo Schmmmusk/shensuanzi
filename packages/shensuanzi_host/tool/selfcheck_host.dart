@@ -320,14 +320,20 @@ Future<void> main() async {
         '${cursors[SyncCursorKeys.products]}');
     check('空库 stock_ledger 为空', (pullJson['stock_ledger']! as List).isEmpty);
     // R-13 方案 A：pull **含主数据**（不再是「只返 6 个业务实体」）。
-    // 9 个实体 + next_cursors = 10 个键。
+    // 9 个实体 + next_cursors **+ has_more**（2026-10-07 §CL 新增）= 11 个键。
+    // ⚠️ 2026-10-08 修：`has_more` 上线时这里漏更 ⇒ 断言陈旧（2 项常红，
+    // 与本次改动无关）—— 凡是数「响应体顶层键个数」的断言，加键就必须改这里。
     check('pull 含主数据（products 在响应里）', pullJson.containsKey('products'));
-    check('pull 恰好 9 个实体 + next_cursors', pullJson.keys.length == 10,
+    check('pull 恰好 9 个实体 + next_cursors + has_more', pullJson.keys.length == 11,
         '${pullJson.keys.toList()}');
     check('实体名与 SyncPullResult.entityNames 一致',
         pullJson.keys
             .toSet()
-            .difference(<String>{...SyncPullResult.entityNames, 'next_cursors'})
+            .difference(<String>{
+              ...SyncPullResult.entityNames,
+              'next_cursors',
+              'has_more',
+            })
             .isEmpty);
     check('恰好 8 个游标', cursors.length == 8, '${cursors.length}');
 

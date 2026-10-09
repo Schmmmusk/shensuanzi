@@ -166,6 +166,7 @@ class HostServiceController {
     PortRange ports = PortRange.defaults,
     Future<String?> Function()? detectLocalIp,
     int Function()? clock,
+    this.onInternalError,
   }) : _db = db,
        _identities = identities,
        _ports = ports,
@@ -173,6 +174,12 @@ class HostServiceController {
        // ⚠️ 括号不能省：初始化列表里 `?? ` 后面直接跟 `() => ...` 会被解析成
        // 「构造函数带返回类型」而报错（Dart 的已知歧义）
        _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  /// **同步内部错误的日志出口**（§CS·五 裁定 ③）：主机把原始异常交给宿主
+  /// 去打日志，客户端只收到一句中文（`syncFailureReason`）。
+  /// `null` = 不记，行为不变。
+  final void Function(String label, Object error, StackTrace stack)?
+  onInternalError;
 
   final Db _db;
   final HostIdentityStore _identities;
@@ -320,6 +327,7 @@ class HostServiceController {
         identity: _identity!,
         ports: _ports,
         onAuthenticated: _noteTraffic,
+        onInternalError: onInternalError,
       );
       _state = HostServiceState.running;
     } on StateError {

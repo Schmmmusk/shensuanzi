@@ -836,6 +836,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
                 identities: HostIdentityStore(
                   hostIdentityFile(location.directory),
                 ),
+                // §CS·五 裁定 ③：同步内部的原始异常**只进日志**，
+                // 客户端只收到一句中文（`syncFailureReason`）
+                onInternalError: (String label, Object error, StackTrace stack) =>
+                    _log.crash(error, stack, label: label),
               );
         _dbFailure = null;
         _brokenDirectory = null;

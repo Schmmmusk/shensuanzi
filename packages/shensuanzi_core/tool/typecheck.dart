@@ -25,6 +25,7 @@ import '../test/account_draft_test.dart' as account_draft_test;
 // ignore: unused_import
 import '../test/party_service_test.dart' as party_service_test;
 // ignore: unused_import
+import '../test/master_data_sink_test.dart' as master_data_sink_test;
 import '../test/product_service_test.dart' as product_service_test;
 // ignore: unused_import
 import '../test/quantity_conversion_test.dart' as quantity_conversion_test;
@@ -54,6 +55,7 @@ import '../test/stocktake_service_test.dart' as stocktake_service_test;
 import '../test/stock_delta_test.dart' as stock_delta_test;
 import '../test/storage_error_test.dart' as storage_error_test;
 import '../test/sync_client_test.dart' as sync_client_test;
+import '../test/sync_failure_test.dart' as sync_failure_test;
 // ignore: unused_import
 import '../test/util_test.dart' as util_test;
 
@@ -106,6 +108,7 @@ void main() {
     export_reads_test.main,
     immediate_payment_test.main,
     party_service_test.main,
+    master_data_sink_test.main,
     product_service_test.main,
     purchase_draft_test.main,
     quantity_conversion_test.main,
@@ -124,6 +127,7 @@ void main() {
     stock_delta_test.main,
     storage_error_test.main,
     sync_client_test.main,
+    sync_failure_test.main,
     util_test.main,
     // tool/
     selfcheck.main,
@@ -143,7 +147,8 @@ void main() {
     make_fixture.main,
   ];
   print(
-    '编译通过：16 个测试文件 + 15 个 tool 入口已通过类型检查（未执行）。'
-    '（共 ${entries.length} 个入口）',
+    // ⚠️ 不要写死「N 个测试文件 + M 个 tool 入口」—— 加一个文件就漂
+    //（2026-10-08 真实漂过：加了 master_data_sink_test 后仍印 16）。
+    '编译通过：${entries.length} 个入口（test/ + tool/）已通过类型检查（未执行）。',
   );
 }

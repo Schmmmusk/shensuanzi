@@ -865,6 +865,30 @@ void main() {
   check('无界宽度 ⇒ 不堆叠（横向滚动容器没有「太窄」）',
       !entryFieldsShouldStack(maxWidth: double.infinity, textScale: 2));
 
+  // ---------------------------------------------------------------- MasterDataPolicy
+  section('MasterDataPolicy（§CV·七 ① 乙 —— 主数据门控值对象）');
+  {
+    const MasterDataPolicy desktop = MasterDataPolicy.desktop();
+    check(
+        '桌面：三族全开（单机版零变化）',
+        desktop.canCreateProducts &&
+            desktop.canCreateParties &&
+            desktop.canCreateAccounts);
+    const MasterDataPolicy mobile = MasterDataPolicy.mobile();
+    check(
+        '手机 v1：只开商品，往来 / 账户仍禁建',
+        mobile.canCreateProducts &&
+            !mobile.canCreateParties &&
+            !mobile.canCreateAccounts);
+    check(
+        '显式构造三族独立（互不牵连）',
+        const MasterDataPolicy(
+          canCreateProducts: false,
+          canCreateParties: true,
+          canCreateAccounts: false,
+        ).canCreateParties);
+  }
+
   // ⚠️ 统计输出必须在**所有** section 之后 —— 详见上文那条注释。
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   stdout.writeln('=' * 46);

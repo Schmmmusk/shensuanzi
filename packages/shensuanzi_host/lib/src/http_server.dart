@@ -74,11 +74,13 @@ class HostHttpServer {
     InternetAddress? address,
     int Function()? clock,
     void Function()? onAuthenticated,
+    void Function(String label, Object error, StackTrace stack)? onInternalError,
   }) async {
     final int Function() now =
         clock ?? () => DateTime.now().millisecondsSinceEpoch;
     final _HostRoutes routes = _HostRoutes(
-      sync: SyncServer(db),
+      // `onInternalError` = 主机侧「原始异常只进日志」的出口（§CS·五 ③）
+      sync: SyncServer(db, onInternalError: onInternalError),
       identity: identity,
       clock: now,
       onAuthenticated: onAuthenticated,

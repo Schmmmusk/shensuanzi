@@ -23,10 +23,27 @@ import 'package:sqlite3/sqlite3.dart';
 /// - **一条 op 一个事务**。失败只影响该条，不回滚同一批里的其它条目
 ///   （它们是各自独立的队列条目，见 §六）。
 class SyncServer {
-  SyncServer(this.db) : _engine = RuleEngine(db);
+  SyncServer(this.db, {this.onInternalError})
+    : _engine = RuleEngine(db),
+      _products = ProductService(db);
 
   final Db db;
   final RuleEngine _engine;
+
+  /// **内部错误的日志出口**（§CS·五 裁定 ③，2026-10-08）。
+  ///
+  /// 客户端只拿到一句中文结论（[syncFailureReason]）；**原始异常 + 堆栈走这里**
+  /// 进主机日志 —— 两个通道不混（与 M15 同一条纪律）。`null` = 不记（测试 /
+  /// 自检里常见），不影响任何行为。
+  final void Function(String label, Object error, StackTrace stack)?
+  onInternalError;
+
+  /// 商品建档的**编码改派**（D1，2026-10-08）。
+  ///
+  /// ⚠️ 本类只**调用**它，不自己算编码 —— 改派逻辑的唯一出处是
+  /// `ProductService.resolvePreferredCode`（`docs/reply.md` 裁定 §二②）。
+  /// 自己算的话，「桌面建档」与「同步建档」会各写一套（纪律 5）。
+  final ProductService _products;
 
   Database get _raw => db.raw;
 
@@ -80,8 +97,12 @@ class SyncServer {
       }
     } on FormatException catch (error) {
       return SyncResponse.rejected(op.entityId, error.message);
-    } catch (error) {
-      return SyncResponse.rejected(op.entityId, '操作失败：$error');
+    } catch (error, stack) {
+      // §CS·五 裁定 ③（2026-10-08）：**领域异常先分类，再回一句中文**。
+      // 原来这里写 `'操作失败：$error'` —— `SqliteException.toString()` 带着
+      // 整条 SQL 与绑定参数，等于把客户端 payload 原样回传（M15 同一类问题）。
+      onInternalError?.call('同步操作失败（${op.operation.wire}）', error, stack);
+      return SyncResponse.rejected(op.entityId, syncFailureReason(error));
     }
   }
 
@@ -281,6 +302,23 @@ class SyncServer {
 
   // ------------------------------------------------------------ 主数据
 
+  /// `createMasterData`（`sync_protocol.md` §8.1）。
+  ///
+  /// ## 商品编码的「主机改派」（D1，2026-10-08）
+  ///
+  /// 手机**离线**建档时，编码由客户端按**自己镜像**的 `max(code)+1` 生成
+  /// （`reply_review.md` §CH 提案 A §3）。主机的并发现实是「另一台设备
+  /// （或电脑上）可能已经用了同一个码」—— 于是：
+  ///
+  /// - 客户端的编码**可用** ⇒ 原样采用（用户无感）；
+  /// - **已被别的商品占用** ⇒ 主机**改派**一个新的编码。
+  ///
+  /// 客户端不为此多发一次往返：它靠 **pull 回写镜像**拿到真实编码
+  /// （镜像行与这里同 id ⇒ `SyncClient._upsertRow` 直接覆盖，
+  /// 见 `sync_client.dart` 的 UPSERT 说明）。
+  ///
+  /// ⚠️ 判定一律走 [ProductService.resolvePreferredCode]（**改派唯一出处**）；
+  /// 本方法只决定「**什么时候**该改派」= 建商品时。其它主数据表原样落库。
   SyncResponse _createMasterData(SyncOperation op, int now) {
     final SyncResponse? guard = _requireMasterData(op);
     if (guard != null) return guard;
@@ -300,18 +338,64 @@ class SyncServer {
           status: SyncStatus.alreadyExists,
         );
       }
-      // created_at / updated_at / sync_version 由主机写（纪律 10 + §七）
-      _insertRow(op.entity, <String, Object?>{
-        ...values,
-        'id': op.entityId,
-        'created_at': now,
-        'updated_at': now,
-        'sync_version': 0,
-      });
-      return SyncResponse(entityId: op.entityId, status: SyncStatus.applied);
+      return _insertMasterData(op, values, now);
     });
   }
 
+  /// 主数据**落库**（建档路径的**唯一实现**）—— `createMasterData` 与
+  /// `updateMasterData` 的 **upsert 分支**共用（§CV·3 裁定，2026-10-08）。
+  ///
+  /// ⚠️ **必须在事务内调用**：编码可能顺延自增（`products.code` 是 UNIQUE）。
+  ///
+  /// 商品编码的改派：判定一律走 [ProductService.resolvePreferredCode]
+  /// （**改派唯一出处**）；本方法只决定「**什么时候**该改派」= 落库时。
+  SyncResponse _insertMasterData(
+    SyncOperation op,
+    Map<String, Object?> values,
+    int now,
+  ) {
+    Map<String, Object?> effective = values;
+    if (op.entity == Schema.products) {
+      final Object? rawCode = values['code'];
+      if (rawCode != null && rawCode is! String) {
+        // 不静默兜底：`code` 是 TEXT 列，塞数字会被 SQLite 存成文本，
+        // 用户会看到一个莫名其妙的编码，而没人知道是谁塞的
+        return SyncResponse.rejected(op.entityId, 'products.code 必须是字符串');
+      }
+      effective = <String, Object?>{
+        ...values,
+        'code': _products.resolvePreferredCode(rawCode as String?),
+      };
+    }
+    // created_at / updated_at / sync_version 由主机写（纪律 10 + §七）
+    _insertRow(op.entity, <String, Object?>{
+      ...effective,
+      'id': op.entityId,
+      'created_at': now,
+      'updated_at': now,
+      'sync_version': 0,
+    });
+    return SyncResponse(entityId: op.entityId, status: SyncStatus.applied);
+  }
+
+  /// `updateMasterData`（`sync_protocol.md` §8.1）—— **upsert 语义**（§CV·3 裁定，2026-10-08）。
+  ///
+  /// | 主机该 id | 行为 |
+  /// |---|---|
+  /// | **存在** | 乐观锁校验 `base_version`：匹配 ⇒ 更新 + `sync_version + 1`；落后 ⇒ `conflict` + `server_state` |
+  /// | **不存在** | **转为建档**（用 payload 的 id；**忽略 `base_version`**） |
+  ///
+  /// ## 为什么是 upsert（§CV·3 方案丙）
+  ///
+  /// 客户端队列**不合并**同一实体的 create / update，只保证**正常路径**按
+  /// `created_at` 升序 push。一旦 create 进了重试（`next_retry_at` 后退），
+  /// update 可能**先到主机** —— 旧实现（不存在 ⇒ `rejected`）会让这条编辑
+  /// **永远补不上**（指数退避到死信）。
+  ///
+  /// upsert 把它**从根上消除**：create / update 谁先到都收敛到同一状态
+  /// （`Agents.md §二·8`「主机永远赢」）。
+  ///
+  /// ⚠️ **仅主数据** —— 单据必须走 `RuleEngine`，**不存在** upsert 概念。
   SyncResponse _updateMasterData(SyncOperation op, int now) {
     final SyncResponse? guard = _requireMasterData(op);
     if (guard != null) return guard;
@@ -323,13 +407,33 @@ class SyncServer {
       );
     }
 
-    final Map<String, Object?> values = SyncValueCheck.normalize(op.payload)
-      ..remove('id');
+    final Map<String, Object?> values = SyncValueCheck.normalize(op.payload);
+    if (values['id'] != null && values['id'] != op.entityId) {
+      return SyncResponse.rejected(
+        op.entityId,
+        'payload.id（${values['id']}）必须等于 entity_id（${op.entityId}）',
+      );
+    }
+    values.remove('id');
+    // §CS·五 裁定 ①（2026-10-08）：**系统生成的字段一律以主机为准**。
+    //
+    // `products.code` 客户端**不该发**（`data_model.md §2.1`：由系统生成、用户不填）；
+    // 就算发了也一律丢弃 —— 主机永远赢（`Agents.md §二·8`），且避免
+    // 「客户端拿着**被改派前的过期 code** 来 update」撞 `products.code UNIQUE`
+    // ⇒（修复前）`rejected` + 指数退避重试到死信，这张编辑永远补不上。
+    //
+    // 通用规则（`sync_protocol.md §8.1`）：**update payload 不含系统生成字段**。
+    if (op.entity == Schema.products) {
+      values.remove('code');
+    }
 
     return db.transaction<SyncResponse>(() {
       final Row? current = _findRow(op.entity, op.entityId);
       if (current == null) {
-        return SyncResponse.rejected(op.entityId, '主数据不存在：${op.entityId}');
+        // upsert：主机没有该行 ⇒ 用 payload（已剥 `id` / 系统生成字段）建档。
+        // `base_version` 在此**无意义**（没有可比对的版本），故不校验。
+        // 编码由 `_insertMasterData` → `resolvePreferredCode(null)` 生成 / 改派。
+        return _insertMasterData(op, values, now);
       }
 
       final int version = current['sync_version']! as int;

@@ -23,7 +23,7 @@
 > | CSV 导出（§AF）                                                    | ✅ 五页接线 + 三层测试闭环                                                                                                                                                                                                   |
 > | **首发准备（§AG）**                                                  | ✅ Release 已构建（30.8 MB → 压缩 **12.8 MB**）；版本号 / 文件属性 / LICENSE / 图标 / 日志 / 同步入口占位 / README / 打包文档 / **发布包脚本**均已落地；**14 步清单已在新机器实测：12/14（2026-09-29）→ 两处根因修复（§AI）+ 三口子落地（§AJ）后重新打包复测 → 14/14 全过（2026-09-30），首发验证闭环** |
 > | **Android（§AH）**                                               | ✅ **B1 起已落地并真机验收**：B1a/B1b 首启直达（§BH·五）· B2 扫码配对 + 首拉镜像（§BL）· **B3 手机开单 → 队列 → 自动推 → 三态条 → 库存叠加 → 引导**（§CA / §CB / §CD / §CE 落地，**§CF 真机 ①–⑦ 全过**）· C3 复验进行中。⚠️ 本提交（§CJ·补 2 后）**未经人工复跑门禁** |
-> | **待办**                                                         | 👉 **唯一权威入口 = §AR「当前待办总览」**（头部这一行只是指针）。**当前队列**（2026-10-07，§CK / `handoff-2026-10-07.md`）：① **复跑全量门禁**（本提交未复跑）② **D1 主数据入队 core 段**（裁定已下，§CI 摸底完，**实现未写**）③ C3 真机复验收尾（③ 标题缩放待裁定 · ④① 待复验）④ README 能力表（B3 收尾后）。**本行原有三件**（v3 批次 / Android / `DocumentDraft`）**均已挪后或已落地**：v3 段 1a·1b ✅（§BD），Android B1–B3 ✅，`DocumentDraft` 仍等形状稳定（§BE·二）。**另：外部测试报告带来的 M 系列（§CO–§CR）✅ 已全部闭环（2026-10-08）** |
+> | **待办**                                                         | 👉 **唯一权威入口 = §AR「当前待办总览」**（头部这一行只是指针）。**当前队列**（2026-10-07，§CK / `handoff-2026-10-07.md`）：① **复跑全量门禁**（本提交未复跑）② **D1 主数据入队 core 段**（✅ **已落地，2026-10-08，§CS**；⚠️ 待用户复跑 `dart test`）③ C3 真机复验收尾（③ 标题缩放待裁定 · ④① 待复验）④ **D2**（QueueSink + 乐观写 + UI 恢复表单；**§CS·五 已裁定并落地主机侧，「客户端不发 code」= D2 的实现约束**，见 `sync_protocol.md §8.1` 端责任表）⑤ README 能力表（B3 收尾后）。**本行原有三件**（v3 批次 / Android / `DocumentDraft`）**均已挪后或已落地**：v3 段 1a·1b ✅（§BD），Android B1–B3 ✅，`DocumentDraft` 仍等形状稳定（§BE·二）。**另：外部测试报告带来的 M 系列（§CO–§CR）✅ 已全部闭环（2026-10-08）** |
 > | **有意识不做（首发范围外）**                                               | 欢迎浮层（§六 已收紧为一屏对话框，欢迎语两行随 §AG 遗漏 1 进对话框）· 备份恢复 UI / 加密（AE-6）· 单据分页（SC-3）· mDNS（v1.5）· 退货 / 利润显示（§Z 七）· 备份目录 README.txt（AE 遗漏 10）。**注：两处已移出本列** —— 送货单（批次 1b，§AP）、**折扣抹零**（2026-10-02 裁定：v1 就做，转 v3 批次，§BA·一）       |
 >
 > 对应 `Agents.md` §七「开发顺序」九步：**1–5、7 的逻辑层已完成**，6（Windows UI）**11 入口全通**，  
@@ -109,6 +109,12 @@
 > §CP **M 系列第二批（P2）落地**：草稿保护（M09+M11+M12）+ M16 两步修（镜像打开移出 build 期 + 失败页重试）（**2026-10-08**）
 > §CQ **M 系列第三批（P2）落地**：库存离线视图（M08+M14）+ 窄屏适配（M13）；**六** 复跑红修复（局部函数先引用后声明）（**2026-10-08**）
 > §CR **M 系列 P3 收尾落地**：M03 相机权限中文 + M05 壳相关导航文案 + M10 窄屏单位提示（新增 `scan_error` / `entry_layout` / `EntryFieldsRow`）（**2026-10-08**）
+> §CS **D1 主数据入队 core 段落地** + **§CS·五 裁定落地**（`updateMasterData` 忽略 `code` + `syncFailureReason` 分类 + 原始异常进日志 + 三处文档；**客户端「不发 code」归 D2**）（**2026-10-08**）
+> §CT **Android 环境诊断**：doctor 两报错的根因（`local.properties` 指盘根 / Flutter 只认 `cmdline-tools\latest`）+ cmdline-tools 23.0 的**包 ID 用斜杠**（`platforms/android-36`，不是 `;`）（**2026-10-08**）
+> §CU **D2a 落地：主数据提交出口（core）** —— `MasterDataSink` / `ServiceMasterSink` / `QueueMasterSink` + 乐观写镜像 + payload 纯函数（update 剥 `code`）；**⚠️ D2 裁定原文已丢失（reply.md 被覆盖），按 §CH 提案 A 实施 + 三项判断待确认**（**2026-10-08**）
+> §CV **D2 裁定原文已找回（在 git 历史 `d09ed5f:docs/reply.md`）** + 与 D2a 对账（5 边界 / 3 细节）+ 1 项曾需重裁（队列合并 vs 顺序）⇒ **§CV·五 已裁方案丙并落地** + 落地 5 处文档 + **§CV·六 D2b 开工**（`isPending` 派生落地 + **2 项待裁**：门控形状 / 收紧 code）（**2026-10-08**）
+> §CW **Android 许可报错根因**：cmdline-tools **23.0 的 `sdkmanager` 是转发 shim**，永不输出 Flutter 要匹配的 `All SDK package licenses accepted.` ⇒ 用**经典版 22.0 做 `latest`** + 实跑接受许可（licenses 1→8 个）（**2026-10-08**）
+> §CV·七 **三项裁定落地**：② `resolvePreferredCode` **温和收紧**（非匹配 ⇒ 视同未提供）+ 三态判定**镜像补齐**（core）+ ① **`MasterDataPolicy` 值对象**（接线与「表单走 sink」同批，待做）（**2026-10-09**）
 >
 > 📦 **已归档的节**（`~~删除线~~` 表示已移出本文件）：§0-§7 → `reply_review_archive_v1.md`；  
 > **§F / §G / §I / §J / §K 与 §H 的落地记录部分** → `reply_review_archive_v2.md`（2026-09-28）。  
@@ -3509,6 +3515,7 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 | ~~2~~ | ~~**AH-A 主机接通**~~ | ✅ **已落地**（2026-10-02）：`shensuanzi_host` 接进根应用 + 设置页「多设备同步」区（开关默认关 / 四态状态行 / 失败怎么办 / 配对二维码**自绘**）+ 控制器（纯 Dart，56 项自检）。**§AH 遗漏 8（`api_version`）早已落地，无需做** | — | **§BB** |
 | 3 | **折扣抹零 + 包装换算（v3）** | 🚧 **进行中 —— 段 1a ✅ + 段 1b ✅**（1a：Schema v3 五列 + `migrationStep(2)` + **迁移链环级验证**，+6 用例 · 自检 105 项，见 **§BD·六**；1b：`data_model.md` / `rules.md` 五列语义 + 7 条交互关系成文，见 **§BD·七** —— **待你复核措辞，通过才进 2a**）。✅ **已裁定：v3 = 5 列**（`reply.md` v3 审查意见：**这是裁定漏了两列的必要补齐，报备即可、无需重裁**）—— `products.package_unit` / `package_size` + `document_lines.discount_amount` / `entry_quantity` / `entry_unit`。**5 列的交互关系已在审查意见 §二 一次定死**（7 条 —— ⚠️ **已逐字固化进 §BD**，因为 `reply.md` 每轮被覆盖）。按审查意见拆步（审查原文写「切成 6 步」，但表里是 **7 行**；⚠️ **按表执行**）：**1a** Schema + 迁移测试 ✅ · **1b** 文档先行 ✅ · **2a** 引擎口径 · **2b** 三份草稿 + `toBaseQuantity` · **2c** 白名单 + 协议 + 导出 · **3** Flutter · **4** 手册 + 台账 **§BD**。**每步做完即提交，下一步不改上一步的文件** | **无** | `reply.md` v3 审查意见 / **§BD** / §BA·一 |
 | 4 | **Android（AH-B/C）** | 客户端镜像 + **重建而非迁移**（`mirror_schema_version`） | **依赖 #2** | §AH / `schema_migration.md`「客户端镜像」 |
+| 5 | **D2b（主数据本地建档 + UI）** | `app.dart` 按 `_shellKind` 注入两 sink（`ServiceMasterSink` / `QueueMasterSink`）+ `readOnlyMasterData` 换「本地建档 + 入队」+ 失败明细（关联引用 id）+ `readOnlyMasterData` **改名**（§二⑤）+ `isPending` 标记 UI；**等 go-ahead** | —（§CV·三 已裁） | **§CU / §CV** |
 
 > ⏱️ **优先级指令（2026-10-03，用户）**：**先把 v3 搞完，再说退货**（退货留在 §AR·三 候选不动）；
 > **「时间不多了，得尽快出安卓版」** —— v3 排在 Android 前的理由因此更硬：
@@ -3530,6 +3537,9 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 | ~~9~~ | ~~`sync_protocol.md` 补「请求体必须 UTF-8」~~ | ✅ **已补** | **§AW·二** |
 | ~~10~~ | ~~迁移失败的「自动恢复」并没有发生~~ | ✅ **已裁定 + 已落地**（2026-10-03，§BE）：**同意 A 但做完整版** —— ① 改文本（`database.dart` / `schema_migration.md` §三 / 台账 §AQ 两处）② **删 `_restoreFrom`**（保留 = 死代码；「待用」是伪需求，真要做是新设计需重裁）③ 改过时的测试注释 ④ 环级用例补「重试不重跑 v1→v2」的可观测断言 ⑤ **立纪律 17**（描述与实现必须一致）⑥ 用户手册补 `before-v{N}` 是什么（含 HTML 重生成） | **§BE·一** |
 | ~~11~~ | ~~二维码打开「未响应」~~ | ✅ **已裁定（方案 A）+ 已落地**（2026-10-03，§BF·二）：`PairingQr` 缓存化（`late final`，`uri` 刻意不缓存）+ **`_QrView` 改 StatefulWidget 持实例** + `RepaintBoundary` + `shouldRepaint` 同实例 false。**实测：15 408 ms → 4.38 ms**（~3500 倍）；矩阵逐 bit 一致；**+3 断言**。⚠️ 一处偏离（`shouldRepaint` 用实例相等而非恒 false）待复核 | **§BF / §BF·二**（提案文档：`docs/proposals/多设备同步-二维码打开未响应-根因与方案.md`） |
+| ~~12~~ | ~~D2 队列：老裁定「合并」 vs 新裁定「顺序」~~ | ✅ **已裁定（方案丙，2026-10-08）**：**升序（保留）+ 主机 upsert（新增）+ 不做客户端合并**（老「合并」提案**废止** —— 它只在 create 仍 `pending` 的窄窗口有效，`sent` 后即失效）；**已落地**（§CV·五） | **§CV·三 / §CV·五** |
+| ~~13~~ | ~~D2b 门控形状~~ —— `readOnlyMasterData`（一个 `bool`）管不了「商品可建 / 往来账户仍禁建」 | ✅ **已裁定：乙（值对象 `MasterDataPolicy`）**（2026-10-09）—— 值对象 + 测试/自检镜像已落地；**接线待做**（与「表单走 sink」同批，见 §CV·七·三） | **§CV·七·三** |
+| ~~14~~ | ~~是否收紧 `resolvePreferredCode`~~（只接受 `^P\d+$`） | ✅ **已裁定：温和收紧**（非匹配 ⇒ **视同未提供**，**不** rejected）；已落地 + `sync_protocol.md §8.1` + 测试/自检镜像（**§CV·七·一**） | **§CV·七·一** |
 
 > 📌 **一条真待裁定（第 10 行：「自动恢复」的文本 vs 实现）**；另**一件等时间** ——
 > **第 2 行 `DocumentDraft`**（裁定「开」，判据 = 1b 后 ≥1 周，**未到期**）。
@@ -8012,4 +8022,501 @@ app typecheck **25 入口** ✓ · app selfcheck **138 项 0 失败**（+7）✓
 而我当时**只做了语法 + `$` 插值两项**，漏了第 1 项 ⇒ 漏到用户侧。
 §BC（2026-10-03）已裁定「**不做**静态检查工具」，改用**纪律 16 + 根层交付清单**——
 本节记录为该清单**第 1 项**的**再次发生**（§AR·三 的触发条件「再出现 ≥2 次」据此计数）。
+
+---
+
+## §CS D1 主数据入队 · core 段落地（2026-10-08）
+
+> 承接 §CH 提案 A 与 §CI 摸底。裁定要点（§CI 记录的 reply.md §二②）：**改派逻辑的唯一出处
+> 是 `ProductService`，`SyncServer` 只调用、不自己算编码**（纪律 5：同一条规则只写一处）。
+
+### 一、改了什么
+
+| 层 | 改动 |
+|---|---|
+| `shensuanzi_core` | 新增 `ProductDao.codeExists(code, {excludeId})`；新增 **`ProductService.resolvePreferredCode(String?)`**（`null`/空白 ⇒ 自增；可用 ⇒ **原样采用**；被占 ⇒ **改派**顺延）；`ProductService.create` 加可选 `preferredCode` |
+| `shensuanzi_host` | `SyncServer` 接一个 `ProductService`；`_createMasterData` 的 **products 分支**调 `resolvePreferredCode` 替换 payload 里的 `code`；`code` 不是字符串 ⇒ `rejected`（不静默塞进 TEXT 列） |
+
+**语义**：手机离线按自己镜像 `max(code)+1` 生成编码（§CH §3），主机可能已被占用 ⇒ 主机改派，
+客户端**不发第二次往返**，靠 pull 回写镜像（同 id ⇒ `SyncClient._upsertRow` 覆盖）。改派对客户端
+**不是错误** ⇒ 回执仍是 `applied`（`serverState` 为 `null`，真码由 pull 带回）。
+
+### 二、裁定逐项对照（§CI 的四条）
+
+| 裁定 | 状态 |
+|---|---|
+| ① `latestCode` 已按「先长度后字典序」同序 ⇒ 补测试钉住 | ✅ **已有测试**（`product_service_test`：`P9999 → P10000` / `已有 P10000 → P10001`）—— 摸底结论成立，无需再补 |
+| ④ pull 已是 UPSERT ⇒ 补「乐观行与 pull 同 id 收敛」断言 | ✅ 现有行为满足（`_upsertRow` = `ON CONFLICT(id) DO UPDATE`）；**本批补了一条端到端测试**（见下） |
+| ⑧ 乐观行收敛（主数据） | ✅ 由同一条端到端测试覆盖（products，镜像只有一行且收敛到主机码） |
+| §二② 改派唯一出处 = `ProductService` | ✅ `SyncServer` 只调用 `_products.resolvePreferredCode`，自身不生成编码 |
+
+### 三、测试与自检镜像
+
+| 层 | 新增 |
+|---|---|
+| core `product_service_test` | `resolvePreferredCode` 组 5 条 + `create(preferredCode:)` 组 4 条 |
+| host `sync_server_test` | 改派组 5 条（可用原样 / 同 code 异 id 改派且原占用者不动 / 两台设备先后推 / code 非字符串 rejected / parties 不受影响） |
+| host `client_server_test` | **端到端 1 条**（B 用 P001 建档 ⇒ 主机改派 ⇒ pull 后镜像同 id 收敛、只有一行） |
+| core `selfcheck_products` | +6 项（镜像） |
+| host `selfcheck_sync` | +7 项（镜像） |
+| host `selfcheck_client_server` | +6 项（镜像） |
+
+### 四、本侧验证（`dart run` 通道，全部真跑过）
+
+core typecheck **43 入口** ✓ · core `selfcheck` **111** ✓ · `selfcheck_products` **56** ✓ ·
+`selfcheck_payments` **93** ✓ · `selfcheck_sale` **19** ✓ · `selfcheck_query` **30** ✓ ·
+host typecheck **11 入口** ✓ · `selfcheck_sync` **155** ✓ · `selfcheck_client_server` **36** ✓
+
+⚠️ `dart test` 仍被 `CreateFile failed 231` 挡住（实测：起 `frontend_server` 失败）⇒ 移交用户复跑。
+
+### 五、🟡 报备一项（未擅自改，等裁定）
+
+**`updateMasterData` 携带「过期 code」会撞 UNIQUE** —— 手机被改派后、**pull 之前**若推一条 edit，
+payload 里的 `code` 还是它自己那个（过期的）值：
+
+- 若那个码已被别人占用 ⇒ `_updateRow` 撞 `products.code UNIQUE` ⇒ 抛异常 ⇒ 落到
+  `rejected('操作失败：SqliteException(…)')`（**信息对用户无意义**）；
+- 该条 `_retry` 走指数退避（1s/4s/16s…），超 `maxRetries` ⇒ **死信** ⇒ 这张编辑**永远补不上**
+  （三态条会显示失败条数，但用户看不懂）。
+
+**两个候选**（都不大，但改的是同步语义，**等裁定**）：
+
+| 方案 | 做法 | 评价 |
+|---|---|---|
+| **A（我倾向）** | products 的 `updateMasterData` **忽略 payload 里的 `code`**（主机保留自己的） | 与既有规则「**`code` 不改**」（`ProductService.update` 文档 + 桌面 UI 都不改编码）完全一致；客户端无法把编码改坏；零新增概念 |
+| B | 冲突时**改派**（同 create） | 语义更复杂：`update` 改名却顺手改编码，用户会更困惑 |
+
+⚠️ 现实影响面：**D2 之前没有客户端会推 `updateMasterData`**（桌面端不走同步建档），所以这不是
+上线阻塞项 —— 但 D2 一开工就会踩。
+
+### 六、复跑红修复（2026-10-08，两处）
+
+性质：**都是我的期望值写错**，生产代码零改动。
+
+| 文件 | 我写的 | 实际 | 为什么写错 |
+|---|---|---|---|
+| core `product_service_test.dart` | 库里只有 `P0007` ⇒ 顺延 `P0001` | **`P0008`** | 生成器是 **`max+1`**，**不补空档**（我把「顺延」误当成「找最小的空号」） |
+| host `sync_server_test.dart` | `P001` 被占 ⇒ 改派 `P002` | **`P0002`** | 编码**补零 4 位**，我在这一条漏了补零（同一文件的 selfcheck 里我写的是 `P7002`，反而是对的） |
+
+**堵漏**：在 `selfcheck_products.dart` 补了两条**镜像检查**（「取 max+1，**不补空档**」+
+「只算不写 ⇒ 同输入同结果」）—— 把这两个易错点放进我侧**能真跑**的地方（`dart run` 不受 231 影响）。
+复跑：`selfcheck_products` **57 项 0 失败** ✓ / core typecheck 43 入口 ✓ / host typecheck 11 入口 ✓。
+
+### 七、§CS·五 的那项：裁定已下并落地（2026-10-08，`docs/reply.md`）
+
+> 裁定原话收束：「**方案 A 正确，但要两端都做：客户端 `updateMasterData` 不再发 `code`
+> （契约修复），主机端忽略传入的 `code`（防御）。顺手把「`SqliteException` 直抛用户」归到
+> M15 同批修 …… 同时在 `sync_protocol.md` 写清通用规则：「update payload 不含系统生成字段」，
+> 覆盖未来所有主数据。**」
+
+| # | 裁定项 | 落地 |
+|---|---|---|
+| ① | 主机端**防御性忽略**（products 的 update 丢弃 `code`） | ✅ `SyncServer._updateMasterData`：`op.entity == Schema.products` ⇒ `values.remove('code')` |
+| ② | 客户端 `updateMasterData` **不发** `code`（契约修复） | ⏳ **归 D2** —— `QueueSink` 的主数据入队**尚未存在**（D2 = `enqueueMasterData` + 乐观写 + UI 恢复表单）⇒ 已写进 `sync_protocol.md §8.1` 的**端责任表**，D2 落地时按此实现 |
+| ③ | **`SqliteException` 直抛整改**（归 M15 同批） | ✅ 新建 core `lib/src/sync/sync_failure.dart`：`ConstraintKind` + `constraintKindOf` + `syncFailureReason`（**按扩展结果码**细分三类：UNIQUE/PK ⇒ duplicate · FK ⇒ missingReference · CHECK/NOT NULL ⇒ invalid；其余走 M15 的 `classifyStorageFailure`）。`SyncServer.handle` 的 catch 改为**分类后回一句中文**；**原始异常 + 堆栈走新增的 `onInternalError`**（`HostHttpServer.start` → `HostServiceController` → `app.dart` 传 `_log.crash`） |
+| ④ | `parties` / `accounts` 无需修（只有 `products.code` 是 UNIQUE） | ✅ 核对属实；**通用规则**已写进 `sync_protocol.md §8.1`（覆盖将来新增主数据） |
+| ⑤ | 三处文档 | ✅ `sync_protocol.md §8.1`（payload 约束 + 端责任表 + 失败回执措辞）· `data_model.md §2.1`（`code` 行）· `Agents.md §四`（wire 形态行） |
+
+**新增测试与镜像**
+
+| 层 | 新增 |
+|---|---|
+| core `sync_failure_test.dart`（新） | 9 条（三分 + 兜底 + **反向断言**：回执里不许出现 `UNIQUE`/`products`/`INSERT`/`?`/`p-1` 等） |
+| host `sync_server_test` | +2 条（① 过期 code ⇒ applied 且 code 以主机为准；③ 约束冲突 ⇒ 中文 + 原始异常进日志） |
+| core `selfcheck` | +6 项（同步失败段） |
+| host `selfcheck_sync` | +8 项（同上两组镜像） |
+
+**本侧验证**：core typecheck **44 入口** ✓ · core `selfcheck` **117** ✓ · host typecheck **11 入口** ✓ ·
+`selfcheck_sync` **163** ✓
+✅ **用户复跑全过（2026-10-08 16:3x）**：core + host 两包 `dart test` 全绿 ⇒ §CS + §CS·五 闭环。
+⚠️ `dart test` 我侧仍被 `CreateFile failed 231` 挡住（移交机制不变）。
+
+---
+
+## §CT Android 环境诊断（开发机，2026-10-08）
+
+> 背景：用户在新开发机上配 Android 环境，`flutter doctor` 报
+> **「cmdline-tools component is missing」+「Android SDK at D:\」**。以下是**读文件实测**的结论
+> （我侧 `flutter doctor` 被 `CreateFile failed 231` 挡住，无法代跑）。
+
+### 一、两个报错的根因
+
+> ⚠️ **本节第一版把「Android SDK at D:\」归到了 `local.properties` —— 那是错的，见 §五的更正。**
+> 下表保留原判断与依据（历史），**结论以 §五为准**。
+
+| 报错 | 根因 | 证据 |
+|---|---|---|
+| `Android SDK at D:\` | ~~`android/local.properties` 写成 `sdk.dir=D:\\`（盘根）~~ **← 错，见 §五** | 该文件原文；真 SDK 在 `D:\AndroidSDK`。⚠️ 该文件**已 gitignore**（`android/.gitignore:6`）⇒ 各机自己改，不入库 |
+| `cmdline-tools component is missing` | Flutter **硬编码**只认 `<sdk>/cmdline-tools/**latest**/bin/sdkmanager`；机器上只有 `cmdline-tools/22.0`（**里面有 sdkmanager.bat**，只是目录名不对） | `find` 实测 |
+
+### 二、⚠️ 一个会让命令「看起来拼错」的坑：cmdline-tools 23.0 换了包 ID 分隔符
+
+`cmdline-tools/latest`（= **23.0**）已经**把 `sdkmanager` 转发给新的 `android` CLI**
+（`sdkmanager` 自身 deprecated）。而新 CLI 的包 ID 分隔符是**斜杠**，**不是分号**：
+
+```powershell
+# ❌ 新 CLI 上会报 Package platforms not found / Package android-36 not found
+sdkmanager.bat --install "platforms;android-36"
+
+# ✅ 正确写法
+& "D:\AndroidSDK\cmdline-tools\latest\bin\sdkmanager.bat" --install "platforms/android-36"
+```
+
+（旧版 cmdline-tools 用的 `platforms;android-36` 是**分号** —— 这条经验在新版上失效。
+`--list` 输出里用的也是斜杠：`platforms/android-37.0`。）
+
+**本次已实装**：`platforms/android-36` 已下载安装（101 MB）—— 因为项目 `compileSdk = 36`
+而机器上原本只有非标准的 `platforms/android-37.0`。
+
+### 三、其余结论（读文件得出）
+
+| 项 | 结论 |
+|---|---|
+| 许可 | ✅ `licenses/android-sdk-license` 在 |
+| 已装 | build-tools 36.0.0 · platform-tools 37.0.1 · emulator 37.2.12 · system-images（android-37.0） |
+| **JDK** | ⚠️ 项目是 **AGP 8.11.1 / Gradle 8.14 / Kotlin 2.2.20** ⇒ 要 **JDK 17–21**。`D:\Java` = **JDK 21** ✓ 可用；**Android Studio 自带 JBR 是 JDK 25**（Gradle 8.14 不支持）⇒ 应 `flutter config --jdk-dir "D:\Java"`。环境里 `JAVA_HOME` **没有正常设置**（只有一个名为 `%JAVA_HOME%`、值为 `D:\Java\bin\java.exe` 的变量） |
+| `ANDROID_HOME` | 未设（doctor 在项目目录里靠 `local.properties` 找到 SDK）；建议设成 `D:\AndroidSDK`，任何目录都能跑 |
+| **NDK** | **不需要** —— `sqlite3_flutter_libs` 用**预编译 AAR**（`eu.simonbinder:sqlite3-native-library`），不走 CMake。若构建真报 NDK 缺失，再装 `ndk;28.2.13676358`（Flutter 3.41 默认值） |
+| 项目 Android 配置 | `minSdk = 24` · `targetSdk = flutter.targetSdkVersion` · Java 17 · release 暂用 debug 签名 |
+
+**下一步（用户侧）**：`flutter config --jdk-dir "D:\Java"` → `flutter doctor -v` → `flutter build apk --debug`。
+
+### 四、顺手修：`selfcheck_host` 两处**陈旧断言**（非本次引入）
+
+跑全量自检时发现 `selfcheck_host` **2 项常红**，与本次改动无关 —— 是 **`has_more`
+（2026-10-07 §CL 新增）上线时漏更**：
+
+| 位置 | 原文 | 修正 |
+|---|---|---|
+| `selfcheck_host.dart:~325` | `pull 恰好 9 个实体 + next_cursors`（`keys.length == 10`） | `== 11`（+ `has_more`） |
+| `selfcheck_host.dart:~327` | `difference({...entityNames, 'next_cursors'})` | 集合里补 `'has_more'` |
+
+⚠️ **为什么一直没人发现**：`selfcheck_*` 是**我侧**的验证通道，**不在用户的门禁**里
+（用户跑 `flutter analyze` / `flutter test` / 两包 `dart test`）⇒ 这类漂移只能靠我每轮全跑时暴露。
+**已复跑**：`selfcheck_host` **116 项全过**。
+**教训**：凡是**数「响应体顶层键个数」**的断言，协议加键就必须同步改它。
+
+### 五、⚠️ 更正 + 真根因（2026-10-08 二次诊断，用户反馈「SDK 依然不能用」）
+
+**我上一轮的诊断错了**：`android/local.properties` 只被 **Gradle（构建）** 读取，
+**`flutter doctor` 的「Android toolchain」那行不读它** —— 它走的是**全局 SDK 定位**：
+
+```
+flutter config 的 android-sdk  →  ANDROID_HOME  →  ANDROID_SDK_ROOT  →  退化：用 PATH 里的 sdkmanager/adb 反推
+```
+
+**实测（本机）**：
+
+| 事实 | 值 |
+|---|---|
+| `.flutter_settings`（`flutter config` 的落盘） | **不存在** ⇒ 从未 `flutter config --android-sdk` |
+| `ANDROID_HOME` / `ANDROID_SDK_ROOT` | **都未设** |
+| PATH 里的 android 相关项 | **`D:\platform-tools\`** 与 `D:\platform-tools\adb.exe`（一个**游离的 platform-tools 副本**，**不在 SDK 里**） |
+| `which adb` | `D:\platform-tools\adb` ⇒ 反推 SDK = **`D:\`** ← **这就是「Android SDK at D:\」的真正出处** |
+| 于是 `D:\` 下没有 `cmdline-tools` | ⇒ 连带报「cmdline-tools component is missing」 |
+
+⇒ **两个报错是同一个根因**：SDK 定位失败后落到 `D:\`。补 `cmdline-tools/latest` 只能消第二个，
+**第一个（SDK 路径不对）必须先把 SDK 定位修好**。
+
+**正确修法（不依赖环境变量，最稳）**：
+
+```powershell
+flutter config --android-sdk "D:\AndroidSDK"
+flutter config --jdk-dir "D:\Java"
+flutter doctor -v
+```
+
+落盘到 `%USERPROFILE%\.flutter_settings`，**优先级高于环境变量**，且不影响其它工具。
+（可选加固：设系统变量 `ANDROID_HOME=D:\AndroidSDK`；并把 PATH 里那个游离的
+`D:\platform-tools` 换成 `D:\AndroidSDK\platform-tools` —— 它会让**任何**从 `adb` 反推 SDK 的
+工具都算错，Flutter 只是第一个撞上的。）
+
+⚠️ `local.properties` 的修正**仍然有效**（那是 **Gradle 构建**要用的），只是它**治不了 doctor**。
+
+---
+
+## §CU D2a 落地：主数据提交出口（core，2026-10-08）
+
+> 承接 §CH 提案 A 的 §9 拆段：**D1 core 改派（已完成，§CS）→ D2 app（QueueSink 扩展 +
+> 乐观写 + UI 恢复表单）**。本段做 D2 的**可验证那一半**（纯 Dart），D2b 是 app 接线 + UI。
+
+### 一、⚠️ 先说一件事：D2 的裁定原文**已丢失**
+
+`docs/reply.md` 是**每轮覆盖**的（`Agents.md` §六「只写不改」）。交接文档说 D2 的裁定在
+「reply.md §二③⑤」，但**那份 reply.md 已被 M 系列与本轮 §CS·五 两次覆盖** ⇒ 现在只剩
+**间接转述**（§CH 提案 A 的十条 + handoff §三·4 的一句）。§BD 早就记过同一类事故
+（「要反映当前状态的是台账，不是 reply.md」）——**这次又栽在同一个坑上**。
+
+因此本段**按 §CH 提案 A 的原文实施**（那是台账里唯一逐字存在的规格），并把三项**需要你确认**
+的判断显式列出（见 §四）。**若与你的裁定不符，回退成本很低（一个文件 + 一段自检）。**
+
+### 二、落地了什么
+
+新增 `packages/shensuanzi_core/lib/src/master_data/master_data_sink.dart`，与单据的
+`DocumentSink`（B3a）**同构**：
+
+| 名字 | 作用 |
+|---|---|
+| `MasterDataSubmitResult` | 两端同形结果：`saved`（主机落库）/ `queued`（客户端入队）/ `failure`（字段级原因）；`queuedNotice` = 「已记入待同步（编码 P0001）…」 |
+| `MasterDataSink`（abstract） | 表单页只认它 ⇒ **UI 层不出现「是不是客户端」的分支** |
+| `ServiceMasterSink` | 主机：转调 `ProductService`（**行为零变化**，只把 `ProductDraftInvalid` 从抛出改成装进结果） |
+| `QueueMasterSink` | 客户端：校验 → 本地 UUIDv7 + 编码（镜像 `max+1`）→ **乐观写镜像** → 入队（同库同事务） |
+| `masterDataCreatePayload` / `masterDataUpdatePayload` | wire payload 纯函数：去主机专属列；**update 额外去 `code`**（§CS·五 契约**从源头**堵住） |
+
+### 三、三条契约逐条对齐
+
+| 契约 | 实现 |
+|---|---|
+| `code` 系统生成、客户端**建档时只提建议** | 建档 payload **带 `code`**（主机可改派，D1 已落地）；客户端用**与主机同一份** `ProductCodeGenerator`（跑在镜像上） |
+| **`update` 不发 `code`**（§CS·五） | `masterDataUpdatePayload` 无条件剥掉 `code`（不靠调用方自觉） |
+| **乐观写镜像** | `QueueMasterSink` 在**镜像库**里插/改行（`ProductDao`），用户立刻能在列表看到；主机改派后靠 pull **同 id** 覆盖回来 |
+| `id` 是幂等键 | 客户端 `newId()`（UUIDv7），`payload.id == entity_id` |
+| 校验失败不留痕 | 先 `draft.validate()`；失败 ⇒ **不入队、不写镜像**（库与队列各留 0 行） |
+
+### 四、🟡 三项判断（需你确认；都不是我拍脑袋，但都超出「照抄 §CH」）
+
+| # | 判断 | 理由 / 原文 |
+|---|---|---|
+| 1 | **乐观写镜像已实施** | §CH §4 自己标了「**需裁定**」（它要修订 `data_model.md §4.4` 第 3 条「镜像只读」）。但 §9 拆段与 handoff §三·4 都把「乐观写」列为 D2 的既定内容 ⇒ 我按**已裁定**处理。**若要保留「镜像只读」原则，请说一声**，改回「不写镜像」很小 |
+| 2 | **停用 / 恢复都走 `updateMasterData`（带 `is_active`）**，不走 `deleteMasterData` | 主机侧两条等价（都软删 + `sync_version + 1`），但 update **双向**（停用与恢复同一条通道）；§CH §6 的措辞也是 update |
+| 3 | **队列共用 `sync_queue`**（不新增表） | handoff §三·4 的「队列合并」我理解为「主数据与单据共用同一张队列」—— 三态条与重试机制**天然复用**，`SyncQueueEntry` 无需改 |
+
+### 五、测试与验证
+
+| 层 | 内容 |
+|---|---|
+| host `selfcheck_queue_sink`（可跑） | **+22 项**（双库：镜像=客户端 / host=主机）：建档乐观写 → 主机 `applied` → 编码一致 → 编辑 payload **不带 code** → 主机版本 +1 且编码不动 → 停用 → 校验失败不留痕 |
+| core `test/master_data_sink_test.dart`（新） | 客户端侧契约 12 条 + `ServiceMasterSink` 4 条（**与上面那 22 项是同一批断言的两半** —— core 不可能 import host，端到端只能住 host） |
+| 三包 typecheck | core **45 入口** ✓ / host **11** ✓ / app **27** ✓ |
+
+**顺手修**：三处 `tool/typecheck.dart` 的结论文案**写死了数量**（加文件就漂 —— 这次加了
+`master_data_sink_test` 仍印「16 个测试文件」）⇒ 改成只报**入口总数**。
+
+### 六、D2b（待 go-ahead）
+
+1. `app.dart` 建 `QueueMasterSink` / `ServiceMasterSink` 并按 `_shellKind` 注入；
+2. `readOnlyMasterData` 语义从「弹引导」换成「**本地建档 + 入队**」（商品 / 往来 / 账户表单恢复可用）；
+3. 三态条失败明细加一句「**请到电脑上重新建**」（§CH §5：rejected 时删镜像乐观行）；
+4. 期初录入**仍保留引导**（§CH §7：盘点 delta 客户端算不出）。
+
+---
+
+## §CV D2 裁定原文**已找回**（在 git 历史里）+ 与 D2a 对账 + 1 项需重裁（2026-10-08）
+
+### 一、更正 §CU：「裁定原文丢失」**是误判**
+
+`reply.md` **是被 git 跟踪的文件** —— 每轮的覆盖只发生在**工作区**，历史版本一直都在。
+**取回命令**（任意历史版本）：
+
+```bash
+MSYS_NO_PATHCONV=1 git show <commit>:docs/reply.md
+```
+
+**D2（方案 A 乐观写）裁定所在提交**：**`d09ed5f`**（2026-10-07「B3 收尾」）——
+该文件前 231 行 = **主数据入队裁定**，后 133 行 = 另一份 UI 审查（合并稿）。
+早期另一版：`253666f`（「主数据禁建 + 引导」的方案 1）。
+
+**全历史定位关键词**：`git log -S "主数据入队" -- docs/` · `-S "QueueSink"` · `-S "readOnlyMasterData"`。
+
+### 二、与 D2a 的对账（裁定 §二 五处边界 + §三 三处细节）
+
+| 裁定点 | 要求 | D2a 现状 |
+|---|---|---|
+| §二① | 客户端 `max(code)` 与主机**同序** | ✅ 复用**同一个** `ProductCodeGenerator`（`latestCode` 同序查询） |
+| §二② | 改派唯一出处 = `ProductService`（非 `SyncServer`） | ✅ D1 已落地 `resolvePreferredCode` |
+| §二③ | 队列**按 entity_id 合并**（create + update 折叠成一条） | ❌ **未做** —— `SyncQueueDao` 无合并方法（见下 §三） |
+| §二④ | 镜像 pull 用 **UPSERT** | ✅ `SyncClient._upsertRow` = `ON CONFLICT(id) DO UPDATE` |
+| §二⑤ | `readOnlyMasterData` **改名**（名不副实） | ❌ **未做** —— 9 处仍在（`app.dart` / `app_shell.dart`） |
+| §三7 | `base_version` = 镜像行 `sync_version` | ✅ D2a 已按此 |
+| §三8 | 乐观行与 pull **同 id 收敛**断言 | ✅ D2a 端到端断言（`client_server_test` / `selfcheck_client_server`） |
+| §三6 | rejected 文案具体（**不**客户端造句） | 🟡 D2b UI 项 |
+
+### 三、⚠️ 需重裁：老裁定「队列合并」 vs 新裁定「顺序保证」
+
+- **老裁定（`d09ed5f` §二③）**：`QueueSink` 同一 entity 的多次操作，队列里**按 entity_id 合并**
+  —— 已有 `createMasterData` 时，新编辑**更新那条**，不追加 `updateMasterData`。
+  理由：create 重试（`next_retry_at` 后退）时 update 可能被先 push ⇒ 乱序。
+  原文标注「这是 `SyncQueueDao` 的**增强**，D2 要处理」；不做 ⇒ 「建完立刻改名」出死信。
+- **新裁定（本轮 `reply.md §三`）**：只要求 **push 顺序按 `created_at` 升序**，并注明
+  「这**已经是** `SyncQueueDao` 的默认行为」。`due()` 实测 = `ORDER BY created_at, id`。
+
+**强度不同**：合并 = **预防**乱序（消除 create→update 的先后依赖）；
+顺序 = 只保证**正常路径**有序 —— 但新裁定同时说「push 失败**不打断**后续条目」
+⇒ create 进重试时 update 仍可能先走 ⇒ **老裁定要消掉的乱序风险仍在**。
+
+**待裁定：以哪条为准（合并 / 顺序）。** 未定前 `data_model.md §4.1` 的对应注记**不写**。
+
+### 四、本轮已落地的文档（纪律 17 前置，**双方裁定一致**的部分）
+
+| 文档 | 改动 |
+|---|---|
+| `data_model.md §4.4` 第 3 条 | 「镜像只读」→「**单据表严格只读 · 主数据表允许乐观写**」+ `isPending` 派生标记 + 同 id UPSERT 收敛 |
+| `data_model.md §4.1` | 补 `entity` = 真实表名（**无** `masterData` 抽象名）+ `operation` 的主数据用法表 |
+| `Agents.md §4.2` | 「客户端不跑规则」行：补「**主数据允许乐观写 + 入队**」（单据仍严格只读） |
+| `sync_protocol.md §8.1` | 补 `createMasterData` 的 **code 改派语义**（主机行为、唯一出处 `ProductService`）+ `deleteMasterData` **边界**（保留 op、新客户端不用） |
+| `sync_protocol.md §8.5` | 补「**引用的主数据尚未同步**」的 rejected 处理（与引用 id 关联提示、不删行） |
+
+### 五、§CV·3 裁定落地：主机端 `updateMasterData` 改 **upsert**（方案丙，2026-10-08）
+
+**裁定**（本轮 `reply.md`）：老裁定（合并）只在 create 仍 `pending` 的窄窗口有效；
+新裁定（升序）**不覆盖失败重试路径** ⇒ **两者都不完整**。取第三条路：
+**升序（保留）+ 主机 upsert（新增）+ 不做客户端合并（废止老裁定）**。
+
+| 位置 | 改动 |
+|---|---|
+| `SyncServer._insertMasterData`（**新**） | 建档路径的**唯一实现**（`createMasterData` 与 upsert 分支共用）；编码改派仍走 `ProductService.resolvePreferredCode` |
+| `SyncServer._updateMasterData` | `_findRow == null` ⇒ **转建档**（用 payload 的 id、**忽略 `base_version`**）；删除原 `rejected('主数据不存在')`；新增 `payload.id` 一致性守卫 |
+| 客户端 | **零改动** —— `QueueMasterSink` 只按顺序入队（create 后 update），**不合并** |
+
+**测试**（两套镜像）：
+- host `sync_server_test`：新增「目标不存在 ⇒ upsert 建档」「乱序收敛（update 先到 ⇒ 建档、
+  create 后到 ⇒ `already_exists`、只有一行）」「缺必填 ⇒ 中文且不含 SQL / 表名」；
+  **删除**旧的「目标不存在 → rejected」（按裁定改语义，不是"为绿而改"）
+- `selfcheck_sync`：**+6 项**（169 ✓）
+- **文档 4 处**：`sync_protocol.md §8.1`（upsert 语义表）· `§8.5`（同 id 幂等）·
+  `data_model.md §4.1`（不合并、靠 upsert 收敛 + 标注老提案已废止）· `Agents.md §二·8`（upsert 收敛乱序）
+
+**本侧真跑**：host typecheck 11 入口 ✓ · `selfcheck_sync` **169** ✓ · `client_server` 36 ✓ ·
+`host` 116 ✓ · `queue_sink` 36 ✓ · `service` 76/76 ✓
+
+**🟡 顺带发现（未改，报备）**：`ProductCodeGenerator.next()` 对**非 `P<数字>` 格式**的现有编码会抛
+`StateError`（自检夹具 `syncProduct(code: 'PU1')` 恰好撞上，已用 `freshDb()` 隔离）。
+upsert 路径**必然调用**生成器，而 `resolvePreferredCode` 会**原样接受**客户端建议的任何
+「未被占用」的 code ⇒ 理论上客户端可塞一个 `WXYZ`，此后任何改派 / upsert 都会抛。
+生产路径（客户端只发镜像 `max+1`）到不了，但**建议裁定是否收紧** `resolvePreferredCode`
+（只接受 `^P\d+$`，否则视同未提供）。本轮**未擅自改**。
+
+**✅ 用户复跑全过（2026-10-08）**：主机包 `dart test` 全绿 + 安卓环境 `flutter doctor` ✓。
+**生成物处置**（用户裁定）：`linux|macos|windows/*.generated_plugin*` 5 个文件**不入库** ——
+实测 `git diff` **为空**（只是 CRLF/LF 行尾漂移，内容与已入库版本一致），已还原。
+
+### 六、D2b 开工：`isPending` 派生已落地 + **2 项待裁**（2026-10-08）
+
+**已落地（与裁定形状无关的那块）**：core `SyncQueueDao.unconfirmedEntityIds()` ——
+`pending` + `sent` ⇒ **未确认**；`failed`（死信）**不算**。用途 = 镜像主数据行的派生 `isPending` 标记
+（`data_model.md §4.4` 第 3 条：界面要能区分「我有的」与「主机确认的」）。
+- 测试 `sync_queue_triage_test` **+3**（pending/sent 算 · pull 确认后清空 · 同实体去重）
+- 自检 `selfcheck_sync_client` **+4**（**91** ✓）
+
+**⚠️ 待裁 ①：门控形状（阻塞 D2b 的 UI 段）**。`MasterDataSink` 是 **product-only**
+（§CH §8「v1 只开商品」），但现有 `readOnlyMasterData`（**一个 `bool`**）同时门控
+**商品 / 往来 / 账户** 三处（`sale_page` / `delivery_page` / `purchase_page` / `parties_page` / `stock_page`）。
+v1 只开商品 ⇒ 一个 bool **表达不了**「商品可建、往来账户仍禁建」。
+
+| 候选 | 做法 | 代价 |
+|---|---|---|
+| **甲** | 拆两个标记：新增 `canCreateProductsLocally`；原 flag 只管往来/账户并改名（如 `readOnlyPartyData`） | 触 5 页，语义直白 |
+| **乙** | 传小值对象 `MasterDataPolicy { product, party, account }` | 触 5 页 + 新增类型；**将来放开往来/账户只改一处** |
+| 丙 | 把 `MasterDataSink` 扩到 parties/accounts（v1 一次开三样） | **超出 §CH §8 的 v1 范围**，工作量最大 |
+
+**⚠️ 待裁 ②**：是否收紧 `resolvePreferredCode`（只接受 `^P\d+$`，否则视同未提供）——
+理由见 §CV·五 的 🟡。
+
+**📌 顺带发现（未改，报备）：一处镜像缺口**。`sync_queue_triage_test` 的
+`counts()` / `isSynced`（三态判定）断言在 `tool/selfcheck*.dart` 里**没有镜像**
+（core 全部自检 grep `counts()` / `isSynced` = 空）⇒ 这一族是**单边断言**。
+按纪律应补；是否现在补由你定。
+
+---
+
+## §CW Android 许可报错的根因与修法（cmdline-tools 23.0，2026-10-08）
+
+### 一、报错与根因
+
+`flutter doctor -v` 唯一剩红：`X Android license status unknown.`，
+而 `flutter doctor --android-licenses` 只打一句 `Warning: The --licenses option is no longer needed.`
+
+| 事实 | 值 |
+|---|---|
+| Flutter 的许可检查（`android_workflow.dart:387`） | 跑 `sdkManagerPath --licenses`，**解析输出行**，只认 `All SDK package licenses accepted.`（`licenseAccepted`，行 32） |
+| `sdkManagerPath`（`android_sdk.dart:527`） | `getCmdlineToolsPath(bat, skipOldTools: true)` —— **只认 `cmdline-tools/latest/bin/sdkmanager.bat`** |
+| 机器上 `latest` = **23.0**（新 CLI） | 其 `sdkmanager.bat` 是**转发 shim**（转发给 `android.exe`）⇒ 只打 deprecation 警告，**永不输出那句话** ⇒ Flutter 判 `unknown` |
+| 机器上 `22.0` = **经典版** | `bin/sdkmanager.bat` 第 85 行 = `java -classpath lib\sdkmanager-classpath.jar com.android.sdklib.tool.sdkmanager.SdkManagerCli` ⇒ **能被 Flutter 解析** |
+
+### 二、修法（已执行）
+
+1. `cmdline-tools/latest`（23.0，shim）→ 改名 `cmdline-tools/23.0`
+2. 经典 `22.0` → **复制**为 `cmdline-tools/latest`（`mv` 被句柄拒 ⇒ 用 `cp -r`），
+   并把 `latest/source.properties` 的 `Pkg.Path` 改成 `cmdline-tools;latest`
+3. **同时**用经典 `sdkmanager --licenses` 接受许可 ⇒ `licenses/` 由 1 个文件变 **8 个**
+   （Gradle 需要的 `android-sdk-license` 本来就在；新增 googletv / googlexr / arm-dbt / preview / gdk / microxr / mips）
+
+**验证**（按 Flutter 原样喂 `n`）：`latest/bin/sdkmanager.bat --licenses` 输出末尾 =
+`All SDK package licenses accepted.`，退出码 0 ⇒ Flutter 会判 `LicensesAccepted.all`。
+
+### 三、遗留（**纯提示，不影响 `flutter doctor`**）
+
+`sdkmanager` 会打 `Observed package id ... in inconsistent location` 警告（`latest` / `23.0` /
+`22.0` 三者被按 `Pkg.Revision` 交叉识别）。这些是 **stderr 提示**，Flutter 的 `handleLine`
+不匹配它们（只有 `licenses? not accepted` / `All SDK package licenses accepted.` 才匹配），
+所以 doctor 输出干净。`22.0` 那一份是冗余副本（`latest` 已是它的复制）——
+被句柄占用**移不掉**，用户可在关掉 Android Studio 后自行删除：
+
+```powershell
+Remove-Item "D:\AndroidSDK\cmdline-tools\22.0" -Recurse -Force
+```
+
+> ⚠️ 我侧 `flutter doctor` 被沙箱缺陷（`CreateFile failed 231`）挡住 ⇒ 以上结论是**读源码 + 实跑
+> `sdkmanager`** 得出的，最终以用户侧 `flutter doctor -v` 为准。
+
+**✅ 用户复跑验证（2026-10-08）**：`flutter doctor -v` 的 Android toolchain 已 **✓**
+（SDK `D:\AndroidSDK` · JDK 21 · build-tools 36.0.0 · 许可全过）。
+
+---
+
+## §CV·七 三项裁定落地（2026-10-09）
+
+### 一、② 温和收紧 `resolvePreferredCode`（**已落地**）
+
+**落地前核查（按裁定要求 grep）**：全仓搜 `preferredCode` / `resolvePreferredCode` ⇒
+**唯一生产调用方** = `SyncServer._insertMasterData`（`sync_server.dart:367`；`createMasterData`
+与 upsert 共用）；`ProductService.create` 只把它转手给 `resolvePreferredCode`。
+**无**导入功能、调试脚本或别处传它 ⇒ 收紧**安全**。
+
+| 位置 | 改动 |
+|---|---|
+| `ProductCodeGenerator.pattern`（**新**） | `RegExp('^P\d+$')` —— **主机编码格式的唯一定义**（`next` 解析 + `resolvePreferredCode` 验收共用） |
+| `ProductService.resolvePreferredCode` | 只接受匹配 `pattern` 的建议；**不匹配 ⇒ 视同未提供**（走自增，**不** `rejected`） |
+
+**为什么必须收**：`latestCode()` 只按 `LIKE 'P%'` 过滤 ⇒ `ABC-001` 本就不干扰，但 **`PU1` 会**
+（P 前缀 + 非数字）⇒ `int.tryParse('U1')` 失败抛 `StateError`，且**不可自愈**（此后任何自增路径都炸）。
+
+**契约已进文档**：`sync_protocol.md §8.1`（`code` 只接受主机格式；不匹配视同未提供；主机格式变化**不影响客户端**）。
+
+**测试**：`product_service_test` 的 `ABC-001` 组按新语义**改写**（原断言「原样采用」已不成立）+
+补 `PU1` / `P12x`；自检 `selfcheck_products` 同款镜像（**58** ✓）。
+
+### 二、镜像缺口：三态判定家族（**已补，core 侧**）
+
+**核查结论（修正 §CV·六 的说法 —— 先查了再改）**：
+- core 自检**整体覆盖充分**（`tool/` 下 16 个 `selfcheck_*`）⇒ **不是**「core 自检缺失」；
+- `counts()` / `isSynced` 在 **host** 的 `selfcheck_queue_sink:190` 有 **1 条**断言
+  ⇒ **不是「完全单边」**，而是「**core 侧缺镜像**」。
+
+⇒ 在 `selfcheck_sync_client.dart` 新增 section「SyncQueueDao.counts / isSynced（三态判定）」，
+**一次补齐整族**（空队列 · pending · pending→sent ⇒ 已同步 · 死信并列 · withStatus 可查）。
+`selfcheck_sync_client` **96** ✓（+5）。
+
+### 三、① 门控形状：`MasterDataPolicy` 值对象（**值对象已落地，接线待做**）
+
+新建 `packages/shensuanzi_app/lib/src/master_data_policy.dart`：
+`MasterDataPolicy{canCreateProducts, canCreateParties, canCreateAccounts}` +
+`desktop()`（全开）/ `mobile()`（v1 只开商品）。**边界**：只表达 **UI 层面允不允许**，
+**不改变 `MasterDataSink` 的能力面**（sink 仍 product-only）。测试 `master_data_policy_test` +
+自检镜像 `selfcheck_app` **151** ✓。
+
+**⚠️ 接线尚未做（下一步）** —— ① 与「表单走 sink」**必须同批**：现在 `_createProduct` 调
+`showProductFormDialog(service: widget.service)`，而手机端那是**镜像上的 ProductService**
+⇒ 建档会**只写镜像、不入队**（静默丢数据）。
+
+| 文件 | 改动 |
+|---|---|
+| `lib/src/app.dart` | 构造 `MasterDataPolicy` + `MasterDataSink`（桌面 `ServiceMasterSink(products)` / 手机 `QueueMasterSink(mirror: 镜像, queue: SyncQueueDao(镜像))`） |
+| `lib/src/ui/app_shell.dart` | `readOnlyMasterData` → `masterDataPolicy`；新增 `masterDataSink`；透传 5 页 |
+| `sale_page` / `delivery_page` / `purchase_page` | picker 的 `readOnly` 拆成 `canCreateProducts` / `canCreateParties`；`_createProduct` 走 sink |
+| `parties_page` | 3 处 → `policy.canCreateParties` |
+| `stock_page` | 3 处 → `policy.canCreateProducts`；商品表单走 sink |
+| `product_form_dialog` | 加 `MasterDataSink sink`（create / update 走它；`barcodeOwners` 仍读 service） |
+
+⚠️ 根 `lib/` **无我侧编译门禁** ⇒ 这批要**一次做完**（半途会编不过）+ 过 `testing.md §L` 根层交付清单。
 

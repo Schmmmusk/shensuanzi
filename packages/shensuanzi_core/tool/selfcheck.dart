@@ -526,6 +526,42 @@ void main() {
   check('只读走「重新打开」（重试当前连接必然再失败）',
       storageFailureNote(SqliteException(8, 'x')).contains('重新打开'));
 
+  // ============================================================ 同步失败的中文原因（§CS·五 ③）
+  //
+  // 与 `test/sync_failure_test.dart` 镜像：约束冲突按**扩展结果码**细分；
+  // 给客户端的话里**不含 SQL / 参数 / 表名 / 类型名**（M15 同一条诉求）。
+  section('同步失败的中文原因（sync_failure.dart）');
+  check(
+      '约束冲突三分：UNIQUE/PK ⇒ duplicate、FK ⇒ missingReference、CHECK/NOT NULL ⇒ invalid',
+      constraintKindOf(SqliteException(2067, 'x')) == ConstraintKind.duplicate &&
+          constraintKindOf(SqliteException(1555, 'x')) ==
+              ConstraintKind.duplicate &&
+          constraintKindOf(SqliteException(787, 'x')) ==
+              ConstraintKind.missingReference &&
+          constraintKindOf(SqliteException(275, 'x')) == ConstraintKind.invalid &&
+          constraintKindOf(SqliteException(1299, 'x')) ==
+              ConstraintKind.invalid);
+  check('主码 19 但扩展码不认识 ⇒ 兜底 invalid（不漏报）',
+      constraintKindOf(SqliteException(19, 'x')) == ConstraintKind.invalid);
+  check('非约束冲突 ⇒ null（存储故障交给 M15 的分类）',
+      constraintKindOf(SqliteException(5, 'x')) == null &&
+          constraintKindOf(StateError('x')) == null);
+  check('存储类故障复用 M15 分类（措辞面向主机）',
+      syncFailureReason(SqliteException(5, 'x')).contains('主机正忙') &&
+          syncFailureReason(SqliteException(13, 'x')).contains('磁盘空间'));
+  check(
+      '给客户端的话**不含 SQL / 参数 / 表名 / 类型名**',
+      !syncFailureReason(SqliteException(
+        2067,
+        'UNIQUE constraint failed: products.code',
+        null,
+        'INSERT INTO products (id, code) VALUES (?, ?)',
+        <Object?>['p-1', 'P001'],
+      )).contains('products'));
+  check('搞不清的错 ⇒ 让用户交日志（不倒异常文本）',
+      syncFailureReason(StateError('内部状态不对')).contains('日志') &&
+          !syncFailureReason(StateError('内部状态不对')).contains('StateError'));
+
   db.close();
   check('close() 后可用', !db.inTransaction);
 

@@ -260,6 +260,73 @@ Response: {
 
 `status` 枚举：`applied` / `already_exists` / `conflict` / `rejected`
 
+**`updateMasterData` 的 payload 约束（§CS·五 裁定，2026-10-08）**：
+
+> **payload 不包含「系统生成的字段」**（如 `products.code`）；主机端对这些字段
+> **一律以本库为准**（收到也丢弃）。
+
+为什么：`products.code` 是**系统生成、用户不填**的字段（`data_model.md §2.1`），
+客户端**没有资格**改它。手机离线建档时按自己镜像的 `max(code)+1` 生成编码，而主机
+可能**已经改派**（同 code 异 id ⇒ 主机顺延，见 `createMasterData`）—— 客户端若在
+pull 之前就推一条 `updateMasterData`，payload 里的 `code` 是**过期值**，会撞
+`code UNIQUE`：修复前表现为 `rejected` + 指数退避重试到**死信**
+（这张编辑**永远补不上**，用户只看到一条看不懂的失败）。
+
+| 端 | 责任 |
+|---|---|
+| 客户端 | `updateMasterData` payload **不发**系统生成字段（D2 落地 `QueueSink` 时遵守） |
+| 主机 | 收到也**忽略**（主机永远赢，`Agents.md §二·8`）—— 旧版本客户端、误传都不崩 |
+
+**同类规则适用于将来所有主数据：系统生成的字段，客户端不写、主机不采信。**
+
+**`createMasterData` 的 code 改派语义（主机端行为，D1 2026-10-08）**：
+
+`createMasterData` 的 payload **带 `code`** —— 它是客户端的**建议值**，不是命令。
+主机收到后：该 `code` 未被任何**异 id** 占用 ⇒ 采用；已被占用 ⇒ **改派**
+（取 `max(code)+1` 顺延，查询与主机生成器**同序**：`ORDER BY LENGTH(code) DESC, code DESC`）。
+改派对客户端**不是错误** —— 回执仍是 `applied`、不带 `server_state`，真码靠 `pull`
+按**同一 id** 回写镜像（UPSERT）收敛。
+
+`code` 是**建议值**，**只接受匹配主机编码格式（当前 `^P\d+$`）的值**；**不匹配 ⇒ 视同未提供**
+（主机自增，**不** `rejected` —— 主机不因客户端笨而拒绝服务，`Agents.md §二·8`）。
+主机格式将来变化（如改前缀）**不影响客户端** —— 客户端本来就不发它
+（`ProductCodeGenerator.pattern` 是格式的唯一定义，§CV·七 温和收紧）。
+
+> ⚠️ 改派的**唯一出处**是 `ProductService.resolvePreferredCode`（`Agents.md 4.1`：
+> 建档只有一条路径）。`SyncServer` 只**调用**它，自己不算编码 —— 否则「桌面建档」与
+> 「同步建档」会各写一套（纪律 5）。
+
+**`updateMasterData` 的 upsert 语义（§CV·3 裁定，2026-10-08）**：
+
+主机按 `id` 查该实体：
+
+| 主机侧 | 行为 |
+|---|---|
+| **存在** | 按乐观锁校验 `base_version` → 匹配则更新、`sync_version + 1`；落后则 `conflict` + `server_state` |
+| **不存在** | **转为建档**（用 payload 的 `id`；**忽略 `base_version`**）；编码由主机生成 / 改派 |
+
+**为什么**：客户端队列**不合并**同一实体的 create / update（见 `data_model.md §4.1`），
+只保证**正常路径**按 `created_at` 升序 push。一旦 create 进了重试（`next_retry_at` 后退），
+`update` 可能**先到主机** —— 若不存在时回 `rejected`，这条编辑就**永远补不上**（指数退避到死信）。
+
+upsert 把它**从根上消除**：create / update 谁先到都收敛到同一状态
+（`Agents.md §二·8`「主机永远赢」）。
+
+> ⚠️ **仅主数据** —— 单据必须走 `RuleEngine`，**不存在** upsert 概念。
+
+**`deleteMasterData` 的边界（2026-10-08 裁定）**：
+
+`deleteMasterData` 是**历史遗留 op**（协议只增不删，`Agents.md` 纪律 15）——
+**保留但新客户端一律不用**：停用 / 恢复走 `updateMasterData`（携带 `is_active`）。
+主机侧两条**等价**（都是软删 + `sync_version + 1`），但 update **双向**
+（停用与恢复同一条通道），少一个分支。`deleteMasterData` 的处置：**保留 op 不破旧客户端**
+（v0.3.0 前 Android 未发布，实际无旧客户端；将来也不移除）。
+
+**失败回执的措辞（§CS·五 裁定 ③）**：`rejected` 的 `reason` 由主机做**领域分类**
+（唯一 / 外键 / 校验 / 存储故障）后给一句中文，**不含 SQL、绑定参数、表名与异常类型名**；
+原始异常只进**主机日志**（`SyncServer.onInternalError`）。与 M15（本机界面保存失败）共用
+同一套结果码分类。
+
 **`createDocument` 的 payload 结构（R-1 / R-6 裁定，2026-09-25）**：
 
 | 字段 | 必填 | 说明 |
@@ -537,6 +604,28 @@ GET    /api/party_ledger?party_id=&since=
 | `return_exceeds_original` | RULE-007 / RULE-008 | 累计退货量超过原单量 |
 
 其余拒绝原因是**自由文本**（含中文诊断信息），客户端只需展示，不要解析。
+
+#### 「引用的主数据尚未同步」的 rejected（D2 契约，2026-10-08）
+
+若一条 `createDocument` 引用的主数据（`party_id` / `product_id` / `account_id`）
+**还在客户端队列里、尚未被主机接受**（仍在 `pending` / `sent`），主机落库时会因
+**外键不存在**而 `rejected`。
+
+> **客户端必须把「被拒绝的原因」与「引用的主数据 id」关联起来** —— 提示用户
+> 「这条单引用的客户还没同步成功」，而不是给一个孤立的「推送失败」。
+>
+> 处置：**不删镜像行、不删队列条目**；主数据那条 push 成功、pull 确认之后，
+> 重推该单即通过。**队列顺序**是这条契约的前提（见 `data_model.md §4.1`）。
+
+#### 同一实体的 upsert 幂等（D2 契约，2026-10-08）
+
+主数据的 `createMasterData` / `updateMasterData` 对**同一 `id`** 幂等（§8.1 upsert）：
+
+- `create` → 已存在 ⇒ `already_exists`（**不改行**）
+- `update` → 不存在 ⇒ **建档**；存在 ⇒ 乐观锁更新
+
+⇒ 客户端**不需要**在本地合并同一实体的多次操作，**按顺序 push 即可**；
+主机收到什么顺序都收敛到同一状态（`data_model.md §4.1`）。
 
 #### `rejected` 与 `conflict` 的分类原则（R-3.4）
 

@@ -192,6 +192,129 @@ void main() {
 
   db.close();
 
+  // ---------- ⑤ 主数据入队（D2，2026-10-08）----------
+  //
+  // ⚠️ 这一段用**两个库**：`mirror` = 手机镜像（队列挂在它上面），`host` = 主机。
+  // 上面 ①–④ 用单库是简化（队列与主机同库）；主数据**乐观写**必须两库才测得准
+  // —— 乐观行写在镜像里，主机收到 createMasterData 时**自己那边还没有这个 id**。
+  section('主数据入队：乐观写镜像 → 主机 applied（D2）');
+  {
+    final Db mirror = Db.openInMemory(foreignKeys: false);
+    final Db host = Db.openInMemory(foreignKeys: true);
+    final SyncServer hostServer = SyncServer(host);
+    final QueueMasterSink masterSink = QueueMasterSink(
+      mirror: mirror,
+      queue: SyncQueueDao(mirror),
+      clock: () => 1700000001000,
+    );
+
+    final MasterDataSubmitResult created = masterSink.createProduct(
+      ProductDraft(
+        name: '矿泉水',
+        unit: '瓶',
+        sellPrice: '2.00',
+        costPrice: '1.20',
+        safetyStock: '24',
+        packageNote: '1 箱 = 48 瓶',
+      ),
+    );
+    check('建档入队（含编码）', created.isQueued && created.product != null);
+    check('入队文案给了编码', (created.queuedNotice ?? '').contains(created.product!.code));
+
+    final Product mirrorRow = ProductDao(mirror).findById(created.product!.id)!;
+    check('**乐观写镜像**：列表立刻能查到',
+        mirrorRow.name == '矿泉水' && mirrorRow.code == created.product!.code);
+
+    final List<SyncQueueEntry> entries = SyncQueueDao(mirror).all();
+    check('镜像队列恰好 1 条', entries.length == 1);
+    check('op = createMasterData',
+        entries.single.toOperation().operation == SyncOpType.createMasterData);
+    check(
+      'payload **带 code**（建档时它是客户端的建议，主机可改派）',
+      entries.single.toOperation().payload.containsKey('code'),
+    );
+    check(
+      'payload **不含主机专属列**（created_at / updated_at / sync_version）',
+      <String>['created_at', 'updated_at', 'sync_version']
+          .every((String k) => !entries.single.toOperation().payload.containsKey(k)),
+    );
+
+    final SyncResponse hostResp =
+        hostServer.handle(entries.single.toOperation(), now: 1700000001010);
+    check('主机 applied（编码未冲突 ⇒ 原样采用）',
+        hostResp.status == SyncStatus.applied && hostResp.reason == null,
+        '${hostResp.reason}');
+    final Product hostRow = ProductDao(host).findById(mirrorRow.id)!;
+    check('主机编码 == 镜像编码', hostRow.code == mirrorRow.code);
+    check('主机写了 sync_version = 0', hostRow.syncVersion == 0);
+
+    // 编辑：payload **不带 code**（§CS·五 契约）
+    final MasterDataSubmitResult edited = masterSink.updateProduct(
+      mirrorRow.id,
+      ProductDraft(
+        name: '矿泉水（大瓶）',
+        unit: '瓶',
+        sellPrice: '2.50',
+        costPrice: '1.20',
+        safetyStock: '24',
+      ),
+    );
+    check('编辑入队', edited.isQueued && edited.product!.name == '矿泉水（大瓶）');
+    check('镜像行已更新（乐观）',
+        ProductDao(mirror).findById(mirrorRow.id)!.name == '矿泉水（大瓶）');
+
+    final SyncQueueEntry editEntry = SyncQueueDao(mirror).all().last;
+    final SyncOperation editOp = editEntry.toOperation();
+    check('op = updateMasterData', editOp.operation == SyncOpType.updateMasterData);
+    check('base_version = 镜像行的旧版本（0）', editOp.baseVersion == 0,
+        '${editOp.baseVersion}');
+    check(
+      'payload **不带 code**（系统生成字段客户端不发 —— §CS·五）',
+      !editOp.payload.containsKey('code'),
+    );
+
+    final SyncResponse editResp = hostServer.handle(editOp, now: 1700000001020);
+    check('主机 applied 且版本 +1',
+        editResp.status == SyncStatus.applied &&
+            ProductDao(host).findById(mirrorRow.id)!.syncVersion == 1,
+        '${editResp.reason}');
+    check('主机侧编码一个字没动',
+        ProductDao(host).findById(mirrorRow.id)!.code == mirrorRow.code);
+
+    // 停用：同样走 updateMasterData（带 is_active）
+    final MasterDataSubmitResult off =
+        masterSink.setProductActive(mirrorRow.id, false);
+    check('停用入队', off.isQueued && off.product!.isActive == false);
+    final SyncQueueEntry offEntry = SyncQueueDao(mirror).all().last;
+    check('停用也走 updateMasterData', 
+        offEntry.toOperation().operation == SyncOpType.updateMasterData);
+    final SyncResponse offResp =
+        hostServer.handle(offEntry.toOperation(), now: 1700000001030);
+    check('主机 applied 且 is_active = 0',
+        offResp.status == SyncStatus.applied &&
+            ProductDao(host).findById(mirrorRow.id)!.isActive == false,
+        '${offResp.reason}');
+
+    // 校验失败：镜像不留行、队列不增项
+    final int queueBefore = SyncQueueDao(mirror).all().length;
+    final int mirrorCountBefore =
+        mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n']! as int;
+    final MasterDataSubmitResult bad =
+        masterSink.createProduct(ProductDraft(name: '', unit: '瓶'));
+    check('空名字 ⇒ failure（字段级原因在）',
+        bad.isFailure && bad.error!.errors.containsKey(ProductField.name));
+    check(
+      '失败时**不入队、不乐观写**',
+      SyncQueueDao(mirror).all().length == queueBefore &&
+          (mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n']!
+                  as int) ==
+              mirrorCountBefore,
+    );
+
+    mirror.close();
+    host.close();
+  }
+
   stdout.writeln('\n==============================================');
   if (_failures.isEmpty) {
     stdout.writeln('全部通过：$_passed 项');

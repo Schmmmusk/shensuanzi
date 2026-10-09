@@ -400,6 +400,118 @@ void main() {
     });
   });
 
+  // ============================================================ 编码改派（D1）
+  //
+  // 手机离线建档按**自己镜像**的 max(code)+1 生成编码（reply_review.md §CH
+  // 提案 A §3）—— 主机这边可能已经被别的商品占用了。判定只有一处：
+  // `ProductService.resolvePreferredCode`（reply.md 裁定 §二②）。
+  group('resolvePreferredCode（D1：客户端建议的编码，主机说了算）', () {
+    test('没建议（null / 空白）⇒ 主机自增（桌面建档走这条，行为不变）', () {
+      expect(
+        db.transaction<String>(() => service.resolvePreferredCode(null)),
+        'P0001',
+      );
+      db.transaction<void>(() {
+        final String blank = service.resolvePreferredCode('   ');
+        expect(blank, 'P0001', reason: '空白 = 没建议');
+      });
+    });
+
+    test('建议的编码**可用** ⇒ 原样采用（手机显示什么就是什么）', () {
+      expect(
+        db.transaction<String>(() => service.resolvePreferredCode('P0042')),
+        'P0042',
+      );
+    });
+
+    test('建议的编码**被占用** ⇒ 主机改派（顺延自增）', () {
+      seedProduct('P0042');
+      final String assigned = db.transaction<String>(
+        () => service.resolvePreferredCode('P0042'),
+      );
+      expect(assigned, isNot('P0042'), reason: '占用了就要改派');
+      expect(assigned, 'P0043', reason: '改派顺延自增');
+    });
+
+    test('改派只「算」不「写」：同一输入同结果（落库由 create 负责）', () {
+      seedProduct('P0007');
+      final String a = db.transaction<String>(
+        () => service.resolvePreferredCode('P0007'),
+      );
+      final String b = db.transaction<String>(
+        () => service.resolvePreferredCode('P0007'),
+      );
+      expect(a, 'P0008', reason: '库里只有 P0007 ⇒ 顺延 P0008（生成器取 max+1，**不补空档**）');
+      expect(b, a, reason: 'resolve 不插行 ⇒ 第二次仍是同一个结果');
+      expect(a, isNot('P0007'));
+    });
+
+    test('非法编码（非 ^P\\d+\$）⇒ **视同未提供**，走自增（§CV·七 温和收紧）', () {
+      // 收紧前 `ABC-001` 会被**原样采用** —— 那会让 `products.code` 掺进解析不了的
+      // 文本，此后任何自增路径都抛 StateError（不可自愈）。现在一律视同没建议。
+      expect(
+        db.transaction<String>(() => service.resolvePreferredCode('ABC-001')),
+        'P0001',
+        reason: '非 P 前缀 ⇒ 视同未提供',
+      );
+      expect(
+        db.transaction<String>(() => service.resolvePreferredCode('PU1')),
+        'P0001',
+        reason: 'P 前缀但非数字 —— 正是会把生成器搞坏的那类（latestCode 的 LIKE P% 放它进来）',
+      );
+      expect(
+        db.transaction<String>(() => service.resolvePreferredCode('P12x')),
+        'P0001',
+        reason: '数字里混字母 ⇒ 同样视同未提供',
+      );
+    });
+  });
+
+  group('create(preferredCode:)（D1：同步建档的入口）', () {
+    test('不传 preferredCode ⇒ 与以前完全一致（自增 P0001）', () {
+      expect(service.create(goodDraft(), now: 1000).code, 'P0001');
+    });
+
+    test('preferredCode 可用 ⇒ 落库就是这个编码', () {
+      final Product created = service.create(
+        goodDraft(),
+        now: 1000,
+        preferredCode: 'P0500',
+      );
+      expect(created.code, 'P0500');
+      expect(ProductDao(db).findById(created.id)!.code, 'P0500');
+    });
+
+    test('preferredCode 被占用 ⇒ 落库的是**改派后**的编码（不是请求的那个）', () {
+      seedProduct('P0500');
+      final Product created = service.create(
+        goodDraft(),
+        now: 1000,
+        preferredCode: 'P0500',
+      );
+      expect(created.code, isNot('P0500'));
+      expect(ProductDao(db).findById(created.id)!.code, created.code);
+      // 原占用者不受影响
+      expect(
+        db.raw
+            .select("SELECT code FROM products WHERE name = '占位-P0500'")
+            .first['code'],
+        'P0500',
+      );
+    });
+
+    test('改派与落库同事务：不会被中间插入撞号（P0001 被占 ⇒ P0002）', () {
+      seedProduct('P0001');
+      final Product created = service.create(
+        goodDraft(),
+        now: 1000,
+        preferredCode: 'P0001',
+      );
+      expect(created.code, 'P0002');
+      expect(db.inTransaction, isFalse, reason: '事务不残留');
+    });
+  });
+
   // ============================================================ 编辑
   group('ProductService.update', () {
     test('保留 id / code / created_at，sync_version +1，updated_at 更新', () {

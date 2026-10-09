@@ -430,6 +430,56 @@ Future<void> main() async {
     await w.dispose();
   }
 
+  // ============================================================ 主数据入队（D1）
+  section('D1：手机用已被占用的编码建档 ⇒ 主机改派 + pull 收敛');
+  {
+    final World w = await World.start();
+    // World.start() 里 A 已用 P001 建了「商品甲」；B 没拉过 ⇒ 镜像为空，
+    // 离线生成也落在 P001 上（§CH 提案 A §3）。
+    final String bProductId = newId();
+    w.clientB.queue.enqueue(
+      SyncQueueEntry.create(
+        masterOp(Schema.products, bProductId,
+            <String, Object?>{'code': 'P001', 'name': '商品乙'}),
+        now: now(),
+      ),
+    );
+    final SyncPushReport push = await w.clientB.push();
+    check('B 推成功（改派对客户端不是错误）',
+        push.sent == 1 && push.rejected == 0, push.errors.join(' | '));
+
+    final Map<String, Object?> hostRow = Map<String, Object?>.from(
+      w.hostDb.raw
+          .select('SELECT code FROM products WHERE id = ?', <Object?>[bProductId])
+          .first,
+    );
+    check('主机改派了 B 的编码（≠ P001）', hostRow['code'] != 'P001',
+        '${hostRow['code']}');
+    check(
+        '两条都落库（改派不是拒绝）',
+        (w.hostDb.raw.select('SELECT COUNT(*) AS n FROM products').first['n']
+                as int) ==
+            2);
+    check(
+        '原占用者（商品甲）仍是 P001',
+        w.hostDb.raw
+                .select("SELECT code FROM products WHERE name = '商品甲'")
+                .first['code'] ==
+            'P001');
+
+    await w.clientB.pull();
+    final List<Map<String, Object?>> mirrorRows = w.mirrorB.raw
+        .select('SELECT id, code FROM products WHERE id = ?', <Object?>[bProductId])
+        .map((r) => <String, Object?>{'id': r['id'], 'code': r['code']})
+        .toList();
+    check('镜像只有一行（乐观行与 pull 行同 id ⇒ UPSERT 覆盖）',
+        mirrorRows.length == 1, '${mirrorRows.length}');
+    check('镜像收敛到主机改派后的编码',
+        mirrorRows.single['code'] == hostRow['code'],
+        '${mirrorRows.single['code']} vs ${hostRow['code']}');
+    await w.dispose();
+  }
+
   // ============================================================ v1 边界
   section('v1 边界：documentAction 与鉴权');
   {

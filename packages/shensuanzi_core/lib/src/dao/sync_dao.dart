@@ -146,6 +146,24 @@ class SyncQueueDao {
       .map(SyncQueueEntry.fromRow)
       .toList(growable: false);
 
+  /// **尚未被 pull 确认**的实体 id 集合（`pending` + `sent`）—— D2b 的 `isPending` 判定。
+  ///
+  /// 语义：`sent` 是「**主机已收下、但 pull 还没见到**」（见 [SyncQueueStatus.sent]），
+  /// 所以它与 `pending` 一样属于「**未确认**」；`sent` 条目**只有在 pull 真的见到
+  /// 该 id 后**才删（[clearConfirmed]）。
+  ///
+  /// ⚠️ `failed`（死信）**不算** —— 它要人工处理，混进来会让「待同步」常亮。
+  ///
+  /// 用途：镜像里的主数据行据此加一个**派生**的 `isPending` 标记 ——
+  /// 界面要能区分「我有的」与「主机确认的」（`data_model.md §4.4` 第 3 条）。
+  Set<String> unconfirmedEntityIds() => <String>{
+    for (final SyncQueueEntry entry in <SyncQueueEntry>[
+      ...withStatus(SyncQueueStatus.pending),
+      ...withStatus(SyncQueueStatus.sent),
+    ])
+      entry.entityId,
+  };
+
   /// **推送成功** → `sent`（⚠️ **不删除**，理由见 [SyncQueueStatus.sent]）
   void markSent(String id) => _raw.execute(
     'UPDATE ${Schema.syncQueue} SET status = ? WHERE id = ?',

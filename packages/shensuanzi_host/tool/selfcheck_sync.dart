@@ -438,6 +438,63 @@ void main() {
     db.close();
   }
 
+  // ============================================================ 编码改派（D1）
+  //
+  // 与 `test/sync_server_test.dart` 的「createMasterData · 商品编码的主机改派（D1）」
+  // 镜像。改派逻辑的唯一出处是 `ProductService.resolvePreferredCode`。
+  section('createMasterData · 商品编码的主机改派（D1）');
+  {
+    freshDb();
+    final String firstId = syncProduct(code: 'P7001');
+    check('客户端编码可用 ⇒ 原样采用',
+        ProductDao(db).findById(firstId)!.code == 'P7001');
+
+    final String secondId = newId();
+    final SyncResponse second = server.handle(
+      opMaster('products', secondId, SyncOpType.createMasterData, payload: {
+        'code': 'P7001',
+        'name': '商品乙',
+      }),
+      now: now(),
+    );
+    check('同 code 异 id ⇒ applied（改派**不是**错误）',
+        second.status == SyncStatus.applied, '${second.reason}');
+    check('改派后编码 ≠ 请求的编码（顺延 P7002）',
+        ProductDao(db).findById(secondId)!.code == 'P7002',
+        '${ProductDao(db).findById(secondId)!.code}');
+    check('原占用者的编码一个字都不动',
+        ProductDao(db).findById(firstId)!.code == 'P7001');
+    check('两条都落库（改派不是拒绝）', countOf('products') == 2,
+        '${countOf('products')}');
+
+    final String thirdId = newId();
+    final SyncResponse third = server.handle(
+      opMaster('products', thirdId, SyncOpType.createMasterData, payload: {
+        'code': 'P7001',
+        'name': '商品丙',
+      }),
+      now: now(),
+    );
+    check(
+        '两台设备先后推同一 code ⇒ 先后改派，不撞 UNIQUE',
+        third.status == SyncStatus.applied &&
+            ProductDao(db).findById(thirdId)!.code == 'P7003',
+        '${third.reason} / ${ProductDao(db).findById(thirdId)!.code}');
+
+    final SyncResponse badCode = server.handle(
+      opMaster('products', newId(), SyncOpType.createMasterData, payload: {
+        'code': 5,
+        'name': '商品',
+      }),
+      now: now(),
+    );
+    check('code 不是字符串 ⇒ rejected',
+        badCode.status == SyncStatus.rejected &&
+            (badCode.reason?.contains('code') ?? false),
+        '${badCode.reason}');
+    db.close();
+  }
+
   section('updateMasterData');
   {
     freshDb();
@@ -474,14 +531,117 @@ void main() {
     check('缺 base_version → rejected',
         noVersion.reason?.contains('base_version') ?? false, '${noVersion.reason}');
 
-    final SyncResponse missing = server.handle(
-      opMaster('products', newId(), SyncOpType.updateMasterData, baseVersion: 0, payload: {
-        'sell_price': 1,
+    // §CV·3（方案丙，2026-10-08）：不存在 ⇒ **upsert 建档**（不再 rejected）。
+    //
+    // ⚠️ 先换空库：本段上文用 `syncProduct(code: 'PU1')` 造行，而 `PU1` 是**非规范编码**。
+    // upsert 路径**必然调用**编码生成器（`resolvePreferredCode(null)`），生成器遇
+    // `PU1` 会 `int.tryParse('U1') == null` 抛 StateError。空库 ⇒ 从 `P0001` 起，正常。
+    // （测试侧用 `P910` 这类规范码，没有这个问题 —— 见 `sync_server_test.dart`。）
+    db.close();
+    freshDb();
+    final String upsertId = newId();
+    final SyncResponse upsert = server.handle(
+      opMaster('products', upsertId, SyncOpType.updateMasterData, baseVersion: 0, payload: {
+        'name': '离线建的商品',
+        'sell_price': 350,
       }),
       now: now(),
     );
-    check('目标不存在 → rejected', missing.reason?.contains('不存在') ?? false,
-        '${missing.reason}');
+    check('目标不存在 ⇒ upsert：applied',
+        upsert.status == SyncStatus.applied, '${upsert.reason}');
+    check('upsert 用 payload 的 id 建档',
+        ProductDao(db).findById(upsertId)!.name == '离线建的商品');
+    check('upsert 建档版本从 0 起（与 create 同）',
+        ProductDao(db).findById(upsertId)!.syncVersion == 0);
+    check('编码由主机生成（update payload 不带 code）',
+        ProductDao(db).findById(upsertId)!.code.isNotEmpty,
+        '${ProductDao(db).findById(upsertId)!.code}');
+
+    // 乱序收敛：update 先到 ⇒ 建档；create 后到 ⇒ already_exists
+    final SyncResponse lateCreate = server.handle(
+      opMaster('products', upsertId, SyncOpType.createMasterData, payload: {
+        'name': '离线建的商品',
+        'code': 'P7788',
+        'sell_price': 350,
+      }),
+      now: now(),
+    );
+    check('乱序收敛：create 后到 ⇒ already_exists',
+        lateCreate.status == SyncStatus.alreadyExists, '${lateCreate.status}');
+
+    // upsert 遇缺必填 ⇒ 约束分类回中文，不含 SQL / 表名
+    final SyncResponse missingName = server.handle(
+      opMaster('products', newId(), SyncOpType.updateMasterData, baseVersion: 0, payload: {
+        'sell_price': 1, // 缺 name（NOT NULL）
+      }),
+      now: now(),
+    );
+    final String missingReason = missingName.reason ?? '';
+    check('upsert 缺必填 ⇒ rejected', missingName.status == SyncStatus.rejected);
+    check('回执不含 SQL / 表名 / 异常类名',
+        !missingReason.contains('SQL') &&
+            !missingReason.contains('products') &&
+            !missingReason.contains('UNIQUE') &&
+            !missingReason.contains('SqliteException'),
+        missingReason);
+
+    // §CS·五 ①：系统生成的字段一律以主机为准（payload 里的 code 丢弃）
+    final String keep = syncProduct(code: 'P810');
+    final String other = syncProduct(code: 'P811');
+    final SyncResponse staleCode = server.handle(
+      opMaster('products', other, SyncOpType.updateMasterData,
+          baseVersion: 0,
+          payload: <String, Object?>{'code': 'P810', 'sell_price': 999}),
+      now: now(),
+    );
+    check('带**过期 code** 的 update ⇒ applied（不是 rejected）',
+        staleCode.status == SyncStatus.applied, '${staleCode.reason}');
+    check('code 以主机为准（仍是 P811）',
+        ProductDao(db).findById(other)!.code == 'P811',
+        '${ProductDao(db).findById(other)!.code}');
+    check('其它字段照常更新',
+        ProductDao(db).findById(other)!.sellPrice == 999);
+    check('别人的编码不受影响',
+        ProductDao(db).findById(keep)!.code == 'P810');
+    db.close();
+  }
+
+  // ============================================================ 内部错误的回执口径（§CS·五 ③）
+  //
+  // 与 `test/sync_server_test.dart` 的「内部错误的回执口径」镜像。
+  section('内部错误的回执口径（§CS·五 ③）');
+  {
+    freshDb();
+    final List<String> labels = <String>[];
+    final List<Object> logged = <Object>[];
+    final SyncServer logging = SyncServer(
+      db,
+      onInternalError: (String label, Object error, StackTrace stack) {
+        labels.add(label);
+        logged.add(error);
+      },
+    );
+
+    // products.name 是 NOT NULL ⇒ 缺 name 触发 SQLITE_CONSTRAINT_NOTNULL
+    final SyncResponse constraint = logging.handle(
+      opMaster('products', newId(), SyncOpType.createMasterData,
+          payload: <String, Object?>{'code': 'P820'}),
+      now: now(),
+    );
+    check('约束冲突 ⇒ 中文原因（说清是「不完整或不合法」）',
+        constraint.status == SyncStatus.rejected &&
+            (constraint.reason?.contains('不完整或不合法') ?? false),
+        '${constraint.reason}');
+    check(
+        '回给客户端的话**不含表名 / 类型名 / SQL**',
+        <String>['products', 'Sqlite', 'constraint', 'INSERT']
+            .every((String leak) => !(constraint.reason ?? '').contains(leak)),
+        '${constraint.reason}');
+    check('原始异常走 onInternalError（含 constraint 细节）',
+        logged.length == 1 &&
+            logged.single.toString().toLowerCase().contains('constraint'),
+        '${logged.isEmpty ? '（无）' : logged.first}');
+    check('日志标签带操作名', labels.length == 1, '${labels}');
     db.close();
   }
 

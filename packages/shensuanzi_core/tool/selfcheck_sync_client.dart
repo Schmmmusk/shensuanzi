@@ -260,7 +260,67 @@ Future<void> main() async {
         error: '重试超限', retryCount: 11, nextRetryAt: 0, dead: true);
     check('markFailed(dead=true) → 死信 failed',
         client.queue.findById(entry.id)!.status == SyncQueueStatus.failed);
+
+    // D2b：镜像主数据行的 `isPending` 判定（未确认 = pending + sent；failed 不算）
+    check('死信不算「未确认」',
+        !client.queue.unconfirmedEntityIds().contains('d1'));
+    final SyncQueueEntry probe = client.queue.enqueue(
+        SyncQueueEntry.create(docOp('d2', 'sale', <int>[1]), now: now()));
+    check('pending 算「未确认」',
+        client.queue.unconfirmedEntityIds().contains('d2'));
+    client.queue.markSent(probe.id);
+    check('sent 仍算「未确认」（主机已收下、等 pull）',
+        client.queue.unconfirmedEntityIds().contains('d2'));
+    client.queue.clearConfirmed(<String>{'d2'});
+    check('pull 确认后不再算', !client.queue.unconfirmedEntityIds().contains('d2'));
     db.close();
+  }
+
+  // ============================================================ 三态判定
+  //
+  // 镜像 `test/sync_queue_triage_test.dart`。（§CV·六 报的镜像缺口：这一族原先
+  // 只有单测 + host 自检的 1 条，**core 自检侧**没覆盖 ⇒ 此处一次补齐整族。）
+  section('SyncQueueDao.counts / isSynced（三态判定）');
+  {
+    final Db triageDb = Db.openInMemory();
+    final SyncQueueDao triage = SyncQueueDao(triageDb);
+    SyncQueueEntry t(String id) => SyncQueueEntry(
+        id: id,
+        entity: Schema.documents,
+        entityId: 'entity-$id',
+        operation: SyncOpType.createDocument,
+        createdAt: 1700000000000);
+
+    check('空队列 ⇒ 已同步（0 / 0）',
+        triage.counts().pendingCount == 0 &&
+            triage.counts().failedCount == 0 &&
+            triage.counts().isSynced);
+
+    triage.enqueue(t('t1'));
+    check('一条 pending ⇒ 待同步 1、未同步',
+        triage.counts().pendingCount == 1 && !triage.counts().isSynced);
+
+    triage.markSent('t1');
+    check('pending → sent ⇒ **已同步**（sent 不显示 —— 主机已收下）',
+        triage.counts().pendingCount == 0 &&
+            triage.counts().isSynced &&
+            triage.count() == 1);
+
+    triage.enqueue(t('t2'));
+    triage.enqueue(t('t3'));
+    triage.markFailed('t3',
+        error: 'rejected',
+        retryCount: SyncClient.maxRetries + 1,
+        nextRetryAt: 0,
+        dead: true);
+    check('死信 ⇒ 失败 1，与待同步**并列**不覆盖',
+        triage.counts().pendingCount == 1 &&
+            triage.counts().failedCount == 1 &&
+            !triage.counts().isSynced);
+    check('明细列表：pending / failed 各自可查（withStatus）',
+        triage.withStatus(SyncQueueStatus.pending).single.id == 't2' &&
+            triage.withStatus(SyncQueueStatus.failed).single.id == 't3');
+    triageDb.close();
   }
 
   // ============================================================ 拉取

@@ -84,6 +84,14 @@ export 'src/master_data/party_service.dart'
 export 'src/master_data/product_draft.dart' show ProductDraft, ProductField;
 export 'src/master_data/product_service.dart'
     show ProductDraftInvalid, ProductService;
+export 'src/master_data/master_data_sink.dart'
+    show
+        MasterDataSink,
+        MasterDataSubmitResult,
+        QueueMasterSink,
+        ServiceMasterSink,
+        masterDataCreatePayload,
+        masterDataUpdatePayload;
 
 // 单据建档（采购 / 店内销售；送货 / 退货的草稿将来同放 documents/）
 export 'src/documents/purchase_draft.dart'
@@ -164,6 +172,8 @@ export 'src/sync/sync_operation.dart'
 export 'src/sync/sync_pull.dart'
     show SyncCursor, SyncCursorKeys, SyncPullResult;
 export 'src/sync/whitelist.dart' show SyncValueCheck, SyncWhitelist;
+export 'src/sync/sync_failure.dart'
+    show ConstraintKind, constraintKindOf, syncFailureReason;
 
 // 同步（客户端：离线队列 + 拉取应用。**不含传输实现**）
 export 'src/sync/pairing_payload.dart' show PairingPayload;

@@ -36,6 +36,25 @@ class ProductDao {
       ])
       .isNotEmpty;
 
+  /// 这个**编码**是否已被占用（D1，2026-10-08）。
+  ///
+  /// 与 [exists]「按 id 找」是两件事：这里按 `code` 找 —— 客户端建议的编码
+  /// 能不能用，看的是编码有没有人用（`products.code` 是 **UNIQUE**）。
+  ///
+  /// [excludeId] 留给「改派前的自查」：同一条自己当然命中自己的编码。
+  bool codeExists(String code, {String? excludeId}) {
+    final ResultSet rows = excludeId == null
+        ? _raw.select(
+            'SELECT 1 FROM ${Schema.products} WHERE code = ? LIMIT 1',
+            <Object?>[code],
+          )
+        : _raw.select(
+            'SELECT 1 FROM ${Schema.products} WHERE code = ? AND id <> ? LIMIT 1',
+            <Object?>[code, excludeId],
+          );
+    return rows.isNotEmpty;
+  }
+
   Product? findById(String id) {
     final ResultSet rows = _raw.select(
       'SELECT * FROM ${Schema.products} WHERE id = ?',

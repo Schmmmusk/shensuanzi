@@ -25,6 +25,7 @@ import '../test/environment_test.dart' as environment_test;
 import '../test/export_test.dart' as export_test;
 import '../test/log_test.dart' as log_test;
 import '../test/manual_test.dart' as manual_test;
+import '../test/master_data_policy_test.dart' as master_data_policy_test;
 import '../test/navigation_test.dart' as navigation_test;
 import '../test/scan_error_test.dart' as scan_error_test;
 import '../test/shell_kind_test.dart' as shell_kind_test;
@@ -57,6 +58,7 @@ void main() {
     export_test.main,
     log_test.main,
     manual_test.main,
+    master_data_policy_test.main,
     navigation_test.main,
     scan_error_test.main,
     shell_kind_test.main,
@@ -71,7 +73,7 @@ void main() {
     selfcheck_manual.main,
   ];
   print(
-    '编译通过：16 个测试文件 + 5 个自检脚本 + 1 个生成脚本已通过类型检查（未执行）。'
-    '（共 ${entries.length} 个入口）',
+    // ⚠️ 不要写死数量（见 core 的同名注释）：只报入口总数。
+    '编译通过：${entries.length} 个入口（test/ + tool/）已通过类型检查（未执行）。',
   );
 }

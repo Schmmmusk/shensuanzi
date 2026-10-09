@@ -26,7 +26,7 @@
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `id` | TEXT PK | UUIDv7 |
-| `code` | TEXT UNIQUE | 商品编码。**由系统生成**（`P0001` 起，见 `docs/reply.md`），用户不填 |
+| `code` | TEXT UNIQUE | 商品编码。**由系统生成**（`P0001` 起，见 `docs/reply.md`），用户不填。**客户端不同步此字段**；主机端 `updateMasterData` 时**忽略**传入的 `code`（§CS·五 裁定，`sync_protocol.md §8.1`） |
 | `name` | TEXT | 名称 |
 | `barcode` | TEXT NULL | 条码，索引 |
 | `unit` | TEXT | 单位，默认"件"。**最小销售单位**（§AJ·AI-5 裁定）—— 库存、成本、流水均按此单位记。按箱进、按个卖的商品填「个」，装箱关系写 `package_note`；**需要按箱录入自动换算**的商品另填 `package_unit` / `package_size`（见下方 v3 两列与 §3.2 的 7 条） |
@@ -469,6 +469,25 @@ CREATE UNIQUE INDEX idx_stock_seq  ON stock_ledger(seq_no);
 | `created_at` | INTEGER | |
 | `next_retry_at` | INTEGER | 默认 0 |
 
+**`entity` 的取值 = 目标表的「真实表名」**（与 wire 形态同源）：业务表是
+`documents` / `document_lines` / …；**主数据表是 `products` / `parties` / `accounts`**
+—— **没有**统一的 `masterData` 这种抽象名。这样 `SyncQueueEntry` **无需改结构**
+即可容纳主数据入队（判断依据：它本来就是「目标表名」语义）。
+
+**`operation` 与主数据（2026-10-08 裁定）**：
+
+| op | 客户端用法 |
+|---|---|
+| `createMasterData` | 主数据**建档**（payload 带 `code` —— 建议值，主机可改派） |
+| `updateMasterData` | 主数据**编辑 / 停用 / 恢复**（带 `is_active`；payload **不含** `code`） |
+| `deleteMasterData` | 历史遗留 op，**新客户端不用**（见 `sync_protocol.md §8.1`） |
+
+⚠️ **同一实体的多次操作「不合并」**（§CV·3 裁定，2026-10-08）：客户端按 `created_at`
+升序入队 / push（`SyncQueueDao.due` 的顺序），**不**把 `create` + `update` 折叠成一条。
+乱序由**主机端 upsert** 收敛（`sync_protocol.md §8.1`）—— **复杂度落在主机一侧**，
+客户端零特殊逻辑。（早期的「按 `entity_id` 合并」提案**已废止**：它只在 create 仍
+`pending` 的窄窗口有效，`sent` 之后即失效。）
+
 **`status` 的生命周期**（R-14 附带的「未同步影响」，2026-09-26 裁定）：
 
 | 状态 | 含义 | 进入 | 离开 |
@@ -579,13 +598,22 @@ CREATE UNIQUE INDEX idx_stock_seq  ON stock_ledger(seq_no);
    `Document.pendingDocNoPrefix + <本地唯一后缀>`；主机回填正式单号后覆盖。
    （`documents.doc_no` 有 UNIQUE 约束；撞车意味着镜像已损坏，
    `pull` 会抛**带上下文**的 `StateError`，修复路径是重建镜像 + 重拉。）
-3. **镜像只读，写入仅通过 pull**（C2·§CC，2026-10-06）：
-   九张业务表的唯一写入方是 `SyncClient.pull`；用户 UI 一律只读
+3. **镜像对「单据表」严格只读；对「主数据表」允许乐观写**（C2·§CC 2026-10-06；**D2 修订 2026-10-08**）：
+   九张**业务表**的唯一写入方是 `SyncClient.pull`，用户 UI 一律只读
    （手机端读面 = 镜像库，本机主库废弃但保留 —— v1 Android 未发布，无历史数据，不迁移）。
    `sync_queue` / `clock_offset` / `sync_cursor` 三张**客户端传输表**不在此限
    （§四：它们是传输状态，不是业务数据）。
-   主数据「新建 / 编辑 / 停用」只在主机做 —— 手机端本机建的 id 推到主机会被
-   外键拒绝（§CC 摸底：协议正确性），UI 上以「保留入口 + 引导到电脑」呈现。
+   **主数据表（`products` / `parties` / `accounts`）允许客户端乐观写**：
+   手机离线建档时 `QueueMasterSink` 在入队的同时把行写进镜像，用户立刻能在列表里
+   看到自己刚建的那条。⚠️ 这**不是「只读」的例外，是「客户端不跑规则」的边界** ——
+   主数据行**客户端全知**（`name` / `unit` / `sell_price` / `package_size` 全是用户
+   直接输入的字段），与单据本质不同（金额 / 状态由主机规则算出，客户端算不出）。
+   乐观行与主机的权威行**同 id**（id 由客户端生成），pull 时按 id **UPSERT** 收敛到同一行
+   （主机若改派了 `code`，也只改这一行的 `code`）。
+   ⚠️ **乐观行必须可分辨**：镜像里的主数据行带一个**派生**的 `isPending` 标记
+   （= 队列里该 id 尚有 `pending` / `sent` 条目、且**尚未被 pull 确认**），
+   UI 对 `isPending` 的行加一行浅灰小字「待同步」——「我有的」与「主机确认的」
+   必须一眼可分（与 §4.1 的「未同步影响」同源；实现见 D2b）。
 
 ## 五、不变量
 

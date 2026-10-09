@@ -86,4 +86,64 @@ void main() {
     expect(queue.withStatus(SyncQueueStatus.pending).map((SyncQueueEntry e) => e.id), <String>['e1']);
     expect(queue.withStatus(SyncQueueStatus.failed).map((SyncQueueEntry e) => e.id), <String>['e3']);
   });
+
+  // ---------------- D2b：镜像主数据行的 `isPending` 判定 ----------------
+
+  test('unconfirmedEntityIds：pending + sent 都算「未确认」，failed 不算', () {
+    queue.enqueue(entry('e1')); // pending
+    queue.enqueue(entry('e2'));
+    queue.markSent('e2'); // sent：主机已收下、等 pull 确认
+    queue.enqueue(entry('e3'));
+    queue.markFailed(
+      'e3',
+      error: 'boom',
+      retryCount: SyncClient.maxRetries + 1,
+      nextRetryAt: 0,
+      dead: true,
+    );
+
+    expect(
+      queue.unconfirmedEntityIds(),
+      <String>{'entity-e1', 'entity-e2'},
+      reason: 'pending + sent 都未确认；failed（死信）不算 —— 否则「待同步」会常亮',
+    );
+  });
+
+  test('unconfirmedEntityIds：pull 确认后不再算（clearConfirmed 删条目）', () {
+    queue.enqueue(entry('e1'));
+    queue.markSent('e1');
+    expect(queue.unconfirmedEntityIds(), <String>{'entity-e1'});
+
+    queue.clearConfirmed(<String>{'entity-e1'});
+    expect(
+      queue.unconfirmedEntityIds(),
+      isEmpty,
+      reason: 'pull 见到该 id ⇒ 条目删除 ⇒ 不再是「待同步」',
+    );
+  });
+
+  test('unconfirmedEntityIds：同一实体两条 op ⇒ 去重成一个 id', () {
+    // D2b：客户端**不合并**同一实体的 create + update（靠主机 upsert 收敛）⇒
+    // 队列里会有两条同 entity_id 的条目，标记必须是**一个**。
+    queue.enqueue(
+      SyncQueueEntry(
+        id: 'c1',
+        entity: Schema.products,
+        entityId: 'p1',
+        operation: SyncOpType.createMasterData,
+        createdAt: 1700000000000,
+      ),
+    );
+    queue.enqueue(
+      SyncQueueEntry(
+        id: 'u1',
+        entity: Schema.products,
+        entityId: 'p1',
+        operation: SyncOpType.updateMasterData,
+        createdAt: 1700000000001,
+      ),
+    );
+
+    expect(queue.unconfirmedEntityIds(), <String>{'p1'}, reason: 'Set 去重');
+  });
 }

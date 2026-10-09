@@ -416,6 +416,62 @@ void main() {
     expect(local['name'], '甲改的名字', reason: '主机赢 —— 本地被 server_state 覆盖');
   });
 
+  // ============================================================ 主数据入队（D1）
+
+  test('D1：手机上用**已被占用**的编码建档 ⇒ 主机改派，pull 后镜像收敛（同 id、不重复行）', () async {
+    // setUp 里 A 已经用 P001 建了「商品甲」。B 没拉过 ⇒ 自己的镜像里是空的，
+    // 离线生成也落在 P001 上（§CH 提案 A §3：客户端按镜像 max(code)+1 生成）。
+    final String bProductId = newId();
+    clientB.queue.enqueue(
+      SyncQueueEntry.create(
+        masterOp(Schema.products, bProductId, <String, Object?>{
+          'code': 'P001',
+          'name': '商品乙',
+        }),
+        now: now(),
+      ),
+    );
+    final SyncPushReport push = await clientB.push();
+    expect(push.sent, 1, reason: push.errors.join(' | '));
+    expect(push.rejected, 0, reason: '改派对客户端不是错误');
+
+    // 主机侧：两个商品都在，编码不重复（主机改派了 B 那条）
+    final Map<String, Object?> hostRow = Map<String, Object?>.from(
+      hostDb.raw
+          .select('SELECT code FROM products WHERE id = ?', <Object?>[bProductId])
+          .first,
+    );
+    expect(hostRow['code'], isNot('P001'), reason: 'P001 已被商品甲占用 ⇒ 改派');
+    expect(
+      hostDb.raw.select('SELECT COUNT(*) AS n FROM products').first['n'],
+      2,
+      reason: '改派不是拒绝 —— 两条都要落库',
+    );
+    expect(
+      hostDb.raw
+          .select("SELECT code FROM products WHERE name = '商品甲'")
+          .first['code'],
+      'P001',
+      reason: '原占用者不受影响',
+    );
+
+    // B pull ⇒ 镜像同 id 收敛到主机的真码，且**只有一行**（乐观行不残留）
+    await clientB.pull();
+    final List<Map<String, Object?>> mirrorRows = mirrorB.raw
+        .select(
+          'SELECT id, code FROM products WHERE id = ?',
+          <Object?>[bProductId],
+        )
+        .map((r) => <String, Object?>{'id': r['id'], 'code': r['code']})
+        .toList();
+    expect(mirrorRows, hasLength(1), reason: '乐观行与 pull 行同 id ⇒ UPSERT 覆盖，不新增');
+    expect(
+      mirrorRows.single['code'],
+      hostRow['code'],
+      reason: '镜像收敛到主机改派后的编码',
+    );
+  });
+
   // ============================================================ v1 边界
 
   test('documentAction：purchase 收 mark_delivered → rejected（规则不允许），进重试', () async {

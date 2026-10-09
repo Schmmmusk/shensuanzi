@@ -130,3 +130,4 @@ export 'src/entry_layout.dart'
     show entryFieldsMinWidth, entryFieldsShouldStack;
 export 'src/scan_error.dart'
     show ScanFailureKind, scanFailureKindOf, scanFailureMessage;
+export 'src/master_data_policy.dart' show MasterDataPolicy;
