@@ -90,3 +90,23 @@ String syncFailureReason(Object error) {
     StorageFailureKind.unknown => '主机处理这条操作时出错，请把电脑上的日志发给技术支持。',
   };
 }
+
+/// **请求格式有误**（协议违反 ⇒ 客户端 bug，用户**修不了**）时的通用回执（2026-10-09 裁定）。
+///
+/// ## 与 [syncFailureReason] 的分工
+///
+/// | | 兜的是什么 | 触发点 |
+/// |---|---|---|
+/// | [syncFailureReason] | **已经 throw 出来**的内部错误 | `handle` 的兜底 catch |
+/// | 本常量 | **在 throw 之前就被校验拦下来**的**同类**内部错误 | 白名单 / entity 不符 / 字段类型不符 / 游标不合法… |
+///
+/// 两者都是「原始细节走 `onInternalError` 进主机日志，回执**只给一句通用中文**」。
+///
+/// ## 措辞只讲「怎么办」，不讲「哪里错了」
+///
+/// ① `ui_principles.md §五`：错误信息说怎么办，不说哪里错了；
+/// ② 这些错误**用户确实修不了**（是客户端实现的协议违反，不是用户填错），说清也没用。
+/// ⇒ 「重试」+「反复出现就反馈」就够，**不出现表名 / 字段名 / 任何术语**。
+/// ⚠️ 文案本身也要过 `forbiddenDevTermsInUserText`（`sync_failure_test` 有断言）。
+const String malformedSyncRequestReason =
+    '同步请求格式有误，请重试。如果反复出现，请把这条消息截图发给开发者。';

@@ -115,6 +115,15 @@
 > §CV **D2 裁定原文已找回（在 git 历史 `d09ed5f:docs/reply.md`）** + 与 D2a 对账（5 边界 / 3 细节）+ 1 项曾需重裁（队列合并 vs 顺序）⇒ **§CV·五 已裁方案丙并落地** + 落地 5 处文档 + **§CV·六 D2b 开工**（`isPending` 派生落地 + **2 项待裁**：门控形状 / 收紧 code）（**2026-10-08**）
 > §CW **Android 许可报错根因**：cmdline-tools **23.0 的 `sdkmanager` 是转发 shim**，永不输出 Flutter 要匹配的 `All SDK package licenses accepted.` ⇒ 用**经典版 22.0 做 `latest`** + 实跑接受许可（licenses 1→8 个）（**2026-10-08**）
 > §CV·七 **三项裁定落地**：② `resolvePreferredCode` **温和收紧**（非匹配 ⇒ 视同未提供）+ 三态判定**镜像补齐**（core）+ ① **`MasterDataPolicy` 值对象**（接线与「表单走 sink」同批，待做）（**2026-10-09**）
+> §CV·八 **D2b 接线落地**：`MasterDataPolicy` 全量接线（8 文件：3 开单页 + 往来 + 库存 + 商品 + 期初 + app_shell + app）+ **表单走 sink**（手机端不再「只写镜像不入队」）+ 7 测试夹具；⚠️ 根 `lib/` 无我侧编译门禁（`flutter analyze` 231）⇒ 交用户复跑（**2026-10-09**）
+> §CV·九 **门禁报错修复 + 缺口 1/2 落地**：修 `flutter test` 编译错（`product_form_dialog_test` 缺 `sink`）· 未用导入 · `selfcheck_sync` 4 处 lint；**查出并修掉 §CV·七② 引出的自检回归**（`selfcheck_sync` 老夹具用非规范码 `PM1` ⇒ 恒红，补主机侧镜像 ⇒ **170 ✓**）；补 `mobile()` 三条页面断言（缺口 1）· 期初语义门 `assert`（缺口 2）；🟡 **报备 `canCreateAccounts` 无消费点**（**2026-10-09**）
+> §CV·十 **`canCreateAccounts` 接消费点（裁定「甲」）**：`AccountsPage` 加 **required `masterDataPolicy`** + 门控三处写面（新建／编辑／停用，**含一处显式扩展**）+ 空态换镜像文案；`MobileGuideTopic` +2（`newAccount`／`editAccount`）+ ④ 号 widget 断言；消费点 **0 → 3**（**2026-10-09**）
+> §CV·十一 **`mobileGuidance` 文案契约镜像**：新 `mobile_guidance_test`（9 条：含「电脑」/含「同步」/无开发术语/互不相同/`mirrorEmptyMessage` 拼参与**双分支**/标题上限）+ `selfcheck_app` **只放 3 条**（刻意不重复）；临时脚本真跑 11 项（含 3 条反向灵敏度）；⚠️ **报备**：裁定举例的 SQL/exception/null **不在** `manualForbiddenDevTerms` 里（**2026-10-09**）
+> §CV·十二 **共用禁止词表扩充 + 改名（裁定「甲」第二轮）**：`manualForbiddenDevTerms` → **`forbiddenDevTermsInUserText`** + 追加 10 个词（SQL/exception 口径 + 反推提升的 5 个 SQL 术语）+ 三层结构留痕；模块级两份**保留不动**；实测手册正文对新词 **0 命中**；⚠️ **报备**：裁定 §五 的 `expectNoDevTerms` 落不了（**core 够不到该表**：依赖方向 app→core + 包边界已冻结）（**2026-10-09**）
+> §CV·十三 **禁止词表归位到 core（裁定「甲」第三轮 —— 定性为「归类修正」非边界变更）**：新建 core `user_text.dart` + core/app 各一份薄 helper `expectNoDevTerms`；`manual_content` 改 import、**app 桶删掉 re-export**（单一来源）；`sync_failure_test` / `scan_error_test` / `mobile_guidance_test` 三处改调 helper（模块特有词走 `extra`）；两包临时脚本真跑 **14 + 8** 项全过；🟡 残余：**host 那一层未做**（**2026-10-09**）
+> §CV·十四 **host 层接入共用表 —— 三层齐（裁定「甲」第四轮）**：host 新增同款薄 helper + `sync_server_test` 两处改调；`selfcheck_sync` 走**路 A 内联**（自包含）；真跑 **8 项**全过 · `selfcheck_sync` **170** ✓；⚠️ **§四 顺手查揪出 host 另 5 处校验回执自身带开发术语**（含 3 处插入表名/`Schema`）+ 2 处 `_error` 拼原始异常 ⇒ **新报备 #20**（**2026-10-09**）
+> §CV·十五 **协议违反类回执「重新分类」：走日志 + 通用中文（裁定「甲」第五轮）**：新增 core `malformedSyncRequestReason` 单一来源 + `SyncServer._malformedRequest` 统一处置（4 处）· http 侧 `_HostRoutes` 接 `onInternalError` 且 4 个动态响应体改固定文案；断言同步 **含镜像**（`selfcheck_host` 2 处漏改靠跑自检抓到）；host lib 复扫 ⇒ 用户可见面已无带术语文案；⚠️ **新报备 #21**（另约 17 处「说哪里错了」的校验回执未动）（**2026-10-09**）
+> §CV·十六 **复跑两处红修复 + 同型隐患排查 + RuleEngine 核对**：core `master_data_sink_test` 偶发红根因 = **夹具冻结时钟**（UUIDv7 同毫秒顺序无保证 + `all()` 按 `created_at,id` 排；真跑铁证 冻结 **28/60** 错 vs 单调 0/60）⇒ 修 `clock: now`；同型隐患 `selfcheck_queue_sink` 两处也修（`document_sink_test` 复核安全）；host `sync_server_test:1062` 是 §CV·十五 的**漏改断言**（查子串 `白名单`、我按完整字面量 grep ⇒ 扫不到）⇒ 改断言通用文案；**裁定 §三 的 RuleEngine 核对有实货**：`RuleEngine` 兜底 catch 会把 **`Bad state: …`** 灌进用户可见 `reason`（无人守）+ `docs/rules.md RULE-003` 泄漏 + 无「机读码」通道 ⇒ **新报备 #22**，并给出 `reason_code` 落地草案（**待 go-ahead**）（**2026-10-09**）
 >
 > 📦 **已归档的节**（`~~删除线~~` 表示已移出本文件）：§0-§7 → `reply_review_archive_v1.md`；  
 > **§F / §G / §I / §J / §K 与 §H 的落地记录部分** → `reply_review_archive_v2.md`（2026-09-28）。  
@@ -3515,7 +3524,7 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 | ~~2~~ | ~~**AH-A 主机接通**~~ | ✅ **已落地**（2026-10-02）：`shensuanzi_host` 接进根应用 + 设置页「多设备同步」区（开关默认关 / 四态状态行 / 失败怎么办 / 配对二维码**自绘**）+ 控制器（纯 Dart，56 项自检）。**§AH 遗漏 8（`api_version`）早已落地，无需做** | — | **§BB** |
 | 3 | **折扣抹零 + 包装换算（v3）** | 🚧 **进行中 —— 段 1a ✅ + 段 1b ✅**（1a：Schema v3 五列 + `migrationStep(2)` + **迁移链环级验证**，+6 用例 · 自检 105 项，见 **§BD·六**；1b：`data_model.md` / `rules.md` 五列语义 + 7 条交互关系成文，见 **§BD·七** —— **待你复核措辞，通过才进 2a**）。✅ **已裁定：v3 = 5 列**（`reply.md` v3 审查意见：**这是裁定漏了两列的必要补齐，报备即可、无需重裁**）—— `products.package_unit` / `package_size` + `document_lines.discount_amount` / `entry_quantity` / `entry_unit`。**5 列的交互关系已在审查意见 §二 一次定死**（7 条 —— ⚠️ **已逐字固化进 §BD**，因为 `reply.md` 每轮被覆盖）。按审查意见拆步（审查原文写「切成 6 步」，但表里是 **7 行**；⚠️ **按表执行**）：**1a** Schema + 迁移测试 ✅ · **1b** 文档先行 ✅ · **2a** 引擎口径 · **2b** 三份草稿 + `toBaseQuantity` · **2c** 白名单 + 协议 + 导出 · **3** Flutter · **4** 手册 + 台账 **§BD**。**每步做完即提交，下一步不改上一步的文件** | **无** | `reply.md` v3 审查意见 / **§BD** / §BA·一 |
 | 4 | **Android（AH-B/C）** | 客户端镜像 + **重建而非迁移**（`mirror_schema_version`） | **依赖 #2** | §AH / `schema_migration.md`「客户端镜像」 |
-| 5 | **D2b（主数据本地建档 + UI）** | `app.dart` 按 `_shellKind` 注入两 sink（`ServiceMasterSink` / `QueueMasterSink`）+ `readOnlyMasterData` 换「本地建档 + 入队」+ 失败明细（关联引用 id）+ `readOnlyMasterData` **改名**（§二⑤）+ `isPending` 标记 UI；**等 go-ahead** | —（§CV·三 已裁） | **§CU / §CV** |
+| 5 | **D2b（主数据本地建档 + UI）** | ✅ **接线已落地**（§CV·八，2026-10-09）：8 文件 + 7 夹具；`MasterDataPolicy` 按能力门控 + 表单走 `MasterDataSink`（手机 = 乐观写镜像 + 入队）；`stock_page` 的期初改由 `mobileShell` 管。✅ **§CV·九 收尾两项**：`mobile()` 页面断言 ×3（缺口 1）+ 期初 `assert` 语义门（缺口 2）。**剩余**：`isPending` 列表「待同步」小字 + 失败明细关联引用 id | — | **§CV·八 / §CV·九** |
 
 > ⏱️ **优先级指令（2026-10-03，用户）**：**先把 v3 搞完，再说退货**（退货留在 §AR·三 候选不动）；
 > **「时间不多了，得尽快出安卓版」** —— v3 排在 Android 前的理由因此更硬：
@@ -3540,10 +3549,19 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 | ~~12~~ | ~~D2 队列：老裁定「合并」 vs 新裁定「顺序」~~ | ✅ **已裁定（方案丙，2026-10-08）**：**升序（保留）+ 主机 upsert（新增）+ 不做客户端合并**（老「合并」提案**废止** —— 它只在 create 仍 `pending` 的窄窗口有效，`sent` 后即失效）；**已落地**（§CV·五） | **§CV·三 / §CV·五** |
 | ~~13~~ | ~~D2b 门控形状~~ —— `readOnlyMasterData`（一个 `bool`）管不了「商品可建 / 往来账户仍禁建」 | ✅ **已裁定：乙（值对象 `MasterDataPolicy`）**（2026-10-09）—— 值对象 + 测试/自检镜像已落地；**接线待做**（与「表单走 sink」同批，见 §CV·七·三） | **§CV·七·三** |
 | ~~14~~ | ~~是否收紧 `resolvePreferredCode`~~（只接受 `^P\d+$`） | ✅ **已裁定：温和收紧**（非匹配 ⇒ **视同未提供**，**不** rejected）；已落地 + `sync_protocol.md §8.1` + 测试/自检镜像（**§CV·七·一**） | **§CV·七·一** |
+| ~~15~~ | ~~`canCreateAccounts` 目前无消费点~~ | ✅ **已裁定：甲**（2026-10-09）+ **已落地**（§CV·十）：`AccountsPage` 加 required `masterDataPolicy` + 门控三处写面 + ④ 号 widget 断言；消费点 **0 → 3**。⚠️ 含一处**显式扩展**（编辑／停用一并门控，超出裁定字面 —— 见 §CV·十·二） | **§CV·九·五 / §CV·十** |
+| ~~16~~ | ~~`mobileGuidance` 文案表无任何镜像~~ | ✅ **已裁定：补，但钉「文案契约」而非重复穷尽性**（2026-10-09）+ **已落地**（§CV·十一）：新 `mobile_guidance_test`（9 条）+ `selfcheck_app` 3 条 | **§CV·十一** |
+| ~~17~~ | ~~开发术语表要不要含 SQL / exception / null~~ | ✅ **已裁定：甲（且扩得更大）**（2026-10-09）+ **已落地**（§CV·十二）：改名 `forbiddenDevTermsInUserText` + 追加 **10** 个词 + 三层结构；模块级两份保留不动 | **§CV·十一·四 / §CV·十二** |
+| ~~18~~ | ~~裁定 §五 的 `expectNoDevTerms` helper 落不了~~ | ✅ **已裁定：甲，但定性纠正为「归类修正」**（2026-10-09）+ **已落地**（§CV·十三）：常量归位到 **core** `lib/src/user_text.dart`；helper **各包各一份薄的**（依赖 `package:test`，不能跨包）；app 桶**不留 re-export** | **§CV·十二·五 / §CV·十三** |
+| ~~19~~ | ~~host 那一层要不要也接共用表~~ | ✅ **已裁定：甲**（2026-10-09）+ **已落地**（§CV·十四）：host 新增同款薄 helper + `sync_server_test` 两处改调；`selfcheck_sync` 走路 A 内联。**至此三层（core / host / app）全部覆盖** | **§CV·十三·六 / §CV·十四** |
+| ~~20~~ | ~~host 另有 5 处校验回执自身带开发术语~~ | ✅ **已裁定：甲，但定性为「重新分类」**（2026-10-09）+ **已落地**（§CV·十五）：这 5 处（+http 2 处）**本就是客户端 bug** ⇒ 走 `onInternalError` 记日志 + 通用中文；新增 core `malformedSyncRequestReason` | **§CV·十四·四 / §CV·十五** |
+| ~~21~~ | ~~另约 17 处校验类 `rejected` 仍是「说哪里错了」的措辞~~ | ✅ **已裁定：甲 + 方案 A（加 `reason_code`）**（2026-10-09）—— **待落地**：`reason` 改通用中文、加**机读** `reason_code`、测试从 `contains('中文')` 改成 `reasonCode == …`（**分支区分能力由此恢复**）；「另 3 处」单独处置（`主数据不存在` ⇒ **行为改**：`deleteMasterData` 幂等）。⚠️ **与 #22 耦合**（码在 `_mapOutcome` 汇合）⇒ 两件一起设计。落地草案见 **§CV·十六·五** | **§CV·十五·五 / §CV·十六·五** |
+| **22** | 🔴 **`RuleEngine` 的 rejected 会把 `Bad state: …` 灌进用户可见 `reason`** —— `dispatch` 兜底 catch 产出 `'规则执行失败，整单回滚：$error'`，而 `SyncServer._mapOutcome` **原样**透传给客户端；另 `'purchase 不适用「签收」动作（docs/rules.md RULE-003）'` 泄漏**内部文档路径**与 wire 类型名；且 `RuleEngine` **没有「机读码」通道**（兜底 catch 把「用户能改的领域拒绝」与「客户端 bug」压成同一种东西）。**今天无任何断言守着它** | **未裁**（裁定 §三 只要求「核对 `RuleEngine` 输出」；核对结果指向 `RuleEngine` 自身要改，**超出 17 处范围**）：甲 只修泄漏（`Bad state:` / `docs/rules.md` 进日志、回执改通用）/ **乙 甲 + 给 `RuleOutcome` 加码字段**（与 #21 的方案 A 同一次设计 —— 推荐）/ 丙 维持现状 | **§CV·十六·四** |
 
-> 📌 **一条真待裁定（第 10 行：「自动恢复」的文本 vs 实现）**；另**一件等时间** ——
-> **第 2 行 `DocumentDraft`**（裁定「开」，判据 = 1b 后 ≥1 周，**未到期**）。
-> 其余下一步是**开工项**（§AR·一）：**v3 段 1b（文档先行）** · **Android**。
+> 📌 **待落地（已裁）**：**第 21 行**（17 处 ⇒ 甲 + `reason_code`）—— 与 **第 22 行**（`RuleEngine` 泄漏 / 加码）**同一次设计**，草案已备（§CV·十六·五）⇒ **等一句 go-ahead**。
+> **唯一真待裁定 = 第 22 行**（`RuleEngine` 改到哪一步：甲 / 乙 / 丙）。
+> 另**一件等时间** —— **第 2 行 `DocumentDraft`**（裁定「开」，判据 = 1b 后 ≥1 周，**未到期**）。
+> 其余下一步是**开工项**（§AR·一）：**D2b 剩余（`isPending` UI + 失败明细关联 id）** · **v3 段 1b** · **Android**。
 
 ### 三、候选（**有触发条件**，未到期不做）
 
@@ -8520,3 +8538,643 @@ Remove-Item "D:\AndroidSDK\cmdline-tools\22.0" -Recurse -Force
 
 ⚠️ 根 `lib/` **无我侧编译门禁** ⇒ 这批要**一次做完**（半途会编不过）+ 过 `testing.md §L` 根层交付清单。
 
+### 四、D2b 接线**已落地**（8 文件 + 7 测试夹具，2026-10-09）
+
+| 文件 | 改动 |
+|---|---|
+| `ui/product_form_dialog.dart` | `showProductFormDialog` 加 **required `MasterDataSink sink`**；`_save` **走 sink**（不再 `service.create`）；`service` **降级为只读**（条码查重）；手机端 queued ⇒ SnackBar 出 `queuedNotice` |
+| `ui/sale_page` / `delivery_page` / `purchase_page` | `readOnlyMasterData` → **required `masterDataPolicy` + required `masterDataSink`**；两个 picker 的 `readOnly` → `canCreate`（**正语义**）；商品 picker 拿 `sink` |
+| `ui/parties_page.dart` | → **required `masterDataPolicy`**（只看 `canCreateParties`） |
+| `ui/stock_page.dart` | `readOnlyMasterData` → **`mobileShell`** —— 3 处都是「期初入口 + 镜像空态」= **壳能力，不是主数据权限**（取值与旧 flag 逐字一致）；期初页传 `ServiceMasterSink` |
+| `ui/products_page.dart` | **桌面专用页**（`products` 不在手机 tab）⇒ 本机构建 `ServiceMasterSink`；建档 / 编辑 / **停用**都走它 |
+| `ui/opening_stock_page.dart` | 加 required `masterDataSink`（下沉到 `_OpeningProductPickerSheet`） |
+| `ui/app_shell.dart` | `masterDataPolicy`（**required**）+ `masterDataSink`（**可空** —— 沿用 `documentSink` 惯用法 + `_PendingPage` 兜底） |
+| `lib/src/app.dart` | 按 `_shellKind` 造 policy（`mobile()` / `desktop()`）+ sink（`QueueMasterSink(mirror, queue)` / `ServiceMasterSink`） |
+
+**为什么 sink 必须与 policy 同批**：`_createProduct` 原来调 `showProductFormDialog(service: widget.service)`，
+而手机端那是**镜像上的 `ProductService`** ⇒ 建档**只写镜像、不入队**（静默丢数据）。
+现在表单**只认 sink**。
+
+**测试夹具**（7 文件 / 9 处）：`sale×2` · `delivery×1` · `purchase×1` · `parties×1` · `opening×1` ·
+`mobile_shell×2` · `widget×1`。⚠️ AppShell 那两个只测**摆放**（服务全缺省）⇒ **不传 sink**，
+页面照旧走 `_PendingPage`。
+
+**验证（⚠️ 根 `lib/` 仍无我侧编译门禁）**：
+- ✅ `dart format --output=none`（17 文件）**语法全过**
+- ✅ 人工过 `testing.md §L` 清单：**局部声明顺序**（未新增局部函数）· **`$` 插值**（新增行 **0 处**）·
+  **桶导入**（`MasterDataPolicy` 已进 3 页的 `show` 列表；`MasterDataSink` / `ServiceMasterSink` 走 core）·
+  **无重复命名参数** · 参数名与调用点**逐个对齐**（grep 确认）
+- ❌ `flutter analyze` 与 `dart run tool/import_guard.dart` **仍被 231 挡住**（实跑：根包有 Flutter 原生
+  build hook ⇒ 要起子进程 ⇒ `CreateFile failed 231`）⇒ 交用户复跑
+
+**🟡 已知缺口（报备）**：
+1. **移动 policy 的页面行为无测试** —— `MasterDataPolicy.mobile()` 的端到端行为（点「＋新建商品」出
+   **表单**、点「＋新建客户」出**引导**）没有 widget 断言；现有夹具全用 `desktop()`。
+   （值对象本身有 `master_data_policy_test` + `selfcheck_app` 覆盖。）建议补一条。
+2. `opening_stock_page` 的 sink 由宿主**预置**（StockPage 传 `ServiceMasterSink`）—— 该入口在手机端被
+   `mobileShell` 引导接管，故当前正确；**若将来手机上开期初，必须改成注入**。
+
+
+## §CV·九 门禁报错修复 + 缺口 1/2 落地（2026-10-09）
+
+### 一、用户侧门禁暴露的三处（已全部清掉）
+
+| # | 报告 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `test/product_form_dialog_test.dart:48` **missing_required_argument**（编译错 ⇒ `flutter test` 加载失败） | D2b 把 `showProductFormDialog` 的 `sink` 设为 **required**，而该文件**不在我的 8 文件清单里** —— 我当时只 grep 了「构造 `SalePage`/`AppShell` 这类**页面**」的夹具，**漏了直接调对话框函数**的夹具 | 补 `sink: ServiceMasterSink(service)`（桌面 = 与直连逐字同行为） |
+| 2 | `test/opening_stock_page_test.dart:15` **unused_import** | 上批给它加了 `shensuanzi_app` 桶，实际只用 core 的 `ServiceMasterSink` | 删该 import |
+| 3 | `packages/shensuanzi_host/tool/selfcheck_sync.dart` **4 处 lint**（3× `unnecessary_string_interpolations` + 1× `unnecessary_brace_in_string_interps`） | 详情参数里把已是 `String` 的值又包一层 `'${…}'` | 去插值：`ProductDao(…).code` / `'$labels'` |
+
+### 二、⚠️ 顺带查到一处**我上批引出的自检回归**（重要）
+
+跑 host 全自检时 `selfcheck_sync` 报 **1 红**：`check('applied 且字段落库', saved.code == 'PM1')`。
+
+- **根因**：§CV·七②「温和收紧」后 `PM1` 不匹配 `^P\d+$` ⇒ `resolvePreferredCode` **视同未提供**、
+  改走自增 ⇒ 落库码变 `P0001` ⇒ 老断言恒红。
+- **为什么藏住了**：`selfcheck_*` 是**我侧通道、不在门禁里**；收紧那批我只复跑了 core 自检 +
+  三包 typecheck，**没把 host 自检放进循环**（§CV·七 那轮就是漏跑）。
+- **修法**（不是为绿而改，是补上收紧的另一半）：
+  1. 夹具改用**规范码** `P0001`（保持「原样落库」的原意）；
+  2. **新增**一条主机侧断言：`非规范编码 ⇒ 视同未提供（改派自增，不拒绝）` —— 主机侧此前对收紧
+     **零覆盖**，正是上面那条红的藏身处。
+- **同族排查**（全仓 grep `code:` 字面量）：`PC*/PM*/PU*/PD*/PB*/PR*/PL*/PN*/HH*/HZ*/H*/PA/PB`
+  等非规范码在 host 自检/测试里**大量**存在，但**只有上面那一处断言了字面 code** ⇒ 其余仅当 id 用，
+  改派无影响。已逐条核对（含 `sync_server_test` 的 `P001/P777/P900/P9xx`；`http_server_test` 的
+  `H0xx` 只进 payload、不断言）。
+- **复跑**：`selfcheck_sync` **170 ✓**（+1）；host 其余 36/116/36/76、core 117/58/93/19/30/96 全过。
+
+### 三、缺口 1 落地：`mobile()` 的页面行为断言（裁定 §P2）
+
+新增 **3 条 widget 断言**（与裁定点名的三条逐字对应）：
+
+| 文件 | 断言 |
+|---|---|
+| `test/sale_page_test.dart` | ① `mobile()` 点「＋新建商品」⇒ 出**建档表单**（`新增商品` 在场、**无**引导） |
+| `test/sale_page_test.dart` | ② `mobile()` 点「＋新建客户」⇒ 出**引导**（`这一步在电脑上做`） |
+| `test/parties_page_test.dart` | ③ `mobile()` 点「＋新建往来方」⇒ 出**引导**、**不进表单**（`party-name` 不在场） |
+
+两处夹具各加**可选**参数 `policy`（缺省 `desktop()`）⇒ 既有桌面用例**逐字零变化**；**未做参数化遍历**
+（裁定：「不要改成参数化」）。
+
+### 四、缺口 2 落地：期初的「语义门」（裁定 §P3）
+
+`stock_page.dart` 在构造 `OpeningStockPage` 前加 **`assert(!widget.mobileShell, …)`** + 注释：
+说明「当前只有主机能到期初（手机端点入口走引导）」以及将来开手机期初**必须先裁 A/B/C 语义**
+再决定 sink 是注入还是另写页面。**不改逻辑**（`_showOpening` 只可能由非手机壳的按钮置起）；
+这道门的作用是「将来有人加移动端入口时，撞到它就必须先回答语义问题」。
+
+### 五、🟡 报备一项：`canCreateAccounts` 目前**没有消费点**
+
+裁定 ① 选的值对象有 `{products, parties, accounts}` 三个字段，但全仓 grep：
+
+- `canCreateProducts` ⇒ 3 开单页消费 ✓
+- `canCreateParties` ⇒ 3 开单页 + 往来页消费 ✓
+- **`canCreateAccounts` ⇒ 0 处消费** —— `AccountsPage` 的构造签名只有 `service`
+  （`app_shell.dart:373`），**从未**接 `masterDataPolicy`。
+
+**不是本批引入**：旧的 `bool readOnlyMasterData` 也**从未**传给 `AccountsPage`。
+**当前不出事的原因**：`accounts` 目的地在手机壳**没有入口**（台账「手机壳可达面」= 5 tab 早已记录），
+所以「手机端建账户」这条路走不通。
+
+**两个选项（等裁定）**：
+
+- **甲（我倾向）**：把 `AccountsPage` 接上 `masterDataPolicy`（`app_shell` 传 `shell.masterDataPolicy`），
+  用 `canCreateAccounts` 门控「新建账户」。桌面 `desktop()` ⇒ `true` ⇒ **零变化**；手机不可达 ⇒ 也零变化，
+  但字段不再悬空，将来手机加账户入口时**自动**走引导（**值对象的意义就是「将来只改一处」**）。
+- **乙**：接受「账户是文档级字段」，在值对象注释里写明「当前无消费点」。
+
+### 六、本侧验证
+
+```
+host  typecheck 11 入口 ✓ · selfcheck_sync 170 ✓ · client_server 36 ✓ · host 116 ✓
+      queue_sink 36 ✓ · service 76/76 ✓
+core  typecheck 45 入口 ✓ · selfcheck 117 ✓ · products 58 ✓ · payments 93 ✓ · sale 19 ✓
+      query 30 ✓ · sync_client 96 ✓
+app   typecheck 28 入口 ✓
+语法  dart format --output=none（6 文件）✓（⚠️ 本仓非 format-clean，未改动的文件同样报 Changed）
+❌ 根 `flutter analyze` / `flutter test` / `import_guard` 仍被 `CreateFile failed 231` 挡住 ⇒ 交用户复跑
+```
+
+**✅ 用户复跑全过（2026-10-09）**：`flutter analyze` 0 issues + `flutter test` 全绿 ⇒ 本批闭环。
+
+## §CV·十 `canCreateAccounts` 接消费点（裁定「甲」落地，2026-10-09）
+
+裁定原文见 `docs/reply.md`（**甲 + 参数 required + 补 ④ 号 widget 断言**）；本节为落地记录。
+
+### 一、落地四处
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `packages/shensuanzi_app/lib/src/mobile_guidance.dart` | `MobileGuideTopic` **+2**：`newAccount` / `editAccount`（共 6 个）+ 两条文案（按族插入，账户紧跟商品之后）；枚举文档「四处入口」→「六处入口」 |
+| 2 | `lib/src/ui/account_page.dart` | `AccountsPage` 加 **required `masterDataPolicy`**（注释写明为什么不能给默认值 = M15 教训）；`canCreateAccounts` 门控**三处写面**（详见 §二）；空态文案在禁建时换 `mirrorEmptyMessage('账户列表')` |
+| 3 | `lib/src/ui/app_shell.dart:373` | `AccountsPage(service: …, masterDataPolicy: shell.masterDataPolicy)` |
+| 4 | `test/account_page_test.dart` | 夹具 `page({MasterDataPolicy? policy})`（缺省 `desktop()` ⇒ 既有 4 条用例**零变化**）+ 新增 **④ 号断言**：`mobile()` 点「新建账户」⇒ 出**引导**（`这一步在电脑上做`）、**不进表单**（`account-name` 不在场） |
+
+### 二、⚠️ 一处**显式扩展**（超出裁定字面，报备）
+
+**裁定字面只要门控「新建」按钮；我把「编辑」与「停用/恢复」一并门控了。**
+
+理由（两条，都不是自选口味）：
+
+1. **`parties_page` 的先例就是整族写面**：`canCreateParties` 门控「新建」+「编辑」+「停用/恢复」三处
+   （`parties_page.dart:218/260`），本页若只门控新建，同族两处就是**同型漏洞**；
+   而「等将来再补」这个论证，裁定 §三 自己已经**明确否掉**了。
+2. **只门控新建会让空态文案变成错的**：禁建时空态仍写「点右上角「新建账户」建一个」——
+   而那个按钮此刻只会弹引导。⇒ 必须一并换成 `mirrorEmptyMessage`。
+
+**行为影响 = 0**：桌面 `desktop()` ⇒ `canCreateAccounts = true` ⇒ 三处 gate 全不触发（既有 4 条用例零变化）；
+手机端 `accounts` 目的地无入口（5 tab 里没有）⇒ 也不触发。
+**若要严格按字面回退**：删 `_toggleActive` 的 gate + `_editAccount` 里 `existing != null` 那一支 + 恢复旧空态文案，改动很小。
+
+### 三、性质对照
+
+- `canCreateAccounts` 的生产消费点：**0 → 3**（`account_page.dart:95/131/153`）⇒ 字段不再悬空
+  （裁定 §一 的核心诉求：值对象「将来只改一处」的初衷得到保持）。
+- 与 §CV·七 的 ①②③ 合起来：`mobile()` 下 product / party / account **三个独立分支都有 widget 断言**（①商品→表单 · ②客户→引导 · ③往来页→引导 · ④账户→引导）。
+
+### 四、🟡 报备（新）：`mobileGuidance` 文案表**没有任何镜像**
+
+`mobileGuideMessage` / `mobileGuideTitle` 全仓 grep：**无测试、无 `selfcheck_*` 断言**
+（4 条老消息也没有）—— 我给两条新消息立的保证只有 **`switch` 穷尽性**（漏 case 编译不过，app 包有门禁 ✓）。
+
+是否补镜像（`selfcheck_app` 一节 + app 包一个测试文件，断言「每个 topic 文案非空 / 含『电脑』/ 互不相同」）由你定。已列 §AR·二 **#16**。
+
+### 五、本侧验证
+
+```
+app   typecheck 28 入口 ✓ · selfcheck_app 151 ✓（无回归）
+core/host typecheck 45 / 11 入口 ✓ · 语法 ✓（5 文件）
+构造点 grep：AccountsPage 3 处（定义 / app_shell / test）**全部带 masterDataPolicy** ✓
+              —— `mobile_shell` 确认**没有**构造它（裁定 §五 提醒的那点已核）
+`canCreateAccounts` 消费点 0 → 3 ✓
+❌ 根 `flutter analyze` / `flutter test` 仍被 231 挡住 ⇒ 交用户复跑
+```
+
+**✅ 用户复跑全过（2026-10-09）**：`flutter analyze` 0 issues + `flutter test` 全绿 ⇒ 本批闭环。
+
+## §CV·十一 `mobileGuidance` 文案契约镜像（2026-10-09）
+
+裁定原文见 `docs/reply.md`（**补镜像，但钉的是「文案契约」，不是重复 `switch` 穷尽性**；
+`test/` + `selfcheck_app` 两处，selfcheck 只放关键几条）。本节为落地记录。
+
+### 一、为什么这是真缺口
+
+`mobileGuideMessage` / `mobileGuideTitle` 是手机端**唯一**告知用户
+「为什么不行 → 去哪做 → 做完怎么同步」（`mobile_guidance.dart` 文件头自己承诺的三段结构）的通道，
+而在此之前**零断言**：`switch` 穷尽性只守「加了话题忘写 case」，**守不住**文案写空 / 复制粘贴 /
+漏「电脑」（不知道去哪）/ 漏「同步」（不知道做完怎么看到）/ 混进开发术语。
+`ui_principles.md §1.3` 要求内联提示说清下一步 ⇒ 这是**原则的硬约束没被任何门禁守住**。
+
+### 二、落地三处
+
+| # | 位置 | 内容 |
+|---|---|---|
+| 1 | `packages/shensuanzi_app/test/mobile_guidance_test.dart`（**新**） | **全量契约 9 条 test**：①每条正文含「电脑」②含「同步」③无开发术语（**复用** `manualForbiddenDevTerms`）④各条正文**互不相同**（防复制粘贴）⑤`mirrorEmptyMessage`：`what` 被拼接 + 含「电脑」「同步」+ **钉住双分支**（「稍等」与「电脑上也还没有」缺一不可）⑥标题 ≤ 15 字 |
+| 2 | `packages/shensuanzi_app/tool/selfcheck_app.dart` | 新 section「mobileGuidance 文案契约」**只放 3 条**：含「电脑」/ 含「同步」/ 镜像空态同契约 —— 与单测**刻意不重复**（裁定 §三：selfcheck 只做最关键的几条） |
+| 3 | `packages/shensuanzi_app/tool/typecheck.dart` | 新测试加入口 ⇒ **29 个入口** |
+
+`MobileGuideTopic.values` 直接驱动遍历 ⇒ 将来**加话题自动进覆盖**，不会漏。
+
+### 三、我的真跑验证（我侧跑不了 `dart test`）
+
+按项目纪律（「凡新测试必须配真跑临时脚本」），写了 `tool/_tmp_guidance_contract.dart` 走 `dart run`
+通道跑**同一批契约**：**11 项全过**，含 3 条**反向灵敏度**对照
+（空文案抓不到「电脑」/ 禁用词表能抓「数据库」/ 重复文案会被 ④ 抓 —— 证明检查器有牙
+⇒ 「全绿」不是假信心）。**脚本已删，无残留**（`tool/` 下 `_tmp` 计数 0）。
+
+### 四、⚠️ 一处与裁定举例**有出入**（未擅自扩表，报备）
+
+裁定 §二·断言3 举例说要挡「**SQL / exception / null**」，但裁定同时要求**复用**
+`manualForbiddenDevTerms`（「不要新造一份」）—— 而那份表是**手册口径**
+（`编译/构建/依赖/数据库/参数/框架/进程/白名单/游标/API/UI/DAO/schema/Flutter/Dart`），
+**并不含** SQL / exception / null。
+
+⇒ 我按「不新造一份」只**复用现有表**：今天覆盖到的是「手册口径的开发术语」，
+**不覆盖** SQL / exception / null（这三个目前只有**模块级**断言守着：
+`core/test/sync_failure_test.dart` 断言 reject 文案不含 SQL / 表名，
+`app/test/scan_error_test.dart` 断言不含插件类名）。
+
+**两条路（等裁定）**：
+- **甲**：把 `SQL` / `exception` / `null` **追加进共用的 `manualForbiddenDevTerms`**
+  —— 单一来源（不新造表），代价是**同时收紧手册门禁**。⚠️ 已实测手册正文**不含**这三词
+  （`grep` 干净）⇒ 追加是安全的低风险。
+- **乙**：维持现状，接受「手册口径」就是这份表的范围。
+
+> ⚠️ **后续（2026-10-09 同日）**：裁定选了甲，且扩得更大 —— 见 **§CV·十二**。
+> 该节把表**改名为 `forbiddenDevTermsInUserText`** 并追加 10 个词
+> （含本节提到的三个 + 从 `sync_failure_test` 反推提升的 5 个 SQL 术语）。
+> 本节正文保留当时措辞（旧名）不动。
+
+### 五、本侧验证
+
+```
+app   typecheck 29 入口 ✓（+1 新测试）· selfcheck_app 154 项 ✓（+3）
+core/host typecheck 45 / 11 入口 ✓ · 语法 ✓（3 文件）
+契约临时脚本：11 项全过（含 3 条反向灵敏度）· 已删除、无残留 ✓
+❌ 根 `flutter analyze` / `flutter test` / `dart test` 仍被 231 挡住 ⇒ 交用户复跑
+```
+
+**✅ 用户复跑全过（2026-10-09）**：`flutter analyze` 0 issues + `flutter test` 全绿
+**且 `packages/shensuanzi_app` 的 `dart test` 含新 `mobile_guidance_test`（9 条）全过** ⇒ 本批闭环。
+
+## §CV·十二 共用禁止词表扩充 + 改名（裁定「甲」第二轮，2026-10-09）
+
+裁定原文见 `docs/reply.md`。本节为落地记录。**起因**：§CV·十一·四 报备「裁定举例的 SQL / exception / null
+不在共用表里」；裁定第二轮把它扩成一次**结构性**修正。
+
+### 一、裁定的实质：三层结构
+
+| 层 | 内容 | 谁守 |
+|---|---|---|
+| **1. 共用表** | **通用**开发术语（手册口径 + SQL / 异常口径） | `forbiddenDevTermsInUserText` —— **所有**用户可见文本都该过 |
+| **2. 模块级额外黑名单** | 模块特有泄漏（表名 / 样例数据 / 插件名 / 占位符） | 各模块自己的断言（**保留不动**） |
+| **3. 两关都过** | — | 每个模块 |
+
+裁定纠正了 §CV·十一·四 的一个隐含判断：那两份**不是**「模块级黑名单」，是「模块级**额外**黑名单」——
+即「共用表覆盖不到的领域，各模块自己补」。**结构本身合理，缺的是共用表该覆盖的没覆盖。**
+
+### 二、落地（4 处）
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `packages/shensuanzi_app/lib/src/manual_content.dart` | **改名** `manualForbiddenDevTerms` → **`forbiddenDevTermsInUserText`**（+ 文档注释重写：写明三层结构、旧名、以及「它早已不只管手册」）；**追加 10 个词**并按口径**分组留痕**：`SQL` `sql` `exception` `Exception` `null`（+ 从 `sync_failure_test` **反推提升**的 `UNIQUE` `constraint` `INSERT` `SELECT` `SqliteException`）；`assertManualIsUserFacing` 的扫描改用新名 |
+| 2 | `packages/shensuanzi_app/lib/shensuanzi_app.dart` | 桶导出改名 |
+| 3 | `packages/shensuanzi_app/test/mobile_guidance_test.dart` | 引用改用新名（3 处） |
+| 4 | 模块级两份 | **未动**（按裁定 §四）：`sync_failure_test` 的 `products` / `p-1` / `P001` / `?` 与 `scan_error_test` 的 `Camera` / `permission denied` / `MobileScanner` / `unsupported` **保留** |
+
+**代码里留痕的决策**（不另开文档）：① 大小写都列（`SQL`/`sql`、`exception`/`Exception`，与既有 `schema`/`Schema` 同款）；
+② **不加 `?`** —— 太容易误伤（用户文本本来就有问号）；③ **不加 `products`** —— 它是**样例表名**，不是通用术语。
+
+### 三、安全性实测（先验后改）
+
+新词会不会**打破既有手册门禁**？逐个 grep 手册正文：`SQL / sql / exception / Exception / null /
+UNIQUE / constraint / INSERT / SELECT / SqliteException` —— **10 个全部 0 命中** ⇒ 追加安全（事后复跑也证实）。
+
+### 四、真跑验证（我侧跑不了 `dart test`）
+
+临时脚本 `tool/_tmp_dev_terms.dart`（`dart run` 通道）**16 项全过**，含：
+
+- 契约仍成立：引导正文 / 镜像空态文案对**新共用表零命中**；
+- **10 个新词的反向灵敏度**（`SqliteException` `sql` `SQL` `Exception` `UNIQUE` `null` `constraint` `INSERT` `SELECT` 全被抓到；老口径 `编译` / `数据库` 仍在）；
+- **不受影响**：`?` 不误伤（`devTermsIn('要新建吗？')` 为空）、正常用户文案零命中；
+- **手册扫描**对新表零命中。
+- **脚本已删，无残留。**
+
+### 五、⚠️ 裁定 §五（`expectNoDevTerms` helper）**我落不了**，报备
+
+裁定 §五 建议抽 `expectNoDevTerms(text, {extra})`，并让**三个**文件都调它 —— 含
+`packages/shensuanzi_core/test/sync_failure_test.dart`。**但那个文件够不到共用表**：
+
+- 共用表在 **`shensuanzi_app`**；
+- `shensuanzi_core` 的 pubspec **只依赖** `sqlite3 / uuid / path / collection`（dev: `test` / `lints`），
+  **不依赖 app**（依赖方向是 **app → core**，反向会成环）；
+- ⇒ core 的测试**无法 import** `forbiddenDevTermsInUserText`；
+- ⚠️ 且**包边界已冻结**（本文件 §A / `Agents.md`）—— 把常量跨包搬家是**边界变更**，不属我可自行决定。
+
+**三条路（等裁）**：
+
+| 选项 | 做法 | 代价 |
+|---|---|---|
+| **甲** | 把共用表**搬到 core**（如 `core/lib/src/user_text.dart`）；`app` 的 `manual_content.dart` 改 import + 桶转发；两侧各放一个小 helper | **边界变更**（需你裁）；消费点改名波及 app 数处 + 桶 |
+| **乙** | helper 只落 **app 内部**（`app/test/support/dev_terms.dart`），供 `mobile_guidance_test` + `scan_error_test` 用；core 的 `sync_failure_test` 继续用自带列表 | core 侧**仍拿不到第 1 层**（它已有第 2 层，等于只过一关） |
+| **丙** | 不做 helper（裁定原话：「如果你不想加，现状也能跑 —— 只是每个模块要自己记得调两次」） | 0 |
+
+**我倾向乙**：不动冻结的边界，先把能统一的两处（都在 app 包内）统一；core 侧那关等将来有别的理由动边界时一起做。
+**未裁前不动。**
+
+### 六、本侧验证
+
+```
+selfcheck_manual 8 过 0 挂 ✓（新词未打破手册扫描）· selfcheck_app 154 ✓（无回归）
+core/host/app typecheck 45 / 11 / 29 入口 ✓ · 语法 ✓（3 文件）
+契约临时脚本 16 项全过（含 10 词反向灵敏度）· 已删除、无残留 ✓
+旧名残留：仅 3 处**改名说明**注释 + 历史正文（§AT / §CV·十一）—— 按归档分寸**不改历史正文**
+❌ 根 `flutter analyze` / `flutter test` / `dart test` 仍被 231 挡住 ⇒ 交用户复跑
+```
+
+## §CV·十三 用户可见文本禁止词表**归位到 core**（裁定「甲」第三轮，2026-10-09）
+
+### 一、定性：这是**归类修正**，不是边界变更（裁定的核心纠正）
+
+我上一轮把「把常量从 app 搬到 core」定性为**边界变更**并挂起等裁 —— **裁定不认同，且对**：
+
+> 它描述的是「**面向用户的文本**中禁止出现的开发术语」——这个规则**不属于任何特定包**，
+> 是**项目级规范**。三层都产出用户可见文本：core（`syncFailureReason`）· host（`SyncServer`
+> 的 rejected reason）· app（手册 / 引导 / 扫码）。**它现在放在 app，只因为它最初是从
+> `manual_content.dart` 提取的** —— 提取时没想清「这是 app 层规则还是项目级规则」。
+
+⇒ **它不是边界变更**（**没有引入任何新的跨包依赖**：core 不依赖 app，依赖方向始终 app → core），
+只是把一个**错放的常量归位**。与 `Agents.md` 纪律 16 的精神一致：跨序引用就放到顶层。
+**留痕理由**（裁定 §五）：后来人看到搬迁 diff 会问「这是重裁还是修正？」—— 台账说清就不用猜。
+
+### 二、落地：裁定 §四 的八步（**每步之后跑对应包门禁**）
+
+| # | 包 | 动作 | 结果 |
+|---|---|---|---|
+| 1 | core | 新建 `lib/src/user_text.dart`（常量 + 文档：为什么在 core / 三层结构 / 旧名） | ✓ |
+| 1b | core | `shensuanzi_core.dart` 导出（新增「用户可见文本的规范」段） | ✓ |
+| 2 | core | 新建 `test/support/dev_terms.dart`（薄 helper） | ✓ |
+| 3 | core | `sync_failure_test` 改调 helper，`extra: ['p-1','P001','?','products']` | typecheck 45 ✓ |
+| 4 | app | `manual_content.dart` **删本地定义**，改 `import core show …` | ✓ |
+| 5 | app | `shensuanzi_app.dart` 的 export 行**删掉**（**不留 re-export**） | ✓ |
+| 6 | app | 新建 `test/support/dev_terms.dart`（同款薄 helper） | ✓ |
+| 7 | app | `scan_error_test` 改调 helper，`extra: ['Camera permission denied','Camera','permission denied','MobileScanner','unsupported']`（★ `Exception` **移交**共用表） | typecheck 29 ✓ |
+| 8 | app | `mobile_guidance_test` 改调 helper（**无 extra**） | ✓ |
+
+### 三、两层结构（裁定 §二）
+
+`expectNoDevTerms` 依赖 `package:test` ⇒ **不能跨包共享**：放 core `lib/` 会让生产代码引 test 依赖；
+放 core `test/support/` 则 app 够不到。⇒ **常量进 core `lib/`（单一来源）+ helper 各包各一份薄的**。
+
+两份 helper **逐字相同**（各自文件头注明「与另一个包的同名文件逐字相同，改动时两处同步」）——
+这是**薄封装的固有代价，不是重复实现**（就像 `expect` 每个测试文件都要 import）。
+
+### 四、不留 re-export 的**实证**
+
+写完临时脚本时它只 `import package:shensuanzi_app/shensuanzi_app.dart`，
+编译直接报 **`Undefined name 'forbiddenDevTermsInUserText'`** —— 这恰好证明
+**app 桶不再转发该常量**（裁定 §三 要的效果：单一来源，不制造「用 core 的还是 app 的？」这个问）。
+脚本改为显式 `import package:shensuanzi_core/shensuanzi_core.dart` 后通过。
+
+### 五、真跑验证（我侧跑不了 `dart test`，两包各配临时脚本，**均已删除、无残留**）
+
+| 包 | 临时脚本 | 结果 |
+|---|---|---|
+| core | `tool/_tmp_user_text.dart` | **14 项全过**：真实 `SqliteException(2067,…)` 的 `syncFailureReason` 对「共用表 + 模块 extra」零命中；**8 种错误码 + StateError 全覆盖零命中**；反向灵敏度（共用表含 SQL/异常口径；`products` 只在 extra；`?` 只在 extra） |
+| app | `tool/_tmp_user_text.dart` | **8 项全过**：引导正文 / 镜像空态 / 扫码三类文案 / 手册正文全部零命中；反向灵敏度（`Exception` 已由共用表抓；插件词仍靠 extra 且**不在**共用表里） |
+
+```
+core/app typecheck 45 / 29 入口 ✓（host 11 ✓）
+selfcheck_manual 8 过 0 挂 ✓（**运行时经 core 取表**，证明搬迁后的 import 真的生效）
+selfcheck_app 154 ✓（无回归）· 语法 ✓（9 文件）
+❌ 根 `flutter analyze` / `flutter test` / `dart test` 仍被 231 挡住 ⇒ 交用户复跑
+```
+
+### 六、🟡 残余（未做，已开 §AR·二 #19）
+
+裁定 §一 把 **host** 也列为「用户可见文本」的一层，但 §四 的八步**没含 host** ⇒ 本批未动。
+事实：host **够得到**该表（host 依赖 core ✓），且 host 侧**已有模块级等价断言**
+（`sync_server_test` / `selfcheck_sync` 的「回执不含 SQL / 表名 / 异常类名」）⇒ 补第 1 层是
+**1 个薄 helper + 2 个调用点**。**未裁前不做。**
+
+> ✅ **已裁定：甲**（2026-10-09，同日）+ **已落地** —— 见 **§CV·十四**（三层齐）。
+> 该节的「顺手查」还揪出 host 另 **5 处**校验回执自身带开发术语（新报备 §AR·二 #20）。
+
+## §CV·十四 host 层接入共用表 —— **三层齐了**（裁定「甲」第四轮，2026-10-09）
+
+> 裁定原文见 `docs/reply.md`。本节即裁定 §五 要求的「**§CV·十三·六 落地**」记录。
+
+### 一、理由（裁定 §一：不是对称好看，是单一来源）
+
+host 的 `SyncServer` 产生 `rejected` 回执 —— **那句中文是最终给用户看的**（core 只「归类 + 造句」，
+host 负责「送出去」）。core / app 两层已接共用表，**host 不接就是三层里唯一没接的**，
+再加上它**已经有一份模块级等价列表** ⇒ **「现在」是三份并行维护的等价列表，
+「将来」有人加词改了共用表、漏了 host 那份 ⇒ host 的断言静默失效**。
+**「已有等价断言」不是不补的理由，恰恰是更该补的理由**（它说明 host 本来就在做这件事）。
+
+与 §CV·① 的一贯逻辑一致：**能现在解耦的，不要留到耦合发生后再解**（host 已依赖 core，**零新增依赖**）。
+
+### 二、落地：1 个薄 helper + 2 个调用点
+
+| # | 位置 | 动作 |
+|---|---|---|
+| 1 | `test/support/dev_terms.dart`（**新**） | 与 core / app 的 helper **逐字相同**（文件头加一行指明「三处同源，改动同步」） |
+| 2 | `test/sync_server_test.dart` | 两处改调 helper：①「upsert 缺必填」`extra: ['products']`；②「约束冲突」`extra: ['products','Sqlite','NOT NULL']`（原先是 4 条内联 `expect` + 一个 5 词循环） |
+| 3 | `tool/selfcheck_sync.dart` | 两处 `check(...)` 改走**内联判据** `devTermHits(...)`（**裁定 §三 路 A**）：`selfcheck` 是 `tool/` 脚本、**应自包含**，不 import `test/` 夹具；**表**仍是单一来源（core） |
+
+**为什么 selfcheck 不 import 那个 helper**：它依赖 `package:test`；按裁定 §三，`tool/` 脚本依赖
+测试夹具是错的形状 ⇒ 内联 3 行判据（路 A），表本身仍单源。
+
+### 三、真跑验证（我侧跑不了 `dart test`）
+
+`tool/_tmp_host_terms.dart`（`dart run`）**8 项全过**，复现 `sync_server_test` 的两个场景：
+场景①（upsert 缺必填）与场景②（缺 name 触发 `NOT NULL`）的 `reason` 各自对
+「共用表 + 模块 `extra`」**零命中**；反向灵敏度证明 `products` / `Sqlite` / `NOT NULL`
+**只在 `extra`**（不在共用表）。**脚本已删，无残留。**
+
+```
+host typecheck 11 入口 ✓ · selfcheck_sync **170 项** ✓（两处断言换判据后仍绿、无回归）
+❌ 根 `flutter analyze` / `flutter test` / `dart test` 仍被 231 挡住 ⇒ 交用户复跑
+```
+
+### 四、⚠️ 裁定 §四「顺手查」的结果：host 侧**另有 5 处用户可见文案自身带开发术语**
+
+按裁定给的判据（grep `lib/` 里「给用户看的中文」但没走 `syncFailureReason`），
+用**共用表本身**扫了 `packages/shensuanzi_host/lib/src/*.dart` 的中文字符串字面量，命中 5 处
+（**全是 `SyncResponse.rejected` 的结构校验分支，都会经 `reason` 显示给客户端/用户**）：
+
+| 位置 | 文案 | 命中的词 |
+|---|---|---|
+| `sync_server.dart:84` | `'表不在白名单内：${op.entity}'` | **白名单**（＋**插入了表名**） |
+| `sync_server.dart:137` | `'documentAction 的 entity 必须是 ${Schema.documents}，实际 ${op.entity}'` | **Schema**（＋**插入表名**） |
+| `sync_server.dart:207` | `'createDocument 的 entity 必须是 ${Schema.documents}，实际 ${op.entity}'` | **Schema**（＋**插入表名**） |
+| `sync_server.dart:363` | `'products.code 必须是字符串'` | **products** |
+| `sync_server.dart:788` | `'游标 $key 必须是整数，实际 "$raw"'` | **游标** |
+
+**另有两处「原始异常拼进响应体」**（与 §CS·五 修掉的那类同型，但不含开发术语，
+所以没被上面的扫描抓到）：`http_server.dart:164` `'请求体解析失败：$error'` ·
+`:219` `'服务端异常：$error'`。（`:209` `'令牌无效或缺失'` 是干净的。）
+
+**为什么我「没有」顺手改**：这是**生产文案**的改写（= 产品/UX 决定），不是测试断言 ——
+「测试红 ≠ 改生产代码的授权」。补它们的正确姿势是先裁定「这些校验回执要不要也说人话」。
+**已开 §AR·二 #20**（含具体清单），未裁前不动。
+
+### 五、至此的收口
+
+| 层 | 是否接共用表 | 判据落点 |
+|---|---|---|
+| `shensuanzi_core` | ✅ | `test/support/dev_terms.dart` + `sync_failure_test` |
+| `shensuanzi_host` | ✅ **本次** | `test/support/dev_terms.dart` + `sync_server_test`（＋ `tool/selfcheck_sync` 内联） |
+| `shensuanzi_app` | ✅ | `test/support/dev_terms.dart` + `scan_error_test` / `mobile_guidance_test` |
+
+⇒ **用户可见文本的开发术语禁令，三层全部覆盖、单一来源。**
+
+## §CV·十五 协议违反类回执**重新分类**：走日志 + 通用中文（裁定「甲」第五轮，2026-10-09）
+
+### 一、裁定的核心纠正：这是**重新分类**，不是「改写文案」
+
+我上一轮把它定性为「生产文案改写（产品决定）」—— **裁定纠正**：这 5 处**本来就不该是
+用户可见的 `rejected`**。看触发条件：白名单外的表 / entity 不符 / 字段类型不符 / 游标不合法
+—— **全是客户端实现的 bug（协议违反），没有一处用户能自己修**。
+
+而 `rejected` 的语义（`sync_protocol.md §8.5`）是「停在失败队列，**给人看原因**」——
+「给人看」的前提是「人能做什么」，这 5 处做不到。
+
+⇒ 正确处置 = **与 `SyncServer.handle` 兜底 catch 同一通道**（§CS·五 已建立的模式）：
+**原始细节走 `onInternalError` 进主机日志**（诊断要看的就是它）+ **回执只给一句通用中文**。
+
+### 二、落地
+
+| 块 | 内容 |
+|---|---|
+| **A. sync 侧 4 处** | 新增 `SyncServer._malformedRequest(op, cause, detail)`（统一处置）；`handle` 白名单守卫 · `_applyAction` entity 不符 · `_createDocument` entity 不符 · `_insertMasterData` 的 `products.code` 类型不符 —— 全改走它 |
+| **A′. 第 5 处（游标）** | `_parseSeqNoCursor` **不改 throw**（`FormatException` 的细节有价值）；它的**用户可见路径**是 `http_server._pull` 的 400 —— 由 B 一并堵住 |
+| **B. http 侧** | `_HostRoutes` 新增 `onInternalError` 字段（`HostHttpServer.start` 传下去）；**4 个动态响应体**（push 解析 400 · pull 400 · 500 兜底）改为**固定文案 + 记日志**；`catch` 都补上 `stack` |
+| **C. 新文案（单一来源）** | core 新增 **`malformedSyncRequestReason`** = 「同步请求格式有误，请重试。如果反复出现，请把这条消息截图发给开发者。」（`sync_failure.dart` + 桶导出）；host 侧 `_HostRoutes` 两个私有常量 `_badRequestReason` / `_internalErrorReason` |
+| **D. 断言同步（含镜像）** | `sync_server_test` 2 处改写（断言换成「== 通用文案」+ **日志里保留细节**）· `selfcheck_sync` 2 处同类改写 + **新增 7 项自检段**（4 分支回执 + 3 条日志细节）· `selfcheck_host` **2 处**（http 400 的镜像断言）· `http_server_test` 2 处（并加「响应体是固定文案」的契约断言）· core `sync_failure_test` **+1 组**（通用文案本身过共用表 + 说了「重试」） |
+
+**措辞原则**（写进 `malformedSyncRequestReason` 的文档注释）：**只讲「怎么办」**（重试 / 反馈），
+**不讲「哪里错了」** —— ① `ui_principles.md §五`；② 用户确实修不了。文案本身也过共用表。
+
+### 三、⚠️ 又一次**镜像漏改**（靠跑自检抓到，不是靠 grep）
+
+改完 `http_server_test` 的两条断言后跑 host 自检，`selfcheck_host` **2 项红**：
+`400 说明提到 operations` / `400 说明提到游标` —— 它们是那两条断言的**镜像**，
+我 grep「旧文案」时**没扫到**（它们断言的是 `contains('operations')`，不含我搜的关键词）。
+⇒ 这正是 `testing.md` 那条纪律的又一次实证：**`test/**` 与 `tool/selfcheck*.dart` 改一边必须改另一边**；
+**靠 grep 旧文案是不可靠的，必须跑一遍自检**。
+
+### 四、§四 复扫的结果：host `lib/` 剩下的带术语字符串**全部只进日志**
+
+用共用表复扫 `host/lib/src/*.dart`，剩余命中全部是**日志侧的字符串**（用户看不到）：
+`sync_server.dart` 的 `'白名单'` 日志标签与三处 `StateError(...)` 详情、
+`_parseSeqNoCursor` 的 `FormatException` 消息、`http_server.dart` 的 `'pull 参数不合法'` 日志标签。
+⇒ **用户可见面上，host 已无带开发术语的文案。**
+
+### 五、⚠️ 报备（新）：还有约 17 处校验类 `rejected` 用「说哪里错了」的措辞
+
+按同一判据（「错误信息说怎么办，不说哪里错了」），下列分支**不含术语**（所以共用表扫不到），
+但**用户同样修不了**：未知字段 / 缺 `payload.document` / 不可写列 / `payload.id` 必须等于 `entity_id` /
+缺 `base_version` / `deleteMasterData` 只允许 id / 文档字段类型不符 / 未知 action / `occurred_at` 格式 …
+（另有 `规则拒绝` / `动作被拒绝` / `主数据不存在` 三处**可能确实面向用户**，要单独判。）
+
+⚠️ **改它们会动 15+ 条既有断言**（`sync_server_test` + `selfcheck_sync` 的 `contains('未知字段')` /
+`'不可写列'` / `'sync_version'` / `'只支持主数据表'` / `'base_version'` / `'只允许 id'` …）
+—— 那是**一处产品决定 + 一批断言改写**，不属本次裁定的范围 ⇒ **未裁前不动**，已开 **§AR·二 #21**。
+
+### 六、本侧验证
+
+```
+core/app typecheck 45 / 29 入口 ✓（host 11 ✓）
+host 自检：selfcheck_sync **178** ✓（+7）· host **116** ✓（漏改已修）· client_server 36 ✓
+          · queue_sink 36 ✓ · service 76/76 ✓
+core 自检：117 / 58 / 30 / 96 ✓ · app：selfcheck_app 154 ✓ · selfcheck_manual 8 过 0 挂 ✓
+语法 ✓（8 文件）· host lib 复扫：用户可见面已无带术语文案 ✓
+❌ 根 `flutter analyze` / `flutter test` / `dart test` 仍被 231 挡住 ⇒ 交用户复跑
+```
+
+## §CV·十六 复跑两处红修复 + 同型隐患排查 + RuleEngine 核对（2026-10-09）
+
+### 一、core `master_data_sink_test` 偶发红：根因是**夹具的冻结时钟**（不是生产代码）
+
+用户复跑报：`停用 / 恢复都走 updateMasterData` 期望 `updateMasterData`、实得 `createMasterData`。
+
+**根因链**（四步，缺一不可）：
+
+1. 该组夹具写 `clock: () => 1700000000000`（**常量**）⇒ 同一次用例里几条队列条目 `created_at` **完全相同**；
+2. `SyncQueueDao.all()` = `ORDER BY created_at, id` ⇒ 顺序落到第二键 `id` 上；
+3. `newId()` 是 UUIDv7，**同一毫秒内的顺序由随机尾巴决定**（`util/ids.dart` 原文：
+   「**没有保证**……实测连续两次 `newId()` 的字典序可能反着」）；
+4. ⇒ `.last` 有时取到「建档」那条 ⇒ 断言等于**掷硬币**。
+
+**真跑铁证**（临时脚本 `tool/_tmp_clock_order.dart`，同一场景 60 轮，跑完即删）：
+
+| 夹具时钟 | `.last` 取错次数 |
+|---|---|
+| 冻结（`() => 1700000000000`） | **28 / 60**（≈掷硬币） |
+| 单调（`support/fixtures.dart` 的 `now`） | **0 / 60** |
+
+**修**：`clock: now` + 一段注释（把上面四步写进代码，避免下次有人"简化"回常量）。
+⚠️ 事实澄清：`fixtures.dart` 文件头那句「固定 id + **单调时钟**，保证失败可复现（无随机）」
+才是本意 —— **夹具写常量是偏离了它自己声明的契约**，不是 `all()` 或 `newId()` 的 bug。
+
+### 二、同型隐患排查（同一根因，只是还没发作）
+
+| 文件 | 状况 |
+|---|---|
+| `packages/shensuanzi_host/tool/selfcheck_queue_sink.dart` | ⚠️ **两处**冻结时钟（`:69` `() => 1700000000000` · `:208` `() => 1700000001000`），且 D2a 段依赖 `.last`（3 条条目）⇒ **同一枚硬币**。**已修**：新增自检专用单调 `tick()`，两处都换掉 |
+| `packages/shensuanzi_core/test/document_sink_test.dart` | ✅ 安全：只用 `.single`（每个用例库里只有 1 条队列条目）⇒ 顺序无关 |
+| 其余 `clock: () => fixed`（`sync_client_test` · `client_server_test` · `http_server_test` · `selfcheck_sync_client` …） | 已逐个 grep 复核：**没有**「冻结时钟 + 依赖多条队列条目顺序」的组合 |
+
+**教训**：**队列测试的时钟必须单调**。「同毫秒内 UUIDv7 顺序无保证」是 `ids.dart`
+白纸黑字写着的，而 `all()` 的第二排序键正是 `id` —— 两者相遇就是不确定性。
+
+### 三、host `sync_server_test` 那条红：我上批 §CV·十五 的**漏改断言**
+
+`白名单（纪律 10）`组第 1 条仍断言 `contains('白名单')`，而 §CV·十五 已把该分支改成**通用回执**。
+
+- **为什么漏**：我当时 grep 的是**完整旧字面量** `表不在白名单内`，而这条断言查的是**子串** `白名单` ⇒ 扫不到。
+  （与 §CV·十五·三 那次「镜像漏改」同型：**靠 grep 旧文案不可靠**。）
+- **已修**：改成 `expect(response.reason, malformedSyncRequestReason)`，注释里写明
+  「这条断言因此**失去分支区分能力** —— 正是 §AR·二 #21 要加 `reason_code` 的理由」。
+- ⚠️ **同族复核**（对 host 全部 **80 处** `reason` 断言逐条过）：只有这一处陈旧；其余
+  （`不可写列` / `未知字段` / `只允许 id` / `只支持主数据表` / `base_version` / `幂等键` /
+  `互斥` / `不适用` …）全部落在**本次未改**的分支上 ✓。
+
+### 四、裁定 §三 要求的 **RuleEngine 核对**（结论：有实货）
+
+**结构事实**：`SyncServer._mapOutcome` 把 `outcome.reason` **原样**灌进用户可见的
+`SyncResponse.reason`：
+
+```dart
+case RuleStatus.rejected:
+  return SyncResponse.rejected(entityId, outcome.reason ?? '规则拒绝');
+```
+
+而 `RuleEngine` 的 rejected 有**三条产出路径**，性质完全不同：
+
+| 路径 | 产出 | 性质 |
+|---|---|---|
+| `dispatch` 的**兜底 catch**（`rule_engine.dart:222`） | `'规则执行失败，整单回滚：$error'` | 🔴 **泄漏原始异常** |
+| 各规则体内 `throw StateError('…')`（20+ 处） | 如 `'采购入库的 line 数量必须为正数，实际 0'` | 领域层，但**被上一行吞进 `$error`** |
+| 显式 `RuleOutcome(rejected, reason: …)` | `'immediate_payments 与 allocations 互斥…'` · `'v1 尚未实现 transfer（调拨）的规则'` · `'purchase 不适用「签收」动作（docs/rules.md RULE-003）'` · `'单据不存在：$id'` | 客户端 bug 的措辞 |
+
+**发现 1（新）**：`$error` 展开后是 **`Bad state: …`** —— Dart 的 `StateError.toString()`
+前缀会**直接显示给用户**，且**今天没有任何断言守着它**（`sync_failure_test` 只管 `SyncServer`
+兜底 catch 那一路，不管 `RuleEngine` 自己的 catch）。例：
+
+> 规则执行失败，整单回滚：Bad state: return_exceeds_original: 累计退货量 10 超过原单量 5
+
+**发现 2（新）**：`'purchase 不适用「签收」动作（docs/rules.md RULE-003）'` —— 把 **wire 类型名**
+与**仓库内部文档路径**写进了用户可见文案（`sync_server_test:1029` 还断言着 `contains('不适用')`）。
+
+**发现 3**：`'immediate_payments 与 allocations 互斥…'` / `'v1 尚未实现 …（调拨）的规则'` ——
+协议/客户端 bug 的措辞，含字段名与「v1」这类开发语汇。
+
+**结构结论（关键）**：`RuleEngine` **没有「机读码」通道**，且它的兜底 catch **把「用户能改的
+领域拒绝」与「客户端 bug」压成同一种东西**。⇒ 裁定 §四 的方案 A（`reason_code`）要真正落地，
+**必须同时给 `RuleOutcome` 加码字段** —— 否则「17 处合并成通用文案」会把 `规则拒绝` 这一路上
+**用户还能用的信息**一起吞掉（正是裁定 §二 警告的那件事，只是发生在 RuleEngine 侧）。
+
+⇒ 这**超出裁定范围**（裁定让我「核对 RuleEngine 输出」；核对结果指向 `RuleEngine` 自身要改）
+⇒ 列 §AR·二 **#22**，**未裁前不动**。
+
+### 五、`reason_code` 的落地草案（**待 go-ahead**，未动代码）
+
+**与 #22 耦合，故两件一起设计**：`SyncResponse` 的码与 `RuleOutcome` 的码在 `_mapOutcome` 汇合。
+
+- **wire**：`SyncResponse` 加 `reason_code`（**仅 `rejected` 时出现**，与 `reason` 并列；
+  `conflict` 不带 —— `sync_server_test:1691` 已钉住「conflict 无 reason」）。
+- **API**：`SyncResponse.rejected(entityId, reason, {required SyncRejectCode code})` ——
+  **required**，任何分支漏给码就编不过（同 §AI-1「不可表示优于靠测试覆盖」）。
+- **码集草案**（snake_case，与 §8.5 既有 `unknown_action` / `return_exceeds_original` 同风格）：
+
+| 码 | 覆盖的分支 |
+|---|---|
+| `not_writable_table` | 白名单外 · 只支持主数据表 |
+| `unknown_field` | 未知字段（documentAction / createDocument） |
+| `unwritable_column` | 不可写列（documents / 主数据 / delete 只允许 id） |
+| `missing_field` | 缺 `payload.document` · 缺 `base_version` · 缺 `action` |
+| `field_type_mismatch` | `occurred_at` / `document` / `lines` 类型不符 |
+| `id_mismatch` | `payload.id != entity_id`（三处） |
+| `unknown_action` | 未知动作名（**从 `reason` 前缀升级成字段**） |
+| `malformed_parameter` | 游标等 `FormatException` |
+| `rule_rejected` | `RuleEngine` 拒绝（**+#22 的细分码**） |
+| `duplicate` / `reference_missing` / `data_invalid` / `host_storage` | 兜底 catch，按 `ConstraintKind` / `StorageFailureKind` 分（**`reference_missing` 就是 §8.5「引用的主数据尚未同步」那条契约要用的键**） |
+
+- **文档**：`sync_protocol.md §8.5` 表格扩成「`reason_code` + 何时用 + `reason` 措辞原则」；
+  `§8.1` 回执字段表加 `reason_code`。
+- **测试**：15+ 条 `contains('中文')` → `reasonCode == …`（**分支区分能力由此恢复**）；
+  core 侧补 `SyncRejectCode` 的 wire 值断言 + 反向灵敏度。
+- **「另 3 处」**（裁定已给处置）：`主数据不存在` ⇒ **行为改**（`deleteMasterData` 幂等 ⇒
+  `already_exists`，不再 `rejected`）；`规则拒绝` / `动作被拒绝` 的兜底 ⇒ 通用文案 + `rule_rejected`
+  （细分待 #22）。
+
+### 六、本侧验证
+
+```
+core typecheck 45 入口 ✓ · host typecheck 11 入口 ✓ · 语法 ✓（3 文件）
+host 自检：selfcheck_sync 178 ✓ · queue_sink 36 ✓ · host 116 ✓ · client_server 36 ✓ · service 76/76 ✓
+根因铁证临时脚本：冻结 28/60 错 · 单调 0/60 错（已删，无残留）
+❌ 根 `dart test` / `flutter test` 仍被 231 挡住 ⇒ 交用户复跑
+```

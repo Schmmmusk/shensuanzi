@@ -82,8 +82,15 @@ void main() {
     );
   }
 
-  Widget page({ExportSink? exports}) => MaterialApp(
-    home: Scaffold(body: PartiesPage(service: service, exports: exports)),
+  Widget page({ExportSink? exports, MasterDataPolicy? policy}) => MaterialApp(
+    home: Scaffold(
+      body: PartiesPage(
+        service: service,
+        exports: exports,
+        // 缺省桌面（三族全开）⇒ 既有用例**零变化**；mobile() 组显式传入
+        masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
+      ),
+    ),
   );
 
   testWidgets('空列表给「怎么办」；新建双角色往来方 → 列表出现「已结清」', (
@@ -429,5 +436,29 @@ void main() {
       reason: '干净停用的不必占位置（它没有账要提醒）',
     );
     expect(find.textContaining('还没有往来方'), findsOneWidget);
+  });
+
+  // ============================================================ §CV·七 ① 乙
+  // `mobile()` 下**本页消费值对象**的分支（值对象本身由 `master_data_policy_test` /
+  // `selfcheck_app` 钉）—— 这里钉「往来 = false ⇒ 走引导，不进表单」。
+  testWidgets('mobile()：＋新建往来方 ⇒ 出**引导**（往来 v1 禁建）', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page(policy: const MasterDataPolicy.mobile()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('新建往来方'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('这一步在电脑上做'),
+      findsOneWidget,
+      reason: '往来 v1 禁建 ⇒ 保留入口 + 引导到电脑',
+    );
+    expect(
+      find.byKey(const Key('party-name')),
+      findsNothing,
+      reason: '不能进表单 —— 条件写反（把 false 当 true 用）会在这里暴露',
+    );
   });
 }

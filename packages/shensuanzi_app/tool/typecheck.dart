@@ -26,6 +26,7 @@ import '../test/export_test.dart' as export_test;
 import '../test/log_test.dart' as log_test;
 import '../test/manual_test.dart' as manual_test;
 import '../test/master_data_policy_test.dart' as master_data_policy_test;
+import '../test/mobile_guidance_test.dart' as mobile_guidance_test;
 import '../test/navigation_test.dart' as navigation_test;
 import '../test/scan_error_test.dart' as scan_error_test;
 import '../test/shell_kind_test.dart' as shell_kind_test;
@@ -59,6 +60,7 @@ void main() {
     log_test.main,
     manual_test.main,
     master_data_policy_test.main,
+    mobile_guidance_test.main,
     navigation_test.main,
     scan_error_test.main,
     shell_kind_test.main,

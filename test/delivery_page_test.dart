@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/delivery_page.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
 
@@ -100,6 +101,8 @@ void main() {
         productService: products,
         partyService: parties,
         sink: sink,
+        masterDataPolicy: const MasterDataPolicy.desktop(),
+        masterDataSink: ServiceMasterSink(products),
       ),
     ),
   );

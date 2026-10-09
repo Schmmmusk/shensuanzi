@@ -305,7 +305,10 @@ Future<void> main() async {
       body: <String, Object?>{'ops': <Object?>[]},
     );
     check('缺 operations → 400', noOps == 400, '$noOps');
-    check('400 说明提到 operations', '${noOpsJson['error']}'.contains('operations'));
+    // §CV·十五：响应体只放**固定文案**（动态异常内容走主机日志）
+    check('400 说明是**固定文案**（不回显异常）',
+        '${noOpsJson['error']}' == '请求格式有误，请重试。',
+        '${noOpsJson['error']}');
 
     final (int pullStatus, Map<String, Object?> pullJson) =
         await call('GET', '/api/sync/pull', bearer: token);
@@ -340,7 +343,10 @@ Future<void> main() async {
     final (int badCursor, Map<String, Object?> badCursorJson) =
         await call('GET', '/api/sync/pull?doc_since=oops', bearer: token);
     check('游标非法 → 400', badCursor == 400, '$badCursor');
-    check('400 说明提到游标', '${badCursorJson['error']}'.contains('游标'));
+    // §CV·十五：游标名与值都是诊断信息 ⇒ 进日志，不回显给用户
+    check('400 说明是**固定文案**（不回显「哪个游标」）',
+        '${badCursorJson['error']}' == '请求格式有误，请重试。',
+        '${badCursorJson['error']}');
 
     final (int zeroLimit, Map<String, Object?> zeroLimitJson) =
         await call('GET', '/api/sync/pull?limit=0', bearer: token);

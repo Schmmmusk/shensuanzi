@@ -91,8 +91,7 @@ export 'src/manual_content.dart' show
     ManualSection,
     ManualSteps,
     assertManualIsUserFacing,
-    buildManualSections,
-    manualForbiddenDevTerms;
+    buildManualSections;
 export 'src/log.dart' show AppLog, formatLogLine, logFileName, logFolderName;
 
 // ---- §AF 数据导出 ----

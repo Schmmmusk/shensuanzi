@@ -94,7 +94,19 @@ void main() {
       sink = QueueMasterSink(
         mirror: mirror,
         queue: SyncQueueDao(mirror),
-        clock: () => 1700000000000,
+        // ⚠️ **必须是单调时钟**（`support/fixtures.dart` 的 `now()`），不能写常量。
+        //
+        // `SyncQueueDao.all()` 按 `(created_at, id)` 排 —— 冻结时钟会让同一次
+        // 用例里的几条队列条目 `created_at` **完全相同**，于是顺序落到 `id` 上；
+        // 而 `newId()`（UUIDv7）在**同一毫秒内的顺序由随机尾巴决定**
+        // （`util/ids.dart` 原文：「没有保证……实测连续两次 `newId()` 的字典序可能反着」）。
+        // ⇒ `.last` / `all()[i]` 变成掷硬币。
+        //
+        // 2026-10-09 真实踩到：`停用 / 恢复都走 updateMasterData` 偶发红
+        // （期望 `updateMasterData`、实得 `createMasterData`）。
+        // 根因是**夹具**，不是生产代码 —— `fixtures.dart` 文件头那句
+        // 「单调时钟，保证失败可复现（无随机）」才是本意。
+        clock: now,
       );
     });
     tearDown(() => mirror.close());

@@ -48,6 +48,8 @@ void main() {
       databaseReady: databaseReady,
       configStore: store,
       onConfigChanged: (AppConfig config) {},
+      // 门控按能力走（§CV·七 ① 乙）；sink 缺省 = 各页照旧 `_PendingPage`
+      masterDataPolicy: const MasterDataPolicy.desktop(),
     ),
   );
 

@@ -84,6 +84,8 @@ class HostHttpServer {
       identity: identity,
       clock: now,
       onAuthenticated: onAuthenticated,
+      // HTTP 层自己的 400 / 500 也走同一出口（§CV·十五：响应体不许有动态异常内容）
+      onInternalError: onInternalError,
     );
     final InternetAddress bind = address ?? InternetAddress.anyIPv4;
 
@@ -119,6 +121,7 @@ class _HostRoutes {
     required this.identity,
     required this.clock,
     this.onAuthenticated,
+    this.onInternalError,
   });
 
   final SyncServer sync;
@@ -127,6 +130,31 @@ class _HostRoutes {
 
   /// 鉴权通过一次调一次（`null` = 不关心）
   final void Function()? onAuthenticated;
+
+  /// 「原始异常只进日志」的出口（`null` = 不关心）。
+  ///
+  /// ⚠️ HTTP 层的 400 / 500 **响应体只放固定文案**，动态的异常细节 ——
+  /// 包括「哪条 SQL / 哪个字段 / 游标是什么」—— 一律走这里（§CV·十五）。
+  final void Function(String label, Object error, StackTrace stack)?
+  onInternalError;
+
+  /// **请求格式有误**的固定响应体（客户端 bug，用户修不了）—— 只讲「怎么办」。
+  static const String _badRequestReason = '请求格式有误，请重试。';
+
+  /// **服务端内部错误**的固定响应体 —— 同上。
+  static const String _internalErrorReason = '服务器内部错误，请重试。';
+
+  /// 记日志 + 回固定的 400 文案（**不回显 `error.message`**）
+  Response _badRequest(String label, Object error, StackTrace stack) {
+    onInternalError?.call(label, error, stack);
+    return _error(400, _badRequestReason);
+  }
+
+  /// 记日志 + 回固定的 500 文案（**不回显 `error.toString()`**）
+  Response _internalError(String label, Object error, StackTrace stack) {
+    onInternalError?.call(label, error, stack);
+    return _error(500, _internalErrorReason);
+  }
 
   Handler get handler {
     final Router router = Router()
@@ -158,10 +186,10 @@ class _HostRoutes {
           jsonDecode(body) as Map<Object?, Object?>,
         ),
       );
-    } on FormatException catch (error) {
-      return _error(400, error.message);
-    } catch (error) {
-      return _error(400, '请求体解析失败：$error');
+    } catch (error, stack) {
+      // ⚠️ 响应体**只放固定文案**：`error.message` 是英文 Dart 消息、
+      // `'$error'` 可能带 SQL / 路径 —— 都走日志（§CV·十五）
+      return _badRequest('push 请求体解析失败', error, stack);
     }
 
     // 逐条独立处理（SyncServer.push 保证一条失败不拖累其它条目）
@@ -195,8 +223,10 @@ class _HostRoutes {
             )
             .toJson(),
       );
-    } on FormatException catch (error) {
-      return _error(400, error.message);
+    } on FormatException catch (error, stack) {
+      // 「游标不合法」这类也走这里 —— 细节（哪个游标、什么值）进日志，
+      // 响应体只给固定文案（§CV·十五）
+      return _badRequest('pull 参数不合法', error, stack);
     }
   }
 
@@ -215,8 +245,9 @@ class _HostRoutes {
   Middleware _catchErrors() => (Handler inner) => (Request request) async {
     try {
       return await inner(request);
-    } catch (error) {
-      return _error(500, '服务端异常：$error');
+    } catch (error, stack) {
+      // ⚠️ 响应体**只放固定文案**：`'$error'` 可能带 SQL / 路径 / 堆栈（§CV·十五）
+      return _internalError('未捕获异常', error, stack);
     }
   };
 

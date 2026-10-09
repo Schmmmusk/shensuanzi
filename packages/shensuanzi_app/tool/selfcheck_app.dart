@@ -889,6 +889,31 @@ void main() {
         ).canCreateParties);
   }
 
+  // ---------------------------------------------------------------- mobileGuidance
+  section('mobileGuidance 文案契约（§CV·十一）');
+  {
+    // ⚠️ 这里**只放最关键的两条**（含「电脑」+ 含「同步」）—— 全量契约
+    //（互不相同 / 无开发术语 / 标题上限 / `mirrorEmptyMessage` 拼参与双分支）
+    // 在 `test/mobile_guidance_test.dart`。两边**刻意不重复**（裁定 §三）。
+    final List<String> noWhere = <String>[
+      for (final MobileGuideTopic topic in MobileGuideTopic.values)
+        if (!mobileGuideMessage(topic).contains('电脑')) topic.name,
+    ];
+    check('每条引导都说了「电脑」（用户知道去哪做）', noWhere.isEmpty, '$noWhere');
+
+    final List<String> noSync = <String>[
+      for (final MobileGuideTopic topic in MobileGuideTopic.values)
+        if (!mobileGuideMessage(topic).contains('同步')) topic.name,
+    ];
+    check('每条引导都说了「同步」（用户知道做完怎么让手机看到）',
+        noSync.isEmpty, '$noSync');
+
+    check(
+        '镜像空态文案也含「电脑」+「同步」',
+        mirrorEmptyMessage('商品列表').contains('电脑') &&
+            mirrorEmptyMessage('商品列表').contains('同步'));
+  }
+
   // ⚠️ 统计输出必须在**所有** section 之后 —— 详见上文那条注释。
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   stdout.writeln('=' * 46);

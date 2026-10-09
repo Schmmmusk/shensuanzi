@@ -48,6 +48,12 @@ class _ProductsPageState extends State<ProductsPage> {
 
   ProductService get _service => widget.service!;
 
+  /// 主数据提交出口。**本页是桌面专用**（`products` 不在手机 tab 里，
+  /// `mobile_shell.dart` 的 tab 是 overview / stock / parties / billing / mine）
+  /// ⇒ 出口恒为**主机落库** `ServiceMasterSink`（§CV·七 ① 乙）。
+  /// 全部主数据写（建档 / 编辑 / 停用）都走它，与「一处出口」的纪律一致。
+  MasterDataSink get _masterDataSink => ServiceMasterSink(_service);
+
   List<Product> get _rows => _service.list(
     query: _search.text.trim().isEmpty ? null : _search.text.trim(),
     active: _showInactive ? null : true,
@@ -57,6 +63,7 @@ class _ProductsPageState extends State<ProductsPage> {
     final Product? saved = await showProductFormDialog(
       context,
       service: _service,
+      sink: _masterDataSink,
     );
     if (!mounted || saved == null) return;
     _announce('已保存，编码 ${saved.code}');
@@ -67,6 +74,7 @@ class _ProductsPageState extends State<ProductsPage> {
     final Product? saved = await showProductFormDialog(
       context,
       service: _service,
+      sink: _masterDataSink,
       existing: product,
     );
     if (!mounted || saved == null) return;
@@ -77,7 +85,7 @@ class _ProductsPageState extends State<ProductsPage> {
   /// 停用 / 恢复，并给一次**撤销**机会
   void _toggleActive(Product product) {
     final bool wasActive = product.isActive;
-    _service.setActive(product.id, !wasActive);
+    _masterDataSink.setProductActive(product.id, !wasActive);
     setState(() {});
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -90,7 +98,7 @@ class _ProductsPageState extends State<ProductsPage> {
           label: '撤销',
           onPressed: () {
             if (!mounted) return;
-            _service.setActive(product.id, wasActive);
+            _masterDataSink.setProductActive(product.id, wasActive);
             setState(() {});
           },
         ),

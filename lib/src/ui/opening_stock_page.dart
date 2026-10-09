@@ -32,6 +32,7 @@ class OpeningStockPage extends StatefulWidget {
     super.key,
     required this.service,
     required this.productService,
+    required this.masterDataSink,
     required this.isFirstTime,
     required this.bookQuantities,
     required this.onDone,
@@ -39,6 +40,10 @@ class OpeningStockPage extends StatefulWidget {
 
   final StocktakeService service;
   final ProductService productService;
+
+  /// 期初里「新建商品」的**提交出口**（本页在手机端被引导接管 ⇒ 能进来的只有
+  /// 桌面 == 主机，宿主传的是 `ServiceMasterSink`；见 `stock_page.dart` 的说明）。
+  final MasterDataSink masterDataSink;
 
   /// `true` = 库存无任何流水（首次）→「录入现有货物」；`false` →「重新清点」
   final bool isFirstTime;
@@ -118,7 +123,10 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
       context: context,
       isScrollControlled: true,
       builder: (BuildContext sheetContext) =>
-          _OpeningProductPickerSheet(service: widget.productService),
+          _OpeningProductPickerSheet(
+            service: widget.productService,
+            sink: widget.masterDataSink,
+          ),
     );
     if (picked == null || index >= _rows.length) return;
     setState(() {
@@ -479,9 +487,15 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
 /// 空查询显示**全部商品** —— 期初录入的用户可能一件都没采购过，
 /// 没有「最近使用」可显示。新建入口共用 `showProductFormDialog`（遗漏 3）。
 class _OpeningProductPickerSheet extends StatefulWidget {
-  const _OpeningProductPickerSheet({required this.service});
+  const _OpeningProductPickerSheet({
+    required this.service,
+    required this.sink,
+  });
 
   final ProductService service;
+
+  /// 建档 / 编辑的**提交出口**（占位用户可能连一种商品都没有，这里也要能建）。
+  final MasterDataSink sink;
 
   @override
   State<_OpeningProductPickerSheet> createState() =>
@@ -514,6 +528,7 @@ class _OpeningProductPickerSheetState
     final Product? created = await showProductFormDialog(
       context,
       service: widget.service,
+      sink: widget.sink,
     );
     if (created == null || !mounted) return;
     Navigator.of(context).pop(created);

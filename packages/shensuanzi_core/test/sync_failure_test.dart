@@ -10,6 +10,8 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
+import 'support/dev_terms.dart';
+
 /// 按扩展结果码造异常
 SqliteException ex(int extendedCode, [String message = 'test']) =>
     SqliteException(extendedCode, message);
@@ -85,23 +87,13 @@ void main() {
       );
 
       final String reason = syncFailureReason(real);
-      for (final String leak in <String>[
-        'UNIQUE',
-        'constraint',
-        'products',
-        'INSERT',
-        'SELECT',
-        'p-1',
-        'P001',
-        'SqliteException',
-        '?',
-      ]) {
-        expect(
-          reason,
-          isNot(contains(leak)),
-          reason: '给客户端的话里不该出现「$leak」',
-        );
-      }
+      // **通用**术语（含 SQL / 异常口径）走**共用表**（core 的
+      // `forbiddenDevTermsInUserText`）；模块特有的样例 —— 表名 / 样例数据 /
+      // 绑定参数占位符 —— 作为 `extra` 留在本模块（§CV·十三·二）。
+      expectNoDevTerms(
+        reason,
+        extra: <String>['p-1', 'P001', '?', 'products'],
+      );
     });
 
     test('每一类都非空且是完整句子（含句号）', () {
@@ -120,6 +112,17 @@ void main() {
         expect(reason.trim(), isNotEmpty, reason: '$error');
         expect(reason, endsWith('。'), reason: '$error');
       }
+    });
+  });
+
+  group('malformedSyncRequestReason（协议违反的通用回执，§CV·十五）', () {
+    test('本身也守「用户可见文本」的规矩：无开发术语 + 说了「怎么办」', () {
+      expectNoDevTerms(malformedSyncRequestReason);
+      expect(
+        malformedSyncRequestReason,
+        contains('重试'),
+        reason: '只讲「怎么办」—— 这些错误用户修不了，说清「哪里错了」没用',
+      );
     });
   });
 }

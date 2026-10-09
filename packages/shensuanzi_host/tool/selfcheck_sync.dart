@@ -29,6 +29,23 @@ void check(String name, bool ok, [String? detail]) {
 
 void section(String title) => stdout.writeln('\n[$title]');
 
+/// 用户可见文本里命中的开发术语（**空 = 干净**）。
+///
+/// ⚠️ 判据与各包 `test/support/dev_terms.dart` 的 `expectNoDevTerms` **同一套**，
+/// 但这里**内联**、`selfcheck` 保持**自包含**（`tool/` 脚本不依赖 `test/` 夹具；
+/// 裁定 §CV·十三·六 §三 路 A）。表本身仍是**单一来源**（core 的
+/// `forbiddenDevTermsInUserText`）。
+List<String> devTermHits(
+  String text, {
+  List<String> extra = const <String>[],
+}) => <String>[
+  for (final String term in <String>[
+    ...forbiddenDevTermsInUserText,
+    ...extra,
+  ])
+    if (text.contains(term)) term,
+];
+
 int _clock = 1700000000000;
 int now() => _clock++;
 
@@ -369,8 +386,8 @@ void main() {
       ),
       now: now(),
     );
-    check('entity 不是 documents → rejected',
-        wrongEntity.reason?.contains('必须是 documents') ?? false,
+    check('entity 不是 documents → **通用回执**（细节只进日志）',
+        wrongEntity.reason == malformedSyncRequestReason,
         '${wrongEntity.reason}');
     db.close();
   }
@@ -380,10 +397,14 @@ void main() {
   {
     freshDb();
     final int before = now();
-    final String id = syncProduct(code: 'PM1');
+    // §CV·七②（2026-10-09）温和收紧：主机只**采信** `^P\d+$` 的编码建议，
+    // 其余**视同未提供**（走自增）。⇒ 夹具必须用**规范码**才能验「原样落库」。
+    // ⚠️ 老夹具用 `PM1`（非规范）—— 收紧后它会静默变成自增，本条断言恒红；
+    // 之所以能藏这么久：`selfcheck_*` **不在门禁里**，收紧那批我只复跑了 core。
+    final String id = syncProduct(code: 'P0001');
     final Product saved = ProductDao(db).findById(id)!;
 
-    check('applied 且字段落库', saved.code == 'PM1');
+    check('applied 且字段落库', saved.code == 'P0001');
     check('主机写 sync_version = 0', saved.syncVersion == 0, '${saved.syncVersion}');
     check('主机写 created_at', saved.createdAt >= before);
 
@@ -393,6 +414,15 @@ void main() {
     check('第二次 already_exists',
         server.handle(op, now: now()).status == SyncStatus.alreadyExists);
     check('没有重复行', countOf('products') == 2, '${countOf('products')}');
+
+    // §CV·七② 的另一半（主机侧此前**零覆盖** ⇒ 就是上面那条红藏身之处）：
+    // **非规范码** ⇒ 主机改派自增，但**不是** rejected。
+    final String reassigned = syncProduct(code: 'PM1');
+    final String reassignedCode = ProductDao(db).findById(reassigned)!.code;
+    check('非规范编码 ⇒ 视同未提供（改派自增，不拒绝）',
+        reassignedCode != 'PM1' &&
+            ProductCodeGenerator.pattern.hasMatch(reassignedCode),
+        reassignedCode);
 
     final SyncResponse hostOnly = server.handle(
       opMaster('products', newId(), SyncOpType.createMasterData, payload: {
@@ -461,7 +491,7 @@ void main() {
         second.status == SyncStatus.applied, '${second.reason}');
     check('改派后编码 ≠ 请求的编码（顺延 P7002）',
         ProductDao(db).findById(secondId)!.code == 'P7002',
-        '${ProductDao(db).findById(secondId)!.code}');
+        ProductDao(db).findById(secondId)!.code);
     check('原占用者的编码一个字都不动',
         ProductDao(db).findById(firstId)!.code == 'P7001');
     check('两条都落库（改派不是拒绝）', countOf('products') == 2,
@@ -488,10 +518,15 @@ void main() {
       }),
       now: now(),
     );
-    check('code 不是字符串 ⇒ rejected',
+    check('code 不是字符串 ⇒ **通用回执**（细节只进日志）',
         badCode.status == SyncStatus.rejected &&
-            (badCode.reason?.contains('code') ?? false),
+            badCode.reason == malformedSyncRequestReason,
         '${badCode.reason}');
+    // 通用回执**文案本身**也要守规矩（用户可见文本）—— §CV·十五
+    check('通用回执：不含开发术语且说了「重试」',
+        devTermHits(malformedSyncRequestReason).isEmpty &&
+            malformedSyncRequestReason.contains('重试'),
+        malformedSyncRequestReason);
     db.close();
   }
 
@@ -555,7 +590,7 @@ void main() {
         ProductDao(db).findById(upsertId)!.syncVersion == 0);
     check('编码由主机生成（update payload 不带 code）',
         ProductDao(db).findById(upsertId)!.code.isNotEmpty,
-        '${ProductDao(db).findById(upsertId)!.code}');
+        ProductDao(db).findById(upsertId)!.code);
 
     // 乱序收敛：update 先到 ⇒ 建档；create 后到 ⇒ already_exists
     final SyncResponse lateCreate = server.handle(
@@ -578,11 +613,9 @@ void main() {
     );
     final String missingReason = missingName.reason ?? '';
     check('upsert 缺必填 ⇒ rejected', missingName.status == SyncStatus.rejected);
+    // 通用术语走**共用表**（core 的 `forbiddenDevTermsInUserText`）；表名是模块特有 ⇒ `extra`
     check('回执不含 SQL / 表名 / 异常类名',
-        !missingReason.contains('SQL') &&
-            !missingReason.contains('products') &&
-            !missingReason.contains('UNIQUE') &&
-            !missingReason.contains('SqliteException'),
+        devTermHits(missingReason, extra: <String>['products']).isEmpty,
         missingReason);
 
     // §CS·五 ①：系统生成的字段一律以主机为准（payload 里的 code 丢弃）
@@ -598,7 +631,7 @@ void main() {
         staleCode.status == SyncStatus.applied, '${staleCode.reason}');
     check('code 以主机为准（仍是 P811）',
         ProductDao(db).findById(other)!.code == 'P811',
-        '${ProductDao(db).findById(other)!.code}');
+        ProductDao(db).findById(other)!.code);
     check('其它字段照常更新',
         ProductDao(db).findById(other)!.sellPrice == 999);
     check('别人的编码不受影响',
@@ -634,14 +667,16 @@ void main() {
         '${constraint.reason}');
     check(
         '回给客户端的话**不含表名 / 类型名 / SQL**',
-        <String>['products', 'Sqlite', 'constraint', 'INSERT']
-            .every((String leak) => !(constraint.reason ?? '').contains(leak)),
+        devTermHits(
+          constraint.reason ?? '',
+          extra: <String>['products', 'Sqlite', 'NOT NULL'],
+        ).isEmpty,
         '${constraint.reason}');
     check('原始异常走 onInternalError（含 constraint 细节）',
         logged.length == 1 &&
             logged.single.toString().toLowerCase().contains('constraint'),
         '${logged.isEmpty ? '（无）' : logged.first}');
-    check('日志标签带操作名', labels.length == 1, '${labels}');
+    check('日志标签带操作名', labels.length == 1, '$labels');
     db.close();
   }
 
@@ -784,6 +819,66 @@ void main() {
       check('table $entity → rejected', r.status == SyncStatus.rejected);
     }
     check('白名单外没有任何行被写入', countOf('products') == 0 && countOf('documents') == 0);
+    db.close();
+  }
+
+  // ===================================== 协议违反：通用回执 + 细节只进日志（§CV·十五）
+  //
+  // 这些分支**都不该是用户可见的 `rejected`** —— 全是客户端实现的 bug（协议违反），
+  // 用户看了也修不了 ⇒ 回执只给通用中文，**诊断细节完整走 `onInternalError`**。
+  section('协议违反 ⇒ 通用回执 + 细节只进日志');
+  {
+    freshDb();
+    final List<String> labels = <String>[];
+    final List<Object> logged = <Object>[];
+    final SyncServer logging = SyncServer(
+      db,
+      onInternalError: (String label, Object error, StackTrace stack) {
+        labels.add(label);
+        logged.add(error);
+      },
+    );
+
+    // ① 白名单外
+    final SyncResponse whitelist = logging.handle(
+      SyncOperation(
+        entity: 'ghost_table',
+        entityId: 'i-1',
+        operation: SyncOpType.createMasterData,
+      ),
+      now: now(),
+    );
+    check('白名单外 ⇒ 通用回执',
+        whitelist.reason == malformedSyncRequestReason, '${whitelist.reason}');
+
+    // ② createDocument 的 entity 不对
+    final SyncResponse wrongEntity = logging.handle(
+      SyncOperation(
+        entity: 'products',
+        entityId: 'i-2',
+        operation: SyncOpType.createDocument,
+      ),
+      now: now(),
+    );
+    check('entity 不符 ⇒ 通用回执',
+        wrongEntity.reason == malformedSyncRequestReason, '${wrongEntity.reason}');
+
+    // ③ products.code 不是字符串
+    final SyncResponse badCode = logging.handle(
+      opMaster('products', newId(), SyncOpType.createMasterData,
+          payload: <String, Object?>{'code': 5, 'name': '商品'}),
+      now: now(),
+    );
+    check('code 类型不符 ⇒ 通用回执',
+        badCode.reason == malformedSyncRequestReason, '${badCode.reason}');
+
+    // ④ **细节全部进了日志**（排障要看的就是它）
+    check('三次违反各记一条日志', labels.length == 3, '$labels');
+    check('日志保留 entity 名', logged.any((Object e) => '$e'.contains('ghost_table')));
+    check('日志保留「必须是 documents」',
+        logged.any((Object e) => '$e'.contains('必须是 documents')));
+    check('日志保留 code 类型细节',
+        logged.any((Object e) => '$e'.contains('code')));
     db.close();
   }
 

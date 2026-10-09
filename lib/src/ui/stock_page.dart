@@ -37,7 +37,7 @@ class StockPage extends StatefulWidget {
     required this.queries,
     this.exports,
     this.stockDelta,
-    this.readOnlyMasterData = false,
+    this.mobileShell = false,
   });
 
   /// 规则引擎（期初录入「重新清点」入口用 —— RULE-009 经 `StocktakeService`）
@@ -53,10 +53,16 @@ class StockPage extends StatefulWidget {
   /// 手机端注入（镜像队列）；桌面 `null` = 现状零变化。
   final StockDelta? stockDelta;
 
-  /// 手机端**主数据禁建**（C2·§CC）：`true` 时期初录入入口保留但点击后弹
-  /// 引导对话框（盘点客户端算不出 delta —— `deltaOf` 诚实贡献 0）。
-  /// 桌面缺省 `false` = 现状零变化。
-  final bool readOnlyMasterData;
+  /// **是不是手机壳**（`ShellKind.mobile`）。本页用它管两件事，**都与主数据权限无关**：
+  ///
+  /// 1. **期初录入入口**：手机端「保留入口 + 引导」（§CH §7 —— 盘点 `delta`
+  ///    客户端**算不出**，宁可诚实地说不知道，也不给一个错的数）；
+  /// 2. **空态文案**：手机端读面是**镜像**，库存数字可能还没拉下来 ⇒ 用 `mirrorEmptyMessage`。
+  ///
+  /// ⚠️ 旧名 `readOnlyMasterData` 已被 §CV·七 ① 拆走（主数据门控现在按**能力**
+  /// 走 `MasterDataPolicy`）—— 本页这两件事**不是主数据权限**，是「客户端能力 / 壳形态」，
+  /// 所以改用 `mobileShell`（当前取值与旧 flag 逐字一致）。
+  final bool mobileShell;
 
   @override
   State<StockPage> createState() => _StockPageState();
@@ -87,9 +93,27 @@ class _StockPageState extends State<StockPage> {
 
     // §AD 遗漏 2：期初录入入口（就地打开，完成后 setState 刷新数字）
     if (_showOpening) {
+      // ⚠️ 期初录入当前**只在主机开放**（§CV·七 缺口 2，2026-10-09）。
+      //
+      // `_showOpening` 只可能由**非手机壳**的按钮置起（见 [mobileShell]：手机端
+      // 点「录入现有货物」走 `showMobileGuideDialog(openingStock)` 引导，不置本标志），
+      // 所以能进到这里的只有桌面 == 主机 ⇒ 宿主预置 `ServiceMasterSink` 是正确的。
+      //
+      // 将来手机上要开期初**必须先裁「移动端期初的语义」**（走 stocktake 单据？
+      // 加新 op？不做？—— `reply_review.md` §CV·七 缺口 2 列的 A/B/C），
+      // 再决定 sink 是注入还是另写页面。**别为了「留位置」先造一个可能用不上的接口。**
+      // 这道门不为现在防什么，是为将来有人加移动端入口时，撞到它就必须先回答语义问题。
+      assert(
+        !widget.mobileShell,
+        '期初录入当前只在主机开放；移动端启用前请先裁定「移动端期初的语义」'
+        '（§CV·七 缺口 2：走 stocktake 单据 / 新 op / 不做，三选一）',
+      );
       return OpeningStockPage(
         service: StocktakeService(engine: widget.engine, queries: widget.queries),
         productService: widget.products,
+        // 期初里的「新建商品」走**主机落库** —— 本入口在手机端被引导接管
+        //（见 [mobileShell]），所以能进到这里的只有桌面 == 主机（§CV·七 ① 乙）。
+        masterDataSink: ServiceMasterSink(widget.products),
         isFirstTime: !hasAnyLedger,
         bookQuantities: book,
         onDone: () => setState(() => _showOpening = false),
@@ -173,7 +197,7 @@ class _StockPageState extends State<StockPage> {
           TextButton.icon(
             key: const Key('stock-open-entry'),
             // C2·§CC：手机端期初录入保留入口 + 引导（客户端算不出盘点 delta）
-            onPressed: widget.readOnlyMasterData
+            onPressed: widget.mobileShell
                 ? () => showMobileGuideDialog(
                     context,
                     MobileGuideTopic.openingStock,
@@ -236,7 +260,7 @@ class _StockPageState extends State<StockPage> {
                   child: Column(
                     children: <Widget>[
                       Text(
-                        widget.readOnlyMasterData && _searchText.isEmpty
+                        widget.mobileShell && _searchText.isEmpty
                             ? mirrorEmptyMessage('库存数字')
                             : _searchText.isEmpty
                             ? '还没有库存记录'
@@ -246,7 +270,7 @@ class _StockPageState extends State<StockPage> {
                       ),
                       // §AD-6：空态两段式 —— 首段给「开店」场景，次段给「日常」场景
                       // （手机端期初录入被引导接管 ⇒ 不展示这段，裁定六的空态文案顶上）
-                      if (_searchText.isEmpty && !widget.readOnlyMasterData) ...<Widget>[
+                      if (_searchText.isEmpty && !widget.mobileShell) ...<Widget>[
                         const SizedBox(height: 8),
                         Card(
                           child: Padding(

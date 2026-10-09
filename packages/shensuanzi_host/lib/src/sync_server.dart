@@ -81,7 +81,11 @@ class SyncServer {
   SyncResponse handle(SyncOperation op, {required int now}) {
     try {
       if (!SyncWhitelist.isWritableTable(op.entity)) {
-        return SyncResponse.rejected(op.entityId, '表不在白名单内：${op.entity}');
+        return _malformedRequest(
+          op,
+          '白名单',
+          StateError('entity 不在白名单：${op.entity}'),
+        );
       }
       switch (op.operation) {
         case SyncOpType.createDocument:
@@ -104,6 +108,27 @@ class SyncServer {
       onInternalError?.call('同步操作失败（${op.operation.wire}）', error, stack);
       return SyncResponse.rejected(op.entityId, syncFailureReason(error));
     }
+  }
+
+  /// **协议违反的统一处置**（2026-10-09 裁定，`docs/reply_review.md` §CV·十五）。
+  ///
+  /// 这类分支**都不该是用户可见的 `rejected`** —— 它们全是**客户端实现的 bug**
+  /// （白名单外 / entity 不符 / 字段类型不符 / 游标不合法…），**用户看了也修不了**
+  /// （`ui_principles.md §五`：错误信息说怎么办，不说哪里错了）。
+  ///
+  /// ⇒ 与 [handle] 的兜底 catch **同一处置**：**原始细节走 `onInternalError` 进主机日志**
+  /// （诊断要看的就是它），回执只给一句**通用中文** [malformedSyncRequestReason]。
+  SyncResponse _malformedRequest(
+    SyncOperation op,
+    String cause,
+    Object detail,
+  ) {
+    onInternalError?.call(
+      '同步操作失败（${op.operation.wire}：$cause）',
+      detail,
+      StackTrace.current,
+    );
+    return SyncResponse.rejected(op.entityId, malformedSyncRequestReason);
   }
 
   // ------------------------------------------------------------ documentAction
@@ -132,9 +157,12 @@ class SyncServer {
   /// （R-3.3：不引入 `delivered_at` —— 主机 `updated_at` 已记录状态何时变化）。
   SyncResponse _applyAction(SyncOperation op, int now) {
     if (op.entity != Schema.documents) {
-      return SyncResponse.rejected(
-        op.entityId,
-        'documentAction 的 entity 必须是 ${Schema.documents}，实际 ${op.entity}',
+      return _malformedRequest(
+        op,
+        'entity 不符',
+        StateError(
+          'documentAction 的 entity 必须是 ${Schema.documents}，实际 ${op.entity}',
+        ),
       );
     }
     final Set<String> unknownKeys = op.payload.keys
@@ -202,9 +230,12 @@ class SyncServer {
 
   SyncResponse _createDocument(SyncOperation op, int now) {
     if (op.entity != Schema.documents) {
-      return SyncResponse.rejected(
-        op.entityId,
-        'createDocument 的 entity 必须是 ${Schema.documents}，实际 ${op.entity}',
+      return _malformedRequest(
+        op,
+        'entity 不符',
+        StateError(
+          'createDocument 的 entity 必须是 ${Schema.documents}，实际 ${op.entity}',
+        ),
       );
     }
 
@@ -359,8 +390,13 @@ class SyncServer {
       final Object? rawCode = values['code'];
       if (rawCode != null && rawCode is! String) {
         // 不静默兜底：`code` 是 TEXT 列，塞数字会被 SQLite 存成文本，
-        // 用户会看到一个莫名其妙的编码，而没人知道是谁塞的
-        return SyncResponse.rejected(op.entityId, 'products.code 必须是字符串');
+        // 用户会看到一个莫名其妙的编码，而没人知道是谁塞的。
+        // ⚠️ 这是**客户端 bug**（用户修不了）⇒ 细节进日志、回执只说通用中文（§CV·十五）。
+        return _malformedRequest(
+          op,
+          'code 类型不符',
+          StateError('products.code 必须是字符串，实际 ${rawCode.runtimeType}'),
+        );
       }
       effective = <String, Object?>{
         ...values,

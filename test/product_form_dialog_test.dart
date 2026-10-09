@@ -45,7 +45,12 @@ void main() {
       body: Builder(
         builder: (BuildContext context) => Center(
           child: FilledButton(
-            onPressed: () => showProductFormDialog(context, service: service),
+            // D2b：表单只认 sink（桌面 = ServiceMasterSink，与直连逐字同行为）
+            onPressed: () => showProductFormDialog(
+              context,
+              service: service,
+              sink: ServiceMasterSink(service),
+            ),
             child: const Text('打开表单'),
           ),
         ),

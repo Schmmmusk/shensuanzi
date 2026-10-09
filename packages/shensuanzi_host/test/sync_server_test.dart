@@ -13,6 +13,7 @@ import 'package:test/test.dart';
 
 import 'package:shensuanzi_core/sqlite_local.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
+import 'support/dev_terms.dart';
 import 'support/fixtures.dart';
 
 void main() {
@@ -368,8 +369,14 @@ void main() {
       expect(response.reason, contains('doc_type'), reason: response.reason);
     });
 
-    test('entity 不是 documents → rejected', () {
-      final SyncResponse response = server.handle(
+    test('entity 不是 documents ⇒ **通用回执**，细节只进日志（§CV·十五）', () {
+      final List<Object> logged = <Object>[];
+      final SyncServer logging = SyncServer(
+        db,
+        onInternalError: (String label, Object error, StackTrace stack) =>
+            logged.add(error),
+      );
+      final SyncResponse response = logging.handle(
         const SyncOperation(
           entity: 'products',
           entityId: 'p-1',
@@ -379,7 +386,12 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('必须是 documents'));
+      // 客户端 bug（协议违反）—— 用户修不了 ⇒ 只回**通用中文**
+      expect(response.reason, malformedSyncRequestReason);
+      expectNoDevTerms(response.reason!);
+      // 诊断细节（哪条 op / 什么 entity / 什么值）完整走主机日志
+      expect(logged, hasLength(1), reason: '排障要看的就是它');
+      expect('${logged.single}', contains('必须是 documents'));
     });
   });
 
@@ -534,8 +546,14 @@ void main() {
       );
     });
 
-    test('code 不是字符串 ⇒ rejected（不静默塞进 TEXT 列）', () {
-      final SyncResponse response = server.handle(
+    test('code 不是字符串 ⇒ **通用回执**，细节只进日志（§CV·十五）', () {
+      final List<Object> logged = <Object>[];
+      final SyncServer logging = SyncServer(
+        db,
+        onInternalError: (String label, Object error, StackTrace stack) =>
+            logged.add(error),
+      );
+      final SyncResponse response = logging.handle(
         opMaster('products', newId(), SyncOpType.createMasterData, payload: {
           'code': 5,
           'name': '商品',
@@ -544,7 +562,9 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('code'));
+      expect(response.reason, malformedSyncRequestReason);
+      expect(logged, hasLength(1));
+      expect('${logged.single}', contains('code'));
     });
 
     test('改派只作用于 products：parties 照旧落库', () {
@@ -670,10 +690,11 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, isNot(contains('SQL')));
-      expect(response.reason, isNot(contains('products')));
-      expect(response.reason, isNot(contains('UNIQUE')));
-      expect(response.reason, isNot(contains('INSERT')));
+      // 通用术语走**共用表**（core 的 `forbiddenDevTermsInUserText`）—— 单一来源；
+      // 表名是**模块特有** ⇒ `extra`（§CV·十三·六）
+      final String reason = response.reason ?? '';
+      expect(reason, isNotEmpty, reason: 'rejected 必须给一句中文');
+      expectNoDevTerms(reason, extra: <String>['products']);
     });
 
     // §CS·五 裁定 ①（2026-10-08）：**系统生成的字段一律以主机为准**。
@@ -730,20 +751,14 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('不完整或不合法'), reason: response.reason);
-      for (final String leak in <String>[
-        'products',
-        'Sqlite',
-        'constraint',
-        'NOT NULL',
-        'INSERT',
-      ]) {
-        expect(
-          response.reason,
-          isNot(contains(leak)),
-          reason: '回给客户端的话里不该出现「$leak」',
-        );
-      }
+      final String reason = response.reason ?? '';
+      expect(reason, contains('不完整或不合法'), reason: reason);
+      // 通用术语（`constraint` / `INSERT` / `SqliteException` …）走**共用表**；
+      // **表名**与 SQLite **方言词**是模块特有 ⇒ `extra`（§CV·十三·六）
+      expectNoDevTerms(
+        reason,
+        extra: <String>['products', 'Sqlite', 'NOT NULL'],
+      );
 
       // 原始异常（含 SQL 细节）走日志
       expect(logged, hasLength(1));
@@ -1044,7 +1059,11 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('白名单'));
+      // §CV·十五（2026-10-09）：白名单守卫生成的文案改走**通用回执**
+      // （协议违反 = 客户端 bug，用户修不了 ⇒ 细节只进主机日志）。
+      // ⚠️ 这条断言因此**失去了「分支区分」能力** —— 正是 §AR·二 #21
+      // 要加 `reason_code` 的理由；届时这里改成 `expect(response.reasonCode, …)`。
+      expect(response.reason, malformedSyncRequestReason);
     });
 
     test('任意表名都进不来（schemas / sqlite_master）', () {

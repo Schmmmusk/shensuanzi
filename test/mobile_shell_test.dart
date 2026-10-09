@@ -41,6 +41,8 @@ void main() {
         databaseReady: false,
         configStore: store,
         onConfigChanged: (AppConfig config) {},
+        // 门控按能力走（§CV·七 ① 乙）；sink 缺省 = 相关 tab 照旧 `_PendingPage`
+        masterDataPolicy: const MasterDataPolicy.desktop(),
       ),
     ),
   );
@@ -125,6 +127,7 @@ void main() {
         databaseReady: false,
         configStore: store,
         onConfigChanged: (AppConfig config) {},
+        masterDataPolicy: const MasterDataPolicy.desktop(),
         mobileSync: sync,
       ),
     ),

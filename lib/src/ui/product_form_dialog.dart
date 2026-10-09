@@ -51,20 +51,36 @@ const List<String> _commonUnits = <String>[
 /// 取深一档的橙是为了白底上对比度够 —— 浅橙在中老年用户的老花屏上会糊掉。
 const Color _noticeColor = Color(0xFFB45309);
 
+/// [sink] = **提交出口**（D2b·§CV·七）：桌面 `ServiceMasterSink`（落库）、
+/// 手机 `QueueMasterSink`（**乐观写镜像 + 入队**）。表单只认它。
+///
+/// ⚠️ **不能再用 `service.create`**：手机端那个 `ProductService` 建在**镜像**上，
+/// 直接调它会**只写镜像、不入队**（改动永远到不了电脑，且没人报错）。
+///
+/// [service] 仍要传 —— 但**只用于读**（条码查重 `barcodeOwners`）。
 Future<Product?> showProductFormDialog(
   BuildContext context, {
   required ProductService service,
+  required MasterDataSink sink,
   Product? existing,
 }) => showDialog<Product>(
   context: context,
   builder: (BuildContext dialogContext) =>
-      _ProductFormDialog(service: service, existing: existing),
+      _ProductFormDialog(service: service, sink: sink, existing: existing),
 );
 
 class _ProductFormDialog extends StatefulWidget {
-  const _ProductFormDialog({required this.service, this.existing});
+  const _ProductFormDialog({
+    required this.service,
+    required this.sink,
+    this.existing,
+  });
 
+  /// **只读**用（条码查重）—— 写入一律走 [sink]。
   final ProductService service;
+
+  /// 提交出口（桌面落库 / 手机乐观写 + 入队）。
+  final MasterDataSink sink;
 
   /// `null` = 新增；非 null = 编辑
   final Product? existing;
@@ -186,17 +202,30 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     });
 
     try {
-      final Product saved = widget.existing == null
-          ? widget.service.create(draft)
-          : widget.service.update(widget.existing!.id, draft);
+      // D2b：**写入走 sink**（桌面 = 落库；手机 = 乐观写镜像 + 入队）。出口把它
+      // 自己的校验结论装进结果（不再抛 `ProductDraftInvalid`）。
+      final MasterDataSubmitResult result = widget.existing == null
+          ? widget.sink.createProduct(draft)
+          : widget.sink.updateProduct(widget.existing!.id, draft);
+
       if (!mounted) return;
-      Navigator.of(context).pop(saved);
-    } on ProductDraftInvalid catch (error) {
-      // 服务层又校验了一遍（它不假设调用方校验过）—— 把结论标回界面
-      setState(() {
-        _errors = error.errors;
-        _saving = false;
-      });
+
+      if (result.isFailure) {
+        setState(() {
+          _errors = result.error!.errors;
+          _saving = false;
+        });
+        return;
+      }
+
+      // 手机端：**说清这条还没到电脑** —— 编码由主机定，靠 pull 回写镜像
+      final String? notice = result.queuedNotice;
+      if (notice != null) {
+        ScaffoldMessenger.maybeOf(
+          context,
+        )?.showSnackBar(SnackBar(content: Text(notice)));
+      }
+      Navigator.of(context).pop(result.product);
     } catch (error) {
       setState(() {
         _failure = '没能保存（$error）。'

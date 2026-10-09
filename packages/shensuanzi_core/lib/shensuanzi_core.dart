@@ -35,6 +35,9 @@ export 'src/db/storage_error.dart'
 export 'src/util/ids.dart' show newId;
 export 'src/util/money.dart' show Money;
 
+// 用户可见文本的规范（**项目级**：core / host / app 三层共用 —— §CV·十三 归类修正）
+export 'src/user_text.dart' show forbiddenDevTermsInUserText;
+
 // 模型
 export 'src/models/account.dart' show Account, AccountType;
 export 'src/models/base.dart'
@@ -173,7 +176,11 @@ export 'src/sync/sync_pull.dart'
     show SyncCursor, SyncCursorKeys, SyncPullResult;
 export 'src/sync/whitelist.dart' show SyncValueCheck, SyncWhitelist;
 export 'src/sync/sync_failure.dart'
-    show ConstraintKind, constraintKindOf, syncFailureReason;
+    show
+        ConstraintKind,
+        constraintKindOf,
+        malformedSyncRequestReason,
+        syncFailureReason;
 
 // 同步（客户端：离线队列 + 拉取应用。**不含传输实现**）
 export 'src/sync/pairing_payload.dart' show PairingPayload;

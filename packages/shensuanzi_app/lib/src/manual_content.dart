@@ -8,11 +8,21 @@
 ///
 /// ## 「不给开发者看」的纪律（可执行）
 ///
-/// 手册是给**使用者**看的，不是给开发者看的。这不是靠自觉：定义一个
-/// **开发词汇黑名单**（`manualForbiddenDevTerms`），[assertManualIsUserFacing]
-/// 逐字扫一遍 —— 测试、自检、生成脚本三方都会调它，
+/// 手册是给**使用者**看的，不是给开发者看的。这不是靠自觉：有一份**项目级**的
+/// **用户可见文本开发词汇表**（`forbiddenDevTermsInUserText`，**住在 `shensuanzi_core`**），
+/// [assertManualIsUserFacing] 逐字扫一遍 —— 测试、自检、生成脚本三方都会调它，
 /// 谁往手册里写了「Dart / schema / 编译」之类的词，门禁直接红。
+///
+/// ⚠️ 那份表**不只管手册**（2026-10-09 改名 + 搬家）：
+/// 它服务**三层**（core 的失败回执 / host 的 rejected reason / app 的手册与引导），
+/// 所以归位到最底层的 core —— 见 `docs/reply_review.md` §CV·十三。
+/// 模块特有的泄漏（表名、样例数据、插件类名）各自在自己模块的测试里补。
 library;
+
+// 用户可见文本的开发词汇表 —— **单一来源在 core**（本文件只 import 使用，
+// 既不本地定义、也不 re-export：两个入口会让后来人不知道该用哪个）。
+import 'package:shensuanzi_core/shensuanzi_core.dart'
+    show forbiddenDevTermsInUserText;
 
 /// 手册里的一个内容块。
 sealed class ManualBlock {
@@ -700,27 +710,11 @@ List<ManualSection> buildManualSections({required String versionLine}) => <Manua
   ),
 ];
 
-/// 手册里**不允许出现**的开发词汇 —— 「不给开发者看」是可执行的门禁，不是自觉。
-///
-/// 原则：用户不需要知道实现。 「数据文件」不说「数据库」；「软件」不说「应用架构」。
-const List<String> manualForbiddenDevTerms = <String>[
-  'Flutter',
-  'Dart',
-  'schema',
-  'Schema',
-  'API',
-  'UI',
-  'DAO',
-  '编译',
-  '构建',
-  '依赖',
-  '游标',
-  '白名单',
-  '框架',
-  '数据库',
-  '进程',
-  '参数',
-];
+// ⚠️ 用户可见文本的开发词汇表**已搬到 core**：
+// `packages/shensuanzi_core/lib/src/user_text.dart` 的 `forbiddenDevTermsInUserText`。
+// 它服务**三层**（core / host / app 都产出用户可见文本），不该住在 app ——
+// 本文件只 import 使用，**不再本地定义、也不 re-export**（单一来源）。
+// 归类修正的理由见 `docs/reply_review.md` §CV·十三。
 
 /// 扫全部文本，返回命中的开发词汇（**空列表 = 干净**）。
 ///
@@ -739,7 +733,7 @@ List<String> assertManualIsUserFacing(List<ManualSection> sections) {
         },
     ];
     for (final String text in texts) {
-      for (final String term in manualForbiddenDevTerms) {
+      for (final String term in forbiddenDevTermsInUserText) {
         if (text.contains(term)) hits.add('${section.id}: $term');
       }
     }

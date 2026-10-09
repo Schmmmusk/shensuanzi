@@ -10,6 +10,8 @@
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:test/test.dart';
 
+import 'support/dev_terms.dart';
+
 void main() {
   group('scanFailureKindOf（M03：插件错误码 → 可行动类别）', () {
     test('permissionDenied 是唯一「用户能自己修」的一类', () {
@@ -60,23 +62,20 @@ void main() {
     });
 
     test('**绝不出现插件英文原文 / 类名**（否则用户以为软件坏了）', () {
-      const List<String> forbidden = <String>[
-        'Camera permission denied',
-        'Camera',
-        'permission denied',
-        'MobileScanner',
-        'Exception',
-        'unsupported',
-      ];
+      // **通用**术语（`Exception` 等）走**共用表**；**插件特有**的名字作为
+      // `extra` 留在本模块 —— 将来换个扫码插件，这些词才跟着变，
+      // 共用表不该背这个责任（§CV·十三·二）。
       for (final ScanFailureKind kind in ScanFailureKind.values) {
-        final String msg = scanFailureMessage(kind);
-        for (final String bad in forbidden) {
-          expect(
-            msg,
-            isNot(contains(bad)),
-            reason: '$kind 的文案里不该出现「$bad」',
-          );
-        }
+        expectNoDevTerms(
+          scanFailureMessage(kind),
+          extra: <String>[
+            'Camera permission denied',
+            'Camera',
+            'permission denied',
+            'MobileScanner',
+            'unsupported',
+          ],
+        );
       }
     });
   });

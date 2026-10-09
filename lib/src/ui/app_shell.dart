@@ -46,7 +46,8 @@ class AppShell extends StatefulWidget {
     this.onDocumentSubmitted,
     this.onStorageFailure,
     this.stockDelta,
-    this.readOnlyMasterData = false,
+    required this.masterDataPolicy,
+    this.masterDataSink,
     this.mobileShell = false,
     this.returns,
     this.onMigrateData,
@@ -113,16 +114,28 @@ class AppShell extends StatefulWidget {
   /// 手机端注入（镜像队列）；桌面 `null` = 现状零变化。
   final StockDelta? stockDelta;
 
-  /// 手机端**主数据禁建**（C2·§CC：协议正确性 —— 本机建的 id 推到主机
-  /// 必被外键拒绝）。`true` 时「新建 / 编辑 / 期初」入口**保留但点击后弹
-  /// 引导对话框**（不隐藏 —— Agents.md 4.3）。桌面缺省 `false` = 零变化。
-  final bool readOnlyMasterData;
+  /// **主数据门控**（§CV·七 ① 乙，2026-10-09）：三族各自能不能在**本机**建档。
+  /// 桌面 = `MasterDataPolicy.desktop()`；手机 v1 = `MasterDataPolicy.mobile()`
+  /// （只开商品）。
+  ///
+  /// ⚠️ **required** —— 旧版 `readOnlyMasterData` 带默认 `false`，默默漏装就是
+  /// 「手机上一切都能建」；手机端的 `PartyService` / `ProductService` 建在**镜像**上，
+  /// 写进去永远到不了电脑（静默丢数据）。宁可编不过。
+  final MasterDataPolicy masterDataPolicy;
+
+  /// 主数据提交**出口**（§CV·七 ① 乙）。
+  ///
+  /// 桌面 `ServiceMasterSink`（落库）/ 手机 `QueueMasterSink`（乐观写镜像 + 入队）。
+  /// `null` = 装配没给（摆放层测试）⇒ 相关页面退回 `_PendingPage`（与
+  /// [documentSink] **同一惯用法**：宁可显示「数据未就绪」，也不给一条写不通的路径）。
+  final MasterDataSink? masterDataSink;
 
   /// **是不是手机壳**（M05 / M07，2026-10-08）。
   ///
-  /// 与 [readOnlyMasterData] 同源但**语义不同**，所以不合并：
-  /// 这个说的是「界面形态」（顶部三态条 / 底部导航 / 没有单据详情页），
-  /// 那个说的是「能不能在本机建档」。将来手机放开建档，两者会分开。
+  /// 与 [masterDataPolicy] **不同源**（M05 当年与旧的「禁建」flag 同源，§CV·七 ①
+  /// 拆分后彻底分开）：这个说的是「界面形态」（顶部三态条 / 底部导航 / 没有单据详情页），
+  /// 那个说的是「能不能在本机建**主数据**」。两者取值当前仍一致（都跟 `ShellKind`），
+  /// 但**语义无关** —— 将来手机放开主数据建档，本 flag 一个字都不用改。
   ///
   /// 用途：同一份页面代码里，**按壳给不同的指引文案** ——
   /// 例如送货页原来叫用户「到「单据」详情页点收款」，而手机**没有**那个页面。
@@ -255,7 +268,8 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
       page = shell.sales == null ||
               shell.products == null ||
               shell.parties == null ||
-              shell.documentSink == null
+              shell.documentSink == null ||
+              shell.masterDataSink == null
           ? _PendingPage(destination: destination)
           : SalePage(
               service: shell.sales!,
@@ -267,8 +281,9 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               onStorageFailure: shell.onStorageFailure,
               // M08：本地未同步影响（手机端才有；桌面 null）
               stockDelta: shell.stockDelta,
-              // C2·§CC：手机端主数据禁建（保留入口 + 引导）
-              readOnlyMasterData: shell.readOnlyMasterData,
+              // §CV·七 ① 乙：主数据门控按**能力**走（商品 v1 可建 / 往来仍引导）
+              masterDataPolicy: shell.masterDataPolicy,
+              masterDataSink: shell.masterDataSink!,
             );
     } else if (destination.id == 'delivery') {
       // 送货（批次 1b / RULE-003）：创建即扣库存、状态强制 in_transit，
@@ -277,7 +292,8 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
           shell.deliveries == null ||
               shell.products == null ||
               shell.parties == null ||
-              shell.documentSink == null
+              shell.documentSink == null ||
+              shell.masterDataSink == null
           ? _PendingPage(destination: destination)
           : DeliveryPage(
               service: shell.deliveries!,
@@ -288,7 +304,8 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               onStorageFailure: shell.onStorageFailure,
               // M08：本地未同步影响（手机端才有；桌面 null）
               stockDelta: shell.stockDelta,
-              readOnlyMasterData: shell.readOnlyMasterData,
+              masterDataPolicy: shell.masterDataPolicy,
+              masterDataSink: shell.masterDataSink!,
               mobileShell: shell.mobileShell,
             );
     } else if (destination.id == 'stock') {
@@ -301,7 +318,9 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               queries: shell.queries!,
               exports: shell.exports,
               stockDelta: shell.stockDelta,
-              readOnlyMasterData: shell.readOnlyMasterData,
+              // 期初入口 + 镜像空态按**壳**走（不是主数据权限 —— 盘点 delta
+              // 客户端算不出，见 `stock_page.dart`）
+              mobileShell: shell.mobileShell,
             );
     } else if (destination.id == 'parties') {
       page = shell.parties == null
@@ -309,7 +328,7 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
           : PartiesPage(
               service: shell.parties!,
               exports: shell.exports,
-              readOnlyMasterData: shell.readOnlyMasterData,
+              masterDataPolicy: shell.masterDataPolicy,
             );
     } else if (destination.id == 'documents') {
       page = shell.documents == null
@@ -351,12 +370,16 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
     } else if (destination.id == 'accounts') {
       page = shell.accounts == null
           ? _PendingPage(destination: destination)
-          : AccountsPage(service: shell.accounts!);
+          : AccountsPage(
+              service: shell.accounts!,
+              masterDataPolicy: shell.masterDataPolicy,
+            );
     } else if (destination.id == 'purchase') {
       // 采购入库是核心闭环的第二块 —— 库存与规则早就在 core 里（RULE-001）
       page = shell.purchases == null ||
               shell.products == null ||
-              shell.documentSink == null
+              shell.documentSink == null ||
+              shell.masterDataSink == null
           ? _PendingPage(destination: destination)
           : PurchasePage(
               service: shell.purchases!,
@@ -364,7 +387,8 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               sink: shell.documentSink!,
               onSubmitted: shell.onDocumentSubmitted,
               onStorageFailure: shell.onStorageFailure,
-              readOnlyMasterData: shell.readOnlyMasterData,
+              masterDataPolicy: shell.masterDataPolicy,
+              masterDataSink: shell.masterDataSink!,
             );
     } else {
       page = _PendingPage(destination: destination);

@@ -12,6 +12,7 @@ import 'package:shensuanzi_core/sqlite_local.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 import 'package:test/test.dart';
 
+import 'support/dev_terms.dart';
 import 'support/fixtures.dart';
 
 void main() {
@@ -330,7 +331,7 @@ void main() {
       expect(json['error'], isNotNull);
     });
 
-    test('缺 operations → 400', () async {
+    test('缺 operations → 400，且响应体是**固定文案**（§CV·十五）', () async {
       final (int status, Map<String, Object?> json) = await call(
         'POST',
         '/api/sync/push',
@@ -339,7 +340,9 @@ void main() {
       );
 
       expect(status, 400);
-      expect('${json['error']}', contains('operations'));
+      // 响应体只放**固定文案**；「哪个字段缺了」这种动态内容走主机日志
+      expect(json['error'], '请求格式有误，请重试。');
+      expectNoDevTerms('${json['error']}');
     });
   });
 
@@ -628,7 +631,7 @@ void main() {
       expect(DocumentDao(db).findById(docId), isNull, reason: '被拒的单据不落库');
     });
 
-    test('游标非法 → 400', () async {
+    test('游标非法 → 400，且响应体是**固定文案**（不回显「哪个游标」）', () async {
       final (int status, Map<String, Object?> json) = await call(
         'GET',
         '/api/sync/pull?doc_since=not-a-cursor',
@@ -636,7 +639,9 @@ void main() {
       );
 
       expect(status, 400);
-      expect('${json['error']}', contains('游标'));
+      // §CV·十五：游标名与值都是诊断信息 ⇒ 进日志，不回显给用户
+      expect(json['error'], '请求格式有误，请重试。');
+      expectNoDevTerms('${json['error']}');
     });
 
     test('limit 可传', () async {

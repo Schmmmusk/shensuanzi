@@ -10,7 +10,11 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart'
+    show MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+
+import 'mobile_guidance_dialog.dart';
 
 /// 账户类型的界面文案（wire 值是英文，界面上必须说人话）
 const Map<AccountType, String> kAccountTypeLabels = <AccountType, String>{
@@ -23,9 +27,22 @@ const Map<AccountType, String> kAccountTypeLabels = <AccountType, String>{
 
 /// 账户页。
 class AccountsPage extends StatefulWidget {
-  const AccountsPage({super.key, required this.service});
+  const AccountsPage({
+    super.key,
+    required this.service,
+    required this.masterDataPolicy,
+  });
 
   final AccountService service;
+
+  /// **主数据门控**（§CV·九·五 裁定「甲」，2026-10-09）—— 本页只看
+  /// `canCreateAccounts`（新建 / 编辑 / 停用恢复三处写面，与往来页同构）。
+  ///
+  /// ⚠️ **required，不许给默认值**：本页原先是全项目**唯一没接门控**的页面
+  /// （旧的 `bool readOnlyMasterData` 也从未传进来过）。而手机端的
+  /// `AccountService` 建在**镜像**上 —— 写进去永远到不了电脑。
+  /// 带默认值 = 忘了传就「手机上账户能建」且**看不出来**（M15 教训）⇒ 宁可编不过。
+  final MasterDataPolicy masterDataPolicy;
 
   @override
   State<AccountsPage> createState() => _AccountsPageState();
@@ -73,8 +90,13 @@ class _AccountsPageState extends State<AccountsPage> {
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 40),
                   child: Text(
-                    '还没有资金账户。点右上角「新建账户」建一个，'
-                    '比如「现金」或「微信收款」—— 有了账户才能在开单时当场收付款。',
+                    // 本机不能建 ⇒ 空列表更可能是「镜像还没拉到」，别让用户
+                    // 以为数据丢了（与往来页同款处置）
+                    !widget.masterDataPolicy.canCreateAccounts
+                        ? mirrorEmptyMessage('账户列表')
+                        : '还没有资金账户。点右上角「新建账户」建一个，'
+                              '比如「现金」或「微信收款」—— '
+                              '有了账户才能在开单时当场收付款。',
                     textAlign: TextAlign.center,
                     style: TextStyle(height: 1.8, color: theme.hintColor),
                   ),
@@ -90,13 +112,7 @@ class _AccountsPageState extends State<AccountsPage> {
                           account: accounts[i],
                           balanceCents: balances[accounts[i].id] ?? 0,
                           onEdit: () => _editAccount(context, existing: accounts[i]),
-                          onToggleActive: () {
-                            widget.service.setActive(
-                              accounts[i].id,
-                              active: !accounts[i].isActive,
-                            );
-                            setState(() {});
-                          },
+                          onToggleActive: () => _toggleActive(accounts[i]),
                         ),
                       ],
                     ],
@@ -110,7 +126,17 @@ class _AccountsPageState extends State<AccountsPage> {
   }
 
   /// 新建（[existing] 为 null）或编辑。
+  /// 本机不能建 ⇒ 入口保留，点击后弹引导（不进表单）。
   Future<void> _editAccount(BuildContext context, {Account? existing}) async {
+    if (!widget.masterDataPolicy.canCreateAccounts) {
+      await showMobileGuideDialog(
+        context,
+        existing == null
+            ? MobileGuideTopic.newAccount
+            : MobileGuideTopic.editAccount,
+      );
+      return;
+    }
     final Account? result = await showDialog<Account>(
       context: context,
       builder: (BuildContext dialogContext) =>
@@ -119,6 +145,17 @@ class _AccountsPageState extends State<AccountsPage> {
     if (result == null) return;
     if (!mounted) return;
     setState(() {}); // 列表与余额都从服务重读
+  }
+
+  /// 停用 / 恢复启用。
+  /// 停用/恢复同为主数据写（`updateMasterData`）—— 本机不能建就一并引导。
+  Future<void> _toggleActive(Account account) async {
+    if (!widget.masterDataPolicy.canCreateAccounts) {
+      await showMobileGuideDialog(context, MobileGuideTopic.editAccount);
+      return;
+    }
+    widget.service.setActive(account.id, active: !account.isActive);
+    if (mounted) setState(() {});
   }
 }
 

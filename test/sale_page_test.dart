@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/sale_page.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
 
@@ -81,7 +82,7 @@ void main() {
     }
   });
 
-  Widget page({StockDelta? stockDelta}) => MaterialApp(
+  Widget page({StockDelta? stockDelta, MasterDataPolicy? policy}) => MaterialApp(
     home: Scaffold(
       body: SalePage(
         service: service,
@@ -89,6 +90,9 @@ void main() {
         partyService: partyService,
         sink: sink,
         stockDelta: stockDelta,
+        // 缺省桌面 ⇒ 既有用例**零变化**；mobile() 组显式传入
+        masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
+        masterDataSink: ServiceMasterSink(products),
       ),
     ),
   );
@@ -251,6 +255,8 @@ void main() {
             productService: products,
             partyService: partyService,
             sink: queueSink,
+            masterDataPolicy: const MasterDataPolicy.desktop(),
+            masterDataSink: ServiceMasterSink(products),
           ),
         ),
       ),
@@ -666,5 +672,49 @@ void main() {
       isTrue,
       reason: '宽屏必须还是并排，不能把桌面布局改坏',
     );
+  });
+
+  // ============================================================ §CV·七 ① 乙
+  // `MasterDataPolicy.mobile()`（v1 只开商品）下**页面消费值对象**的分支。
+  // 值对象本身由 `master_data_policy_test` / `selfcheck_app` 钉；这里钉的是
+  // 「三个能力各走对路」—— 三处 `if` 位置错一个，值对象测试全绿也发现不了。
+  group('手机端 MasterDataPolicy.mobile()（§CV·七）', () {
+    testWidgets('＋新建商品 ⇒ 出**建档表单**（商品本机可建）', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(page(policy: const MasterDataPolicy.mobile()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('点此选商品'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('新建商品'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('这一步在电脑上做'),
+        findsNothing,
+        reason: '商品在手机 v1 是**可建**的 —— 不能弹引导（条件写反会在这里暴露）',
+      );
+      expect(find.text('新增商品'), findsOneWidget, reason: '出的是建档表单');
+    });
+
+    testWidgets('＋新建客户 ⇒ 出**引导**（往来 v1 仍禁建）', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(page(policy: const MasterDataPolicy.mobile()));
+      await tester.pumpAndSettle();
+
+      // 页头「散客（当场结清）」= 未选客户时的展示 ⇒ 点它开客户选择器
+      await tester.tap(find.text('散客（当场结清）'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('新建客户（用上面的名称）'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('这一步在电脑上做'),
+        findsOneWidget,
+        reason: '往来 v1 禁建 ⇒ 保留入口 + 引导到电脑（与商品分属不同分支）',
+      );
+    });
   });
 }

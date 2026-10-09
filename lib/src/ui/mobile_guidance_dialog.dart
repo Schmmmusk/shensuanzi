@@ -7,7 +7,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
-/// 弹「这一步在电脑上做」引导。手机端主数据禁建的四类入口共用。
+/// 弹「这一步在电脑上做」引导。手机端主数据禁建的各处入口共用
+/// （往来 / 商品 / 账户的新建与编辑、期初录入 —— 清单见 `MobileGuideTopic`）。
 Future<void> showMobileGuideDialog(
   BuildContext context,
   MobileGuideTopic topic,

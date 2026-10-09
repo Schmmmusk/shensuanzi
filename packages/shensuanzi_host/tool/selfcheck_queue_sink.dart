@@ -27,6 +27,16 @@ void check(String name, bool ok, [String? detail]) {
 
 void section(String title) => stdout.writeln('\n[$title]');
 
+/// **单调**时钟（本自检专用）。
+///
+/// ⚠️ 不要写成 `clock: () => 1700000000000` 这种常量 —— `SyncQueueDao.all()` 按
+/// `(created_at, id)` 排，而 `newId()`（UUIDv7）在**同一毫秒内的顺序由随机尾巴
+/// 决定**（`util/ids.dart` 原文：「没有保证」）。冻结时钟 ⇒ 同一次自检里的几条
+/// 队列条目 `created_at` 完全相同 ⇒ `.last` / `all()[i]` 变成掷硬币。
+/// （2026-10-09：core `master_data_sink_test` 正是因此偶发红。）
+int _tick = 1700000000000;
+int tick() => _tick++;
+
 void main() {
   useLocalSqlite();
   final Db db = Db.openInMemory(foreignKeys: true);
@@ -66,7 +76,7 @@ void main() {
   final SyncServer server = SyncServer(db);
   final QueueSink queueSink = QueueSink(
     queue: SyncQueueDao(db),
-    clock: () => 1700000000000,
+    clock: tick, // 单调 ⇒ 队列顺序确定（理由见文件头 `tick`）
   );
 
   // ---------- ① 销售单：入队 → 主机收下 → 正式单号 ----------
@@ -205,7 +215,7 @@ void main() {
     final QueueMasterSink masterSink = QueueMasterSink(
       mirror: mirror,
       queue: SyncQueueDao(mirror),
-      clock: () => 1700000001000,
+      clock: tick, // 单调 ⇒ 三条条目（建档 / 编辑 / 停用）顺序确定
     );
 
     final MasterDataSubmitResult created = masterSink.createProduct(

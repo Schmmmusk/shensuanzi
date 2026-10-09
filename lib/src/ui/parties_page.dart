@@ -29,7 +29,7 @@ class PartiesPage extends StatefulWidget {
     super.key,
     required this.service,
     this.exports,
-    this.readOnlyMasterData = false,
+    required this.masterDataPolicy,
   });
 
   final PartyService service;
@@ -37,11 +37,13 @@ class PartiesPage extends StatefulWidget {
   /// 导出服务（`null` = 不显示导出按钮；同时透传给流水页）
   final ExportSink? exports;
 
-  /// 手机端**主数据禁建**（C2·§CC）：`true` 时「新建 / 编辑 / 停用」入口
-  /// **保留但点击后弹引导对话框**（不隐藏 —— Agents.md 4.3）。
-  /// 停用/启用同为主数据写（`updateMasterData`），一并引导。
-  /// 桌面缺省 `false` = 现状零变化。
-  final bool readOnlyMasterData;
+  /// **主数据门控**（§CV·七 ① 乙，2026-10-09）—— 本页只看 `canCreateParties`：
+  /// `false` 时「新建 / 编辑 / 停用」入口**保留但点击后弹引导**（不隐藏 —— Agents.md 4.3。
+  /// 停用/启用同为主数据写 `updateMasterData`，一并引导）。
+  ///
+  /// ⚠️ **required**：缺省 `false` 那版默默漏装就是「手机上能建往来」——
+  /// 而手机端的 `PartyService` 建在**镜像**上，写进去永远到不了电脑（静默丢数据）。
+  final MasterDataPolicy masterDataPolicy;
 
   @override
   State<PartiesPage> createState() => _PartiesPageState();
@@ -158,7 +160,7 @@ class _PartiesPageState extends State<PartiesPage> {
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 40),
                   child: Text(
-                    widget.readOnlyMasterData
+                    !widget.masterDataPolicy.canCreateParties
                         ? mirrorEmptyMessage('往来方列表')
                         : '还没有往来方。开单时选客户/供应商会自动建，'
                         '也可以点右上角「新建往来方」。',
@@ -212,8 +214,8 @@ class _PartiesPageState extends State<PartiesPage> {
   /// 停用后该往来方不再出现在开单选择器里，但余额仍在账上；用户以为
   /// 「停用 = 结清了」，那笔应收就会在催款时被漏掉。
   Future<void> _toggleActive(Party party) async {
-    // C2·§CC：停用/启用同为主数据写（updateMasterData）—— 一并引导
-    if (widget.readOnlyMasterData) {
+    // 停用/启用同为主数据写（updateMasterData）—— 本机不能建就一并引导
+    if (!widget.masterDataPolicy.canCreateParties) {
       await showMobileGuideDialog(context, MobileGuideTopic.editParty);
       return;
     }
@@ -253,9 +255,9 @@ class _PartiesPageState extends State<PartiesPage> {
   }
 
   /// 新建（[existing] 为 null）或编辑。
-  /// C2·§CC：手机端主数据禁建 —— 入口保留，点击后弹引导（不进表单）。
+  /// 本机不能建 ⇒ 入口保留，点击后弹引导（不进表单）。
   Future<void> _editParty(BuildContext context, {Party? existing}) async {
-    if (widget.readOnlyMasterData) {
+    if (!widget.masterDataPolicy.canCreateParties) {
       await showMobileGuideDialog(
         context,
         existing == null ? MobileGuideTopic.newParty : MobileGuideTopic.editParty,

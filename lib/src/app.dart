@@ -1540,8 +1540,9 @@ class _ShensuanziAppState extends State<ShensuanziApp>
 
     // C2·§CC 方案 1：手机端读面切**镜像**（主库废弃但保留 —— 边界见
     // `MirrorView` 类文档）。桌面分支维持主库服务，零变化。
-    // ⚠️ 手机壳业务页用的服务全部构造在镜像 db 上；主数据写入被
-    // `readOnlyMasterData` 引导接管（协议正确性：本机建的 id 推到主机必被拒）。
+    // ⚠️ 手机壳业务页用的服务全部构造在镜像 db 上；主数据的**建档/编辑**不再靠
+    // 禁建兜底，而是走 `masterDataPolicy`（按能力门控）+ `masterDataSink`
+    // （乐观写镜像 + 入队）—— 见下面那段装配。
     final Db? mirror = _shellKind == ShellKind.mobile
         ? _mobileSyncService?.openMirror()
         : null;
@@ -1570,6 +1571,24 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         ? null
         : StockDelta(db: mirror, queue: SyncQueueDao(mirror));
 
+    // §CV·七 ① 乙（2026-10-09）：**主数据门控 + 提交出口**，与 documentSink 同构。
+    //
+    // 门控按**能力**（手机 v1 只开商品 —— §CH §8；往来 / 账户仍「保留入口 + 引导」）；
+    // 出口桌面 = 落库、手机 = **乐观写镜像 + 入队**（同一个 `mirror` 上还挂着队列，
+    // 所以行与队列条目同库同事务 —— 不会出现「行写了、条目没写」）。
+    final MasterDataPolicy masterDataPolicy = _shellKind == ShellKind.mobile
+        ? const MasterDataPolicy.mobile()
+        : const MasterDataPolicy.desktop();
+    final MasterDataSink? masterDataSink;
+    if (_shellKind == ShellKind.mobile) {
+      masterDataSink = mirror == null
+          ? null
+          : QueueMasterSink(mirror: mirror, queue: SyncQueueDao(mirror));
+    } else {
+      final ProductService? products = _products;
+      masterDataSink = products == null ? null : ServiceMasterSink(products);
+    }
+
     final AppShell shell = AppShell(
       dataDirectory: location.directory,
       backupDirectory: location.backupDirectory,
@@ -1589,9 +1608,11 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // M15（2026-10-08）：开单保存失败 → 原始异常进日志，界面只给分类文案
       onStorageFailure: _onStorageFailure,
       stockDelta: stockDelta,
-      // ⚠️ 按壳类型判定，不按 mirror 是否取到 —— 手机上禁建必须恒真
-      //（mirror 万一没建好时退回主库服务，但建档依旧不许）
-      readOnlyMasterData: _shellKind == ShellKind.mobile,
+      // §CV·七 ① 乙：主数据门控 + 出口。按壳判定（与上面 readOnly 同一理由）：
+      // **不按 mirror 是否取到** —— 门控是「策略」，取不到 mirror 时 sink 为 null，
+      // 相关页面退回 `_PendingPage`（宁可「数据未就绪」，也不给写不通的路）。
+      masterDataPolicy: masterDataPolicy,
+      masterDataSink: masterDataSink,
       // M05 / M07（2026-10-08）：同一份页面代码按壳给不同指引文案
       mobileShell: _shellKind == ShellKind.mobile,
       accounts: shellAccounts,

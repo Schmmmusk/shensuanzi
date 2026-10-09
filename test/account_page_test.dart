@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/account_page.dart';
+import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
 
@@ -33,8 +34,14 @@ void main() {
     }
   });
 
-  Widget page() => MaterialApp(
-    home: Scaffold(body: AccountsPage(service: service)),
+  Widget page({MasterDataPolicy? policy}) => MaterialApp(
+    home: Scaffold(
+      body: AccountsPage(
+        service: service,
+        // 缺省桌面（账户可建）⇒ 既有用例**零变化**；mobile() 组显式传入
+        masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
+      ),
+    ),
   );
 
   testWidgets('空列表给出「怎么办」（新建账户的引导）', (WidgetTester tester) async {
@@ -111,5 +118,29 @@ void main() {
 
     expect(find.textContaining('请填账户名称'), findsOneWidget);
     expect(find.text('新建账户'), findsWidgets, reason: '对话框还开着（标题也是这四个字）');
+  });
+
+  // ============================================================ §CV·九·五 甲
+  // `MasterDataPolicy.mobile()`（账户 v1 禁建）下**本页消费值对象**的分支 ——
+  // 与 §CV·七 的 ①②③ 是同一批的第 ④ 个数：product / party / account 三个**独立**分支。
+  testWidgets('mobile()：＋新建账户 ⇒ 出**引导**（账户 v1 禁建）', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page(policy: const MasterDataPolicy.mobile()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('新建账户'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('这一步在电脑上做'),
+      findsOneWidget,
+      reason: '账户 v1 禁建 ⇒ 保留入口 + 引导到电脑',
+    );
+    expect(
+      find.byKey(const Key('account-name')),
+      findsNothing,
+      reason: '不能进表单 —— 条件写反（把 false 当 true 用）会在这里暴露',
+    );
   });
 }

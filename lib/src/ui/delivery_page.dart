@@ -26,7 +26,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
-    show MobileGuideTopic, mirrorEmptyMessage;
+    show MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'keyboard_reveal.dart';
@@ -46,7 +46,8 @@ class DeliveryPage extends StatefulWidget {
     this.onSubmitted,
     this.onStorageFailure,
     this.stockDelta,
-    this.readOnlyMasterData = false,
+    required this.masterDataPolicy,
+    required this.masterDataSink,
     this.mobileShell = false,
   });
 
@@ -67,9 +68,15 @@ class DeliveryPage extends StatefulWidget {
   /// `null` = 不记（测试）；生产由 `app.dart` 接到 `AppLog`。
   final void Function(Object error, StackTrace stack)? onStorageFailure;
 
-  /// 手机端**主数据禁建**（C2·§CC）：`true` 时「新建客户 / 新建商品」入口
-  /// **保留但点击后弹引导对话框**。桌面缺省 `false` = 现状零变化。
-  final bool readOnlyMasterData;
+  /// **主数据门控**（§CV·七 ① 乙，2026-10-09）：三族各自能不能在**本机**建档。
+  /// 桌面 = `MasterDataPolicy.desktop()`；手机 v1 = `MasterDataPolicy.mobile()`
+  /// （**只开商品**；往来仍「保留入口 + 引导」）。⚠️ **required** —— 缺省 `false`
+  /// 那版默默漏装就是「手机上一切都能建」（静默丢数据），宁可编不过。
+  final MasterDataPolicy masterDataPolicy;
+
+  /// 主数据提交**出口**（桌面 `ServiceMasterSink` / 手机 `QueueMasterSink`）。
+  /// ⚠️ 商品表单**必须**走它 —— 手机端的 `ProductService` 建在镜像上。
+  final MasterDataSink masterDataSink;
 
   /// **未同步库存影响**（M08，2026-10-08）：手机端注入（镜像队列）；
   /// 桌面 `null` = 不叠加 —— 桌面的权威库就是本机，没有「未同步」这回事。
@@ -468,7 +475,8 @@ class _DeliveryPageState extends State<DeliveryPage> {
       builder: (BuildContext sheetContext) => _ProductPickerSheet(
         service: widget.productService,
         recentProducts: widget.service.recentlyDelivered(),
-        readOnly: widget.readOnlyMasterData,
+        canCreate: widget.masterDataPolicy.canCreateProducts,
+        sink: widget.masterDataSink,
       ),
     );
   }
@@ -481,7 +489,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
       builder: (BuildContext sheetContext) => _CustomerPickerSheet(
         service: widget.service,
         partyService: widget.partyService,
-        readOnly: widget.readOnlyMasterData,
+        canCreate: widget.masterDataPolicy.canCreateParties,
       ),
     );
   }
@@ -963,14 +971,14 @@ class _CustomerPickerSheet extends StatefulWidget {
   const _CustomerPickerSheet({
     required this.service,
     required this.partyService,
-    this.readOnly = false,
+    this.canCreate = false,
   });
 
   final DeliveryService service;
   final PartyService partyService;
 
-  /// 手机端主数据禁建（C2·§CC）：`true` = 「新建客户」点击后弹引导。
-  final bool readOnly;
+  /// 本机能不能建客户（`MasterDataPolicy.canCreateParties`）。
+  final bool canCreate;
 
   @override
   State<_CustomerPickerSheet> createState() => _CustomerPickerSheetState();
@@ -1002,8 +1010,8 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
   }
 
   Future<void> _create() async {
-    // C2·§CC：手机端主数据禁建 —— 保留入口，点击后引导
-    if (widget.readOnly) {
+    // 本机不能建 ⇒ 保留入口、点击后引导
+    if (!widget.canCreate) {
       await showMobileGuideDialog(context, MobileGuideTopic.newParty);
       return;
     }
@@ -1075,7 +1083,7 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
                 ? Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text(
-                      widget.readOnly
+                      !widget.canCreate
                           ? mirrorEmptyMessage('客户列表')
                           : _searched
                           ? '没有匹配的客户，可以在下面新建。'
@@ -1113,7 +1121,8 @@ class _ProductPickerSheet extends StatefulWidget {
   const _ProductPickerSheet({
     required this.service,
     required this.recentProducts,
-    this.readOnly = false,
+    required this.sink,
+    this.canCreate = false,
   });
 
   final ProductService service;
@@ -1121,8 +1130,11 @@ class _ProductPickerSheet extends StatefulWidget {
   /// 空查询时展示的「最近送货」列表 —— 由页面查好传入。
   final List<Product> recentProducts;
 
-  /// 手机端主数据禁建（C2·§CC）：`true` = 「新建商品」点击后弹引导。
-  final bool readOnly;
+  /// 本机能不能建商品（`MasterDataPolicy.canCreateProducts`）。
+  final bool canCreate;
+
+  /// 建档 / 编辑的**提交出口**（桌面落库 / 手机乐观写 + 入队）。
+  final MasterDataSink sink;
 
   @override
   State<_ProductPickerSheet> createState() => _ProductPickerSheetState();
@@ -1150,14 +1162,15 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
   }
 
   Future<void> _createProduct() async {
-    // C2·§CC：手机端主数据禁建 —— 保留入口，点击后引导
-    if (widget.readOnly) {
+    // 本机不能建 ⇒ 保留入口、点击后引导
+    if (!widget.canCreate) {
       await showMobileGuideDialog(context, MobileGuideTopic.newProduct);
       return;
     }
     final Product? created = await showProductFormDialog(
       context,
       service: widget.service,
+      sink: widget.sink,
     );
     if (created == null || !mounted) return;
     Navigator.of(context).pop(created);
@@ -1205,7 +1218,7 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
                 ? Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text(
-                      widget.readOnly
+                      !widget.canCreate
                           ? mirrorEmptyMessage('商品列表')
                           : _searched
                           ? '没有匹配的商品，可以点下面新建。'

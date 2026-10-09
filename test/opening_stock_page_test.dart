@@ -81,6 +81,7 @@ void main() {
       body: OpeningStockPage(
         service: service,
         productService: products,
+        masterDataSink: ServiceMasterSink(products),
         isFirstTime: isFirstTime,
         bookQuantities: book ?? const <String, int>{},
         onDone: onDone,
