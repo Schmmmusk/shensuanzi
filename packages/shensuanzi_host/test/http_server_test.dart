@@ -23,6 +23,13 @@ void main() {
   late HostHttpServer server;
   late String base;
 
+  /// 主机侧**内部错误日志**的捕获（#22 裁定，2026-10-09）。
+  ///
+  /// 协议违反 / 规则内部 bug 的**细节只进日志**（回执只给通用中文，
+  /// `response.reason` 不再承担「哪里错了」）⇒「原因点出列名 X」那类断言
+  /// 改成查这里 —— 与 `sync_server_test` 同一处置，分支可定位性由此保住。
+  final List<String> internalErrors = <String>[];
+
   // 避开 17890（生产端口），免得与本机真跑着的实例撞车
   const PortRange testPorts = PortRange(start: 17985, end: 17999);
   final int fixedNow = 1700000000000;
@@ -40,6 +47,7 @@ void main() {
   setUp(() async {
     resetClock();
     hostClock = fixedNow;
+    internalErrors.clear();
     db = newMemoryDb();
     identity = HostIdentityStore.inMemory().loadOrCreate(now: fixedNow);
     server = await HostHttpServer.start(
@@ -48,6 +56,8 @@ void main() {
       ports: testPorts,
       address: InternetAddress.loopbackIPv4,
       clock: () => hostClock,
+      onInternalError: (String label, Object error, StackTrace stack) =>
+          internalErrors.add('$label｜$error'),
     );
     base = 'http://127.0.0.1:${server.port}';
   });
@@ -593,7 +603,7 @@ void main() {
     );
     });
 
-    test('明细漏 id → rejected，且原因点出列名（HTTP 全链路）', () async {
+    test('明细漏 id → rejected + reason_code，列名细节只进日志（HTTP 全链路）', () async {
       final String productId = await createProduct('H005');
       final String partyId = newId();
       final String docId = newId();
@@ -623,10 +633,19 @@ void main() {
         (json['results']! as List).first as Map,
       );
       expect(receipt['status'], 'rejected');
+      // #22 裁定（2026-10-09）：协议违反（客户端漏了明细 id）的回执**只给通用中文**，
+      // 分支区分改由 **reason_code** 承担（这里是 HTTP 层，所以查 JSON 字段）。
       expect(
-        '${receipt['reason']}',
-        contains('缺少必填列 `id`'),
-        reason: '失败原因必须点到具体列名，否则只能靠复跑定位',
+        receipt['reason_code'],
+        'field_type_mismatch',
+        reason: '协议违反 ⇒ 落 `lines` 解析失败那类码',
+      );
+      // 列名的定位价值**没有丢** —— 它随原始异常进主机日志（回执不再回显）。
+      // 「失败原因必须点到具体列名」这条要求因此改由这里承担。
+      expect(
+        internalErrors.any((String e) => e.contains('缺少必填列 `id`')),
+        isTrue,
+        reason: '细节必须点到具体列名，否则只能靠复跑定位',
       );
       expect(DocumentDao(db).findById(docId), isNull, reason: '被拒的单据不落库');
     });

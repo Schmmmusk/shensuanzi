@@ -24,7 +24,10 @@ import 'package:sqlite3/sqlite3.dart';
 ///   （它们是各自独立的队列条目，见 §六）。
 class SyncServer {
   SyncServer(this.db, {this.onInternalError})
-    : _engine = RuleEngine(db),
+    // ⚠️ **单一通道**（#22 裁定 §二②，2026-10-09）：`RuleEngine` 的内部错误也走
+    // 这一个出口 —— 它自己不再另开日志。否则同一条错误（规则内部 bug）会在
+    // 「规则层」和「同步层」各记一次，且两边标签不同，日志里看不出是一件事。
+    : _engine = RuleEngine(db, onInternalError: onInternalError),
       _products = ProductService(db);
 
   final Db db;
@@ -85,6 +88,7 @@ class SyncServer {
           op,
           '白名单',
           StateError('entity 不在白名单：${op.entity}'),
+          RejectCode.notWritableTable,
         );
       }
       switch (op.operation) {
@@ -100,13 +104,24 @@ class SyncServer {
           return _applyAction(op, now);
       }
     } on FormatException catch (error) {
-      return SyncResponse.rejected(op.entityId, error.message);
+      // 游标 / payload.lines 解析失败：`error.message` 是**开发向**的（含字段名）
+      // ⇒ 只进日志，回执给码 + 通用中文。
+      return _malformedRequest(
+        op,
+        '参数不合法',
+        error,
+        RejectCode.malformedParameter,
+      );
     } catch (error, stack) {
       // §CS·五 裁定 ③（2026-10-08）：**领域异常先分类，再回一句中文**。
       // 原来这里写 `'操作失败：$error'` —— `SqliteException.toString()` 带着
       // 整条 SQL 与绑定参数，等于把客户端 payload 原样回传（M15 同一类问题）。
       onInternalError?.call('同步操作失败（${op.operation.wire}）', error, stack);
-      return SyncResponse.rejected(op.entityId, syncFailureReason(error));
+      return SyncResponse.rejected(
+        op.entityId,
+        syncFailureReason(error),
+        code: storageRejectCode(error),
+      );
     }
   }
 
@@ -122,13 +137,14 @@ class SyncServer {
     SyncOperation op,
     String cause,
     Object detail,
+    RejectCode code,
   ) {
     onInternalError?.call(
       '同步操作失败（${op.operation.wire}：$cause）',
       detail,
       StackTrace.current,
     );
-    return SyncResponse.rejected(op.entityId, malformedSyncRequestReason);
+    return SyncResponse.malformed(op.entityId, code);
   }
 
   // ------------------------------------------------------------ documentAction
@@ -163,33 +179,45 @@ class SyncServer {
         StateError(
           'documentAction 的 entity 必须是 ${Schema.documents}，实际 ${op.entity}',
         ),
+        RejectCode.notWritableTable,
       );
     }
     final Set<String> unknownKeys = op.payload.keys
         .toSet()
         .difference(actionPayloadKeys);
     if (unknownKeys.isNotEmpty) {
-      return SyncResponse.rejected(
-        op.entityId,
-        'documentAction 的 payload 含未知字段：${unknownKeys.join(', ')}'
-        '（允许：${actionPayloadKeys.join(', ')}）',
+      return _malformedRequest(
+        op,
+        '未知字段',
+        'documentAction payload 含未知字段：${unknownKeys.join(', ')}'
+            '（允许：${actionPayloadKeys.join(', ')}）',
+        RejectCode.unknownField,
       );
     }
     final Object? action = op.payload['action'];
     if (action is! String || action.isEmpty) {
-      return SyncResponse.rejected(op.entityId, 'payload.action 缺失或不是字符串');
+      return _malformedRequest(
+        op,
+        '缺 action',
+        'payload.action 缺失或不是字符串',
+        RejectCode.missingField,
+      );
     }
     if (action != markDeliveredAction) {
-      return SyncResponse.rejected(
-        op.entityId,
+      return _malformedRequest(
+        op,
+        '未知动作',
         'unknown_action: $action（v1 只支持 $markDeliveredAction）',
+        RejectCode.unknownAction,
       );
     }
     final Object? occurredAt = op.payload['occurred_at'];
     if (occurredAt != null && occurredAt is! int) {
-      return SyncResponse.rejected(
-        op.entityId,
-        'payload.occurred_at 必须是 UTC 毫秒整数（客户端提供，仅展示用）',
+      return _malformedRequest(
+        op,
+        'occurred_at 类型不符',
+        'payload.occurred_at 必须是 UTC 毫秒整数（实际 ${occurredAt.runtimeType}）',
+        RejectCode.fieldTypeMismatch,
       );
     }
 
@@ -222,7 +250,11 @@ class SyncServer {
             serverState: Map<String, Object?>.from(row),
           );
         }
-        return SyncResponse.rejected(op.entityId, outcome.reason ?? '动作被拒绝');
+        return SyncResponse.rejected(
+          op.entityId,
+          outcome.reason ?? ruleInternalErrorReason,
+          code: outcome.code ?? RejectCode.ruleInternalError,
+        );
     }
   }
 
@@ -236,6 +268,7 @@ class SyncServer {
         StateError(
           'createDocument 的 entity 必须是 ${Schema.documents}，实际 ${op.entity}',
         ),
+        RejectCode.notWritableTable,
       );
     }
 
@@ -243,18 +276,22 @@ class SyncServer {
         .toSet()
         .difference(documentPayloadKeys);
     if (unknownKeys.isNotEmpty) {
-      return SyncResponse.rejected(
-        op.entityId,
-        'createDocument 的 payload 含未知字段：${unknownKeys.join(', ')}'
-        '（允许：${documentPayloadKeys.join(', ')}）',
+      return _malformedRequest(
+        op,
+        '未知字段',
+        'createDocument payload 含未知字段：${unknownKeys.join(', ')}'
+            '（允许：${documentPayloadKeys.join(', ')}）',
+        RejectCode.unknownField,
       );
     }
 
     final Object? rawDocument = op.payload['document'];
     if (rawDocument is! Map) {
-      return SyncResponse.rejected(
-        op.entityId,
+      return _malformedRequest(
+        op,
+        '缺 payload.document',
         'createDocument 缺少 payload.document',
+        RejectCode.missingField,
       );
     }
     final Map<String, Object?> raw = Map<String, Object?>.from(rawDocument);
@@ -264,18 +301,21 @@ class SyncServer {
       raw.keys,
     );
     if (badColumns.isNotEmpty) {
-      return SyncResponse.rejected(
-        op.entityId,
+      return _malformedRequest(
+        op,
+        '不可写列',
         'documents 含不可写列：${badColumns.join(', ')}',
+        RejectCode.unwritableColumn,
       );
     }
 
     final Map<String, Object?> values = SyncValueCheck.normalize(raw);
     if (values['id'] != op.entityId) {
-      return SyncResponse.rejected(
-        op.entityId,
-        'payload.document.id（${values['id']}）必须等于 entity_id（${op.entityId}）'
-        '—— id 是幂等键（sync_protocol.md §二）',
+      return _malformedRequest(
+        op,
+        'id 不符',
+        'payload.document.id（${values['id']}）必须等于 entity_id（${op.entityId}）',
+        RejectCode.idMismatch,
       );
     }
 
@@ -291,17 +331,32 @@ class SyncServer {
       ...values,
     };
 
+    // ⚠️ **两个 try 分开**（§CV·十九 裁定）：原来合成一个 catch ⇒ detail 里分不清是
+    // `document` 还是 `lines` 出的问题，而 `reason` 已是通用文案 ⇒ **日志是唯一线索**。
+    // 码**不变**（都是 `fieldTypeMismatch`）：客户端对两者是同一件事（协议错误、重试无意义），
+    // 拆码只会让协议面变宽；**区分只服务于排查** ⇒ 落在 detail 上。
     final Document document;
-    final List<DocumentLine> lines;
     try {
       document = Document.fromRow(row);
+    } catch (error) {
+      return _malformedRequest(
+        op,
+        'document 字段类型不符',
+        'document 字段类型不符：$error'
+            '（必填 id / doc_type / status / occurred_at）',
+        RejectCode.fieldTypeMismatch,
+      );
+    }
+
+    final List<DocumentLine> lines;
+    try {
       lines = _linesFrom(op.payload['lines'], documentId: op.entityId);
     } catch (error) {
-      return SyncResponse.rejected(
-        op.entityId,
-        'document / lines 字段缺失或类型不符：$error'
-        '（document 必填 id / doc_type / status / occurred_at；'
-        'lines 的元素是完整 wire 行，含客户端生成的 id —— sync_protocol.md §8.1）',
+      return _malformedRequest(
+        op,
+        'lines 类型不符',
+        'lines 类型不符：$error（元素是完整 wire 行，含客户端生成的 id）',
+        RejectCode.fieldTypeMismatch,
       );
     }
 
@@ -356,9 +411,11 @@ class SyncServer {
 
     final Map<String, Object?> values = SyncValueCheck.normalize(op.payload);
     if (values['id'] != null && values['id'] != op.entityId) {
-      return SyncResponse.rejected(
-        op.entityId,
+      return _malformedRequest(
+        op,
+        'id 不符',
         'payload.id（${values['id']}）必须等于 entity_id（${op.entityId}）',
+        RejectCode.idMismatch,
       );
     }
 
@@ -396,6 +453,7 @@ class SyncServer {
           op,
           'code 类型不符',
           StateError('products.code 必须是字符串，实际 ${rawCode.runtimeType}'),
+          RejectCode.fieldTypeMismatch,
         );
       }
       effective = <String, Object?>{
@@ -437,17 +495,21 @@ class SyncServer {
     if (guard != null) return guard;
 
     if (op.baseVersion == null) {
-      return SyncResponse.rejected(
-        op.entityId,
-        'updateMasterData 必须带 base_version（乐观锁，sync_protocol.md §四）',
+      return _malformedRequest(
+        op,
+        '缺 base_version',
+        'updateMasterData 必须带 base_version（乐观锁）',
+        RejectCode.missingField,
       );
     }
 
     final Map<String, Object?> values = SyncValueCheck.normalize(op.payload);
     if (values['id'] != null && values['id'] != op.entityId) {
-      return SyncResponse.rejected(
-        op.entityId,
+      return _malformedRequest(
+        op,
+        'id 不符',
         'payload.id（${values['id']}）必须等于 entity_id（${op.entityId}）',
+        RejectCode.idMismatch,
       );
     }
     values.remove('id');
@@ -499,16 +561,25 @@ class SyncServer {
         .toSet()
         .difference(const <String>{'id'});
     if (extraKeys.isNotEmpty) {
-      return SyncResponse.rejected(
-        op.entityId,
+      return _malformedRequest(
+        op,
+        '不可写列',
         'deleteMasterData 的 payload 只允许 id，实际含：${extraKeys.join(', ')}',
+        RejectCode.unwritableColumn,
       );
     }
 
     return db.transaction<SyncResponse>(() {
       final Row? current = _findRow(op.entity, op.entityId);
       if (current == null) {
-        return SyncResponse.rejected(op.entityId, '主数据不存在：${op.entityId}');
+        // **幂等，不是错误**（#21 裁定「另 3 处」之 `主数据不存在`，2026-10-09）：
+        // 多半是**另一台设备已经删了**，结果与本次意图一致 ⇒ 与「同一实体的
+        // upsert 幂等」（§CV·五）同一口径：客户端不需要在本地合并多次操作，
+        // 重推无害。原来这里 `rejected` + 指数退避重试到死信。
+        return SyncResponse(
+          entityId: op.entityId,
+          status: SyncStatus.alreadyExists,
+        );
       }
       if ((current['is_active']! as int) == 0) {
         return SyncResponse(
@@ -530,10 +601,12 @@ class SyncServer {
   /// 返回非 null 表示已经可以短路返回。
   SyncResponse? _requireMasterData(SyncOperation op) {
     if (!SyncWhitelist.isMasterData(op.entity)) {
-      return SyncResponse.rejected(
-        op.entityId,
+      return _malformedRequest(
+        op,
+        '不支持的表',
         '${op.operation.wire} 只支持主数据表'
-        '（${SyncWhitelist.masterDataTables.join(' / ')}），实际 ${op.entity}',
+            '（${SyncWhitelist.masterDataTables.join(' / ')}），实际 ${op.entity}',
+        RejectCode.notWritableTable,
       );
     }
     final List<String> badColumns = SyncWhitelist.offendingColumns(
@@ -541,9 +614,11 @@ class SyncServer {
       op.payload.keys,
     );
     if (badColumns.isNotEmpty) {
-      return SyncResponse.rejected(
-        op.entityId,
+      return _malformedRequest(
+        op,
+        '不可写列',
         '${op.entity} 含不可写列：${badColumns.join(', ')}',
+        RejectCode.unwritableColumn,
       );
     }
     return null;
@@ -757,6 +832,12 @@ class SyncServer {
 
   // ------------------------------------------------------------ 内部
 
+  /// 规则结果 → 回执。
+  ///
+  /// ⚠️ 这里是 **#21 / #22 的汇合点**：`RuleEngine` 的 `RuleOutcome.reason`
+  /// 与 `RuleOutcome.code` 一起透传成 `SyncResponse.reason` / `reason_code`
+  ///（`docs/sync_protocol.md` §8.5）—— **两边的码是同一份枚举**（[RejectCode]），
+  /// 所以不需要任何映射表。
   SyncResponse _mapOutcome(String entityId, RuleOutcome outcome) {
     switch (outcome.status) {
       case RuleStatus.applied:
@@ -767,7 +848,13 @@ class SyncServer {
           status: SyncStatus.alreadyExists,
         );
       case RuleStatus.rejected:
-        return SyncResponse.rejected(entityId, outcome.reason ?? '规则拒绝');
+        return SyncResponse.rejected(
+          entityId,
+          outcome.reason ?? ruleInternalErrorReason,
+          // 兜底只防「有人用裸构造器造了个带 reason 的 rejected」——
+          // 正常路径（`RuleOutcome.rejected`）**强制**给了码。
+          code: outcome.code ?? RejectCode.ruleInternalError,
+        );
     }
   }
 

@@ -22,10 +22,21 @@ void main() {
   late Db db;
   late SyncServer server;
 
+  /// 主机侧**内部错误日志**的捕获（#22 裁定，2026-10-09）。
+  ///
+  /// 协议违反 / 规则内部 bug 的**细节只进日志**（进 `reason` 的是通用中文）
+  /// ⇒ 「原因点出列名 X」那类断言改成查这里，**分支区分能力**由此保住。
+  final List<String> internalErrors = <String>[];
+
   setUp(() {
     resetClock();
     db = newMemoryDb();
-    server = SyncServer(db);
+    internalErrors.clear();
+    server = SyncServer(
+      db,
+      onInternalError: (String label, Object error, StackTrace stack) =>
+          internalErrors.add('$label｜$error'),
+    );
   });
 
   tearDown(() => db.close());
@@ -225,7 +236,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('party_id'));
+      expect(response.reasonCode, RejectCode.ruleInternalError, reason: response.reason);
       expect(DocumentDao(db).findById(sale.id), isNull);
     });
 
@@ -283,7 +294,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('互斥'));
+      expect(response.reasonCode, RejectCode.payloadMutuallyExclusive);
     });
 
     test('entity_id 与 payload.document.id 不一致 → rejected', () {
@@ -299,7 +310,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('幂等键'));
+      expect(response.reasonCode, RejectCode.idMismatch);
     });
 
     test('缺 payload.document → rejected', () {
@@ -314,7 +325,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('缺少 payload.document'));
+      expect(response.reasonCode, RejectCode.missingField);
     });
 
     test('payload 含未知顶层字段 → rejected', () {
@@ -329,7 +340,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('未知字段'));
+      expect(response.reasonCode, RejectCode.unknownField);
     });
 
     test('document 含主机专属列（created_at）→ rejected', () {
@@ -347,11 +358,16 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('不可写列'));
-      expect(response.reason, contains('created_at'));
+      expect(response.reasonCode, RejectCode.unwritableColumn);
+      // 列名细节**只进日志**（#22 裁定）：改查日志
+      expect(
+        internalErrors.any((String e) => e.contains('created_at')),
+        isTrue,
+        reason: '列名只进日志',
+      );
     });
 
-    test('document 缺必填列 → rejected，且原因点出列名', () {
+    test('document 缺必填列（doc_type）→ rejected，列名只进日志', () {
       final String p = syncProduct();
       final Document sale = pending(type: DocType.sale, totalAmount: 100);
       final Map<String, Object?> document = wireDocument(sale)
@@ -366,7 +382,20 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('doc_type'), reason: response.reason);
+      expect(response.reasonCode, RejectCode.fieldTypeMismatch,
+          reason: response.reason);
+      // 列名细节**只进日志** —— 照抄上面「含主机专属列（created_at）」那条的完整模式
+      // （#22 裁定；用例名原来写「且原因点出列名」却没断，属**用例名撒谎**，§CV·十九）。
+      // ⚠️ 断**精确子串**：`doc_type` 也出现在 detail 的「必填 id / doc_type / …」提示里，
+      // 只断 `contains('doc_type')` 会在 `$error` 丢失时**照样绿**（空心断言，
+      // 判据见 `docs/testing.md`）。
+      // tool 侧镜像是 `tool/selfcheck_sync.dart:390`（**不是** `selfcheck_host` ——
+      // 那个是「明细漏 id」= `lines` 路径）。
+      expect(
+        internalErrors.any((String e) => e.contains('缺少必填列 `doc_type`')),
+        isTrue,
+        reason: '缺了哪个列只进日志，且必须点到具体列名',
+      );
     });
 
     test('entity 不是 documents ⇒ **通用回执**，细节只进日志（§CV·十五）', () {
@@ -388,6 +417,7 @@ void main() {
       expect(response.status, SyncStatus.rejected);
       // 客户端 bug（协议违反）—— 用户修不了 ⇒ 只回**通用中文**
       expect(response.reason, malformedSyncRequestReason);
+      expect(response.reasonCode, RejectCode.notWritableTable);
       expectNoDevTerms(response.reason!);
       // 诊断细节（哪条 op / 什么 entity / 什么值）完整走主机日志
       expect(logged, hasLength(1), reason: '排障要看的就是它');
@@ -430,7 +460,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('sync_version'));
+      expect(response.reasonCode, RejectCode.unwritableColumn);
     });
 
     test('未知列 → rejected', () {
@@ -444,7 +474,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('nope'));
+      expect(response.reasonCode, RejectCode.unwritableColumn);
     });
 
     test('bool 值被拒（wire 约定布尔用 1/0）', () {
@@ -458,7 +488,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('1 / 0'));
+      expect(response.reasonCode, RejectCode.malformedParameter);
     });
 
     test('target 是 documents → rejected（只支持主数据表）', () {
@@ -468,7 +498,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('只支持主数据表'));
+      expect(response.reasonCode, RejectCode.notWritableTable);
     });
   });
 
@@ -563,6 +593,7 @@ void main() {
 
       expect(response.status, SyncStatus.rejected);
       expect(response.reason, malformedSyncRequestReason);
+      expect(response.reasonCode, RejectCode.fieldTypeMismatch);
       expect(logged, hasLength(1));
       expect('${logged.single}', contains('code'));
     });
@@ -630,7 +661,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('base_version'));
+      expect(response.reasonCode, RejectCode.missingField);
     });
 
     // §CV·3 裁定（方案丙，2026-10-08）：不存在 ⇒ **upsert 建档**（不再 `rejected`）。
@@ -815,18 +846,18 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('只允许 id'));
+      expect(response.reasonCode, RejectCode.unwritableColumn);
       expect(ProductDao(db).findById(id)!.isActive, isTrue);
     });
 
-    test('目标不存在 → rejected', () {
+    test('目标不存在 → **already_exists（幂等，不再 rejected）**', () {
       final SyncResponse response = server.handle(
         opMaster('products', newId(), SyncOpType.deleteMasterData),
         now: now(),
       );
 
-      expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('不存在'));
+      expect(response.status, SyncStatus.alreadyExists);
+      // #21 裁定（2026-10-09）：目标不在主机上 ⇒ **不是错误**（多半是另一台
     });
   });
 
@@ -962,7 +993,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('unknown_action: un_cancel'));
+      expect(response.reasonCode, RejectCode.unknownAction);
     });
 
     test('payload 含未知字段 / action 缺失 → rejected', () {
@@ -979,7 +1010,7 @@ void main() {
         now: now(),
       );
       expect(extra.status, SyncStatus.rejected);
-      expect(extra.reason, contains('未知字段'));
+      expect(extra.reasonCode, RejectCode.unknownField);
 
       final SyncResponse noAction = server.handle(
         const SyncOperation(
@@ -991,7 +1022,7 @@ void main() {
         now: now(),
       );
       expect(noAction.status, SyncStatus.rejected);
-      expect(noAction.reason, contains('action'));
+      expect(noAction.reasonCode, RejectCode.missingField);
     });
 
     test('purchase 单收到签收 → rejected（规则不允许：docType 不适用）', () {
@@ -1026,7 +1057,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('不适用'));
+      expect(response.reasonCode, RejectCode.actionNotApplicable);
     });
 
     test('单据不存在 → rejected', () {
@@ -1041,7 +1072,7 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reason, contains('不存在'));
+      expect(response.reasonCode, RejectCode.targetMissing);
     });
   });
 
@@ -1064,6 +1095,7 @@ void main() {
       // ⚠️ 这条断言因此**失去了「分支区分」能力** —— 正是 §AR·二 #21
       // 要加 `reason_code` 的理由；届时这里改成 `expect(response.reasonCode, …)`。
       expect(response.reason, malformedSyncRequestReason);
+      expect(response.reasonCode, RejectCode.notWritableTable);
     });
 
     test('任意表名都进不来（schemas / sqlite_master）', () {

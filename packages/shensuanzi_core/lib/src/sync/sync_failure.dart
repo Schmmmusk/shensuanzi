@@ -31,6 +31,7 @@ library;
 import 'package:sqlite3/sqlite3.dart';
 
 import '../db/storage_error.dart';
+import '../reject_code.dart';
 
 /// 约束冲突的细分 —— **只分用户能理解的三类**（裁定点名的那三类）。
 ///
@@ -110,3 +111,40 @@ String syncFailureReason(Object error) {
 /// ⚠️ 文案本身也要过 `forbiddenDevTermsInUserText`（`sync_failure_test` 有断言）。
 const String malformedSyncRequestReason =
     '同步请求格式有误，请重试。如果反复出现，请把这条消息截图发给开发者。';
+
+/// **规则层内部 bug**（不变量破坏 / 协议违反）时的通用回执（#22 裁定，2026-10-09）。
+///
+/// 与 [malformedSyncRequestReason] 是同一套判据（用户修不了 ⇒ 只讲怎么办），
+/// 分开只因为**场景不同**：那句是「请求没进来」，这句是「进来了、但主机处理时
+/// 撞到了不该发生的情况」。两处细节都走日志（`RuleEngine.onInternalError`）。
+///
+/// ## 为什么必须有它
+///
+/// 原来 `RuleEngine.dispatch` 的兜底 catch 把异常**拼进了 `reason`**：
+/// `'规则执行失败，整单回滚：$error'`。而 `StateError.toString()` 的前缀是
+/// **`Bad state:`** —— 于是手机上直接显示 Dart 的异常文本（M15 / §CS·五 的同一类问题）。
+/// 更糟的是它**把好信息一起毁了**：`return_exceeds_original` 是**用户能改**的
+/// 业务拒绝，却埋在 `'Bad state: …'` 里 ⇒ 已按判据分流（见 `RejectCode`）。
+const String ruleInternalErrorReason =
+    '主机处理这张单时出错了，整单没有保存。请再试一次；'
+    '如果一直这样，请把这条消息截图发给开发者。';
+
+/// 兜底 catch 拿到的异常 → **机读码**（`SyncResponse.reason_code`）。
+///
+/// 与 [syncFailureReason] **同一套分类**（`constraintKindOf` / `classifyStorageFailure`），
+/// 只是那个出中文、这个出码 —— 两者的 `switch` 分支必须一一对应，改一个就改另一个
+/// （`sync_failure_test` 有镜像断言）。
+RejectCode storageRejectCode(Object error) {
+  switch (constraintKindOf(error)) {
+    case ConstraintKind.duplicate:
+      return RejectCode.duplicate;
+    case ConstraintKind.missingReference:
+      return RejectCode.referenceMissing;
+    case ConstraintKind.invalid:
+      return RejectCode.dataInvalid;
+    case null:
+      break;
+  }
+  return RejectCode.hostStorage;
+}
+

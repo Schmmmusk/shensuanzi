@@ -587,3 +587,29 @@ DAO 不开事务。事务由 RuleEngine 统一开
 规则实现只此一份，在 shensuanzi_core 的 rule_engine.dart
 自动生成的收付款单不进同步 payload，由主机端生成
 ```
+
+### 规则被拒时的**两种性质**（2026-10-09 裁定，`reply_review.md` §CV·十七）
+
+判据只有一条：**用户能不能做点什么**（`ui_principles.md §五`）——
+不是「文案里有没有术语」。
+
+| 性质 | 怎么抛 | 用户能做什么 | 回执的 `reason` | 回执的 `reason_code` |
+|---|---|---|---|---|
+| **业务拒绝** | `throw RuleRejection('…', code: …)` | **能**（少退一点 / 把金额改小 / 重选原单） | **说「怎么办」** | `return_exceeds_original` / `rule_validation_failed` |
+| **内部 bug** | `throw StateError('…')`（不变量破坏） | 不能 | 通用中文 `ruleInternalErrorReason` | `rule_internal_error` |
+
+**为什么业务拒绝也「抛」而不是直接 `return`**：规则**边算边写**（先插流水、后算分摊），
+直接 `return` 会把已经写进去的行**提交**掉 —— 只有 `throw` 才能让
+`Db.transaction` 回滚。`RuleEngine.dispatch` 认得 `RuleRejection`，转成
+`RuleOutcome.rejected(reason, code:)`。
+
+**内部 bug 的细节去哪**：`RuleEngine.onInternalError`（与 `SyncServer.onInternalError`
+**同一条通道**，主机侧只留一个出口）。⚠️ **绝不拼进 `reason`** ——
+`StateError.toString()` 的前缀是 `Bad state:`，拼进去等于把 Dart 的异常文本
+给用户看（M15 / §CS·五 的同一类问题）。
+
+**Windows UI 这一侧**：`ServiceSink → *Service.create` 把拒绝转成 `StateError` 抛出，
+开单页的兜底 catch 显示 `storageFailureNote(error)`（**分类文案**，不是 `reason`）——
+⇒ 改这里的措辞**不会**影响桌面提示；但反过来，桌面的**业务拒绝也没有专属通道**
+（用户看到的是「没能保存，请再试一次」，而重试必然再失败）。这是**独立问题**，
+见 `reply_review.md` §CV·十七·四。

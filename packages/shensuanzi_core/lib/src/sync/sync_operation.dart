@@ -11,6 +11,9 @@
 /// 例：`products` 的 `is_active` 在 wire 上是 `1` / `0`，不是 `true` / `false`。
 library;
 
+import '../reject_code.dart';
+import 'sync_failure.dart';
+
 /// 同步操作类型（`docs/data_model.md` §4.1）。
 enum SyncOpType {
   createDocument('createDocument'),
@@ -160,6 +163,9 @@ class SyncPushResponse {
       entityId: map['entity_id']! as String,
       status: SyncStatus.fromWire(map['status']! as String),
       reason: map['reason'] as String?,
+      // ⚠️ **不认识的码 ⇒ null，不抛**（前向兼容：主机可能比客户端新。
+      // `reason_code` 是**只增不改**的协议 —— `sync_protocol.md` §8.5.1）。
+      reasonCode: RejectCode.fromWire(map['reason_code'] as String?),
       serverState: serverState == null
           ? null
           : Map<String, Object?>.from(serverState as Map),
@@ -190,15 +196,38 @@ class SyncResponse {
     required this.entityId,
     required this.status,
     this.reason,
+    this.reasonCode,
     this.serverState,
-  });
+  }) : assert(
+         reasonCode == null || status == SyncStatus.rejected,
+         'reason_code 只属于 rejected（conflict 靠 server_state 说话）',
+       );
 
-  /// 便捷构造：拒绝 + 原因
-  factory SyncResponse.rejected(String entityId, String reason) =>
-      SyncResponse(
-        entityId: entityId,
-        status: SyncStatus.rejected,
-        reason: reason,
+  /// 便捷构造：拒绝 + 原因 + **机读码**。
+  ///
+  /// ⚠️ `code` 是 **required** —— 漏给码就编不过。这是有意的（§AI-1
+  /// 「不可表示优于靠测试覆盖」）：若给默认值，加分支时忘给码会**静默**通过，
+  /// 而「测试还能区分分支」正是加 `reason_code` 的**唯一理由**。
+  factory SyncResponse.rejected(
+    String entityId,
+    String reason, {
+    required RejectCode code,
+  }) => SyncResponse(
+    entityId: entityId,
+    status: SyncStatus.rejected,
+    reason: reason,
+    reasonCode: code,
+  );
+
+  /// **协议违反**（客户端 bug）的拒绝 —— `reason` 恒为 [malformedSyncRequestReason]。
+  ///
+  /// 这个工厂的存在是为了让「协议违反却把细节写进 `reason`」**不可表示**：
+  /// 走它的分支**给不出**自定义文案，细节必须由调用方送进 `onInternalError`。
+  factory SyncResponse.malformed(String entityId, RejectCode code) =>
+      SyncResponse.rejected(
+        entityId,
+        malformedSyncRequestReason,
+        code: code,
       );
 
   final String entityId;
@@ -206,6 +235,12 @@ class SyncResponse {
 
   /// 仅 `rejected` 时非空
   final String? reason;
+
+  /// 仅 `rejected` 时非空：**机读**的拒绝原因（wire 字段名 `reason_code`）。
+  ///
+  /// ⚠️ **客户端按它分支，不解析 [reason]** —— `reason` 是给人看的中文，
+  /// 文案会变；`reasonCode` 是协议（`docs/sync_protocol.md` §8.5，只增不改）。
+  final RejectCode? reasonCode;
 
   /// 仅 `conflict` 时非空：主机侧的当前状态（wire JSON）
   final Map<String, Object?>? serverState;
@@ -216,10 +251,12 @@ class SyncResponse {
     'entity_id': entityId,
     'status': status.wire,
     if (reason != null) 'reason': reason,
+    if (reasonCode != null) 'reason_code': reasonCode!.wire,
     if (serverState != null) 'server_state': serverState,
   };
 
   @override
-  String toString() =>
-      'SyncResponse(${status.wire}${reason == null ? '' : ', $reason'})';
+  String toString() => 'SyncResponse(${status.wire}'
+      '${reasonCode == null ? '' : ', ${reasonCode!.wire}'}'
+      '${reason == null ? '' : ', $reason'})';
 }

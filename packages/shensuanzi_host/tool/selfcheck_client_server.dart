@@ -515,8 +515,10 @@ Future<void> main() async {
     final SyncQueueEntry after = w.clientA.queue.findById(action.id)!;
     check('rejected → 进重试而非死信',
         after.status == SyncQueueStatus.pending && after.retryCount == 1);
-    check('原因含「不适用」',
-        after.lastError!.contains('不适用'), '${after.lastError}');
+    // #22 裁定：协议违反（非送货单不能签收）的回执给通用中文 ⇒ 队列里存的
+    // 也是它；细节（`purchase 不适用签收`）只在**主机日志**里。
+    check('失败原因 = 协议违反的通用文案',
+        after.lastError == malformedSyncRequestReason, '${after.lastError}');
 
     final SyncClient wrong = SyncClient(
       db: w.mirrorA,

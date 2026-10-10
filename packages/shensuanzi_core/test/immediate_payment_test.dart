@@ -324,7 +324,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('party_id'));
+      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
       expect(countOf('documents'), 0);
     });
 
@@ -534,7 +534,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('超过被核销单未收金额'));
+      expect(outcome.code, RejectCode.ruleValidationFailed, reason: outcome.reason);
       expect(documents.findById(sale.id)!.paidAmount, 0);
     });
 
@@ -573,8 +573,8 @@ void main() {
             totalAmount: 100,
           ),
           now: now(),
-        ).reason,
-        contains('account_id'),
+        ).code,
+        RejectCode.ruleInternalError,
       );
       expect(
         engine.dispatch(
@@ -584,8 +584,8 @@ void main() {
             totalAmount: 100,
           ),
           now: now(),
-        ).reason,
-        contains('party_id'),
+        ).code,
+        RejectCode.ruleInternalError,
       );
     });
   });
@@ -633,7 +633,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('超过被核销单未收金额'));
+      expect(outcome.code, RejectCode.ruleValidationFailed, reason: outcome.reason);
       expect(documents.findById(sale.id)!.paidAmount, 0);
       expect(
         db.raw
@@ -680,7 +680,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('只接受'));
+      expect(outcome.code, RejectCode.actionNotApplicable, reason: outcome.reason);
       expect(documents.findById(sale.id)!.paidAmount, 0);
       expect(money.balanceOf(accountId), 0, reason: '资金不得动');
     });
@@ -722,7 +722,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('只接受'));
+      expect(outcome.code, RejectCode.actionNotApplicable, reason: outcome.reason);
       expect(documents.findById(purchase.id)!.paidAmount, 0);
     });
 
@@ -764,7 +764,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('往来方不一致'));
+      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
       expect(documents.findById(sale.id)!.paidAmount, 0);
     });
 
@@ -808,7 +808,7 @@ void main() {
         now: now(),
       );
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('互斥'));
+      expect(outcome.code, RejectCode.payloadMutuallyExclusive, reason: outcome.reason);
     });
   });
 }

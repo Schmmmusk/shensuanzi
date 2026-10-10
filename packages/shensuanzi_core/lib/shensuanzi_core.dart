@@ -180,7 +180,12 @@ export 'src/sync/sync_failure.dart'
         ConstraintKind,
         constraintKindOf,
         malformedSyncRequestReason,
+        ruleInternalErrorReason,
+        storageRejectCode,
         syncFailureReason;
+
+// 用户可见文本的规范（`RejectCode`：`RuleOutcome` 与 `SyncResponse` 共用的机读码）
+export 'src/reject_code.dart' show RejectCode;
 
 // 同步（客户端：离线队列 + 拉取应用。**不含传输实现**）
 export 'src/sync/pairing_payload.dart' show PairingPayload;

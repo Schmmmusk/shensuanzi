@@ -242,7 +242,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('party_id'));
+      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
       expect(documents.findById(delivery.id), isNull);
     });
   });
@@ -544,7 +544,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('cancelled'));
+      expect(outcome.code, RejectCode.actionNotApplicable, reason: outcome.reason);
       expect(documents.findById(delivery.id)!.status, DocStatus.cancelled);
     });
 
@@ -559,7 +559,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('不适用'));
+      expect(outcome.code, RejectCode.actionNotApplicable, reason: outcome.reason);
     });
 
     test('单据不存在 → rejected', () {
@@ -568,7 +568,7 @@ void main() {
         now: now(),
       );
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('不存在'));
+      expect(outcome.code, RejectCode.targetMissing, reason: outcome.reason);
     });
   });
 

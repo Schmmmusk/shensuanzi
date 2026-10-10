@@ -253,12 +253,24 @@ Response: {
   "results": [
     { "entity_id": "...", "status": "applied" },
     { "entity_id": "...", "status": "conflict", "server_state": {...} },
-    { "entity_id": "...", "status": "rejected", "reason": "..." }
+    { "entity_id": "...", "status": "rejected",
+      "reason_code": "id_mismatch", "reason": "同步请求格式有误，请重试。…" }
   ]
 }
 ```
 
 `status` 枚举：`applied` / `already_exists` / `conflict` / `rejected`
+
+**`rejected` 的两个字段**（2026-10-09 裁定，`reply_review.md` §CV·十七）：
+
+| 字段 | 给谁 | 内容 |
+|---|---|---|
+| `reason_code` | **客户端 / 测试（机读）** | 拒绝原因码，取自 `RejectCode`（**全表见 §8.5**）。⚠️ **客户端按它分支，不要解析 `reason`** —— 中文会改，码不会 |
+| `reason` | **人（中文）** | 一句结论。三类：协议违反 ⇒ 通用文案；业务拒绝 ⇒ **说「怎么办」**；落库失败 ⇒ 按结果码分类 |
+
+⚠️ `reason_code` **只出现在 `rejected`** 上（`conflict` 靠 `server_state` 说话，
+`applied` / `already_exists` 不带）。`SyncResponse.rejected` 的 `code` 参数是
+**required** —— 加分支时漏给码**编不过**
 
 **`updateMasterData` 的 payload 约束（§CS·五 裁定，2026-10-08）**：
 
@@ -596,14 +608,73 @@ GET    /api/party_ledger?party_id=&since=
 
 ### 8.5 错误码
 
-`rejected` 的 `reason` 里**可机读的前缀**（客户端可以按前缀分类，其余部分给人看）：
+`rejected` 回执带一个**机读**的 `reason_code`（字段位置见 §8.1）。
 
-| 错误码 | 出处 | 含义 |
+> ⚠️ **2026-10-09 起**：原先「可机读的前缀写在 `reason` 里」的做法**废止**
+> （`unknown_action: …` 那种）。原因有两个，都不是洁癖：
+> ① **测试**靠 `contains('中文')` 判分支，文案一变就**同时变绿**，分支写错没人发现；
+> ② `sync_protocol.md` 早就要求客户端把「引用的主数据还没同步」这类原因**关联回 id**，
+> 而用中文做这件事等于解析自然语言。
+
+### 8.5.1 码表（`RejectCode`，只增不改）
+
+**协议违反**（客户端实现的 bug —— 用户**什么都做不了** ⇒ `reason` 只有通用中文
+`malformedSyncRequestReason`，细节走主机日志 `onInternalError`）：
+
+| 码 | 含义 |
+|---|---|
+| `not_writable_table` | 表不在可写白名单 / 该 op 不支持这张表 |
+| `unknown_field` | payload 含协议外的字段 |
+| `unwritable_column` | payload 含不可写列（含 `deleteMasterData` 的「只允许 `id`」） |
+| `missing_field` | **顶层 payload 键**缺失（`payload.document` / `base_version` / `action`） |
+| `field_type_mismatch` | **键存在，但值类型 / 内容不符**（`occurred_at` / `document` / `lines`…，**含嵌套对象内部的字段**） |
+| `id_mismatch` | `payload.id` ≠ `entity_id`（id 是幂等键） |
+| `unknown_action` | 动作名不认识（v1 只支持 `mark_delivered`） |
+| `malformed_parameter` | 参数不合法（游标不是整数等） |
+| `payload_mutually_exclusive` | `immediate_payments` 与 `allocations` 互斥 |
+| `unsupported_doc_type` | v1 有意不支持的 `doc_type`（如 `transfer`） |
+| `action_not_applicable` | 动作对这类单**不适用**（非送货单不能签收 / 该状态不能签收 / 不可作核销目标） |
+| `target_missing` | 被操作的目标在主机上不存在（单据 / 原单 / 核销目标单） |
+
+⚠️ `missing_field` 与 `field_type_mismatch` **不是重叠，是层次**（§CV·十九 裁定）：
+前者管**结构**（`payload` 顶层键在不在），后者管**内容**（值 / 类型对不对，
+**含嵌套对象内部的字段** —— 如 `document` 内部缺 `doc_type`）。
+**客户端对两者是同一件事**（都归「协议错误」，用户看通用文案、重试无意义）⇒ **不拆码**；
+需要区分时（**只服务于排查**）看主机日志的 detail —— `sync_server.dart` 已把
+`document` / `lines` 拆成两条。
+
+**落库失败**（`reason` 由 `syncFailureReason` 按**结果码**分类给出中文）：
+
+| 码 | 含义 |
+|---|---|
+| `duplicate` | 唯一字段重复（`PRIMARY KEY` / `UNIQUE`） |
+| **`reference_missing`** | **引用的对象在主机上不存在（`FOREIGN KEY`）** —— 见 §8.5.2 |
+| `data_invalid` | 数据不完整或不合法（`NOT NULL` / `CHECK`） |
+| `host_storage` | 主机侧存储故障（忙 / 满 / 只读 / 损坏 / 打不开） |
+
+**规则拒绝**（`RuleEngine` 透传，判据 = **用户能不能做点什么**）：
+
+| 码 | 含义 | `reason` |
 |---|---|---|
-| `unknown_action` | `documentAction` | 未知的动作名（v1 只支持 `mark_delivered`） |
-| `return_exceeds_original` | RULE-007 / RULE-008 | 累计退货量超过原单量 |
+| `return_exceeds_original` | 累计退货量超过原单量（RULE-007 / 008） | **说怎么办**（少退一点） |
+| `rule_validation_failed` | 业务拒绝的通用兜底（核销额超额 / 立即收付款超额…） | **说怎么办**（改小金额） |
+| `rule_internal_error` | **规则层内部 bug**（不变量破坏 / 协议违反被抓到） | 通用中文（细节走日志） |
 
-其余拒绝原因是**自由文本**（含中文诊断信息），客户端只需展示，不要解析。
+⚠️ 表里**没有** `rule_rejected` 这种伞码：`rule_validation_failed` 与
+`rule_internal_error` 的边界就是「用户能不能改」，再上一层只是把两类混起来。
+
+### 8.5.2 `reference_missing` 是**唯一「等一下再推就成功」的码**
+
+被引用的主数据（客户 / 商品 / 账户）**还在客户端队列里、主机还没有**时，
+`createDocument` 会撞外键 ⇒ 回 `reference_missing`。
+
+> **客户端必须按 `reason_code == 'reference_missing'` 做特殊处理**：
+> **不删镜像行、不删队列条目** —— 等被引用的主数据 push 成功、pull 确认之后，
+> **重推该单即通过**。
+>
+> ⚠️ 其余码**重试无意义**（要么是客户端 bug，要么得先改数据），不要一律退避重试。
+
+**客户端只需展示 `reason`，不要解析它**（中文会改；判分支一律用 `reason_code`）。
 
 #### 「引用的主数据尚未同步」的 rejected（D2 契约，2026-10-08）
 

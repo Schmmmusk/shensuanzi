@@ -123,7 +123,10 @@
 > §CV·十三 **禁止词表归位到 core（裁定「甲」第三轮 —— 定性为「归类修正」非边界变更）**：新建 core `user_text.dart` + core/app 各一份薄 helper `expectNoDevTerms`；`manual_content` 改 import、**app 桶删掉 re-export**（单一来源）；`sync_failure_test` / `scan_error_test` / `mobile_guidance_test` 三处改调 helper（模块特有词走 `extra`）；两包临时脚本真跑 **14 + 8** 项全过；🟡 残余：**host 那一层未做**（**2026-10-09**）
 > §CV·十四 **host 层接入共用表 —— 三层齐（裁定「甲」第四轮）**：host 新增同款薄 helper + `sync_server_test` 两处改调；`selfcheck_sync` 走**路 A 内联**（自包含）；真跑 **8 项**全过 · `selfcheck_sync` **170** ✓；⚠️ **§四 顺手查揪出 host 另 5 处校验回执自身带开发术语**（含 3 处插入表名/`Schema`）+ 2 处 `_error` 拼原始异常 ⇒ **新报备 #20**（**2026-10-09**）
 > §CV·十五 **协议违反类回执「重新分类」：走日志 + 通用中文（裁定「甲」第五轮）**：新增 core `malformedSyncRequestReason` 单一来源 + `SyncServer._malformedRequest` 统一处置（4 处）· http 侧 `_HostRoutes` 接 `onInternalError` 且 4 个动态响应体改固定文案；断言同步 **含镜像**（`selfcheck_host` 2 处漏改靠跑自检抓到）；host lib 复扫 ⇒ 用户可见面已无带术语文案；⚠️ **新报备 #21**（另约 17 处「说哪里错了」的校验回执未动）（**2026-10-09**）
+> §CV·十七 **`reason_code` + RuleEngine 拒绝分层（#21 + #22 合并落地）**：19 个 `RejectCode` · `SyncResponse.reason_code`（required 码 ⇒ 漏给编不过）· `RuleEngine` 26 处 `StateError` **按「用户能否做点什么」分流**（业务拒绝 `RuleRejection` / 内部 bug 只进日志）· 修两处泄漏（`Bad state: …` / `docs/rules.md RULE-003`）· `deleteMasterData` 改**幂等** · **单一 `onInternalError` 通道**；断言改写 **76 处**（码 / 日志两通道）；⚠️ 前置核对暴露**独立问题 #23**（桌面缺「业务拒绝」通道）（**2026-10-09**）
 > §CV·十六 **复跑两处红修复 + 同型隐患排查 + RuleEngine 核对**：core `master_data_sink_test` 偶发红根因 = **夹具冻结时钟**（UUIDv7 同毫秒顺序无保证 + `all()` 按 `created_at,id` 排；真跑铁证 冻结 **28/60** 错 vs 单调 0/60）⇒ 修 `clock: now`；同型隐患 `selfcheck_queue_sink` 两处也修（`document_sink_test` 复核安全）；host `sync_server_test:1062` 是 §CV·十五 的**漏改断言**（查子串 `白名单`、我按完整字面量 grep ⇒ 扫不到）⇒ 改断言通用文案；**裁定 §三 的 RuleEngine 核对有实货**：`RuleEngine` 兜底 catch 会把 **`Bad state: …`** 灌进用户可见 `reason`（无人守）+ `docs/rules.md RULE-003` 泄漏 + 无「机读码」通道 ⇒ **新报备 #22**，并给出 `reason_code` 落地草案（**待 go-ahead**）（**2026-10-09**）
+> §CV·十八 **host 复跑两处红 ⇒ 定性为 #22 批次的镜像漏改**（`test/` 侧滞后 `tool/` 侧）：`http_server_test` 的「列名」断言 + `client_server_test` 的 `不适用` 断言 ⇒ 改断 **`reason_code` / 通用文案** + 加 `internalErrors` 日志捕获（`HostHttpServer.start` 接出口）；**顺手补 `selfcheck_host` 丢掉的「点到列名」**（**116 → 117**）；**生产代码零改动**；⚠️ `dart test` 231 ⇒ 交用户复跑（**2026-10-09**）
+> §CV·十九 **裁定落地：`fieldTypeMismatch` 边界澄清 + detail 拆分**（裁定「不拆码」）：`reject_code.dart` 两码 doc 互引 + `sync_protocol §8.5.1` 表下 ⚠️（`missingField`=**顶层键**缺失 / `fieldTypeMismatch`=**值或内容**不符含嵌套字段 ⇒ **层次非重叠**）；`sync_server.dart` 的 catch **拆成 `document` / `lines` 两条 detail**（码不变）；补 `sync_server_test:370` 日志断言（**用例名撒谎**已改名）+ 收紧 `selfcheck_sync:396`（⚠️ **deviation**：用精确子串 `缺少必填列 \`doc_type\``，因 `doc_type` 也在 detail 括号提示里 ⇒ 原子串**空心**）；⚠️ lint `selfcheck_host:507` 已修 · ✅ **用户确认 deviation 合理 + 定位纠正正确** ⇒ 判据进 `docs/testing.md`（纪律 4 旁：**被断子串是否只可能由被测路径提供**；`created_at`/`必须是 documents` **不是**空心、`doc_type` **是**）+ 🚫 **裁定「不要全仓清零 `contains`」**（宽松≠空心）（**2026-10-09**）
 >
 > 📦 **已归档的节**（`~~删除线~~` 表示已移出本文件）：§0-§7 → `reply_review_archive_v1.md`；  
 > **§F / §G / §I / §J / §K 与 §H 的落地记录部分** → `reply_review_archive_v2.md`（2026-09-28）。  
@@ -3555,11 +3558,14 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 | ~~18~~ | ~~裁定 §五 的 `expectNoDevTerms` helper 落不了~~ | ✅ **已裁定：甲，但定性纠正为「归类修正」**（2026-10-09）+ **已落地**（§CV·十三）：常量归位到 **core** `lib/src/user_text.dart`；helper **各包各一份薄的**（依赖 `package:test`，不能跨包）；app 桶**不留 re-export** | **§CV·十二·五 / §CV·十三** |
 | ~~19~~ | ~~host 那一层要不要也接共用表~~ | ✅ **已裁定：甲**（2026-10-09）+ **已落地**（§CV·十四）：host 新增同款薄 helper + `sync_server_test` 两处改调；`selfcheck_sync` 走路 A 内联。**至此三层（core / host / app）全部覆盖** | **§CV·十三·六 / §CV·十四** |
 | ~~20~~ | ~~host 另有 5 处校验回执自身带开发术语~~ | ✅ **已裁定：甲，但定性为「重新分类」**（2026-10-09）+ **已落地**（§CV·十五）：这 5 处（+http 2 处）**本就是客户端 bug** ⇒ 走 `onInternalError` 记日志 + 通用中文；新增 core `malformedSyncRequestReason` | **§CV·十四·四 / §CV·十五** |
-| ~~21~~ | ~~另约 17 处校验类 `rejected` 仍是「说哪里错了」的措辞~~ | ✅ **已裁定：甲 + 方案 A（加 `reason_code`）**（2026-10-09）—— **待落地**：`reason` 改通用中文、加**机读** `reason_code`、测试从 `contains('中文')` 改成 `reasonCode == …`（**分支区分能力由此恢复**）；「另 3 处」单独处置（`主数据不存在` ⇒ **行为改**：`deleteMasterData` 幂等）。⚠️ **与 #22 耦合**（码在 `_mapOutcome` 汇合）⇒ 两件一起设计。落地草案见 **§CV·十六·五** | **§CV·十五·五 / §CV·十六·五** |
-| **22** | 🔴 **`RuleEngine` 的 rejected 会把 `Bad state: …` 灌进用户可见 `reason`** —— `dispatch` 兜底 catch 产出 `'规则执行失败，整单回滚：$error'`，而 `SyncServer._mapOutcome` **原样**透传给客户端；另 `'purchase 不适用「签收」动作（docs/rules.md RULE-003）'` 泄漏**内部文档路径**与 wire 类型名；且 `RuleEngine` **没有「机读码」通道**（兜底 catch 把「用户能改的领域拒绝」与「客户端 bug」压成同一种东西）。**今天无任何断言守着它** | **未裁**（裁定 §三 只要求「核对 `RuleEngine` 输出」；核对结果指向 `RuleEngine` 自身要改，**超出 17 处范围**）：甲 只修泄漏（`Bad state:` / `docs/rules.md` 进日志、回执改通用）/ **乙 甲 + 给 `RuleOutcome` 加码字段**（与 #21 的方案 A 同一次设计 —— 推荐）/ 丙 维持现状 | **§CV·十六·四** |
+| ~~21~~ | ~~另约 17 处校验类 `rejected` 仍是「说哪里错了」的措辞~~ | ✅ **已裁定（甲 + 方案 A `reason_code`）+ 已落地**（2026-10-09，**与 #22 合并执行**）：协议违反 12 码 + 落库失败 4 码，**测试改断 `reasonCode`**；`主数据不存在` ⇒ **行为改**（`deleteMasterData` 幂等） | **§CV·十六·五 / §CV·十七** |
+| ~~22~~ | ~~`RuleEngine` 的 rejected 会把 `Bad state: …` 灌进用户可见 `reason`~~ —— `dispatch` 兜底 catch 产出 `'规则执行失败，整单回滚：$error'`，而 `SyncServer._mapOutcome` **原样**透传给客户端；另 `'purchase 不适用「签收」动作（docs/rules.md RULE-003）'` 泄漏**内部文档路径**与 wire 类型名；且 `RuleEngine` **没有「机读码」通道**（兜底 catch 把「用户能改的领域拒绝」与「客户端 bug」压成同一种东西）。**今天无任何断言守着它** | ✅ **已裁定：乙（比提案大 —— 四件事）+ 已落地**（2026-10-09，**与 #21 合并执行**，§CV·十七）：① 修显式泄漏（`$error` / `docs/rules.md` 不再进 `reason`）② 加 `RuleEngine.onInternalError`（**与 `SyncServer` 同一通道**）③ **26 处 `StateError` 按判据分流**（业务拒绝 `RuleRejection` / 内部 bug 只进日志）④ 双方加 `reason_code`（不留 `rule_rejected` 伞码） | **§CV·十六·四 / §CV·十七** |
+| **23** | 🟠 **桌面的「业务拒绝」没有通道** —— `ServiceSink → *Service.create` 把**所有**拒绝转成裸 `StateError`，开单页只 catch `SaleDraftInvalid` ⇒ 业务拒绝（退货超额 / 核销超额…）在 Windows 上显示「没能保存。请再试一次」，而**重试必然再失败**（M15 自己那条「不承诺做不到的事」） | **未裁**（裁定 §六 点名「必须在做 #22 之前确认」⇒ 已确认，且**明确是另一个问题**，不许用「保留详细文案」掩盖）：甲 `*Service.create` 改抛带类型的 `RuleRejected(code, reason)`，开单页加一个 catch 分支（文案现成）/ 乙 维持现状，先修 Draft 校验缺口让业务拒绝在桌面不可达 / 丙 不动 | **§CV·十七·一 / §CV·十七·六** |
 
-> 📌 **待落地（已裁）**：**第 21 行**（17 处 ⇒ 甲 + `reason_code`）—— 与 **第 22 行**（`RuleEngine` 泄漏 / 加码）**同一次设计**，草案已备（§CV·十六·五）⇒ **等一句 go-ahead**。
-> **唯一真待裁定 = 第 22 行**（`RuleEngine` 改到哪一步：甲 / 乙 / 丙）。
+> 📌 **唯一真待裁定 = 第 23 行**（桌面的「业务拒绝」通道：甲 / 乙 / 丙）——
+> **#21 / #22 已合并落地**（§CV·十七），第 16 / 17 / 18 / 19 / 20 / 21 / 22 行全部关闭。
+> ⚠️ 该批次**落地不全**：`test/` 侧两处断言漏改（tool 侧当时已改）⇒ **§CV·十八** 补齐，
+> 生产代码无改动。**教训：批次落地面是 test / tool 两侧，必须成对清点。**
 > 另**一件等时间** —— **第 2 行 `DocumentDraft`**（裁定「开」，判据 = 1b 后 ≥1 周，**未到期**）。
 > 其余下一步是**开工项**（§AR·一）：**D2b 剩余（`isPending` UI + 失败明细关联 id）** · **v3 段 1b** · **Android**。
 
@@ -9178,3 +9184,277 @@ host 自检：selfcheck_sync 178 ✓ · queue_sink 36 ✓ · host 116 ✓ · cli
 根因铁证临时脚本：冻结 28/60 错 · 单调 0/60 错（已删，无残留）
 ❌ 根 `dart test` / `flutter test` 仍被 231 挡住 ⇒ 交用户复跑
 ```
+
+## §CV·十七 `reason_code` + RuleEngine 拒绝分层（**#21 + #22 合并落地**，2026-10-09）
+
+> 裁定原文见 `docs/reply.md`（选乙；**四件事**：修显式泄漏 + 加 `onInternalError` 通道 +
+> StateError 分流 + 双方加 `reason_code`；**不留 `rule_rejected` 伞码**；**#21/#22 记账分开、执行合并**）。
+
+### 一、⚠️ 前置核对（裁定 §六 要求「做 #22 之前必须确认」）—— 结论：**安全**
+
+**问题**：Windows UI 路径上 `RuleEngine` 的拒绝会不会被触发？若会，改通用文案后
+桌面提示会不会**变差**？
+
+**实测链路**：开单页提交 → `ServiceSink.submitSale` →（**只 catch `SaleDraftInvalid`**）
+→ `SaleService.create` 在 `outcome.status != applied` 时 `throw StateError(outcome.reason)`
+→ 页面兜底 catch → **显示 `storageFailureNote(error)`**（M15 分类文案），
+原始异常走 `onStorageFailure → AppLog.crash`。
+
+| 结论 | 说明 |
+|---|---|
+| ✅ **`RuleEngine` 的 `reason` 根本不到桌面界面** | 页面显示的是**分类文案**（`StateError` ⇒ `StorageFailureKind.unknown` ⇒「没能保存。请再试一次…」），`reason` 只随原始异常进日志 ⇒ **改措辞零回归** |
+| 🟠 **但暴露一个独立问题** | 桌面的**业务拒绝没有专属通道**：退货超额时用户看到「没能保存。请再试一次」—— 而**重试必然再失败**（是规则不让过）。这违反 M15 自己那条「**不承诺自己做不到的事**」⇒ 独立问题，见 **§CV·十七·六** |
+
+### 二、码表：**19 个 `RejectCode`**（`core/lib/src/reject_code.dart`，`wire` 只增不改）
+
+| 类 | 码 |
+|---|---|
+| **协议违反**（12，`reason` 恒为通用中文，细节走日志） | `not_writable_table` · `unknown_field` · `unwritable_column` · `missing_field` · `field_type_mismatch` · `id_mismatch` · `unknown_action` · `malformed_parameter` · `payload_mutually_exclusive` · `unsupported_doc_type` · `action_not_applicable` · `target_missing` |
+| **落库失败**（4，`reason` 由 `syncFailureReason` 分类） | `duplicate` · **`reference_missing`** · `data_invalid` · `host_storage` |
+| **规则拒绝**（3） | `return_exceeds_original` · `rule_validation_failed` · `rule_internal_error` |
+
+**没有 `rule_rejected` 伞码**（按裁定 §三）：`rule_validation_failed`（用户能改）与
+`rule_internal_error`（不能改）的边界就是那条判据，再上一层只是把两类混起来。
+
+**两个「不可表示」设计**（§AI-1 口径）：
+
+1. `SyncResponse.rejected(…, {required RejectCode code})` —— 漏给码**编不过**；
+2. `SyncResponse.malformed(entityId, code)` / `RuleRejection.protocol(code, {detail})` ——
+   **给不出**自定义文案 ⇒ 「协议违反却把细节写进 `reason`」不可表示，细节只能走 `detail`/日志。
+
+### 三、`RuleEngine` 的 26 处 `StateError` 分流（裁定 §二③ 的核心）
+
+**判据**：**用户能不能做点什么**。
+
+| 分流 | 站点（摘要） | 处置 |
+|---|---|---|
+| **业务拒绝**（5） | `cost_policy` 的 `return_exceeds_original` · 核销额超过未收金额 · 核销总额超过收付款单金额 · 立即收付款总额超过单据总额 | `throw RuleRejection('…说怎么办…', code: …)` → `RuleOutcome.rejected` |
+| **协议违反**（8） | 原单不存在 · 被核销单不存在 · 不可作为核销目标 · 方向不符 · 互斥（dispatch）· v1 未实现 transfer · 签收：单据不存在 / 类型不适用 / 状态不能签收 | `RuleRejection.protocol(code, detail: '…')` ⇒ 回执通用中文 + 码，`detail` **进日志** |
+| **内部 bug**（其余 ~13） | 数量必须为正数（四处）· `ref_doc_id` 缺失 · 原单类型不符 · `account_id` / `party_id` 缺失 · 核销金额非正 · 往来方不一致 · 盘点 `total_amount` · 盘点数量为负 · 明细 `document_id` 不一致 · 金额之和不符（不变量 B5）· 单号/编码生成器 | **保留 `StateError`** ⇒ 兜底 catch：`onInternalError` 记日志 + 回执 `rule_internal_error` + 通用中文 |
+
+**两处泄漏的具体修法**：
+
+- `dispatch` 兜底 catch：`'规则执行失败，整单回滚：$error'` → **只进日志**。
+  （`StateError.toString()` 的前缀是 **`Bad state:`** —— 原样回传给用户是把 Dart 异常文本
+  当产品文案；而且它**把 `return_exceeds_original` 这种好信息一起毁了**。）
+- `markDelivered` 的 `'…不适用「签收」动作（docs/rules.md RULE-003）'` → 通用中文
+  （**wire 类型名 + 仓库内部文档路径**不再进用户可见文本）。
+
+**单一日志通道**（裁定 §二② 倾向）：`SyncServer` 把自己的 `onInternalError`
+**同时**给 `RuleEngine`（`RuleEngine(db, onInternalError: onInternalError)`）⇒
+主机侧只有**一个**出口，同一条错误不会在两个出口各记一次。
+
+### 四、`deleteMasterData` 目标不存在 ⇒ **幂等**（#21「另 3 处」的行为改）
+
+`SyncResponse.rejected('主数据不存在…')` → **`already_exists`**。理由：多半是
+**另一台设备已经删了**，结果与本次意图一致；与「同一实体 upsert 幂等」（§CV·五）同口径
+—— 客户端不需要在本地合并多次操作，重推无害。**原来这条路会指数退避重试到死信。**
+
+### 五、`reason_code` 的透传与落点
+
+| 位置 | 改动 |
+|---|---|
+| `SyncResponse` | 新字段 `reasonCode`（wire `reason_code`，仅 `rejected`；`assert` 拦住别的状态） |
+| `RuleOutcome` | 新字段 `code` + `RuleOutcome.rejected(reason, {required code})` |
+| `_mapOutcome` | **汇合点**：`outcome.reason` / `outcome.code` 直接透传（两边是**同一份枚举**，无需映射表） |
+| `SyncServer._malformedRequest` | 新增 `RejectCode code` 参数，回执走 `SyncResponse.malformed` ⇒ **协议违反的 18 个站点统一**「日志 + 通用文案 + 码」 |
+| 兜底 catch | `code: storageRejectCode(error)`（与 `syncFailureReason` **同一套分类**，改一个就改另一个） |
+| **客户端解析** | `SyncPushResponse._resultFrom` 补 `RejectCode.fromWire(map['reason_code'])` —— ⚠️ **不认识的码 ⇒ `null`，不抛**（前向兼容：主机可能比客户端新；码表只增不改） |
+
+### 六、⚠️ 报备（新）：**桌面的业务拒绝没有通道** —— 列 §AR·二 **#23**
+
+前置核对（§一）暴露的独立问题：`ServiceSink → *Service.create` 把**所有**拒绝都转成
+裸 `StateError`，开单页只认 `SaleDraftInvalid` ⇒ 业务拒绝（退货超额 / 核销超额…）
+在桌面上显示「没能保存。请再试一次」，**而重试必然再失败**。三个选项（等裁定）：
+
+- **甲**：`*Service.create` 改抛**带类型的** `RuleRejected(code, reason)`，开单页多一个
+  catch 分支 ⇒ 用 `reason`（文案已经写好了「怎么办」）；
+- 乙：维持现状（先修 Draft 校验缺口，让业务拒绝在桌面上不可达）；
+- 丙：不动。
+
+**未裁前不动**（这正是裁定 §六 说的「那是另一个问题，别用保留详细文案来掩盖」）。
+
+### 七、🟠 我这侧的一次事故（诚实报备）
+
+写 `selfcheck_sync.dart` 的批量改写脚本时，我把「插入型改动（加日志捕获）」放在了
+**行号编辑之前** ⇒ 后面所有行号**位移 +20**，改到了**错误的行**上，文件被改坏。
+`git checkout -- <file>` 还原后**按「先按行号改、再做插入」重做**才成功。
+**教训**：**批量脚本里「按行号编辑」与「插入/删除行」不能混**——先做完所有行号编辑，
+再做插入；或者全程用文本锚点。已写进 MEMORY。
+
+### 八、本侧验证
+
+```
+core  typecheck 45 入口 ✓
+      selfcheck 117 · products 58 · payments 93 · sale 19 · query 30 · sync_client 96
+      rules 45 · returns 89 · delivery 70 —— **全绿**
+host  typecheck 11 入口 ✓
+      selfcheck_sync **178** · host **116** · client_server 36 · queue_sink 36 · service 76/76
+app   typecheck 29 入口 ✓ · selfcheck_app 154 ✓
+```
+
+**测试/自检改写统计**（`contains('中文')` → 码 / 日志两通道）：
+
+| 位置 | 处数 | 形式 |
+|---|---|---|
+| `core/test` 4 文件 | 22 | `expect(x.code, RejectCode.…)`（`reason:` 参数保留原文，失败时看得见） |
+| `core/tool` 4 文件 | 15 | `x.code == RejectCode.…` |
+| `host/test/sync_server_test.dart` | 21 + 1 行为改 | 码断言 + **`internalErrors` 日志捕获**（列名类）；`目标不存在` 用例改名 + 断 `already_exists` |
+| `host/tool` 3 文件 | 18 | 码断言 / `internalErrors` 查日志 / `reason_code`（HTTP 层 JSON） |
+
+**分支区分能力**：协议违反类靠 `reason_code`；**内部 bug 类靠日志**（`internalErrors`
+捕获 `RuleEngine`/`SyncServer` 的中文诊断）—— 两类都**没有**退化成冒烟测试。
+
+### 九、用户侧 `flutter analyze` 的 4 处 lint（已修）
+
+| 文件 | lint | 修法 |
+|---|---|---|
+| `core/lib/src/rules/rule_rejection.dart:34` | `type_init_formals` | `RuleRejection.protocol(RejectCode this.code, …)` 的**类型注解冗余** ⇒ 去掉（字段本身已声明类型） |
+| `host/tool/selfcheck_sync.dart:384 / 397 / 456` | `unnecessary_string_interpolations` ×3 | `'${internalErrors.join(' \| ')}'` ⇒ 直接传 `internalErrors.join(' \| ')` |
+
+⚠️ **教训**：`core/lib/` 有 `dart run tool/typecheck.dart`（**只查类型不查 lint**）⇒
+lint 只能靠 `flutter analyze` / `dart analyze`，**我这一侧没有 lint 门禁**。
+「多余插值」「多余类型注解」这两类只有 analyze 会报。`typecheck` **含 `test/` 入口**（本轮实测）。
+
+---
+
+## §CV·十八 host 复跑两处红 —— 定性为 **#22 批次的镜像漏改**（2026-10-09）
+
+### 一、用户复跑报的两处红
+
+| 位置 | 断言期望 | 实际 |
+|---|---|---|
+| `host/test/http_server_test.dart:626` | `reason` 含 `缺少必填列 \`id\`` | **通用文案**（`malformedSyncRequestReason`） |
+| `host/test/client_server_test.dart:514` | `lastError` 含 `不适用` | **通用文案**（同上） |
+
+### 二、根因：**不是回归，是 #22 的断言改写有一侧没落地**
+
+两处都在断 `reason` 的**中文文案** —— 而 #22 已裁定：**协议违反类回执只给通用中文，
+细节进日志**（§CV·十七）。按「同一断言在 test / tool 两侧」清点镜像：
+
+| 场景 | `tool/` 侧（#22 已改） | `test/` 侧（**漏改**） |
+|---|---|---|
+| 明细漏 `id` | `selfcheck_host.dart` 断 `reason_code == field_type_mismatch` | 仍在断列名中文 |
+| purchase 收 `mark_delivered` | `selfcheck_client_server.dart` 断 `lastError == malformedSyncRequestReason` | 仍断 `contains('不适用')` |
+
+⇒ 两处都是「tool 侧已按 #22 改、test 侧没跟上」。**生产代码零改动**（`_malformedRequest`
+的「细节进日志」通路早已就位，`HostHttpServer.start` 早已收 `onInternalError`）。
+
+### 三、修法（**仅 `test/**` 与 `tool/`**）
+
+1. `http_server_test.dart`：`setUp` 加 `internalErrors` 捕获
+   （`HostHttpServer.start(onInternalError: …)`，与 `sync_server_test` 同一写法）
+   ⇒ 断 **`reason_code == 'field_type_mismatch'`** + **日志含 `缺少必填列 \`id\``**；
+   用例改名（原文「原因点出列名」在 #22 后由**日志**承担）。
+2. `client_server_test.dart:514`：改断 **`lastError == malformedSyncRequestReason`**
+   （与 tool 镜像逐字一致）。
+3. `selfcheck_host.dart`：**顺手补齐 tool 侧的同一空缺** —— 原 #22 改写只断码，
+   **把「点到列名」整条丢了**（而注释还写着「点出列名」）。新增
+   `check('漏列 ⇒ 细节（列名）进主机日志', …)` ⇒ `selfcheck_host` **116 → 117**。
+
+### 四、本侧验证（真跑）
+
+- `typecheck` 11 入口 ✓（**含 `test/`**）；另用临时脚本
+  `import '../test/xxx_test.dart' as x; void main(){print(x.main);}` + `dart run`
+  ⇒ **两个测试文件真编译通过**（新增的增量门禁技巧，已记 MEMORY §二）。
+- `selfcheck_host` **117** ✓ · `selfcheck_client_server` **36** ✓ · `selfcheck_sync` 178 ✓ ·
+  `queue_sink` 36 ✓ · `service` 76/76 ✓。
+- **反向灵敏度（真跑取证）**：临时打印捕获到的日志原文 ⇒
+  `同步操作失败（createDocument：document / lines 类型不符）｜…Invalid argument(s) (id): 缺少必填列 \`id\`。已有列：document_id, product_id, …`
+  ⇒ 命中串确实来自 **detail**（**label 里没有它**）⇒ 断言不是空心的。
+  ⚠️ 该陷阱（`label｜detail` 拼接后子串取自 label 会空心化）已写进 MEMORY §五。
+- ⚠️ **`dart test` 仍被 `CreateFile failed 231` 挡住** ⇒ **交用户复跑确认**。
+
+### 五、教训
+
+**批次写明「断言改写」时，落地面是 `test/**` 与 `tool/selfcheck*` 两侧**；
+清点必须按「**同一断言 × 两侧**」成对核对，否则「tool 绿、test 红」这类漏改
+只会在用户复跑时才暴露（本轮就是）。已写进 MEMORY §三·2。
+
+---
+
+## §CV·十九 裁定落地：`fieldTypeMismatch` 边界澄清 + detail 拆分 + `:370` 用例补齐（2026-10-09）
+
+### 一、用户报的 lint（已修）
+
+| 位置 | lint | 修法 |
+|---|---|---|
+| `host/tool/selfcheck_host.dart:507` | `unnecessary_string_interpolations` | `'${internalErrors.join(' \| ')}'` ⇒ 直接传 `internalErrors.join(' \| ')`（与 §CV·十七·九 同类；**`typecheck` 只查类型不查 lint**） |
+
+### 二、问题 1 裁定（**不拆码**）落地
+
+用户裁定：**不拆 `RejectCode`**。`missingField` = **顶层 payload 键缺失**、
+`fieldTypeMismatch` = **键存在但值类型 / 内容不符**（**含嵌套对象内部的字段**）
+—— 两者是**层次**关系，不是重叠。落地两件事：
+
+**① 补边界说明**（防后人再把它当 bug 提出来）：
+- `core/lib/src/reject_code.dart`：两个枚举值的 doc 相互 `[...]` 引用 + 判据 + 为什么不分码。
+- `docs/sync_protocol.md §8.5.1`：两行改写为「**顶层 payload 键**缺失」/「**键存在但值/内容
+  不符**（含嵌套对象内部字段）」，并在表下加 ⚠️ 一段（客户端对两者是**同一件事** ⇒ 不拆码；
+  区分**只服务排查** ⇒ 落日志 detail）。
+
+**② `sync_server.dart` 的 catch 拆两条**（原一个 `try` 同时包 `Document.fromRow` +
+`_linesFrom` ⇒ detail 里分不清是谁出的问题，而 `reason` 已是通用文案 ⇒ 日志是唯一线索）：
+
+| | label | detail |
+|---|---|---|
+| document | `document 字段类型不符` | `document 字段类型不符：$error（必填 id / doc_type / status / occurred_at）` |
+| lines | `lines 类型不符` | `lines 类型不符：$error（元素是完整 wire 行，含客户端生成的 id）` |
+
+**码不变**（都是 `fieldTypeMismatch`）⇒ 客户端与既有断言**零感知**（拆分只动 detail / label）。
+
+### 三、问题 2 裁定（**要补**）落地
+
+- `host/test/sync_server_test.dart:370`：用例名 `document 缺必填列 → rejected，且原因点出列名`
+  （**名撒谎**：写「点出列名」却没断）⇒ 改名 **`document 缺必填列（doc_type）→ rejected，列名只进日志`**
+  + **补日志断言**（照抄同文件 `created_at` 那条的完整模式）。
+- ⚠️ **deviation（显式标注）**：裁定示范的子串是 `contains('doc_type')`，我落地成
+  **`contains('缺少必填列 \`doc_type\`')`**。理由：新 detail 的括号提示里**本来就有** `doc_type`
+  （`（必填 id / doc_type / status / occurred_at）`）⇒ `contains('doc_type')` 会在 `$error`
+  丢失时**照样绿**（**空心断言**，正是 §五 那条纪律要防的）。**同一原因**，把 tool 侧
+  `selfcheck_sync.dart:396` 的**既有**断言一并收紧。
+- **「两处覆盖」的真实配对**：`:370` 的 tool 侧镜像**不是 `selfcheck_host`**（那是「明细漏 id」
+  = `lines` 路径），而是 **`selfcheck_sync.dart:390`**（同样 `..remove('doc_type')`）。
+  两侧都已改完 ⇒ 成对，与裁定「不要单边改」一致。
+
+### 四、本侧验证
+
+- host `typecheck` 11 入口 ✓；临时脚本编译 `sync_server_test.dart` ✓。
+- `selfcheck_sync` **178** ✓（含收紧后的 `doc_type` 断言 ⇒ 证明日志里确有该精确串）·
+  `selfcheck_host` **117** ✓ · `client_server` 36 ✓ · `queue_sink` 36 ✓ · `service` 76/76 ✓。
+- core `typecheck` 45 ✓ + `selfcheck_rules` 45 / `delivery` 70 / `returns` 89 ✓。
+- grep：**新 detail / label 未被任何 `test` / `tool` 断言引用** ⇒ 拆分不产生漏改。
+- ⚠️ `dart test` / `dart analyze` 仍撞 231 ⇒ **交用户复跑**。
+
+### 五、附带说明
+
+§CV·十八·四 引用过**旧 label**（`同步操作失败（createDocument：document / lines 类型不符）｜…`）
+—— 那是**改动前**那次真跑的原文，按「历史正文不动」保留；本节之后该 label 已不存在
+（改成 `document 字段类型不符` / `lines 类型不符`）。
+
+### 六、用户确认 + 要求补的两件（2026-10-09 第二轮 `reply.md`）
+
+**用户确认**（原话要点）：deviation **合理、落地正确，不是走捷径**；
+**「这不是你偏离了裁定，是裁定示范本身不够精确」**；`selfcheck_sync.dart` 定位**纠正得对**
+（上轮说 `selfcheck_host` 是错的）；顺手收紧既有断言**也对**，但要**写清边界**。
+
+**裁定明确「不要扩大范围」**：**不要 grep 全仓 `contains(...)` 去一次性清零空心断言** ——
+有些宽松断言是**有意的**（断 `contains('主机')` 是断**语义方向**），
+区分「空心」与「宽松」需逐处核对 detail 的实际结构，**成本高于收益** ⇒
+**按「遇到的、已确认空心的」处理，不按「疑似空心的」铺开**。
+
+**要求补的两件（均已落地）**：
+
+① **「空心断言」判据进 `docs/testing.md`**（放在 `四条硬纪律` 之后，与纪律 4 相邻）：
+判据 = **被断的子串是否只可能由被测路径提供**；含 3 个对照例（`created_at` / `必须是 documents`
+**不是**空心；`doc_type` **是**）+ 正确写法 + 🚫「不要全仓清零」。
+
+② **台账记 deviation 的来历与定位纠正** —— 裁定 §五 给定的原文，逐字落地如下：
+
+> **落地 deviation**：断言 detail 时**断「只有 `$error` 才能提供的子串」**，不是「detail 里出现的
+> 词」—— 裁定示范的 `contains('doc_type')` 因新 detail 的固定提示里含该词而空心，落地改为
+> `` contains('缺少必填列 `doc_type`') ``。**同时纠正**：`doc_type` 路径的 tool 侧镜像是
+> **`selfcheck_sync.dart`**（`lines` 路径才是 `selfcheck_host`）。
+
+**核心经验（可复用）**：**断 detail 时，断动态部分，不断固定部分。**
+（已在 `sync_server_test.dart:370` 的注释里留一句指路。）

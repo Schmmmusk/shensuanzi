@@ -302,7 +302,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('party_id'));
+      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
       expect(documents.findById(doc.id), isNull, reason: '整单回滚');
       // 「无 party 但立即全额付款 → 允许（零售散客）」的正向用例见
       // test/immediate_payment_test.dart
@@ -326,7 +326,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('不变量 B5'));
+      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
       expect(documents.findById(doc.id), isNull, reason: '整单回滚');
       expect(stock.stockOf(productId), 0);
     });
@@ -532,7 +532,7 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('total_amount 必须为 0'));
+      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
       expect(documents.findById(doc.id), isNull);
     });
 
@@ -582,7 +582,7 @@ void main() {
       final Document doc = pendingDoc(type: DocType.transfer, totalAmount: 0);
       final RuleOutcome outcome = engine.dispatch(document: doc, now: now());
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('尚未实现'));
+      expect(outcome.code, RejectCode.unsupportedDocType, reason: outcome.reason);
       expect(documents.findById(doc.id), isNull);
     });
 

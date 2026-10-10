@@ -315,7 +315,7 @@ void main() {
 
     check('再退 3 件 → rejected', outcome.status == RuleStatus.rejected);
     check('错误码 return_exceeds_original',
-        outcome.reason?.contains('return_exceeds_original') ?? false,
+        outcome.code == RejectCode.returnExceedsOriginal,
         '${outcome.reason}');
     check('整单回滚：单据未落库', documents.findById(over.id) == null);
     check('库存停在 2', stock.stockOf(p) == 2, '${stock.stockOf(p)}');
@@ -728,7 +728,7 @@ void main() {
     final RuleOutcome typeOutcome = run(wrongType, oneLine(wrongType.id, p, 1, 100));
     check('原单类型不符 → rejected', typeOutcome.status == RuleStatus.rejected);
     check('拒绝原因指向「原单类型」',
-        typeOutcome.reason?.contains('原单类型') ?? false, '${typeOutcome.reason}');
+        typeOutcome.code == RejectCode.ruleInternalError, '${typeOutcome.code}｜${typeOutcome.reason}');
 
     final Document noRef = mkDoc(
       type: DocType.purchaseReturn,
@@ -738,7 +738,7 @@ void main() {
     final RuleOutcome noRefOutcome = run(noRef, oneLine(noRef.id, p, 1, 100));
     check('ref_doc_id 缺失 → rejected', noRefOutcome.status == RuleStatus.rejected);
     check('拒绝原因指向 ref_doc_id',
-        noRefOutcome.reason?.contains('ref_doc_id') ?? false, '${noRefOutcome.reason}');
+        noRefOutcome.code == RejectCode.ruleInternalError, '${noRefOutcome.code}｜${noRefOutcome.reason}');
 
     final Document ghost = mkDoc(
       type: DocType.purchaseReturn,
@@ -749,7 +749,7 @@ void main() {
     final RuleOutcome ghostOutcome = run(ghost, oneLine(ghost.id, p, 1, 100));
     check('原单不存在 → rejected', ghostOutcome.status == RuleStatus.rejected);
     check('拒绝原因指向「原单不存在」',
-        ghostOutcome.reason?.contains('原单不存在') ?? false, '${ghostOutcome.reason}');
+        ghostOutcome.code == RejectCode.targetMissing, '${ghostOutcome.code}｜${ghostOutcome.reason}');
     db.close();
   }
 
@@ -770,7 +770,7 @@ void main() {
     final RuleOutcome outcome = run(ret, oneLine(ret.id, b, 1, 100));
     check('原单无该商品流水 → rejected', outcome.status == RuleStatus.rejected);
     check('拒绝原因指向「没有商品」',
-        outcome.reason?.contains('没有商品') ?? false, '${outcome.reason}');
+        outcome.code == RejectCode.ruleInternalError, '${outcome.code}｜${outcome.reason}');
 
     check(
       'CostPolicy.returnCost 对不存在的原单抛错',

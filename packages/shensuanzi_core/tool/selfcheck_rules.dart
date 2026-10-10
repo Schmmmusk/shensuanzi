@@ -197,7 +197,7 @@ void main() {
   final RuleOutcome mismatch = purchase(p2, quantity: 10, unitPrice: 100, total: 999);
   check('明细与总额不符 → rejected', mismatch.status == RuleStatus.rejected);
   check('拒绝原因指向不变量 B5',
-      mismatch.reason?.contains('不变量 B5') ?? false, '${mismatch.reason}');
+      mismatch.code == RejectCode.ruleInternalError, '${mismatch.code}｜${mismatch.reason}');
   check('整单回滚：单据未落库', countOf('documents') == docsBeforeMismatch,
       '${countOf('documents')} vs $docsBeforeMismatch');
   check('整单回滚：库存未变', stock.stockOf(p2) == 0);
@@ -235,7 +235,7 @@ void main() {
   );
   check('有欠款但无 party_id → rejected', noParty.status == RuleStatus.rejected);
   check('拒绝原因指向 party_id',
-      noParty.reason?.contains('party_id') ?? false, '${noParty.reason}');
+      noParty.code == RejectCode.ruleInternalError, '${noParty.code}｜${noParty.reason}');
 
   // 内联构造 Document（不走 pendingDoc）时也必须带 party_id ——
   // 这正是漏改过两次的形状，所以在这里钉住。
@@ -342,7 +342,7 @@ void main() {
   );
   check('transfer → rejected', transfer.status == RuleStatus.rejected);
   check('拒绝原因指向「尚未实现」',
-      transfer.reason?.contains('尚未实现') ?? false, '${transfer.reason}');
+      transfer.code == RejectCode.unsupportedDocType, '${transfer.code}｜${transfer.reason}');
 
   // 用**差集**而不是硬编码列举：将来新增 doc_type 时会在这里失败。
   // delivery / sale_return / purchase_return 的细则见

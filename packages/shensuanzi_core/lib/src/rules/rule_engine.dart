@@ -8,8 +8,12 @@ import '../models/money_ledger.dart';
 import '../models/party_ledger.dart';
 import '../models/settlement.dart';
 import '../models/stock_ledger.dart';
+import '../reject_code.dart';
+import '../sync/sync_failure.dart';
 import '../util/ids.dart';
+import '../util/money.dart';
 import 'cost_policy.dart';
+import 'rule_rejection.dart';
 import 'doc_no_generator.dart';
 import 'payment_entry.dart';
 import 'seq_counter.dart';
@@ -28,12 +32,30 @@ enum RuleStatus {
 
 /// 一次规则执行的结果
 class RuleOutcome {
-  const RuleOutcome(this.status, {this.reason, this.document});
+  const RuleOutcome(this.status, {this.reason, this.code, this.document})
+    : assert(
+        code == null || status == RuleStatus.rejected,
+        'code 只属于 rejected',
+      );
+
+  /// 拒绝（**带机读码**）—— 业务拒绝与内部 bug 都走它。
+  ///
+  /// 两个码族见 [RejectCode]：业务拒绝给「用户能看懂、能照着改」的中文；
+  /// 内部 bug 给通用中文（细节只在日志里）。
+  const RuleOutcome.rejected(String this.reason, {required RejectCode this.code})
+    : status = RuleStatus.rejected,
+      document = null;
 
   final RuleStatus status;
 
   /// 仅 [RuleStatus.rejected] 时非空
   final String? reason;
+
+  /// 仅 [RuleStatus.rejected] 时非空：**机读**的拒绝原因。
+  ///
+  /// `SyncServer._mapOutcome` 会把它透传成 `SyncResponse.reason_code`
+  /// （`docs/sync_protocol.md` §8.5）。
+  final RejectCode? code;
 
   /// 落库后的**最终主单**（含主机分配的正式单号）
   final Document? document;
@@ -76,7 +98,7 @@ class RuleOutcome {
 /// **幂等判定与存储**，属待裁定项 **R-3**，随 `SyncServer` 落地（见 `docs/reply.md`）。
 /// v1 的替代路径是主机本地的 [markDelivered]（司机回店后手动改状态）。
 class RuleEngine {
-  RuleEngine(this.db)
+  RuleEngine(this.db, {this.onInternalError})
     : _docs = DocumentDao(db),
       _stock = StockLedgerDao(db),
       _partyLedger = PartyLedgerDao(db),
@@ -96,6 +118,17 @@ class RuleEngine {
   final SeqCounter _seq;
   final DocNoGenerator _docNo;
   late final CostPolicy _cost;
+
+  /// **内部错误的唯一日志出口**（#22 裁定，2026-10-09）。
+  ///
+  /// 与 `SyncServer.onInternalError` 是**同一条通道**：主机侧只留一个出口
+  /// （`SyncServer` 把自己的回调同时给 `RuleEngine`），否则同一条错误会在
+  /// 两个出口各记一次。⚠️ 桌面（`ServiceSink`）路径**不注入**它 ——
+  /// 那边原始异常由 `AppLog.crash` 收（页面里的 `onStorageFailure`）。
+  ///
+  /// `error` 参数对 [RuleRejection] 的 `detail` 是一条 `String`（诊断细节）。
+  final void Function(String label, Object error, StackTrace stack)?
+  onInternalError;
 
   /// 可作为核销目标的单据类型（`docs/data_model.md` §3.6）
   ///
@@ -168,9 +201,11 @@ class RuleEngine {
     List<Allocation> allocations = const <Allocation>[],
   }) {
     if (immediatePayments.isNotEmpty && allocations.isNotEmpty) {
-      return const RuleOutcome(
-        RuleStatus.rejected,
-        reason: 'immediate_payments 与 allocations 互斥，不能同时非空',
+      // 协议违反（客户端 bug）：payload 自相矛盾 ⇒ 通用文案 + 码（#22 裁定）。
+      // 原来的文案把字段名写进了用户可见文本。
+      return RuleOutcome.rejected(
+        malformedSyncRequestReason,
+        code: RejectCode.payloadMutuallyExclusive,
       );
     }
 
@@ -210,16 +245,43 @@ class RuleEngine {
               now,
             );
           default:
-            // 到这里只剩 `transfer`（调拨）—— v1 有意不实现
-            return RuleOutcome(
-              RuleStatus.rejected,
-              reason: 'v1 尚未实现 ${prepared.docType.wire}（调拨）的规则',
+            // 到这里只剩 `transfer`（调拨）—— v1 有意不实现。
+            // 客户端发了 v1 不支持的类型 ⇒ 协议违反 ⇒ 通用文案 + 码
+            //（原来的 `'v1 尚未实现 …'` 把 wire 名写进了用户可见文本）。
+            return RuleOutcome.rejected(
+              malformedSyncRequestReason,
+              code: RejectCode.unsupportedDocType,
             );
         }
       });
-    } catch (error) {
-      // 事务已回滚（Db.transaction 负责），这里只把错误转成可上报的结果
-      return RuleOutcome(RuleStatus.rejected, reason: '规则执行失败，整单回滚：$error');
+    } on RuleRejection catch (rejection) {
+      // **业务拒绝**（用户能改）：事务已回滚（`Db.transaction` 负责），
+      // 把「说怎么办」的中文与机读码一起交出去；诊断细节只进日志。
+      if (rejection.detail != null) {
+        onInternalError?.call(
+          '规则拒绝（${document.docType.wire}）',
+          rejection.detail!,
+          StackTrace.current,
+        );
+      }
+      return RuleOutcome.rejected(rejection.reason, code: rejection.code);
+    } catch (error, stack) {
+      // **内部 bug**（不变量破坏 / 协议违反）—— 细节**只进日志**。
+      //
+      // ⚠️ 原来这里写 `'规则执行失败，整单回滚：$error'`，而 `StateError.toString()`
+      // 的前缀是 **`Bad state:`** ⇒ Dart 的异常文本**直接显示给用户**
+      //（#22 裁定；与 M15 / §CS·五 同一类）。它还**把好信息一起毁了**：
+      // `return_exceeds_original` 本是用户能改的业务拒绝，却埋在 `Bad state: …` 里
+      //（已分流成 [RuleRejection]）。
+      onInternalError?.call(
+        '规则执行失败（${document.docType.wire}）',
+        error,
+        stack,
+      );
+      return RuleOutcome.rejected(
+        ruleInternalErrorReason,
+        code: RejectCode.ruleInternalError,
+      );
     }
   }
 
@@ -416,7 +478,12 @@ class RuleEngine {
     }
     final Document? original = _docs.findById(refDocId);
     if (original == null) {
-      throw StateError('原单不存在：$refDocId');
+      // 原单在主机上找不到（还没同步上来，或已被删）⇒ 用户修不了 ⇒ 通用文案 + 码，
+      // 具体是哪个 id 只进日志。
+      throw RuleRejection.protocol(
+        RejectCode.targetMissing,
+        detail: '原单不存在：$refDocId',
+      );
     }
     if (!allowedOriginals.contains(original.docType)) {
       throw StateError(
@@ -534,10 +601,16 @@ class RuleEngine {
 
       final Document? target = _docs.findById(targetId);
       if (target == null) {
-        throw StateError('被核销单不存在：$targetId');
+        throw RuleRejection.protocol(
+          RejectCode.targetMissing,
+          detail: '被核销单不存在：$targetId',
+        );
       }
       if (!allocatableTargetTypes.contains(target.docType)) {
-        throw StateError('${target.docType.wire} 不可作为核销目标');
+        throw RuleRejection.protocol(
+          RejectCode.actionNotApplicable,
+          detail: '${target.docType.wire} 不可作为核销目标',
+        );
       }
 
       // ---- 方向校验（2026-10-07 裁定，`docs/reply.md` §3）----
@@ -547,9 +620,10 @@ class RuleEngine {
       final DocType? required = settleDirections[target.docType];
       final DocType own = moneyOut ? DocType.payment : DocType.receipt;
       if (required != null && required != own) {
-        throw StateError(
-          '${own.wire} 单不能核销「${target.docType.label}」'
-          '（${target.docNo}）—— 这类单据只接受 ${required.wire} 单',
+        throw RuleRejection.protocol(
+          RejectCode.actionNotApplicable,
+          detail: '${own.wire} 单不能核销「${target.docType.label}」'
+              '（${target.docNo}）—— 这类单据只接受 ${required.wire} 单',
         );
       }
 
@@ -586,14 +660,27 @@ class RuleEngine {
       if (target == null) continue; // 上面已判过，这里只为取号与总额
       final int already = _settlements.settledAmountOf(entry.key);
       if (already + entry.value > target.totalAmount) {
-        throw StateError(
-          '核销额超过被核销单未收金额：${target.docNo} 已收 $already / 总额 ${target.totalAmount}，'
-          '本次请求 ${entry.value}',
+        // **业务拒绝**：用户能改（把这次核销的金额改小）。
+        throw RuleRejection(
+          '核销金额超过了「${target.docNo}」还没结清的部分'
+          '（这张单总额 ${Money.format(target.totalAmount)} 元，已结 '
+          '${Money.format(already)} 元，本次要核销 '
+          '${Money.format(entry.value)} 元）。请把金额改小。',
+          code: RejectCode.ruleValidationFailed,
+          detail: '核销额超过被核销单未收金额：${target.docNo} 已收 $already'
+              ' / 总额 ${target.totalAmount}，本次请求 ${entry.value}',
         );
       }
     }
     if (requested > doc.totalAmount) {
-      throw StateError('核销总额 $requested 超过收付款单金额 ${doc.totalAmount}');
+      // **业务拒绝**：要么改小核销金额，要么把那几张单的金额改对。
+      throw RuleRejection(
+        '要核销的合计（${Money.format(requested)} 元）超过了这张单的金额'
+        '（${Money.format(doc.totalAmount)} 元）。请把核销金额改小，'
+        '或把这张单的金额改大。',
+        code: RejectCode.ruleValidationFailed,
+        detail: '核销总额 $requested 超过收付款单金额 ${doc.totalAmount}',
+      );
     }
 
     // 收付款单创建即终态
@@ -732,7 +819,13 @@ class RuleEngine {
       requested += entry.amount;
     }
     if (requested > mainDoc.totalAmount) {
-      throw StateError('立即收付款总额 $requested 超过单据总额 ${mainDoc.totalAmount}');
+      // **业务拒绝**：用户能改（把收款金额改小）。
+      throw RuleRejection(
+        '收付款的合计（${Money.format(requested)} 元）超过了这张单的总金额'
+        '（${Money.format(mainDoc.totalAmount)} 元）。请把金额改小。',
+        code: RejectCode.ruleValidationFailed,
+        detail: '立即收付款总额 $requested 超过单据总额 ${mainDoc.totalAmount}',
+      );
     }
 
     final DocType type = moneyOut ? DocType.payment : DocType.receipt;
@@ -877,16 +970,17 @@ class RuleEngine {
       return db.transaction(() {
         final Document? doc = _docs.findById(documentId);
         if (doc == null) {
-          return RuleOutcome(
-            RuleStatus.rejected,
-            reason: '单据不存在：$documentId',
+          return RuleOutcome.rejected(
+            malformedSyncRequestReason,
+            code: RejectCode.targetMissing,
           );
         }
         if (doc.docType != DocType.delivery) {
-          return RuleOutcome(
-            RuleStatus.rejected,
-            reason: '${doc.docType.wire} 不适用「签收」动作'
-                '（docs/rules.md RULE-003）',
+          // 原来这里写 `'… 不适用「签收」动作（docs/rules.md RULE-003）'` ——
+          // 把 **wire 类型名**与**仓库内部文档路径**写进了用户可见文案（#22 裁定）。
+          return RuleOutcome.rejected(
+            malformedSyncRequestReason,
+            code: RejectCode.actionNotApplicable,
           );
         }
 
@@ -907,14 +1001,29 @@ class RuleEngine {
           case DocStatus.settled:
             return RuleOutcome(RuleStatus.alreadyExists, document: doc);
           default:
-            return RuleOutcome(
-              RuleStatus.rejected,
-              reason: '${doc.status.wire} 状态的送货单不能签收',
+            return RuleOutcome.rejected(
+              malformedSyncRequestReason,
+              code: RejectCode.actionNotApplicable,
             );
         }
       });
-    } catch (error) {
-      return RuleOutcome(RuleStatus.rejected, reason: '动作执行失败，已回滚：$error');
+    } on RuleRejection catch (rejection) {
+      if (rejection.detail != null) {
+        onInternalError?.call(
+          '规则拒绝（mark_delivered）',
+          rejection.detail!,
+          StackTrace.current,
+        );
+      }
+      return RuleOutcome.rejected(rejection.reason, code: rejection.code);
+    } catch (error, stack) {
+      // 与 [dispatch] 同一处置：内部 bug 的细节**只进日志**（原来这里也把
+      // `$error` 拼进了 `reason` —— 同一个泄漏）。
+      onInternalError?.call('动作执行失败（mark_delivered）', error, stack);
+      return RuleOutcome.rejected(
+        ruleInternalErrorReason,
+        code: RejectCode.ruleInternalError,
+      );
     }
   }
 

@@ -511,7 +511,10 @@ void main() {
     expect(report.rejected, 1, reason: 'purchase 不适用「签收」—— 规则不允许');
     final SyncQueueEntry after = clientA.queue.findById(action.id)!;
     expect(after.status, SyncQueueStatus.pending, reason: 'rejected 排重试（§六 处置不变）');
-    expect(after.lastError, contains('不适用'));
+    // #22 裁定（2026-10-09）：协议违反（非送货单不能签收）的回执只给通用中文
+    // ⇒ 队列里存的也是它；细节（`purchase 不适用签收`）只在**主机日志**里。
+    // 镜像 `tool/selfcheck_client_server.dart` 的同名断言。
+    expect(after.lastError, malformedSyncRequestReason);
     expect(after.retryCount, 1);
   });
 

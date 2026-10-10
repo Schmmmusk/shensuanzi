@@ -266,7 +266,7 @@ void main() {
       final RuleOutcome outcome = run(over, oneLine(over.id, p, 3, 100));
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('return_exceeds_original'));
+      expect(outcome.code, RejectCode.returnExceedsOriginal, reason: outcome.reason);
       expect(documents.findById(over.id), isNull, reason: '整单回滚');
       expect(stock.stockOf(p), 2, reason: '第二次退货未落地任何流水');
     });
@@ -320,7 +320,7 @@ void main() {
       );
       final RuleOutcome rejected = run(a3, oneLine(a3.id, a, 3, 100));
       expect(rejected.status, RuleStatus.rejected);
-      expect(rejected.reason, contains('return_exceeds_original'));
+      expect(rejected.code, RejectCode.returnExceedsOriginal, reason: rejected.reason);
 
       // B 全额退 5 → 不受 A 影响
       final Document b5 = doc(
@@ -349,7 +349,7 @@ void main() {
       final RuleOutcome outcome = run(ret, oneLine(ret.id, b, 1, 100));
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('没有商品'));
+      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
       expect(documents.findById(ret.id), isNull);
     });
   });
@@ -672,7 +672,7 @@ void main() {
       final RuleOutcome outcome = run(ret, oneLine(ret.id, p, 1, 100));
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('ref_doc_id'));
+      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
       expect(documents.findById(ret.id), isNull);
     });
 
@@ -691,7 +691,7 @@ void main() {
       final RuleOutcome outcome = run(ret, oneLine(ret.id, p, 1, 100));
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('原单类型'));
+      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
       expect(documents.findById(ret.id), isNull);
     });
 
@@ -708,7 +708,7 @@ void main() {
       final RuleOutcome outcome = run(ret, oneLine(ret.id, p, 1, 100));
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.reason, contains('原单不存在'));
+      expect(outcome.code, RejectCode.targetMissing, reason: outcome.reason);
     });
   });
 

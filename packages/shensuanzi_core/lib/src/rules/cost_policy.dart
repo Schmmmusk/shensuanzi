@@ -1,7 +1,9 @@
 import '../dao/ledger_dao.dart';
 import '../models/document.dart';
 import '../models/document_line.dart';
+import '../reject_code.dart';
 import '../util/money.dart';
+import 'rule_rejection.dart';
 
 /// 库存成本口径（`docs/data_model.md` §3.3 / §六）。
 ///
@@ -74,8 +76,13 @@ class CostPolicy {
   /// [returnQuantity] 为本次退货量（**正数**）。返回值符号与 `stock_ledger.quantity`
   /// 一致：`sale_return` 为正（货回库），`purchase_return` 为负（货出库）。
   ///
-  /// **累计退货量超过原单量**时抛 `StateError`（错误码 `return_exceeds_original`），
-  /// 由 `RuleEngine` 捕获后整单拒绝。
+  /// **累计退货量超过原单量**时抛 [RuleRejection]（码
+  /// [RejectCode.returnExceedsOriginal]），由 `RuleEngine` 捕获后整单拒绝。
+  ///
+  /// ⚠️ 它是**业务拒绝**而不是内部 bug（#22 裁定的分流）：用户**能改**
+  /// —— 少退一点。所以文案要说「怎么办」，不写「哪里错了」。
+  /// 而且它是**状态相关**的：界面的前置拦截（`quotasFor`）只能尽力，
+  /// 多端并发退货时仍会命中。
   int returnCost({
     required String refDocId,
     required String productId,
@@ -109,9 +116,12 @@ class CostPolicy {
 
     final int cumulativeQty = priorQty + returnQuantity;
     if (cumulativeQty > originalQty) {
-      throw StateError(
-        'return_exceeds_original: 累计退货量 $cumulativeQty 超过原单量 $originalQty'
-        '（原单 $refDocId，商品 $productId）',
+      throw RuleRejection(
+        '这次要退的数量超过了原单剩的（原单共 $originalQty 件，'
+        '算上这次累计已 $cumulativeQty 件）。请把数量改小后再退。',
+        code: RejectCode.returnExceedsOriginal,
+        detail: '累计退货量 $cumulativeQty 超过原单量 $originalQty'
+            '（原单 $refDocId，商品 $productId）',
       );
     }
 

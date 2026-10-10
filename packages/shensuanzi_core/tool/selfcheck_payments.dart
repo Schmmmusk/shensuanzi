@@ -275,7 +275,7 @@ void main() {
   final RuleOutcome noParty = sell(productId: p6, partyId: null);
   check('有欠款但无 party_id → rejected', noParty.status == RuleStatus.rejected);
   check('拒绝原因指向 party_id',
-      noParty.reason?.contains('party_id') ?? false, '${noParty.reason}');
+      noParty.code == RejectCode.ruleInternalError, '${noParty.code}｜${noParty.reason}');
   check('拒绝后无残留单据', countOf('documents') == docsBefore);
 
   final String p7 = createProduct(code: 'P007');
@@ -378,7 +378,7 @@ void main() {
   );
   check('超收 → rejected', r3.status == RuleStatus.rejected);
   check('拒绝原因指向未收金额',
-      r3.reason?.contains('超过被核销单未收金额') ?? false, '${r3.reason}');
+      r3.code == RejectCode.ruleValidationFailed, '${r3.code}｜${r3.reason}');
 
   final Document prepay = mkDoc(
     type: DocType.receipt,
@@ -403,18 +403,16 @@ void main() {
             document: mkDoc(type: DocType.receipt, partyId: party9, totalAmount: 100),
             now: now(),
           )
-          .reason
-          ?.contains('account_id') ??
-          false);
+          .code ==
+          RejectCode.ruleInternalError);
   check('收付款单缺 party_id → rejected',
       engine
           .dispatch(
             document: mkDoc(type: DocType.receipt, accountId: bank, totalAmount: 100),
             now: now(),
           )
-          .reason
-          ?.contains('party_id') ??
-          false);
+          .code ==
+          RejectCode.ruleInternalError);
 
   // ============================================================ 互斥
   section('payload 互斥（sync_protocol §8.1）');
@@ -427,7 +425,7 @@ void main() {
     now: now(),
   );
   check('两者同时非空 → rejected', both.status == RuleStatus.rejected);
-  check('拒绝原因指向互斥', both.reason?.contains('互斥') ?? false, '${both.reason}');
+  check('拒绝码 = payload_mutually_exclusive', both.code == RejectCode.payloadMutuallyExclusive, '${both.code}｜${both.reason}');
 
   // ============================================================ 纪律 11
   section('纪律 11：资金流必须挂在收付款单下');

@@ -276,7 +276,7 @@ void main() {
     check('有欠款但无 party_id → rejected',
         noPartyOutcome.status == RuleStatus.rejected);
     check('拒绝原因指向 party_id',
-        noPartyOutcome.reason?.contains('party_id') ?? false, '${noPartyOutcome.reason}');
+        noPartyOutcome.code == RejectCode.ruleInternalError, '${noPartyOutcome.code}｜${noPartyOutcome.reason}');
     check('该单同样未落库', documents.findById(noParty.id) == null);
     db.close();
   }
@@ -489,7 +489,7 @@ void main() {
     check('已取消的单不能签收 → rejected',
         onCancelled.status == RuleStatus.rejected);
     check('拒绝原因指向 cancelled',
-        onCancelled.reason?.contains('cancelled') ?? false, '${onCancelled.reason}');
+        onCancelled.code == RejectCode.actionNotApplicable, '${onCancelled.code}｜${onCancelled.reason}');
     check('状态未被改动', documents.findById(id)!.status == DocStatus.cancelled);
 
     final Document purchase = seedStock(p, supplier: supplier);
@@ -500,7 +500,7 @@ void main() {
     check('非 delivery 单据不能签收 → rejected',
         onPurchase.status == RuleStatus.rejected);
     check('拒绝原因指向「不适用」',
-        onPurchase.reason?.contains('不适用') ?? false, '${onPurchase.reason}');
+        onPurchase.code == RejectCode.actionNotApplicable, '${onPurchase.code}｜${onPurchase.reason}');
 
     final RuleOutcome ghost = engine.markDelivered(
       documentId: 'no-such-document',
@@ -508,7 +508,7 @@ void main() {
     );
     check('单据不存在 → rejected', ghost.status == RuleStatus.rejected);
     check('拒绝原因指向「不存在」',
-        ghost.reason?.contains('不存在') ?? false, '${ghost.reason}');
+        ghost.code == RejectCode.targetMissing, '${ghost.code}｜${ghost.reason}');
     check('dispatch 结束后不残留事务', !db.inTransaction);
     db.close();
   }

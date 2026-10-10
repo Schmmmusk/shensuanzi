@@ -2,151 +2,105 @@
 
 先说结论：
 
-- **发现属实，严重度评判准确（🔴）。这比 #20 / #21 更根本——它是「RuleEngine 的 rejected 语义没分层」的暴露。**
-- **选乙，但乙的范围比提案描述的大——不是「甲 + 加码字段」，是「甲 + 加码字段 + StateError 分流 + `onInternalError` 通道」。**
-- **`reason_code` 草案基本可用，但 `rule_rejected` 这个伞码会把 #22 的问题再压一次——它也需要细分，不是兜底。**
+- **deviation 合理，落地正确。理由充分，不是走捷径。**
+- **`selfcheck_sync.dart` 的定位核对是对的——我上轮说的 `selfcheck_host` 是错的，你纠正得对。**
+- **顺手收紧既有断言也对，但要写清「收紧的边界」，别让后来人误解。**
 
 ---
 
-## 一、发现的严重度确认
+## 一、deviation 成立的确认
 
-提案的三个发现都对，**第一个最严重**：
+### 你的判断链
 
-> `RuleEngine.dispatch` 的兜底 catch 产出 `'规则执行失败，整单回滚：$error'`，`$error.toString()` 的前缀是 `Bad state:` —— 直接显示给用户。
+1. 新 detail 的**固定提示**里含 `doc_type`（`（必填 id / doc_type / status / occurred_at）`）
+2. 所以 `contains('doc_type')` 会在 `$error` 丢失时**照样绿**
+3. ⇒ 断 `contains('doc_type')` 是**空心断言**
 
-**这比 #20 / #21 更糟**：
+**这条链完全成立。** 空心断言的本质就是：**断言的字串可以来自「非被测路径」**。
 
-| #20 / #21 | #22 |
-|---|---|
-| SyncServer 层的措辞问题 | **RuleEngine 层的语义问题** |
-| 改文案即可 | 改文案 + 加通道 + 分流 StateError |
-| 一处改完即封口 | 改了 RuleEngine，Windows UI 侧路径**也受影响**（`ServiceSink`） |
+`contains('缺少必填列 \`doc_type\`')` 断的是**只有 `$error` 才能提供的子串**——固定提示里没有「缺少必填列」这五个字。**这是正确的收紧方向。**
 
-**关键盲点**：`RuleEngine` 有**两个消费者**——
+### 为什么裁定示范会「不准」
 
-1. **Windows UI**（`ServiceSink`）：错误进 SnackBar / 对话框，用户就在电脑前
-2. **Sync 通道**（`SyncServer`）：错误进 `SyncResponse`，给 Android 端
+我上轮给 `contains('doc_type')` 是**凭直觉给的字串**，没有核对新 detail 的**实际结构**。你落到代码时发现提示里本来就有 `doc_type`——这是**凭代码核对**发现的偏差。
 
-**现有 `sync_failure_test` 只覆盖第 2 条**——第 1 条（Windows UI 看到的错误）**零覆盖**。而 `'Bad state: …'` 在 Windows UI 上**也会显示**，只是你们还没被测试报告扫到。
-
-**这条发现的价值不只是「修文案」，是「RuleEngine 的 rejected 从来没有一个明确契约」**。
+**这不是「你偏离了裁定」，是「裁定示范本身不够精确」。** 你改正，对了。
 
 ---
 
-## 二、乙 的实际范围（比提案大）
+## 二、`selfcheck_sync.dart` 定位核对
 
-提案说乙 = 「甲 + 给 `RuleOutcome` 加码字段」。**实际要做四件事**：
+你说：
 
-### ① 修显式泄漏（甲 的范围）
+> 「两处覆盖」的真实配对不是 `selfcheck_host`（那是「明细漏 id」= `lines` 路径），而是 **`selfcheck_sync.dart:390`**（同样 `..remove('doc_type')`）。
 
-- `dispatch` 兜底 catch 的 `$error` → 不拼进 `reason`
-- `'docs/rules.md RULE-003'` → 不写进用户可见文本
-- `'v1 尚未实现'` / `'immediate_payments 与 allocations 互斥'` → 客户端 bug，改通用文案
+**核对正确。** 我上轮的判断基于你给的信息「与我在 selfcheck_host 补的那条同类」——**我按字面理解为「同文件同路径」，没有追问**。你查完发现是两个不同路径的同型断言。**你纠正得对。**
 
-### ② 给 `RuleEngine` 加 `onInternalError` 通道
-
-`RuleEngine` 现在**没有日志出口**。`$error` 一旦不拼进 reason，就必须有地方落——否则泄漏变成「丢失诊断信息」。
-
-```dart
-class RuleEngine {
-  RuleEngine(this.db, {this.onInternalError});
-  final void Function(String label, Object error, StackTrace stack)? onInternalError;
-  ...
-}
-```
-
-**与 `SyncServer.onInternalError` 同构**——`SyncServer` 创建 `RuleEngine` 时把回调传下去，或各自持有。**单一通道还是两条通道**要裁一下：我倾向**单一**（`SyncServer` 持有，构造 `RuleEngine` 时注入），否则同一条错误会在两个日志出口各记一次。
-
-### ③ StateError 分流（提案没提，但是 #22 的真正核心）
-
-提案说「20+ 处 `throw StateError` 被上一行吞进 `$error`」——**这 20+ 处必须分流**：
-
-| 类型 | 特征 | 处置 |
-|---|---|---|
-| **业务拒绝** | 用户能改（如 `return_exceeds_original`） | 显式改成 `RuleOutcome(rejected, code: ..., reason: ...)` |
-| **内部 bug** | 协议违反 / 不变量破坏（如「line 数量必须为正数，实际 0」） | 保留 `throw StateError`，被兜底 catch 捕获后**只进日志** |
-
-**为什么必须分流**：`return_exceeds_original` 是**用户能改**的（少退一点）。今天它被埋在 `'Bad state: return_exceeds_original: ...'` 里——**好信息被坏前缀毁了**。这恰恰是 §8.5 早就写好的「错误码」被埋没的案例。
-
-**分流的判据**（明确写进裁定的）：
-
-> 用户**能做什么**——能做 = 业务拒绝（`RuleOutcome`，用户可见）；不能做 = bug（`StateError`，只进日志）。
-
-### ④ `RuleOutcome` 加码字段 + `SyncResponse` 加码字段
-
-提案 §五 的草案对——`RuleOutcome` 与 `SyncResponse` 各加 `reason_code`，`_mapOutcome` 汇合。**这是 #21 方案 A 的延伸，正确。**
+**这件事本身值得记一笔**：后来人看这段历史时，会问「上轮说的 `selfcheck_host` 是什么意思」——你现在的说明（`selfcheck_host` = `lines` 路径、`selfcheck_sync.dart` = `doc_type` 路径）应该进台账，或至少在测试文件里留一句。
 
 ---
 
-## 三、对 `reason_code` 草案的意见
+## 三、顺手收紧既有断言：对，但要写清边界
 
-草案的码集基本可用，**但 `rule_rejected` 这个伞码有问题**：
+### 对的部分
 
-```text
-| rule_rejected | RuleEngine 拒绝（+#22 的细分码） |
-```
+`selfcheck_sync.dart:396` 的既有断言如果是同款空心（固定提示里已经含目标词），**顺手收紧是对的**：
 
-**「+ #22 的细分码」这个写法把 #22 推给未来了**。但 #22 就是现在——**伞码 + 未来细分 = 中间态会留很久**。
+- 与 `:370` 形成对称
+- 与「两处覆盖」纪律一致——两处都改，不能单边
+- 改动是「收紧」不是「放宽」，风险可控
 
-**建议**：`RuleEngine` 的 rejected 码**当场定义**，不留伞码。已知的至少：
+### 要写清的边界
 
-- `return_exceeds_original`（已有，从 reason 前缀升级为字段）
-- `rule_validation_failed`（业务拒绝的通用兜底）
-- `rule_internal_error`（内部 bug，只进日志 + 通用文案）
+「顺手收紧既有断言」有一个**容易滑坡的风险**：**将来有人会拿这次当先例，去改「宽松但有意的断言」。**
 
-**伞码的诱惑在于「我不知道该分几类」——但 #22 的分流（业务拒绝 / 内部 bug）已经给了**两类**的边界。不要留 `rule_rejected` 这个不上不下的层级。**
+看 `sync_server_test.dart` 里其他几处：
 
-其余码我认可：`not_writable_table` / `unknown_field` / `unwritable_column` / `missing_field` / `field_type_mismatch` / `id_mismatch` / `unknown_action` / `malformed_parameter` / `duplicate` / `reference_missing` / `data_invalid` / `host_storage`。
+- `:349` 的 `contains('created_at')`：**不是空心**——`created_at` 是 `badColumns.join(', ')` 动态拼进去的，必须由实际触发路径提供
+- `:336` 的 `contains('必须是 documents')`：**不是空心**——`documents` 是 `Schema.documents` 拼进去的，必须由实际 entity 检查提供
 
-**`reference_missing` 特意确认一下**——它承载 §8.5「引用的主数据尚未同步」的契约，是**唯一一个用户能「等待后重试」成功的码**。文档要写清这一点，因为客户端要按它做**特殊处理**（不删队列，等主数据 pull 后再重推）。
+**这两处不动是对的。** 但**「为什么这两处不是空心、`:370` 那处是」这个区分，应该在审查意见里说清**——否则后来人会混淆。
 
----
+### 判据（可复用）
 
-## 四、与 #21 的关系
+**空心断言的判据**：
 
-提案说「与 #21 的方案 A 同一次设计」——**对，但实际关系比这句更紧**：
+> 被断的子串，是否**只可能**由被测路径（`$error` / 动态拼接）提供？
+>
+> - **是** ⇒ 不是空心，可以断
+> - **否**（提示里本来就有） ⇒ 空心，必须收紧到「只由被测路径提供的子串」
 
-- #21 的「17 处」在 `SyncServer`
-- #22 的「RuleEngine rejected」也在 `SyncServer`（经 `_mapOutcome` 透传）
-- **两者的 `reason_code` 都是 `SyncResponse.reason_code`**
-- **两者的测试改写都是同一批文件**（`sync_server_test` / `selfcheck_sync`）
-
-**所以 #21 + #22 应该合并成一次执行**，不是「同一次设计、分两次做」。分开做会：
-1. 改两次 `SyncResponse`（一次加字段、一次给 RuleEngine 用）
-2. 改两次测试
-3. 中间态不一致
-
-**建议**：裁定上仍可分两笔记账（#21 / #22），**执行上合成一个批次**。
+**这个判据应该写进 `docs/testing.md` 或 `Agents.md 纪律`**——因为它是一个可复用的通用规则，不只适用于 `doc_type` 这一处。
 
 ---
 
-## 五、「另 3 处」的重新归属
+## 四、要不要扩大范围
 
-#21 里我提到「`规则拒绝` / `动作被拒绝` / `主数据不存在` 单独裁」。**现在归属清晰了**：
+**不要。** 你现在的处理范围是：
 
-- `规则拒绝` / `动作被拒绝` → **归 #22**（它们是 `RuleEngine` 透传的兜底文案）
-- `主数据不存在` → 归 #21（`deleteMasterData` 幂等，行为改动）
+- `sync_server_test.dart:370`（本轮新增）
+- `selfcheck_sync.dart:396`（既有，同款）
 
-**#21 的裁定范围要相应调整**——不是「17 处 + 3 处」，是「17 处 + `主数据不存在`」，另两处归 #22。
+**不要顺手 grep 全仓所有 `contains(...)` 断言来「一次性清零空心断言」**：
 
----
+- 有些宽松断言是**有意的**（比如断 `contains('主机')` 是断语义方向，不是断具体路径）
+- 区分「空心」和「宽松」需要**逐处核对 detail 的实际结构**——成本高于收益
+- **按「遇到的、确认是空心的」处理**，不要按「疑似空心的」铺开
 
-## 六、一个提案没提但必须补的
-
-**`RuleEngine` 的 rejected 在 Windows UI 上的行为，也要一并定义。**
-
-Windows UI 通过 `ServiceSink` 调 `RuleEngine`。如果 `RuleEngine` 的拒绝文案改了（变通用、变短），Windows UI 的 SnackBar 会跟着变。
-
-**这意味着**：
-- 「数量必须为正数」这类**在 Windows UI 上确实可操作**的提示，改通用后会变差
-- 但反过来说，**Windows UI 的 Draft 校验应该在 RuleEngine 之前就拦住**——如果拦得住，RuleEngine 的 rejected 在 Windows UI 上应该**永远不出现**
-
-**建议**：**核对 Windows UI 路径上 RuleEngine 拒绝会不会被触发**。如果会，说明 Draft 校验有缺口——**那是另一个问题**，别用「保留详细文案」来掩盖。
-
-**这一条超出 #22 的范围**，但**必须在做 #22 之前确认**——否则改完后 Windows UI 用户会看到明显变差的提示，误以为是回归。
+**这正是 §CV 一贯的纪律**：按根因批次修，不要顺手扩大范围。
 
 ---
 
-## 七、一句话收束
+## 五、台账建议
 
-**发现属实，选乙，但乙的范围是四件事：修显式泄漏 + 加 `onInternalError` 通道 + StateError 分流（业务拒绝 vs 内部 bug）+ 双方加 `reason_code`。不要留 `rule_rejected` 伞码——#22 的分流已给出两类边界，当场定码。`#21 + #22` 记账分开、执行合并。做 #22 前先核对 Windows UI 路径上 RuleEngine 拒绝会不会被触发——会的话那是 Draft 校验缺口，不能靠保留详细文案掩盖。**
+建议在 `reply_review.md` 对应条目加一句：
+
+> **落地 deviation**：断言 detail 时**断「只有 `$error` 才能提供的子串」**，不是「detail 里出现的词」——裁定示范的 `contains('doc_type')` 因新 detail 的固定提示里含该词而空心，落地改为 `contains('缺少必填列 \`doc_type\`')`。**同时纠正**：`doc_type` 路径的 tool 侧镜像是 `selfcheck_sync.dart`（`lines` 路径才是 `selfcheck_host`）。
+
+**为什么记**：它揭示了一条**可复用的经验**——「断 detail 时，要断动态部分而不是固定部分」。后来人遇到类似场景能少走一次弯路。
+
+---
+
+## 六、一句话收束
+
+**deviation 合理，`selfcheck_sync.dart` 定位正确，顺手收紧既有断言也对。补两件事：① 把「空心断言」的判据写进 `docs/testing.md` 或纪律（这是可复用规则，不只适用这一处）；② 台账记一笔 deviation 的来历和定位纠正——「断动态部分而不是固定部分」是这次的核心经验。不要把范围扩大到全仓所有 `contains`——宽松断言和有意的语义断言不能混为一谈。**

@@ -61,9 +61,20 @@ bool throws(void Function() body) {
 late Db db;
 late SyncServer server;
 
+/// 主机侧**内部错误日志**的捕获（#22 裁定，2026-10-09）。
+///
+/// 协议违反 / 规则内部 bug 的**细节只进日志**（进 `reason` 的是通用中文）
+/// ⇒ 「原因点出列名 X」那几条断言改成查这里。
+final List<String> internalErrors = <String>[];
+
 void freshDb() {
   db = Db.openInMemory();
-  server = SyncServer(db);
+  internalErrors.clear();
+  server = SyncServer(
+    db,
+    onInternalError: (String label, Object error, StackTrace stack) =>
+        internalErrors.add('$label｜$error'),
+  );
 }
 
 int countOf(String table) =>
@@ -250,8 +261,8 @@ void main() {
       now: now(),
     );
     check('无 party_id 的赊账销售 → rejected', r.status == SyncStatus.rejected);
-    check('拒绝原因来自规则引擎（party_id）',
-        r.reason?.contains('party_id') ?? false, '${r.reason}');
+    check('无 party_id 的赊账销售 ⇒ 内部 bug（码 rule_internal_error）',
+        r.reasonCode == RejectCode.ruleInternalError, '${r.reasonCode}｜${r.reason}');
     check('整单回滚：单据未落库', DocumentDao(db).findById(sale.id) == null);
     check('整单回滚：没有流水', countOf('stock_ledger') == 0);
     db.close();
@@ -305,7 +316,9 @@ void main() {
     );
     check('immediate_payments 与 allocations 互斥 → rejected',
         both.status == SyncStatus.rejected);
-    check('互斥原因可读', both.reason?.contains('互斥') ?? false, '${both.reason}');
+    check('互斥 ⇒ payload_mutually_exclusive',
+        both.reasonCode == RejectCode.payloadMutuallyExclusive,
+        '${both.reasonCode}｜${both.reason}');
     db.close();
   }
 
@@ -325,8 +338,9 @@ void main() {
     );
     check('entity_id ≠ document.id → rejected',
         idMismatch.status == SyncStatus.rejected);
-    check('原因指向幂等键', idMismatch.reason?.contains('幂等键') ?? false,
-        '${idMismatch.reason}');
+    check('id 不符 ⇒ id_mismatch',
+        idMismatch.reasonCode == RejectCode.idMismatch,
+        '${idMismatch.reasonCode}｜${idMismatch.reason}');
 
     final SyncResponse noDocument = server.handle(
       const SyncOperation(
@@ -337,9 +351,9 @@ void main() {
       ),
       now: now(),
     );
-    check('缺 payload.document → rejected',
-        noDocument.reason?.contains('缺少 payload.document') ?? false,
-        '${noDocument.reason}');
+    check('缺 payload.document ⇒ missing_field',
+        noDocument.reasonCode == RejectCode.missingField,
+        '${noDocument.reasonCode}｜${noDocument.reason}');
 
     final SyncResponse unknownField = server.handle(
       const SyncOperation(
@@ -350,8 +364,9 @@ void main() {
       ),
       now: now(),
     );
-    check('未知顶层字段 → rejected',
-        unknownField.reason?.contains('未知字段') ?? false, '${unknownField.reason}');
+    check('未知顶层字段 ⇒ unknown_field',
+        unknownField.reasonCode == RejectCode.unknownField,
+        '${unknownField.reasonCode}｜${unknownField.reason}');
 
     final SyncResponse hostOnly = server.handle(
       opCreateDocument(
@@ -361,10 +376,12 @@ void main() {
       ),
       now: now(),
     );
-    check('document 含主机专属列 → rejected',
-        hostOnly.reason?.contains('不可写列') ?? false, '${hostOnly.reason}');
-    check('原因点出列名 created_at',
-        hostOnly.reason?.contains('created_at') ?? false, '${hostOnly.reason}');
+    check('document 含主机专属列 ⇒ unwritable_column',
+        hostOnly.reasonCode == RejectCode.unwritableColumn,
+        '${hostOnly.reasonCode}｜${hostOnly.reason}');
+    check('列名 created_at 只进日志（不再进 reason）',
+        internalErrors.any((String e) => e.contains('created_at')),
+        internalErrors.join(' | '));
 
     final SyncResponse missingColumn = server.handle(
       opCreateDocument(
@@ -375,8 +392,11 @@ void main() {
       now: now(),
     );
     check('缺必填列 → rejected', missingColumn.status == SyncStatus.rejected);
-    check('原因点出列名 doc_type',
-        missingColumn.reason?.contains('doc_type') ?? false, '${missingColumn.reason}');
+    // ⚠️ 断**精确子串**（§CV·十九）：`doc_type` 也出现在 detail 的「必填 id / doc_type / …」
+    // 提示里 ⇒ 只断 `contains('doc_type')` 会在 `$error` 丢失时照样绿（空心断言）。
+    check('列名 doc_type 只进日志（不再进 reason）',
+        internalErrors.any((String e) => e.contains('缺少必填列 `doc_type`')),
+        internalErrors.join(' | '));
 
     final SyncResponse wrongEntity = server.handle(
       const SyncOperation(
@@ -433,8 +453,9 @@ void main() {
       now: now(),
     );
     check('含 sync_version → rejected', hostOnly.status == SyncStatus.rejected);
-    check('原因指向列名', hostOnly.reason?.contains('sync_version') ?? false,
-        '${hostOnly.reason}');
+    check('列名 sync_version 只进日志（不再进 reason）',
+        internalErrors.any((String e) => e.contains('sync_version')),
+        internalErrors.join(' | '));
 
     final SyncResponse unknown = server.handle(
       opMaster('products', newId(), SyncOpType.createMasterData, payload: {
@@ -444,8 +465,10 @@ void main() {
       }),
       now: now(),
     );
-    check('未知列 → rejected', unknown.reason?.contains('nope') ?? false,
-        '${unknown.reason}');
+    check('未知列 nope 只进日志（不再进 reason）',
+        unknown.status == SyncStatus.rejected &&
+            internalErrors.any((String e) => e.contains('nope')),
+        '${unknown.reasonCode}｜${internalErrors.join(' | ')}');
 
     final SyncResponse boolValue = server.handle(
       opMaster('products', newId(), SyncOpType.createMasterData, payload: {
@@ -455,16 +478,17 @@ void main() {
       }),
       now: now(),
     );
-    check('bool 值 → rejected（wire 用 1/0）',
-        boolValue.reason?.contains('1 / 0') ?? false, '${boolValue.reason}');
+    check('bool 值 ⇒ malformed_parameter',
+        boolValue.reasonCode == RejectCode.malformedParameter,
+        '${boolValue.reasonCode}｜${boolValue.reason}');
 
     final SyncResponse toDocuments = server.handle(
       opMaster('documents', newId(), SyncOpType.createMasterData),
       now: now(),
     );
-    check('target 是 documents → rejected',
-        toDocuments.reason?.contains('只支持主数据表') ?? false,
-        '${toDocuments.reason}');
+    check('target 是 documents ⇒ not_writable_table',
+        toDocuments.reasonCode == RejectCode.notWritableTable,
+        '${toDocuments.reasonCode}｜${toDocuments.reason}');
     db.close();
   }
 
@@ -563,8 +587,9 @@ void main() {
       }),
       now: now(),
     );
-    check('缺 base_version → rejected',
-        noVersion.reason?.contains('base_version') ?? false, '${noVersion.reason}');
+    check('缺 base_version ⇒ missing_field',
+        noVersion.reasonCode == RejectCode.missingField,
+        '${noVersion.reasonCode}｜${noVersion.reason}');
 
     // §CV·3（方案丙，2026-10-08）：不存在 ⇒ **upsert 建档**（不再 rejected）。
     //
@@ -703,15 +728,16 @@ void main() {
       }),
       now: now(),
     );
-    check('payload 含 id 以外字段 → rejected',
-        extra.reason?.contains('只允许 id') ?? false, '${extra.reason}');
+    check('payload 含 id 以外字段 ⇒ unwritable_column',
+        extra.reasonCode == RejectCode.unwritableColumn,
+        '${extra.reasonCode}｜${extra.reason}');
 
     final SyncResponse missing = server.handle(
       opMaster('products', newId(), SyncOpType.deleteMasterData),
       now: now(),
     );
-    check('目标不存在 → rejected', missing.reason?.contains('不存在') ?? false,
-        '${missing.reason}');
+    check('目标不存在 ⇒ **幂等 already_exists**（不再 rejected，#21 裁定）',
+        missing.status == SyncStatus.alreadyExists, '${missing.status}');
     db.close();
   }
 
@@ -770,10 +796,10 @@ void main() {
       ),
       now: now(),
     );
-    check('未知动作 → rejected + unknown_action',
+    check('未知动作 ⇒ unknown_action',
         unknown.status == SyncStatus.rejected &&
-            (unknown.reason?.contains('unknown_action: un_cancel') ?? false),
-        '${unknown.reason}');
+            unknown.reasonCode == RejectCode.unknownAction,
+        '${unknown.reasonCode}｜${unknown.reason}');
 
     // purchase 收签收 → rejected（规则不允许：docType 不适用）
     freshDb();
@@ -789,10 +815,10 @@ void main() {
       now: now(),
     );
     final SyncResponse wrongType = server.handle(action(purchase.id), now: now());
-    check('purchase 收签收 → rejected（不适用）',
+    check('purchase 收签收 ⇒ action_not_applicable',
         wrongType.status == SyncStatus.rejected &&
-            (wrongType.reason?.contains('不适用') ?? false),
-        '${wrongType.reason}');
+            wrongType.reasonCode == RejectCode.actionNotApplicable,
+        '${wrongType.reasonCode}｜${wrongType.reason}');
 
     db.close();
   }

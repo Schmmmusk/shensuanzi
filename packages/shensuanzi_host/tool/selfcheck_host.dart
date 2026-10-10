@@ -201,12 +201,17 @@ Future<void> main() async {
     final Db db = Db.openInMemory();
     final HostIdentity identity = HostIdentityStore.inMemory().loadOrCreate(now: _fixedNow);
     final String token = identity.plaintextToken!;
+    // 主机侧内部错误日志的捕获（#22 裁定，2026-10-09）：协议违反的**细节只进日志**
+    // ⇒「点到列名」这类定位价值由它承担（回执只给通用中文）。
+    final List<String> internalErrors = <String>[];
     final HostHttpServer server = await HostHttpServer.start(
       db: db,
       identity: identity,
       ports: _testPorts,
       address: InternetAddress.loopbackIPv4,
       clock: () => _clock,
+      onInternalError: (String label, Object error, StackTrace stack) =>
+          internalErrors.add('$label｜$error'),
     );
     final String base = 'http://127.0.0.1:${server.port}';
 
@@ -491,9 +496,15 @@ Future<void> main() async {
     check('明细漏 id → 200 + rejected', badStatus == 200, '$badStatus');
     check('漏 id 的明细 → rejected', badReceipt['status'] == 'rejected',
         '${badReceipt['reason']}');
-    check('原因点到列名 `id`',
-        '${badReceipt['reason']}'.contains('缺少必填列 `id`'),
-        '${badReceipt['reason']}');
+    // #22 裁定（2026-10-09）：协议违反的细节**只进日志** ⇒ 回执只给通用中文，
+    // 分支区分改由 **reason_code** 承担（这里是 HTTP 层，所以查 JSON 里的字段）。
+    check('漏列 ⇒ reason_code = field_type_mismatch',
+        badReceipt['reason_code'] == 'field_type_mismatch',
+        '${badReceipt['reason_code']}｜${badReceipt['reason']}');
+    // 「原因点到列名」这条要求没被削弱 —— 改由日志承担（回执不再回显）。
+    check('漏列 ⇒ 细节（列名）进主机日志',
+        internalErrors.any((String e) => e.contains('缺少必填列 `id`')),
+        internalErrors.join(' | '));
     check('被拒的单据不落库', DocumentDao(db).findById(badDoc) == null);
 
     // ---------------------------------------------- 主数据增量（R-13 方案 A）
