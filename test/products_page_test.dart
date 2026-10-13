@@ -59,9 +59,31 @@ void main() {
     }
   });
 
-  Widget page({ExportSink? exports}) => MaterialApp(
-    home: Scaffold(body: ProductsPage(service: service, exports: exports)),
+  Widget page({ExportSink? exports, PendingMarks? pendingMarks}) => MaterialApp(
+    home: Scaffold(
+      body: ProductsPage(
+        service: service,
+        exports: exports,
+        pendingMarks: pendingMarks,
+      ),
+    ),
   );
+
+  /// 让某个商品成为「主机还没确认」的乐观行（队列里一条 pending 条目）
+  PendingMarks pendingFor(String productId) {
+    final SyncQueueDao queue = SyncQueueDao(db);
+    queue.enqueue(
+      SyncQueueEntry.create(
+        SyncOperation(
+          entity: Schema.products,
+          entityId: productId,
+          operation: SyncOpType.createMasterData,
+        ),
+        now: 1700000000000,
+      ),
+    );
+    return PendingMarks(queue);
+  }
 
   testWidgets('导出全部商品：含停用、不受搜索框影响（AF-2 / AF-12）', (
     WidgetTester tester,
@@ -115,5 +137,34 @@ void main() {
 
     expect(find.byKey(const Key('export-products')), findsNothing);
     expect(find.text('导出全部商品'), findsNothing);
+  });
+
+  // ---------------- D2b：乐观行的「待同步」小字 ----------------
+
+  testWidgets('乐观行带一行浅灰「待同步」；主机已确认的行没有'
+      '（`data_model.md §4.4` 第 3 条）', (WidgetTester tester) async {
+    await tester.pumpWidget(page(pendingMarks: pendingFor('p1')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('pending-product-p1')),
+      findsOneWidget,
+      reason: 'p1 只在本地（队列里还没被确认）⇒ 必须一眼看得出来',
+    );
+    expect(
+      find.byKey(const Key('pending-product-p2')),
+      findsNothing,
+      reason: 'p2 不在队列里 ⇒ 它已是主机确认的',
+    );
+    expect(find.text('待同步'), findsOneWidget, reason: '文案就是「待同步」三个字');
+  });
+
+  testWidgets('不注入 pendingMarks ⇒ 一行小字都不出现（桌面 / 未接队列时零变化）', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(find.text('待同步'), findsNothing);
   });
 }

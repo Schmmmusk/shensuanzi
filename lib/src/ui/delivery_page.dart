@@ -147,9 +147,6 @@ class _RowCtl {
     priceTouched = false;
   }
 
-  /// 单价预填售价：**只在刚选中商品时填**，用户之后改了不再覆盖
-  bool pricePrefilled = false;
-
   /// 价格框被**用户手改过**（§BG 方案 A ①：裁定明令用**显式布尔**，
   /// 不靠「值变没变」猜）—— 预填 = false；用户编辑（非空）= true；
   /// 用户清空 = false；**程序换算不算手改**（换算后的价仍是「预填价」，
@@ -458,12 +455,13 @@ class _DeliveryPageState extends State<DeliveryPage> {
     final Product? picked = await _showProductPicker(context);
     if (picked == null || rowIndex >= _rows.length) return;
     final _RowCtl row = _rows[rowIndex];
-    row.attachProduct(picked); // v3：带换算上下文 + 重置录入单位
-    // 单价预填售价 —— 只在「刚选中」时填一次；**改后不回写商品档**
-    if (!row.pricePrefilled) {
-      row.unitPrice.text = Money.format(picked.sellPrice);
-      row.pricePrefilled = true;
-    }
+    row.attachProduct(picked); // v3：带换算上下文 + 重置录入单位（含 priceTouched = false）
+    // ⚠️ **无条件**预填售价 —— 别在这里加守卫。换商品（**含重选同一商品**）时，
+    // 旧价对新商品没有意义，必须覆盖；而 `priceTouched` 的语义是「用户**手改过**」，
+    // 不是「是否预填过」—— 把它当预填守卫用**正是 #25 的病根**（§CV·二四·一 / §CV·二五）。
+    // 与「切单位」（§BG 方案 A）判据**不同**：那里换的是**同一商品**的价格单位，
+    // 手改过的价仍是用户的意愿 ⇒ 「未被手改才跟随」；这里换的是**不同商品** ⇒ 总覆盖。
+    row.unitPrice.text = Money.format(picked.sellPrice);
     setState(() => _invalid = null);
   }
 

@@ -717,4 +717,90 @@ void main() {
       );
     });
   });
+
+  // ---- #25（§CV·二五 裁定「甲」）：同一行内换商品 ⇒ 单价必须**重新预填** ----
+  //
+  // ⚠️ 三页是**三份独立实现** ⇒ 三页各钉一遍（不假设同款，见 §CV·二五 裁定 §四）。
+  // ⚠️ 第 ② 步在修复前**必红** —— 这就是本用例的反向灵敏度。
+  testWidgets('#25 换商品 ⇒ 单价重填（含重选）；手改不阻挡覆盖；取消不覆盖', (WidgetTester tester) async {
+    // 第二个商品：售价必须与红富士（5.00）不同，否则断言分辨不出来
+    ProductDao(db).insert(Product(
+      id: newId(),
+      code: 'P0009',
+      name: '黄金梨',
+      costPrice: 700,
+      sellPrice: 1250,
+      createdAt: 9,
+      updatedAt: 9,
+    ));
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    TextField priceField() => tester.widget<TextField>(
+      find.byKey(const Key('sale-price')),
+    );
+    TextField qtyField() => tester.widget<TextField>(
+      find.byKey(const Key('sale-qty')),
+    );
+
+    /// 打开选择器并选中 [name]。
+    /// [opener] = 行内当前可点的文案：还没选过是「点此选商品」，选过是**上一个商品名**。
+    Future<void> pick(String opener, String keyword, String name) async {
+      await tester.tap(find.text(opener));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('picker-search')), keyword);
+      await tester.pumpAndSettle();
+      // ⚠️ 结果行一律用 `widgetWithText(ListTile, …)`：`find.text` 连搜索框的
+      //    `EditableText` 一起匹配
+      await tester.tap(find.widgetWithText(ListTile, name));
+      await tester.pumpAndSettle();
+    }
+
+    // ① 选 A（红富士苹果 售价 5.00）⇒ 预填
+    await pick('点此选商品', '红富士', '红富士苹果');
+    expect(priceField().controller!.text, '5.00');
+
+    // ② 同一行改选 B（黄金梨 售价 12.50）⇒ 【修复前必红】
+    await pick('红富士苹果', '黄金梨', '黄金梨');
+    expect(
+      priceField().controller!.text,
+      '12.50',
+      reason: '换商品必须重填新商品的价 —— 旧价对新商品没有意义（#25）',
+    );
+
+    // ③ 再选回 A ⇒ 「重选同一商品」也要回到该商品的初始态
+    await pick('黄金梨', '红富士', '红富士苹果');
+    expect(priceField().controller!.text, '5.00');
+
+    // ④ **手改过**也不阻挡覆盖
+    await tester.enterText(find.byKey(const Key('sale-price')), '9.99');
+    await tester.pumpAndSettle();
+    expect(priceField().controller!.text, '9.99');
+    await pick('红富士苹果', '黄金梨', '黄金梨');
+    expect(priceField().controller!.text, '12.50', reason: '手改不阻挡覆盖');
+
+    // ⑤ 换商品**不碰数量**
+    await tester.enterText(find.byKey(const Key('sale-qty')), '7');
+    await tester.pumpAndSettle();
+    await pick('黄金梨', '红富士', '红富士苹果');
+    expect(
+      qtyField().controller!.text,
+      '7',
+      reason: '换商品只重置价与单位；数量是用户的输入',
+    );
+
+    // ⑥ 打开选择器后**取消** ⇒ 不覆盖（`picked == null` 的对称边界）
+    final String before = priceField().controller!.text;
+    await tester.tap(find.text('红富士苹果'));
+    await tester.pumpAndSettle();
+    Navigator.of(tester.element(find.byKey(const Key('picker-search')))).pop();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('picker-search')),
+      findsNothing,
+      reason: '前提断言：选择器真的关掉了（否则下面那条会空过）',
+    );
+    expect(priceField().controller!.text, before, reason: '取消选择 ⇒ 不覆盖');
+  });
 }

@@ -31,9 +31,14 @@ class AccountsPage extends StatefulWidget {
     super.key,
     required this.service,
     required this.masterDataPolicy,
+    this.pendingMarks,
   });
 
   final AccountService service;
+
+  /// **主机还没确认**的主数据行（D2b —— `data_model.md §4.4` 第 3 条）。
+  /// `null` = 一律不显示「待同步」小字（桌面 / 测试默认）。
+  final PendingMarks? pendingMarks;
 
   /// **主数据门控**（§CV·九·五 裁定「甲」，2026-10-09）—— 本页只看
   /// `canCreateAccounts`（新建 / 编辑 / 停用恢复三处写面，与往来页同构）。
@@ -54,6 +59,8 @@ class _AccountsPageState extends State<AccountsPage> {
     final ThemeData theme = Theme.of(context);
     final List<Account> accounts = widget.service.list();
     final Map<String, int> balances = widget.service.balances();
+    // ⚠️ 一次 build 取一次快照，再逐行 contains —— `ids` 每次访问都查库
+    final Set<String> pending = widget.pendingMarks?.ids ?? const <String>{};
 
     return Scaffold(
       body: SafeArea(
@@ -110,6 +117,7 @@ class _AccountsPageState extends State<AccountsPage> {
                         if (i > 0) const Divider(height: 1),
                         _AccountRow(
                           account: accounts[i],
+                          isPending: pending.contains(accounts[i].id),
                           balanceCents: balances[accounts[i].id] ?? 0,
                           onEdit: () => _editAccount(context, existing: accounts[i]),
                           onToggleActive: () => _toggleActive(accounts[i]),
@@ -163,12 +171,16 @@ class _AccountsPageState extends State<AccountsPage> {
 class _AccountRow extends StatelessWidget {
   const _AccountRow({
     required this.account,
+    required this.isPending,
     required this.balanceCents,
     required this.onEdit,
     required this.onToggleActive,
   });
 
   final Account account;
+
+  /// 主机还没确认（乐观行）⇒ 名下列一行浅灰「待同步」
+  final bool isPending;
   final int balanceCents;
   final VoidCallback onEdit;
   final VoidCallback onToggleActive;
@@ -231,6 +243,15 @@ class _AccountRow extends StatelessWidget {
                       color: theme.textTheme.bodySmall?.color,
                     ),
                   ),
+                  // 乐观行必须可分辨（`data_model.md §4.4` 第 3 条）
+                  if (isPending) ...<Widget>[
+                    const SizedBox(height: 2),
+                    Text(
+                      '待同步',
+                      key: Key('pending-account-${account.id}'),
+                      style: TextStyle(height: 1.6, color: theme.hintColor),
+                    ),
+                  ],
                 ],
               ),
             ),

@@ -71,7 +71,7 @@ class ManualSection {
   final List<ManualBlock> blocks;
 }
 
-/// 手册章节（[versionLine] 印在「反馈与版本」一章，如 `v0.3.0（第三个可部署版本）`）。
+/// 手册章节（[versionLine] 印在「反馈与版本」一章，如 `v0.3.4（第四个可部署版本）`）。
 List<ManualSection> buildManualSections({required String versionLine}) => <ManualSection>[
   ManualSection(
     id: 'welcome',

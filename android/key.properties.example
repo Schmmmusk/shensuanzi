@@ -1,0 +1,35 @@
+# 发布签名口令（A0b）—— **照这份复制成 `key.properties`，再把下面四个「值」改成你自己的**。
+#
+# ⚠️ 本文件（`.example`）是**入库**的，所以里面只能放占位符；
+#    `key.properties` 已被 `android/.gitignore` 排除（连同 `**/*.jks` / `**/*.keystore`）
+#    ⇒ **真正的口令只填进 `key.properties`**（那一份不进仓库）。
+#
+# ── 第一步：生成 keystore（只做一次；口令自己定，请记牢）──
+#    `keytool` 随 JDK 来（本机在 D:\Java\bin\keytool）。在任意目录执行：
+#
+#      keytool -genkeypair -v ^
+#        -keystore D:\shensuanzi-keys\shensuanzi-release.jks ^
+#        -storetype PKCS12 -keyalg RSA -keysize 2048 -validity 10000 ^
+#        -alias shensuanzi
+#
+#    （PowerShell 里把 `^` 换成反引号，或整条写一行。）
+#    （`-storetype PKCS12` 是 Java 9+ 的默认与推荐格式；JKS 已属遗留。）
+#    ⚠️ **口令只能用 ASCII** —— 理由见下面第 3 条。
+#    ⚠️ **口令记在安全的地方**：丢了就**无法再更新已上架的应用**（Android 硬约束）。
+#
+# ── 第二步：把下面四个**值**改成你自己的 ──
+#
+#    1) `storeFile` 必须是**真实路径**（Gradle 的 `file(...)` 语义：绝对路径，
+#       或相对 `android/app/` 的路径）。放仓库外可做到「连误提交的机会都没有」。
+#       ⚠️ 留成别的字符串 ⇒ 报 `Keystore file '...' not found`（100% 是这一条）。
+#       ⚠️ Windows 路径请写**正斜杠** `D:/x/y.jks`：反斜杠会被 `.properties` 当成**转义符**
+#          吃掉（`\s` 会变成 `s`）⇒ 同样报「文件不存在」，很难看出来。
+#    2) `storePassword` / `keyPassword`：PKCS12 只有一个口令，**两处填同一个**。
+#       留成占位符 ⇒ 报 `keystore password was incorrect`。
+#    3) ⚠️ **口令只能用 ASCII**（字母 / 数字 / 符号）：Java 读 `.properties` 走
+#       ISO-8859-1，中文口令会解成乱码 ⇒ 口令永远对不上，怎么改都构不过。
+#
+storeFile=D:/shensuanzi-keys/shensuanzi-release.jks
+storePassword=REPLACE_WITH_YOUR_PASSWORD
+keyAlias=shensuanzi
+keyPassword=REPLACE_WITH_YOUR_PASSWORD

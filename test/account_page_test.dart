@@ -34,15 +34,33 @@ void main() {
     }
   });
 
-  Widget page({MasterDataPolicy? policy}) => MaterialApp(
-    home: Scaffold(
-      body: AccountsPage(
-        service: service,
-        // 缺省桌面（账户可建）⇒ 既有用例**零变化**；mobile() 组显式传入
-        masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
+  Widget page({MasterDataPolicy? policy, PendingMarks? pendingMarks}) =>
+      MaterialApp(
+        home: Scaffold(
+          body: AccountsPage(
+            service: service,
+            // 缺省桌面（账户可建）⇒ 既有用例**零变化**；mobile() 组显式传入
+            masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
+            pendingMarks: pendingMarks,
+          ),
+        ),
+      );
+
+  /// 让某个账户成为「主机还没确认」的乐观行（队列里一条 pending 条目）
+  PendingMarks pendingFor(String accountId) {
+    final SyncQueueDao queue = SyncQueueDao(db);
+    queue.enqueue(
+      SyncQueueEntry.create(
+        SyncOperation(
+          entity: Schema.accounts,
+          entityId: accountId,
+          operation: SyncOpType.createMasterData,
+        ),
+        now: 1700000000000,
       ),
-    ),
-  );
+    );
+    return PendingMarks(queue);
+  }
 
   testWidgets('空列表给出「怎么办」（新建账户的引导）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
@@ -142,5 +160,38 @@ void main() {
       findsNothing,
       reason: '不能进表单 —— 条件写反（把 false 当 true 用）会在这里暴露',
     );
+  });
+
+  // ============================================================ D2b：乐观行的「待同步」小字
+  // `data_model.md §4.4` 第 3 条：乐观行**必须可分辨**（「我有的」与「主机确认的」）。
+  testWidgets('乐观行带一行浅灰「待同步」', (WidgetTester tester) async {
+    final Account optimistic = service.create(
+      AccountDraft(name: '微信收款', type: AccountType.wechat),
+      now: 1700000000000,
+    );
+
+    await tester.pumpWidget(page(pendingMarks: pendingFor(optimistic.id)));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(Key('pending-account-${optimistic.id}')),
+      findsOneWidget,
+      reason: '只在本地、主机还没确认 ⇒ 必须一眼看得出来',
+    );
+    expect(find.text('待同步'), findsOneWidget);
+  });
+
+  testWidgets('不注入 pendingMarks ⇒ 不出现「待同步」（桌面 / 未接队列时零变化）', (
+    WidgetTester tester,
+  ) async {
+    service.create(
+      AccountDraft(name: '现金', type: AccountType.cash),
+      now: 1700000000000,
+    );
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(find.text('待同步'), findsNothing);
   });
 }

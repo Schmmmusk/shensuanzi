@@ -50,3 +50,7 @@ app.*.map.json
 
 # AI assistant related
 /.workbuddy/
+
+# DeepSeek Harness related temporary files
+.dsh_acceptance/
+.scratch/

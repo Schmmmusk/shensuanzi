@@ -46,6 +46,7 @@ class AppShell extends StatefulWidget {
     this.onDocumentSubmitted,
     this.onStorageFailure,
     this.stockDelta,
+    this.pendingMarks,
     required this.masterDataPolicy,
     this.masterDataSink,
     this.mobileShell = false,
@@ -113,6 +114,13 @@ class AppShell extends StatefulWidget {
   /// 库存叠加（C2·§CC 裁定七：权威 + 未同步 + 拆解）。
   /// 手机端注入（镜像队列）；桌面 `null` = 现状零变化。
   final StockDelta? stockDelta;
+
+  /// **镜像主数据行的「待同步」标记**（D2b —— `data_model.md §4.4` 第 3 条）。
+  ///
+  /// 与 [stockDelta] 同构：手机端注入（镜像 + 队列）、桌面 `null`。
+  /// 有它，主数据列表才能对**乐观行**加一行浅灰小字「待同步」——
+  /// 「我有的」与「主机确认的」一眼可分。
+  final PendingMarks? pendingMarks;
 
   /// **主数据门控**（§CV·七 ① 乙，2026-10-09）：三族各自能不能在**本机**建档。
   /// 桌面 = `MasterDataPolicy.desktop()`；手机 v1 = `MasterDataPolicy.mobile()`
@@ -262,7 +270,11 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
     );
     } else if (destination.id == 'products') {
       // 商品是核心闭环的第一块 —— 已实现，不再是占位页
-      page = ProductsPage(service: shell.products, exports: shell.exports);
+      page = ProductsPage(
+        service: shell.products,
+        exports: shell.exports,
+        pendingMarks: shell.pendingMarks,
+      );
     } else if (destination.id == 'sale') {
       // 店内销售是核心闭环的第三块（RULE-002）；客户「新建」共用 PartyService
       page = shell.sales == null ||
@@ -329,6 +341,7 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               service: shell.parties!,
               exports: shell.exports,
               masterDataPolicy: shell.masterDataPolicy,
+              pendingMarks: shell.pendingMarks,
             );
     } else if (destination.id == 'documents') {
       page = shell.documents == null
@@ -373,6 +386,7 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
           : AccountsPage(
               service: shell.accounts!,
               masterDataPolicy: shell.masterDataPolicy,
+              pendingMarks: shell.pendingMarks,
             );
     } else if (destination.id == 'purchase') {
       // 采购入库是核心闭环的第二块 —— 库存与规则早就在 core 里（RULE-001）

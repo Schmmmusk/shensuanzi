@@ -43,6 +43,7 @@ import '../test/document_build_test.dart' as document_build_test;
 import '../test/document_sink_test.dart' as document_sink_test;
 import '../test/sale_draft_test.dart' as sale_draft_test;
 import '../test/sync_queue_triage_test.dart' as sync_queue_triage_test;
+import '../test/pending_marks_test.dart' as pending_marks_test;
 // ignore: unused_import
 import '../test/schema_test.dart' as schema_test;
 // ignore: unused_import
@@ -120,6 +121,7 @@ void main() {
     document_sink_test.main,
     sale_draft_test.main,
     sync_queue_triage_test.main,
+    pending_marks_test.main,
     schema_test.main,
     settlement_view_test.main,
     settlement_service_test.main,

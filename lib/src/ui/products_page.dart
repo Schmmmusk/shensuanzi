@@ -22,13 +22,22 @@ import 'export_button.dart';
 import 'product_form_dialog.dart';
 
 class ProductsPage extends StatefulWidget {
-  const ProductsPage({super.key, required this.service, this.exports});
+  const ProductsPage({
+    super.key,
+    required this.service,
+    this.exports,
+    this.pendingMarks,
+  });
 
   /// `null` = 数据库没打开成功（启动时选的位置有问题）
   final ProductService? service;
 
   /// 导出服务（`null` = 不显示导出按钮）
   final ExportSink? exports;
+
+  /// **主机还没确认**的主数据行（D2b —— `data_model.md §4.4` 第 3 条）。
+  /// `null` = 一律不显示「待同步」小字（桌面 / 测试默认）。
+  final PendingMarks? pendingMarks;
 
   @override
   State<ProductsPage> createState() => _ProductsPageState();
@@ -120,6 +129,8 @@ class _ProductsPageState extends State<ProductsPage> {
 
     final ThemeData theme = Theme.of(context);
     final List<Product> rows = _rows;
+    // ⚠️ 一次 build 取一次快照，再逐行 contains —— `ids` 每次访问都查库
+    final Set<String> pending = widget.pendingMarks?.ids ?? const <String>{};
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -194,6 +205,7 @@ class _ProductsPageState extends State<ProductsPage> {
                   itemBuilder: (BuildContext context, int index) =>
                       _ProductRow(
                         product: rows[index],
+                        isPending: pending.contains(rows[index].id),
                         onEdit: _edit,
                         onToggleActive: _toggleActive,
                       ),
@@ -207,11 +219,16 @@ class _ProductsPageState extends State<ProductsPage> {
 class _ProductRow extends StatelessWidget {
   const _ProductRow({
     required this.product,
+    required this.isPending,
     required this.onEdit,
     required this.onToggleActive,
   });
 
   final Product product;
+
+  /// 主机还没确认（乐观行）⇒ 名下列一行浅灰「待同步」
+  final bool isPending;
+
   final ValueChanged<Product> onEdit;
   final ValueChanged<Product> onToggleActive;
 
@@ -266,6 +283,16 @@ class _ProductRow extends StatelessWidget {
                     color: theme.textTheme.bodySmall?.color,
                   ),
                 ),
+                // 乐观行必须可分辨（`data_model.md §4.4` 第 3 条）：
+                // 「我有的」与「主机确认的」一眼可分 —— 否则乐观写就是一句谎话
+                if (isPending) ...<Widget>[
+                  const SizedBox(height: 2),
+                  Text(
+                    '待同步',
+                    key: Key('pending-product-${product.id}'),
+                    style: TextStyle(height: 1.6, color: theme.hintColor),
+                  ),
+                ],
               ],
             ),
           ),

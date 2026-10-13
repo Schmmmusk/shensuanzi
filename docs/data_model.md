@@ -613,7 +613,10 @@ CREATE UNIQUE INDEX idx_stock_seq  ON stock_ledger(seq_no);
    ⚠️ **乐观行必须可分辨**：镜像里的主数据行带一个**派生**的 `isPending` 标记
    （= 队列里该 id 尚有 `pending` / `sent` 条目、且**尚未被 pull 确认**），
    UI 对 `isPending` 的行加一行浅灰小字「待同步」——「我有的」与「主机确认的」
-   必须一眼可分（与 §4.1 的「未同步影响」同源；实现见 D2b）。
+   必须一眼可分（与 §4.1 的「未同步影响」同源）。
+   **实现**（D2b，2026-10-10）：判定出口 = `PendingMarks`（core），其唯一来源是
+   `SyncQueueDao.unconfirmedEntityIds()`（`pending` + `sent`；`failed` 不算）⇒
+   商品 / 往来 / 账户三个列表对该行加一行浅灰「待同步」。
 
 ## 五、不变量
 

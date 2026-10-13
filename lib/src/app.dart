@@ -1570,6 +1570,11 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     final StockDelta? stockDelta = mirror == null
         ? null
         : StockDelta(db: mirror, queue: SyncQueueDao(mirror));
+    // D2b（`data_model.md §4.4` 第 3 条）：乐观行的「待同步」标记 —— 与 stockDelta
+    // 同一份 mirror / 同一个队列，同一条件（桌面 `null` = 现状零变化）。
+    final PendingMarks? pendingMarks = mirror == null
+        ? null
+        : PendingMarks(SyncQueueDao(mirror));
 
     // §CV·七 ① 乙（2026-10-09）：**主数据门控 + 提交出口**，与 documentSink 同构。
     //
@@ -1608,6 +1613,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // M15（2026-10-08）：开单保存失败 → 原始异常进日志，界面只给分类文案
       onStorageFailure: _onStorageFailure,
       stockDelta: stockDelta,
+      pendingMarks: pendingMarks,
       // §CV·七 ① 乙：主数据门控 + 出口。按壳判定（与上面 readOnly 同一理由）：
       // **不按 mirror 是否取到** —— 门控是「策略」，取不到 mirror 时 sink 为 null，
       // 相关页面退回 `_PendingPage`（宁可「数据未就绪」，也不给写不通的路）。

@@ -82,16 +82,37 @@ void main() {
     );
   }
 
-  Widget page({ExportSink? exports, MasterDataPolicy? policy}) => MaterialApp(
+  Widget page({
+    ExportSink? exports,
+    MasterDataPolicy? policy,
+    PendingMarks? pendingMarks,
+  }) => MaterialApp(
     home: Scaffold(
       body: PartiesPage(
         service: service,
         exports: exports,
         // 缺省桌面（三族全开）⇒ 既有用例**零变化**；mobile() 组显式传入
         masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
+        pendingMarks: pendingMarks,
       ),
     ),
   );
+
+  /// 让某个往来方成为「主机还没确认」的乐观行（队列里一条 pending 条目）
+  PendingMarks pendingForParty(String partyId) {
+    final SyncQueueDao queue = SyncQueueDao(db);
+    queue.enqueue(
+      SyncQueueEntry.create(
+        SyncOperation(
+          entity: Schema.parties,
+          entityId: partyId,
+          operation: SyncOpType.createMasterData,
+        ),
+        now: 1700000000000,
+      ),
+    );
+    return PendingMarks(queue);
+  }
 
   testWidgets('空列表给「怎么办」；新建双角色往来方 → 列表出现「已结清」', (
     WidgetTester tester,
@@ -460,5 +481,38 @@ void main() {
       findsNothing,
       reason: '不能进表单 —— 条件写反（把 false 当 true 用）会在这里暴露',
     );
+  });
+
+  // ============================================================ D2b：乐观行的「待同步」小字
+  // `data_model.md §4.4` 第 3 条：乐观行**必须可分辨**（「我有的」与「主机确认的」）。
+  testWidgets('乐观行带一行浅灰「待同步」；主机已确认的行没有', (WidgetTester tester) async {
+    final Party optimistic = createCustomer('张三');
+    final Party confirmed = createCustomer('李四');
+
+    await tester.pumpWidget(page(pendingMarks: pendingForParty(optimistic.id)));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(Key('pending-party-${optimistic.id}')),
+      findsOneWidget,
+      reason: '只在本地、主机还没确认 ⇒ 必须一眼看得出来',
+    );
+    expect(
+      find.byKey(Key('pending-party-${confirmed.id}')),
+      findsNothing,
+      reason: '不在队列里 ⇒ 它已是主机确认的',
+    );
+    expect(find.text('待同步'), findsOneWidget);
+  });
+
+  testWidgets('不注入 pendingMarks ⇒ 不出现「待同步」（桌面 / 未接队列时零变化）', (
+    WidgetTester tester,
+  ) async {
+    createCustomer('张三');
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(find.text('待同步'), findsNothing);
   });
 }

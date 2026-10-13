@@ -273,6 +273,26 @@ Future<void> main() async {
         client.queue.unconfirmedEntityIds().contains('d2'));
     client.queue.clearConfirmed(<String>{'d2'});
     check('pull 确认后不再算', !client.queue.unconfirmedEntityIds().contains('d2'));
+
+    // D2b：`PendingMarks` 是那行「待同步」小字的**唯一出口**。
+    // ⚠️ 真经门面调一次 —— 只验 DAO 的话，「门面漏转发」这类事故钉不住
+    // （§五 纪律；`DataDirectoryService.refreshMarker` 就是这么漏的）。
+    final PendingMarks marks = PendingMarks(client.queue);
+    check('PendingMarks：确认后为空', marks.ids.isEmpty);
+    final SyncQueueEntry markProbe = client.queue.enqueue(
+        SyncQueueEntry.create(docOp('d3', 'sale', <int>[1]), now: now()));
+    check('PendingMarks：新入队 ⇒ 该行「待同步」', marks.ids.contains('d3'));
+    client.queue.markSent(markProbe.id);
+    check('PendingMarks：sent 仍算「待同步」（等 pull 确认）',
+        marks.ids.contains('d3'));
+
+    // ⚠️ **反向**：`clearConfirmed` **只删 `sent`** —— 还没推送（`pending`）的条目
+    // 不因 pull 被清（否则本地唯一那份数据就没了；R-14 附带问题 3）。
+    client.queue.enqueue(
+        SyncQueueEntry.create(docOp('d4', 'sale', <int>[1]), now: now()));
+    client.queue.clearConfirmed(<String>{'d4'});
+    check('PendingMarks：pending 不因 pull 被清（只清 sent）',
+        marks.ids.contains('d4'));
     db.close();
   }
 

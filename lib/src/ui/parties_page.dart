@@ -30,9 +30,14 @@ class PartiesPage extends StatefulWidget {
     required this.service,
     this.exports,
     required this.masterDataPolicy,
+    this.pendingMarks,
   });
 
   final PartyService service;
+
+  /// **主机还没确认**的主数据行（D2b —— `data_model.md §4.4` 第 3 条）。
+  /// `null` = 一律不显示「待同步」小字（桌面 / 测试默认）。
+  final PendingMarks? pendingMarks;
 
   /// 导出服务（`null` = 不显示导出按钮；同时透传给流水页）
   final ExportSink? exports;
@@ -53,6 +58,8 @@ class _PartiesPageState extends State<PartiesPage> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    // ⚠️ 一次 build 取一次快照，再逐行 contains —— `ids` 每次访问都查库
+    final Set<String> pending = widget.pendingMarks?.ids ?? const <String>{};
     // §审查 OBS-05 后半：**停用但余额 ≠ 0 的也要显示** —— 停用只是
     //「不再出现在开单选择器里」，不是从账上消失（口径见 `listVisible`）
     final List<Party> parties = widget.service.listVisible();
@@ -178,6 +185,7 @@ class _PartiesPageState extends State<PartiesPage> {
                         _PartyRow(
                           key: Key('party-row-${sorted[i].id}'),
                           party: sorted[i],
+                          isPending: pending.contains(sorted[i].id),
                           balanceCents: balances[sorted[i].id] ?? 0,
                           onOpen: () => _openFlow(context, sorted[i]),
                           onEdit: () => _editParty(context, existing: sorted[i]),
@@ -280,6 +288,7 @@ class _PartyRow extends StatelessWidget {
   const _PartyRow({
     super.key,
     required this.party,
+    required this.isPending,
     required this.balanceCents,
     required this.onOpen,
     required this.onEdit,
@@ -287,6 +296,9 @@ class _PartyRow extends StatelessWidget {
   });
 
   final Party party;
+
+  /// 主机还没确认（乐观行）⇒ 名下列一行浅灰「待同步」
+  final bool isPending;
   final int balanceCents;
   final VoidCallback onOpen;
   final VoidCallback onEdit;
@@ -383,6 +395,15 @@ class _PartyRow extends StatelessWidget {
                       color: theme.textTheme.bodySmall?.color,
                     ),
                   ),
+                  // 乐观行必须可分辨（`data_model.md §4.4` 第 3 条）
+                  if (isPending) ...<Widget>[
+                    const SizedBox(height: 2),
+                    Text(
+                      '待同步',
+                      key: Key('pending-party-${party.id}'),
+                      style: TextStyle(height: 1.6, color: theme.hintColor),
+                    ),
+                  ],
                 ],
               ),
             ),
