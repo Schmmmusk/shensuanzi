@@ -228,8 +228,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       Navigator.of(context).pop(result.product);
     } catch (error) {
       setState(() {
-        _failure = '没能保存（$error）。'
-            '先关掉这个窗口再试一次；如果一直这样，请把这句话告诉技术支持。';
+        // #36 文案半（2026-10-14）：**不要把原始异常拼进用户文案** ——
+        // 原来是 `SqliteException` 全文直抛（**带整条 SQL 与绑定参数**），
+        // 而且「先关掉这个窗口再试一次」对「只读 / 被占用」以外的原因并不成立
+        //（正是 M15 那条「不承诺做不到的事」）。与三张开单页同一条通道：
+        // `storageFailureNote` 按**结果码**给分类文案，细节由日志承担。
+        _failure = storageFailureNote(error);
         _saving = false;
       });
     }

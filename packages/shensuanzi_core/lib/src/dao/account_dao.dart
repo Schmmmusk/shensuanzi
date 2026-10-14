@@ -1,6 +1,7 @@
 import 'package:sqlite3/sqlite3.dart';
 
 import '../db/database.dart';
+import '../db/read_failures.dart';
 import '../db/schema.dart';
 import '../models/account.dart';
 
@@ -33,23 +34,35 @@ class AccountDao {
       ])
       .isNotEmpty;
 
+  /// ⚠️ **#42 甲 · L1**：坏行跳过 + 计数（见 `party_dao.findById` 的同款说明）。
   Account? findById(String id) {
-    final ResultSet rows = _raw.select(
-      'SELECT * FROM ${Schema.accounts} WHERE id = ?',
-      <Object?>[id],
+    final List<Account> found = decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.accounts} WHERE id = ?',
+        <Object?>[id],
+      ),
+      (Map<String, Object?> row) =>
+          Account.fromRow(row, failures: db.readFailures),
+      table: Schema.accounts,
+      failures: db.readFailures,
     );
-    if (rows.isEmpty) return null;
-    return Account.fromRow(rows.first);
+    return found.isEmpty ? null : found.first;
   }
 
   List<Account> findAll({bool? active, int limit = 200}) {
     final String where = active == null
         ? ''
         : ' WHERE is_active = ${active ? 1 : 0}';
-    return _raw
-        .select('SELECT * FROM ${Schema.accounts}$where ORDER BY name LIMIT ?', <Object?>[limit])
-        .map(Account.fromRow)
-        .toList(growable: false);
+    return decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.accounts}$where ORDER BY name LIMIT ?',
+        <Object?>[limit],
+      ),
+      (Map<String, Object?> row) =>
+          Account.fromRow(row, failures: db.readFailures),
+      table: Schema.accounts,
+      failures: db.readFailures,
+    );
   }
 
   void update(Account account) {

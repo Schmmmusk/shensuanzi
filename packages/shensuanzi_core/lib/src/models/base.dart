@@ -6,6 +6,8 @@
 /// 不可变实体连方法都不存在 —— 想 UPDATE 都写不出来。
 library;
 
+import '../db/read_failures.dart';
+
 /// 业务数据：**只插入，不更新，不删除**。
 ///
 /// 对应表：`documents` / `document_lines` / `stock_ledger` /
@@ -44,6 +46,12 @@ int boolToInt(bool value) => value ? 1 : 0;
 /// `Null check operator used on a null value`，类型不符时只抛 `TypeError` ——
 /// 两者都**不说是哪一列**，而 `fromRow` 唯一的远程调用方是 `SyncServer`
 /// （客户端推上来的 JSON），没有列名就等于没有可诊断信息。
+///
+/// ⚠️ **#42（2026-10-14 裁定）**：抛的是 [RowDecodeException]（不再是 `ArgumentError`）
+/// —— 它是**「这一行读不出来」的信号**，由 `decodeRows` 捕获 ⇒ **跳过该行 + 计数**，
+/// 不让异常抛穿到页面 `build`（那次症状是**整页变灰**）。
+/// 全仓**没有**任何地方 catch `ArgumentError`，所以换类型是安全的（已 grep 确认）。
+/// 顺带：新类型**不再把值带进错误文本**（值可能是经营数据）。
 extension RowReader on Map<String, Object?> {
   String requiredString(String column) {
     final Object value = _require(column);
@@ -78,22 +86,20 @@ extension RowReader on Map<String, Object?> {
 
   Object _require(String column) {
     if (!containsKey(column)) {
-      throw ArgumentError(
-        '缺少必填列 `$column`。已有列：${keys.join(', ')}',
-        column,
-      );
+      throw RowDecodeException(column: column, reason: '缺少这一列');
     }
     final Object? value = this[column];
     if (value == null) {
-      throw ArgumentError('必填列 `$column` 是 NULL', column);
+      throw RowDecodeException(column: column, reason: '必填列是空的（NULL）');
     }
     return value;
   }
 
-  ArgumentError _typeError(String column, String expected, Object? actual) =>
-      ArgumentError.value(
-        actual,
-        column,
-        '列 `$column` 应为 $expected，实际 ${actual.runtimeType}',
+  /// ⚠️ **只记列名与期望类型，不记值** —— 值可能是经营数据
+  /// （客户名 / 金额），见 `read_failures.dart` 的日志纪律。
+  RowDecodeException _typeError(String column, String expected, Object? actual) =>
+      RowDecodeException(
+        column: column,
+        reason: '这一列应为 $expected，实际是 ${actual.runtimeType}',
       );
 }

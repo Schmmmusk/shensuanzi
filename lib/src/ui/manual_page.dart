@@ -163,6 +163,12 @@ class _Block extends StatelessWidget {
                       ),
                       child: Text(
                         '${i + 1}',
+                        // #30（2026-10-14）：**圆圈与字号必须同步放大** —— 两者都手动乘了
+                        // textScaler（`scale(22)` / `scale(12)`），若再让 `fontSize` 被
+                        // **自动**放大一次，实际字号就是 `12·s²`，而圆圈只有 `22·s`
+                        // ⇒ `s > 1.83` 时字符必戳出圆外（PC / 手机同一份代码 ⇒ 两端同现）。
+                        // `noScaling` 只关掉「自动那一次」，比例恒定。
+                        textScaler: TextScaler.noScaling,
                         style: TextStyle(
                           fontSize: MediaQuery.textScalerOf(context).scale(12),
                           fontWeight: FontWeight.w700,

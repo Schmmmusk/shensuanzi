@@ -67,6 +67,8 @@ Future<void> _mainMobile() async {
       schemaVersion: '${Schema.version}',
     );
 
+    _installErrorBoundary(log);
+
     runApp(
       ShensuanziApp(
         configStore: store,
@@ -78,7 +80,6 @@ Future<void> _mainMobile() async {
     log.crash(error, stack);
   });
 }
-
 void _mainDesktop() {
   final AppEnvironment environment = AppEnvironment.detect();
   final AppLog log = AppLog.besideConfig(
@@ -115,8 +116,62 @@ void _mainDesktop() {
       );
     }
 
+    _installErrorBoundary(log);
+
     runApp(const ShensuanziApp());
   }, (Object error, StackTrace stack) {
     log.crash(error, stack);
   });
+}
+
+/// #42 甲 · **L3 界面错误边界**（2026-10-14 裁定 §二）。
+///
+/// 默认的 `ErrorWidget` 在 release 里是**一块灰** —— #42 的原始症状就是它
+/// （往来方页整页变灰）。这里换成一句人话；**细节进日志**（异常 + 堆栈），
+/// 界面不给堆栈（用户看不懂，而且异常文本可能夹带经营数据）。
+///
+/// ⚠️ **只在生产入口设置**（`main.dart`）：widget 测试直接 pump `ShensuanziApp` /
+/// `AppShell` ⇒ 不受影响。**别把它搬进 `app.dart`** —— 那样测试会把
+/// 「本该失败的断言」吞成一句提示（`takeException()` 类的门禁就瞎了）。
+///
+/// ⚠️ 它治的是**别的未知抛穿**：枚举坏值 / 类型不符那一族已经在 core 的读路径被
+/// `decodeRows` 兜住（`#42 甲 · L1/L2`）。**不要把它当兜底设计用** ——
+/// 真正的修法永远是「让那条路不抛」。
+///
+/// ⚠️ 返回值必须**自成一体**：异常可能发生在 `MaterialApp` **之外** ⇒
+/// 自己带 `Directionality` 与 `Material`；内容只有一个**可滚动**的文字块
+/// （大字号 / 极小约束下都不许自己再抛一次）。
+void _installErrorBoundary(AppLog log) {
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    log.crash(
+      details.exception,
+      details.stack ?? StackTrace.current,
+      label: '界面渲染失败',
+    );
+    return const _ErrorBoundaryBox();
+  };
+}
+
+/// 界面错误边界的兜底块 —— **通用中文 + 怎么办**，不给异常文本。
+class _ErrorBoundaryBox extends StatelessWidget {
+  const _ErrorBoundaryBox();
+
+  @override
+  Widget build(BuildContext context) => const Directionality(
+    textDirection: TextDirection.ltr,
+    child: Material(
+      color: Color(0xFFF3EDF0),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: EdgeInsets.all(16),
+          child: Text(
+            '这一块内容没能显示出来。\n'
+            '原因已经写进日志文件；要是急着用，可以先重启一次软件。',
+            textAlign: TextAlign.center,
+            style: TextStyle(height: 1.6, color: Color(0xFF1D1B20)),
+          ),
+        ),
+      ),
+    ),
+  );
 }

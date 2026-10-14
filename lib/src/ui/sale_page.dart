@@ -43,6 +43,7 @@ class SalePage extends StatefulWidget {
     this.stockDelta,
     required this.masterDataPolicy,
     required this.masterDataSink,
+    this.mobileShell = false,
   });
 
   /// 开单页**查询**用（选择器 / 库存快照 —— 读）。
@@ -81,6 +82,10 @@ class SalePage extends StatefulWidget {
   /// **未同步库存影响**（M08，2026-10-08）：手机端注入（镜像队列）；
   /// 桌面 `null` = 不叠加 —— 桌面的权威库就是本机，没有「未同步」这回事。
   final StockDelta? stockDelta;
+
+  /// **壳类型**（#37①，2026-10-14）：手机壳**没有键盘** ⇒ 按钮文案不带
+  /// `(Esc)` / `(Ctrl+S)` 后缀。判据沿用 `AppShell.mobileShell`（**不新造 flag**）。
+  final bool mobileShell;
 
   /// 商品搜索与「＋新建商品」复用商品建档。
   final ProductService productService;
@@ -197,15 +202,28 @@ class _RowCtl {
     return qty * price;
   }
 
-  /// 换算后的**最小单位数量**（`document_lines.quantity` 的值）；
-  /// 换算失败 ⇒ `null`（validate 会带文案拦住）
-  int? get baseQuantityValue => toBaseQuantity(
-    entryQuantity: quantityValue ?? 0,
-    entryUnit: entryUnit.isEmpty ? null : entryUnit,
-    baseUnit: baseUnit ?? '',
-    packageUnit: packageUnit,
-    packageSize: packageSize,
-  ).baseQuantityOrNull;
+  /// 换算后的**最小单位数量**（`document_lines.quantity` 的值）。
+  ///
+  /// ⚠️ **数量没填 / 非法 ⇒ `null`**（**不换算、不兜底**）；换算失败也 `null`
+  /// （validate 会带文案拦住）。
+  ///
+  /// #44（2026-10-14 裁定「甲」）：原来写 `entryQuantity: quantityValue ?? 0`
+  /// —— 空框被 **0 兜底**，而 `toBaseQuantity` 对「没切单位」原样返回 `0`
+  /// ⇒ 负库存判定退化成 `0 > estimated` ⇒ 快照为负时**空数量也报假告警**，
+  /// 并挤掉「本地未同步」说明（M08 就是这么红的）。
+  /// 判据：**「没有数量」是 `null`，不是 `0`** —— `null` 让调用方短路，
+  /// `0` 会伪装成一个合法的比较值。
+  int? get baseQuantityValue {
+    final int? entry = quantityValue;
+    if (entry == null) return null;
+    return toBaseQuantity(
+      entryQuantity: entry,
+      entryUnit: entryUnit.isEmpty ? null : entryUnit,
+      baseUnit: baseUnit ?? '',
+      packageUnit: packageUnit,
+      packageSize: packageSize,
+    ).baseQuantityOrNull;
+  }
 
   /// 本行小计（分）= 折前 − 让价（v3 真相口径）；字段没填全 ⇒ `null`
   int? get amountCents {
@@ -257,14 +275,11 @@ class _SalePageState extends State<SalePage> {
   final List<_RowCtl> _rows = <_RowCtl>[];
   final List<_PayCtl> _pays = <_PayCtl>[];
 
-  /// **打开本页时**的库存快照（每商品账面库存）。Z-2：只用于提示，
-  /// 不重查不校验 —— 负库存本来就允许，保存必然放行。
-  late final Map<String, int> _stockSnapshot = widget.service.stockSnapshot();
-
-  /// 打开本页时的**未同步影响**（M08）：手机刚开的单还没推到电脑，
-  /// 权威快照里没有它们 —— 提示要说清「其中本地未同步 N 件」。
-  late final Map<String, int> _unsyncedDelta =
-      widget.stockDelta?.unsyncedDelta() ?? const <String, int>{};
+  /// ⚠️ **库存快照与未同步影响不再是字段**（#28②，2026-10-14）——
+  /// 它们原来是 `late final`（**只在建页时算一次**），而保存成功后
+  /// `_afterSaved` 是「原地清行 + 复用同一个 State」⇒ 接着开第二单时，
+  /// 估算库存**不含刚下的那一单**（两个快照都过期）⇒ 该提示负库存时不提示。
+  /// 现在改成在 `build()` 里各取一次（每条都是一次单查询，不是每行一次）。
 
   /// 保存失败的字段级原因（用户改任何输入后清掉）
   SaleDraftInvalid? _invalid;
@@ -704,6 +719,11 @@ class _SalePageState extends State<SalePage> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    // #28②（2026-10-14）：**每次 build 取一次**（保存后 `_afterSaved` 会 setState
+    // ⇒ 重跑这里）—— 原来 `late final` 只在建页时算，第二单就会拿到过期快照。
+    final Map<String, int> stockSnapshot = widget.service.stockSnapshot();
+    final Map<String, int> unsyncedDelta =
+        widget.stockDelta?.unsyncedDelta() ?? const <String, int>{};
     // M09（2026-10-08）：**返回键也要走放弃确认** —— AppBar 返回箭头（手机壳的
     // 整屏开单页）与系统返回都绕过下面绑定的 Escape，以前填了数量点返回直接丢草稿。
     return PopScope(
@@ -717,7 +737,14 @@ class _SalePageState extends State<SalePage> {
         const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
         const SingleActivator(LogicalKeyboardKey.escape): _cancel,
       },
-      child: Focus(
+      child: FocusScope(
+        // #37甲（2026-10-14）：这里**必须**是 `FocusScope`，不能降回 `Focus` ——
+        // `CallbackShortcuts` 内部是 `Focus(canRequestFocus: false)`，按键只能靠
+        // **后代节点上溯**经过它；而点页内空白会触发 `EditableText.onTapOutside`
+        // （桌面专属）调 `unfocus()`，默认 `disposition: scope` 把焦点升到
+        // **最近的外层 scope**。若是普通 `Focus`，焦点升到路由的 `FocusScope`
+        // （在 `CallbackShortcuts` **之上**）⇒ 上溯不再经过它 ⇒ Ctrl+S / Esc 静默失效。
+        // 换成 `FocusScope` ⇒ 最近 scope 就是本页 ⇒ 焦点留在页内 ⇒ 恒生效。
         autofocus: true,
         // C3·真机反馈 ④：键盘（含输入法候选栏）高度变化时，把焦点字段滚回可视区
         child: KeyboardReveal(
@@ -730,7 +757,7 @@ class _SalePageState extends State<SalePage> {
                   children: <Widget>[
                     _headerRow(theme),
                     const Divider(height: 24),
-                    _linesSection(theme),
+                    _linesSection(theme, stockSnapshot, unsyncedDelta),
                     _totalBar(theme),
                     const Divider(height: 24),
                     _paymentSection(theme),
@@ -811,7 +838,11 @@ class _SalePageState extends State<SalePage> {
     ],
   );
 
-  Widget _linesSection(ThemeData theme) => Column(
+  Widget _linesSection(
+    ThemeData theme,
+    Map<String, int> stockSnapshot,
+    Map<String, int> unsyncedDelta,
+  ) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: <Widget>[
       Row(
@@ -839,11 +870,11 @@ class _SalePageState extends State<SalePage> {
               : _invalid!.lineErrors[i],
           stockOfProduct: _rows[i].product == null
               ? null
-              : _stockSnapshot[_rows[i].product!.id],
+              : stockSnapshot[_rows[i].product!.id],
           // M08：本地未同步影响（同一商品的队列 Δ）
           unsyncedOfProduct: _rows[i].product == null
               ? null
-              : _unsyncedDelta[_rows[i].product!.id],
+              : unsyncedDelta[_rows[i].product!.id],
           enabled: !_saving,
           onPickProduct: () => _pickProduct(i),
           // M12（2026-10-08）：行内字段变了要**重算整单让价分摊** ——
@@ -1176,7 +1207,8 @@ class _SalePageState extends State<SalePage> {
     children: <Widget>[
       TextButton(
         onPressed: _saving ? null : _cancel,
-        child: const Text('取消 (Esc)'),
+        // #37①：手机壳没有键盘 ⇒ 不显示快捷键后缀（判据 = AppShell.mobileShell）
+        child: Text('取消${widget.mobileShell ? '' : ' (Esc)'}'),
       ),
       FilledButton.icon(
         // ⚠️ **稳定 Key**：按钮文案会随「有没有找零」变（§AX·一），
@@ -1195,7 +1227,8 @@ class _SalePageState extends State<SalePage> {
         label: Text(
           _saving
               ? '保存中…'
-              : '${_draft.saveActionLabel(givenCents: Money.tryParseYuan(_given.text.trim()))} (Ctrl+S)',
+              : '${_draft.saveActionLabel(givenCents: Money.tryParseYuan(_given.text.trim()))}'
+                    '${widget.mobileShell ? '' : ' (Ctrl+S)'}',
         ),
       ),
     ],
@@ -1234,7 +1267,10 @@ class _LineCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final int? qty = row.quantityValue;
+    // #28①（2026-10-14）：**必须比「最小单位」** —— 库存（`snapshot` / `estimated`）
+    // 是最小单位口径，而 `quantityValue` 是**录入单位的原始数**（3 箱 = 3）
+    // ⇒ 按箱录入必然漏报。改用同文件已有的换算 getter（`baseQuantityValue`）。
+    final int? qty = row.baseQuantityValue;
     final int snapshot = stockOfProduct ?? 0;
     // M08（2026-10-08）：**估算库存 = 权威快照 + 本地未同步影响** ——
     // 手机上刚开的单还没推给电脑，权威快照不含它们；只报权威值

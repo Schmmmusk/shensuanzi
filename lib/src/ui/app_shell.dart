@@ -24,6 +24,7 @@ import 'products_page.dart';
 import 'account_page.dart';
 import 'documents_page.dart';
 import 'help_page.dart';
+import 'read_failure_banner.dart';
 import 'settings_page.dart';
 import 'parties_page.dart';
 import 'purchase_page.dart';
@@ -47,6 +48,7 @@ class AppShell extends StatefulWidget {
     this.onStorageFailure,
     this.stockDelta,
     this.pendingMarks,
+    this.readFailures,
     required this.masterDataPolicy,
     this.masterDataSink,
     this.mobileShell = false,
@@ -121,6 +123,16 @@ class AppShell extends StatefulWidget {
   /// 有它，主数据列表才能对**乐观行**加一行浅灰小字「待同步」——
   /// 「我有的」与「主机确认的」一眼可分。
   final PendingMarks? pendingMarks;
+
+  /// **读路径坏数据的计数**（#42 甲 · L4，2026-10-14 裁定 §二·接线 1/2 = A）。
+  ///
+  /// 来源 = `Db.readFailures`（**桌面**读的是主库、**手机**读的是镜像库 ⇒
+  /// `app.dart` 传 `(mirror ?? _db)?.readFailures`）。
+  /// 桌面与手机都接线；`null` = 不显示提示条（**测试零变化**）。
+  ///
+  /// ⚠️ 这只是**显示**层：真正的「不静默」保证在 core —— 读路径跳过坏行时
+  /// **必须**计数（`decodeRows`），否则这里永远读到 0。
+  final ReadFailureLog? readFailures;
 
   /// **主数据门控**（§CV·七 ① 乙，2026-10-09）：三族各自能不能在**本机**建档。
   /// 桌面 = `MasterDataPolicy.desktop()`；手机 v1 = `MasterDataPolicy.mobile()`
@@ -296,6 +308,8 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               // §CV·七 ① 乙：主数据门控按**能力**走（商品 v1 可建 / 往来仍引导）
               masterDataPolicy: shell.masterDataPolicy,
               masterDataSink: shell.masterDataSink!,
+              // #37①：手机壳不显示快捷键后缀（判据与送货页同一处）
+              mobileShell: shell.mobileShell,
             );
     } else if (destination.id == 'delivery') {
       // 送货（批次 1b / RULE-003）：创建即扣库存、状态强制 in_transit，
@@ -403,6 +417,8 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               onStorageFailure: shell.onStorageFailure,
               masterDataPolicy: shell.masterDataPolicy,
               masterDataSink: shell.masterDataSink!,
+              // #37①：手机壳不显示快捷键后缀（判据与送货页同一处）
+              mobileShell: shell.mobileShell,
             );
     } else {
       page = _PendingPage(destination: destination);
@@ -450,13 +466,24 @@ class _AppShellState extends State<AppShell> {
     // 页面装配在 [appShellPage] —— 与 MobileShell **共用同一份**（§BH B1a），
     // 两套壳各写一份必然漂移；本方法只管「面包屑 / 工具栏」这层桌面摆设。
     final Widget page = appShellPage(widget, current);
+    // #42 甲 · L4：坏数据提示条挂内容区顶部 —— **库级**状况，两套壳共用同一个
+    // widget（`read_failure_banner.dart`）；计数为 0 时它自己收成 `SizedBox.shrink()`
+    // ⇒ 现状零变化。
+    final Widget banner = ReadFailureBanner(log: widget.readFailures);
     // 沉浸模式：开单是**连续的动作流程**，不显示面包屑与工具栏
     // （`docs/reply.md` §三）。左侧导航仍在 —— 用户可以随时跳去建商品。
-    if (current.immersive) return page;
+    // ⚠️ 提示条**照给**：开单页读的也是同一张库，坏数据一样会少显示东西。
+    if (current.immersive) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[banner, Expanded(child: page)],
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
+        banner,
         _Breadcrumb(current: current),
         const Divider(height: 1),
         Expanded(child: page),

@@ -128,6 +128,23 @@ class SettlementService {
     return doc.totalAmount - settled - documents.returnedAgainst(documentId);
   }
 
+  /// 给界面看的「未收 / 未付 / 未退款」金额：**欠款不会小于 0**（#38 甲，2026-10-14）。
+  ///
+  /// ⚠️ 与 [unsettledCentsOf] **成对存在**，含义不同、都要留着：
+  /// - [unsettledCentsOf] = **算术**，也是 `settle()` 封顶用的口径 ⇒ **不许 clamp**；
+  /// - 本函数 = **展示语义** ⇒ clamp 到 0。
+  ///
+  /// 为什么不直接把算术也 clamp —— 「退货冲减」与「退款单核销」是不是**同一笔钱**
+  /// 还没裁（`§AR·二` #38 第二步）；先改算术 = 拿一个未裁的量级去改业务。
+  ///
+  /// ⚠️ **全退**（[isFullyReturned]）那一路由界面另说「已全部退清」，不走这里；
+  /// 本函数兜的是**其余**会算出负数的残角（典型：先全额收款、再退一部分货 ⇒
+  /// 我方其实欠对方一笔退款）。那笔退款该不该在这里露出，属第二步口径问题。
+  int unsettledForDisplayCentsOf(String documentId) {
+    final int value = unsettledCentsOf(documentId);
+    return value < 0 ? 0 : value; // 不用 dart:math（省一个导入）
+  }
+
   /// 是不是退货单（方向与语义都和普通单据相反的那一类）。
   ///
   /// `sale_return` 该退钱给客户（`payment` 核销它）；
@@ -157,6 +174,19 @@ class SettlementService {
       doc.status == DocStatus.confirmed && trueUnsettledCents <= 0
       ? DocStatus.settled
       : doc.status;
+
+  /// 这单是不是**已全部退清**（被退货冲减的金额 ≥ 单据金额）。
+  ///
+  /// **定义只有这一处**，两处用它 —— 同一件事各写一份必然漂移
+  /// （`Agents.md` 纪律 18「同构代码是高发区」）：
+  /// - **#39**：全退之后**隐去「退货」入口**（否则可反复点、继续退款）；
+  /// - **#38**：全退之后**不再显示「未收 / 欠多少」的数字**，改说「已全部退清」。
+  ///
+  /// [returnedCents] 由 `DocumentDao.returnedAgainst` 按退货单冲减算好
+  /// （`DocumentSummary.returnedCents`）。⚠️ `> 0` 不能省：金额为 0 的单据
+  /// 会让后面的 `>=` **空真**，把一张空单说成「已全退」。
+  static bool isFullyReturned(Document doc, int returnedCents) =>
+      returnedCents > 0 && returnedCents >= doc.totalAmount;
 
   /// 这单**结清时钱往哪个方向走**：`true` = 我方收钱（`receipt`）、
   /// `false` = 我方付钱（`payment`）；`null` = **不能核销**。

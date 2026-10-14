@@ -1,6 +1,7 @@
 import 'package:sqlite3/sqlite3.dart';
 
 import '../db/database.dart';
+import '../db/read_failures.dart';
 import '../db/schema.dart';
 import '../models/settlement.dart';
 
@@ -48,21 +49,26 @@ class SettlementDao {
     return row['s']! as int;
   }
 
-  List<Settlement> ofReceipt(String receiptDocId) => _raw
-      .select(
-        'SELECT * FROM ${Schema.settlements} WHERE receipt_doc_id = ? ORDER BY seq_no',
-        <Object?>[receiptDocId],
-      )
-      .map(Settlement.fromRow)
-      .toList(growable: false);
+  /// #42 甲 · L1：逐行保护（核销是**钱的去向**，一条坏行不该让整页打不开）。
+  List<Settlement> ofReceipt(String receiptDocId) => decodeRows(
+    _raw.select(
+      'SELECT * FROM ${Schema.settlements} WHERE receipt_doc_id = ? ORDER BY seq_no',
+      <Object?>[receiptDocId],
+    ),
+    Settlement.fromRow,
+    table: Schema.settlements,
+    failures: db.readFailures,
+  );
 
-  List<Settlement> ofTarget(String targetDocId) => _raw
-      .select(
-        'SELECT * FROM ${Schema.settlements} WHERE target_doc_id = ? ORDER BY seq_no',
-        <Object?>[targetDocId],
-      )
-      .map(Settlement.fromRow)
-      .toList(growable: false);
+  List<Settlement> ofTarget(String targetDocId) => decodeRows(
+    _raw.select(
+      'SELECT * FROM ${Schema.settlements} WHERE target_doc_id = ? ORDER BY seq_no',
+      <Object?>[targetDocId],
+    ),
+    Settlement.fromRow,
+    table: Schema.settlements,
+    failures: db.readFailures,
+  );
 
   /// 该 `receipt` 是否已核销过该 `target`（用于诊断重复核销）
   bool links(String receiptDocId, String targetDocId) => _raw
@@ -93,28 +99,30 @@ class SettlementDao {
     <Object?>[targetDocId],
   );
 
-  /// 两个方向共用的查询体（只差「哪一列是对端」）
+  /// 两个方向共用的查询体（只差「哪一列是对端」）。
+  ///
+  /// #42 甲 · L1：逐行保护 —— 视图行也是**解码**，同样不能再抛穿（`! as int` 会）。
   List<SettlementView> _views(
     String where,
     String joinOn,
     List<Object?> args,
-  ) => _raw
-      .select(
-        'SELECT d.id AS doc_id, d.doc_no AS doc_no, '
-        's.amount AS amount, s.created_at AS created_at '
-        'FROM ${Schema.settlements} s '
-        'LEFT JOIN ${Schema.documents} d ON $joinOn '
-        '$where '
-        'ORDER BY s.seq_no',
-        args,
-      )
-      .map(
-        (Row r) => SettlementView(
-          docId: r['doc_id'] as String?,
-          docNo: r['doc_no'] as String?,
-          amount: r['amount']! as int,
-          occurredAt: r['created_at']! as int,
-        ),
-      )
-      .toList(growable: false);
+  ) => decodeRows(
+    _raw.select(
+      'SELECT d.id AS doc_id, d.doc_no AS doc_no, '
+      's.amount AS amount, s.created_at AS created_at '
+      'FROM ${Schema.settlements} s '
+      'LEFT JOIN ${Schema.documents} d ON $joinOn '
+      '$where '
+      'ORDER BY s.seq_no',
+      args,
+    ),
+    (Map<String, Object?> r) => SettlementView(
+      docId: r['doc_id'] as String?,
+      docNo: r['doc_no'] as String?,
+      amount: r['amount']! as int,
+      occurredAt: r['created_at']! as int,
+    ),
+    table: Schema.settlements,
+    failures: db.readFailures,
+  );
 }

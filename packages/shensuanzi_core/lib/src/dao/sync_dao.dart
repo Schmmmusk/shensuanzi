@@ -10,6 +10,7 @@ library;
 import 'package:sqlite3/sqlite3.dart';
 
 import '../db/database.dart';
+import '../db/read_failures.dart';
 import '../db/schema.dart';
 import '../models/sync_queue_entry.dart';
 
@@ -84,15 +85,19 @@ class SyncQueueDao {
   /// 按 `sync_protocol.md` §六 要「UI 提示人工处理」，
   /// **必须退出自动重试循环**（否则就是无限重试，只是越来越慢）。
   /// 人工处理完用 [requeue] 放回队列。
-  List<SyncQueueEntry> due(int now, {int limit = 200}) => _raw
-      .select(
-        'SELECT * FROM ${Schema.syncQueue} '
-        "WHERE status = '${SyncQueueStatus.pending.wire}' AND next_retry_at <= ? "
-        'ORDER BY created_at, id LIMIT ?',
-        <Object?>[now, limit],
-      )
-      .map(SyncQueueEntry.fromRow)
-      .toList(growable: false);
+  /// #42 甲 · L1：逐行保护 —— 队列里一条**读不出来**的条目不再让设置页 / 三态条炸掉
+  /// （两个枚举认不出 ⇒ 该行跳过 + 计数，**不兜底成 `failed`**，见 `sync_queue_entry.dart`）。
+  List<SyncQueueEntry> due(int now, {int limit = 200}) => decodeRows(
+    _raw.select(
+      'SELECT * FROM ${Schema.syncQueue} '
+      "WHERE status = '${SyncQueueStatus.pending.wire}' AND next_retry_at <= ? "
+      'ORDER BY created_at, id LIMIT ?',
+      <Object?>[now, limit],
+    ),
+    SyncQueueEntry.fromRow,
+    table: Schema.syncQueue,
+    failures: db.readFailures,
+  );
 
   /// 把死信放回队列（人工处理之后调用）：重试计数清零、退避归零、清掉错误。
   void requeue(String id) => _raw.execute(
@@ -115,36 +120,49 @@ class SyncQueueDao {
   );
 
   /// 全部**还没被主机收下**的条目（`pending` + `failed`）—— 换主机时要逐个挂起。
-  List<SyncQueueEntry> unsent() => _raw
-      .select(
-        'SELECT * FROM ${Schema.syncQueue} WHERE status != ? '
-        'ORDER BY created_at, id',
-        <Object?>[SyncQueueStatus.sent.wire],
-      )
-      .map(SyncQueueEntry.fromRow)
-      .toList(growable: false);
+  /// #42 甲 · L1：逐行保护。
+  List<SyncQueueEntry> unsent() => decodeRows(
+    _raw.select(
+      'SELECT * FROM ${Schema.syncQueue} WHERE status != ? '
+      'ORDER BY created_at, id',
+      <Object?>[SyncQueueStatus.sent.wire],
+    ),
+    SyncQueueEntry.fromRow,
+    table: Schema.syncQueue,
+    failures: db.readFailures,
+  );
 
   SyncQueueEntry? findById(String id) {
-    final ResultSet rows = _raw.select(
-      'SELECT * FROM ${Schema.syncQueue} WHERE id = ?',
-      <Object?>[id],
+    final List<SyncQueueEntry> found = decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.syncQueue} WHERE id = ?',
+        <Object?>[id],
+      ),
+      SyncQueueEntry.fromRow,
+      table: Schema.syncQueue,
+      failures: db.readFailures,
     );
-    return rows.isEmpty ? null : SyncQueueEntry.fromRow(rows.first);
+    return found.isEmpty ? null : found.first;
   }
 
-  List<SyncQueueEntry> all() => _raw
-      .select('SELECT * FROM ${Schema.syncQueue} ORDER BY created_at, id')
-      .map(SyncQueueEntry.fromRow)
-      .toList(growable: false);
+  /// #42 甲 · L1：逐行保护（`all()` 是 D2b「待同步」标记与 `StockDelta` 的共同入口）。
+  List<SyncQueueEntry> all() => decodeRows(
+    _raw.select('SELECT * FROM ${Schema.syncQueue} ORDER BY created_at, id'),
+    SyncQueueEntry.fromRow,
+    table: Schema.syncQueue,
+    failures: db.readFailures,
+  );
 
-  List<SyncQueueEntry> withStatus(SyncQueueStatus status) => _raw
-      .select(
-        'SELECT * FROM ${Schema.syncQueue} WHERE status = ? '
-        'ORDER BY created_at, id',
-        <Object?>[status.wire],
-      )
-      .map(SyncQueueEntry.fromRow)
-      .toList(growable: false);
+  List<SyncQueueEntry> withStatus(SyncQueueStatus status) => decodeRows(
+    _raw.select(
+      'SELECT * FROM ${Schema.syncQueue} WHERE status = ? '
+      'ORDER BY created_at, id',
+      <Object?>[status.wire],
+    ),
+    SyncQueueEntry.fromRow,
+    table: Schema.syncQueue,
+    failures: db.readFailures,
+  );
 
   /// **尚未被 pull 确认**的实体 id 集合（`pending` + `sent`）—— D2b 的 `isPending` 判定。
   ///
@@ -242,13 +260,16 @@ class SyncQueueDao {
     int pending = 0;
     int failed = 0;
     for (final Row row in rows) {
-      switch (SyncQueueStatus.fromWire(row['status']! as String)) {
+      // #42 甲 · L2：认不出的状态**不抛**（这会是一条坏行带塌三态条）
+      // ⇒ 它不计入 pending / failed；该条会在 `all()` / `unsent()` 里被跳过并被计数
+      switch (SyncQueueStatus.fromWireOrNull(row['status']! as String)) {
         case SyncQueueStatus.pending:
           pending = row['n']! as int;
         case SyncQueueStatus.failed:
           failed = row['n']! as int;
         case SyncQueueStatus.sent:
-          break; // WHERE 已排除；留着是穷举完整性
+        case null:
+          break; // sent 已被 WHERE 排除；null = 认不出的状态
       }
     }
     return SyncQueueTriage(pendingCount: pending, failedCount: failed);

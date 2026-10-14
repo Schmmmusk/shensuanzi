@@ -8,6 +8,7 @@ library;
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 /// 确保 [directory] 存在且**真的能写**。
 ///
@@ -25,9 +26,11 @@ String? ensureWritableDirectory(String directory, {required String label}) {
   final Directory dir = Directory(directory);
   try {
     if (!dir.existsSync()) dir.createSync(recursive: true);
-  } catch (_) {
-    return '$label用不了（$directory）。'
-        '请检查它是不是被删掉、被设成只读，或者磁盘满了';
+  } catch (error) {
+    // #35（2026-10-14）：**按 errno 分流**（映射表在 core 领域层）——
+    // 原来无条件说「被删 / 只读 / 磁盘满」，与真实 errno 不符时（例如 errno `32`
+    // = 文件被别的程序占用）用户按提示做**永远修不好**。
+    return '$label用不了（$directory）。${localFileFailureAdvice(error)}';
   }
 
   final File probe = File(
@@ -35,9 +38,8 @@ String? ensureWritableDirectory(String directory, {required String label}) {
   );
   try {
     probe.writeAsStringSync('');
-  } catch (_) {
-    return '$label不可写（$directory）。'
-        '请检查磁盘是否已满，或文件夹是否被设为只读';
+  } catch (error) {
+    return '$label不可写（$directory）。${localFileFailureAdvice(error)}';
   } finally {
     if (probe.existsSync()) probe.deleteSync();
   }

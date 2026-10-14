@@ -399,4 +399,39 @@ void main() {
     );
     expect(fake.froms.single, isNotNull, reason: '默认最近 30 天 → 文件名带范围');
   });
+
+  // #33（2026-10-14）：「自定义时间」选过一段范围之后**必须还能再打开** ——
+  // `ChoiceChip` 点「已选中」项时回调收到的是 `false`（SDK `chip.dart:1128`
+  // = `onSelected(!widget.selected)`）⇒ 吃过 `if (!selected) return;` 守卫就
+  // 再也打不开（用户实测：必须先点别的档才绕得回来）。
+  testWidgets('#33 「自定义时间」可以反复打开（点**已选中**的 chip 也要弹）', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    final Finder custom = find.byKey(const Key('doc-range-custom'));
+
+    // 第一次：打开 + **真选一段范围**。
+    // ⚠️ 只「打开后取消」时 `_range` 仍是 last30、chip 未被选中 ⇒ **改前也是绿的**
+    //（假绿）—— 所以必须把范围真的交回去。
+    await tester.tap(custom);
+    await tester.pumpAndSettle();
+    expect(find.byType(DateRangePickerDialog), findsOneWidget);
+
+    Navigator.of(tester.element(find.byType(DateRangePickerDialog))).pop(
+      DateTimeRange(start: DateTime(2026, 10, 1), end: DateTime(2026, 10, 9)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(DateRangePickerDialog), findsNothing);
+
+    // ⭐ 回归点：此刻 chip 是**选中态**，再点一次仍必须弹出选择器
+    await tester.tap(custom);
+    await tester.pumpAndSettle();
+    expect(
+      find.byType(DateRangePickerDialog),
+      findsOneWidget,
+      reason: '#33：点「已选中」的 chip 回调收到 false ⇒ 吃了 !selected 守卫就再也打不开',
+    );
+  });
 }

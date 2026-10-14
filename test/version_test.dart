@@ -44,8 +44,9 @@ void main() {
     expect(AppVersion.display, contains(AppVersion.value));
     expect(
       AppVersion.display,
-      contains('第四个可部署版本'),
-      reason: '`v0.3.4` 对用户读起来像「未完成/试用」—— 限定词是消除疑虑，不是美化',
+      contains('第五个可部署版本'),
+      reason: '限定词与 `AppVersion.build` 同步手改（中文数字）—— bump 版本时'
+          '这里和 `version.dart` 必须一起动，漏一边测试立刻红',
     );
   });
 

@@ -1,6 +1,7 @@
 import 'package:sqlite3/sqlite3.dart';
 
 import '../db/database.dart';
+import '../db/read_failures.dart';
 import '../db/schema.dart';
 import '../models/party.dart';
 
@@ -31,13 +32,23 @@ class PartyDao {
       .select('SELECT 1 FROM ${Schema.parties} WHERE id = ? LIMIT 1', <Object?>[id])
       .isNotEmpty;
 
+  /// [id] 查一条。
+  ///
+  /// ⚠️ **#42 甲 · L1**：坏行**跳过 + 计数**（原来抛穿 ⇒ 整页变灰）。
+  /// ⇒ 返回值 `null` 现在有**两种**含义：「没有这一条」与「有但读不出来」；
+  /// 后者会计入 `db.readFailures`（UI 的「有 N 条记录暂时显示不全」）。
   Party? findById(String id) {
-    final ResultSet rows = _raw.select(
-      'SELECT * FROM ${Schema.parties} WHERE id = ?',
-      <Object?>[id],
+    final List<Party> found = decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.parties} WHERE id = ?',
+        <Object?>[id],
+      ),
+      (Map<String, Object?> row) =>
+          Party.fromRow(row, failures: db.readFailures),
+      table: Schema.parties,
+      failures: db.readFailures,
     );
-    if (rows.isEmpty) return null;
-    return Party.fromRow(rows.first);
+    return found.isEmpty ? null : found.first;
   }
 
   /// [role] 过滤在 Dart 侧做 —— `roles` 是 JSON 文本，SQL 里精确匹配会误伤
@@ -64,12 +75,17 @@ class PartyDao {
         : ' WHERE ${conditions.join(' AND ')}';
     final String tail = limit == null ? '' : ' LIMIT ?';
     if (limit != null) args.add(limit);
-    Iterable<Party> parties = _raw
-        .select(
-          'SELECT * FROM ${Schema.parties}$where ORDER BY name$tail',
-          args,
-        )
-        .map(Party.fromRow);
+    // #42 甲 · L1：逐行保护 —— **一条坏行不再让整张往来方页打不开**
+    Iterable<Party> parties = decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.parties}$where ORDER BY name$tail',
+        args,
+      ),
+      (Map<String, Object?> row) =>
+          Party.fromRow(row, failures: db.readFailures),
+      table: Schema.parties,
+      failures: db.readFailures,
+    );
     if (role != null) {
       parties = parties.where((Party p) => p.roles.contains(role));
     }

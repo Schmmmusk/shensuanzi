@@ -17,18 +17,18 @@
 ///
 /// `0.1.0` 对工程师是「早期」，对用户是「**未完成 / 试用版**」——
 /// 中老年用户看到 `v0.1.0` 会想「会不会用几天就不能用了？」
-/// 所以 [AppVersion.display] 带上「（第一个可部署版本）」：**这不是美化，
+/// 所以 [AppVersion.display] 带上「（第 N 个可部署版本）」：**这不是美化，
 /// 是消除疑虑**。
 library;
 
 /// 版本号的**机器形态**（与 `pubspec.yaml` 的 `version:` 前半段逐字一致）
 abstract final class AppVersion {
-  /// `0.3.4` —— 与 `pubspec.yaml` 的 `version:` 相同
-  static const String value = '0.3.4';
+  /// `0.3.5` —— 与 `pubspec.yaml` 的 `version:` 相同
+  static const String value = '0.3.5';
 
-  /// `0.3.4+4` 里的构建号（= **第几个可部署版本**）
-  static const int build = 4;
+  /// `0.3.5+5` 里的构建号（= **第几个可部署版本**）
+  static const int build = 5;
 
   /// 给用户看的完整形态（帮助页 / 关于页用这个）
-  static const String display = 'v$value（第四个可部署版本）';
+  static const String display = 'v$value（第五个可部署版本）';
 }

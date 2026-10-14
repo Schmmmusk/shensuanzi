@@ -1,6 +1,7 @@
 import 'package:sqlite3/sqlite3.dart';
 
 import '../db/database.dart';
+import '../db/read_failures.dart';
 import '../db/schema.dart';
 import '../models/document.dart';
 import '../models/money_ledger.dart';
@@ -157,13 +158,16 @@ class StockLedgerDao {
     };
   }
 
-  List<StockLedger> ofProduct(String productId) => _raw
-      .select(
-        'SELECT * FROM ${Schema.stockLedger} WHERE product_id = ? ORDER BY seq_no',
-        <Object?>[productId],
-      )
-      .map(StockLedger.fromRow)
-      .toList(growable: false);
+  /// #42 甲 · L1：逐行保护（商品流水）。
+  List<StockLedger> ofProduct(String productId) => decodeRows(
+    _raw.select(
+      'SELECT * FROM ${Schema.stockLedger} WHERE product_id = ? ORDER BY seq_no',
+      <Object?>[productId],
+    ),
+    StockLedger.fromRow,
+    table: Schema.stockLedger,
+    failures: db.readFailures,
+  );
 }
 
 /// 往来流水 DAO。**不开事务**（`Agents.md` 纪律 1）。
@@ -213,18 +217,32 @@ class PartyLedgerDao {
       'ORDER BY pl.seq_no',
       <Object?>[partyId],
     );
-    return <PartyFlowEntry>[
-      for (final Map<String, Object?> row in rows)
-        PartyFlowEntry(
+    // #42 甲 · L1 + L2：单据类型认不出 ⇒ **跳过该行 + 计数**（往来流水页不再整页变灰）
+    return decodeRows(
+      rows,
+      (Map<String, Object?> row) {
+        final String rawType = row['doc_type']! as String;
+        final DocType? type = DocType.fromWireOrNull(rawType);
+        if (type == null) {
+          throw RowDecodeException(
+            column: 'doc_type',
+            reason: '认不出的单据类型',
+            value: rawType,
+          );
+        }
+        return PartyFlowEntry(
           seqNo: row['seq_no']! as int,
           documentId: row['document_id']! as String,
           docNo: row['doc_no']! as String,
-          docType: DocType.fromWire(row['doc_type']! as String),
+          docType: type,
           amount: row['amount']! as int,
           occurredAt: row['occurred_at']! as int,
           timeEstimated: (row['time_estimated']! as int) == 1,
-        ),
-    ];
+        );
+      },
+      table: Schema.partyLedger,
+      failures: db.readFailures,
+    );
   }
 }
 
@@ -286,19 +304,24 @@ class MoneyLedgerDao {
     return row['s']! as int;
   }
 
-  List<MoneyLedger> ofAccount(String accountId) => _raw
-      .select(
-        'SELECT * FROM ${Schema.moneyLedger} WHERE account_id = ? ORDER BY seq_no',
-        <Object?>[accountId],
-      )
-      .map(MoneyLedger.fromRow)
-      .toList(growable: false);
+  /// #42 甲 · L1：逐行保护（资金流水 —— 账户页 / 详情页都不再被一条坏行带塌）。
+  List<MoneyLedger> ofAccount(String accountId) => decodeRows(
+    _raw.select(
+      'SELECT * FROM ${Schema.moneyLedger} WHERE account_id = ? ORDER BY seq_no',
+      <Object?>[accountId],
+    ),
+    MoneyLedger.fromRow,
+    table: Schema.moneyLedger,
+    failures: db.readFailures,
+  );
 
-  List<MoneyLedger> ofDocument(String documentId) => _raw
-      .select(
-        'SELECT * FROM ${Schema.moneyLedger} WHERE document_id = ? ORDER BY seq_no',
-        <Object?>[documentId],
-      )
-      .map(MoneyLedger.fromRow)
-      .toList(growable: false);
+  List<MoneyLedger> ofDocument(String documentId) => decodeRows(
+    _raw.select(
+      'SELECT * FROM ${Schema.moneyLedger} WHERE document_id = ? ORDER BY seq_no',
+      <Object?>[documentId],
+    ),
+    MoneyLedger.fromRow,
+    table: Schema.moneyLedger,
+    failures: db.readFailures,
+  );
 }

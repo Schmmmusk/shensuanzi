@@ -271,11 +271,15 @@ class _DocumentsPageState extends State<DocumentsPage> {
                       ),
                       selected: _range == range,
                       onSelected: (bool selected) {
-                        if (!selected) return;
+                        // #33（2026-10-14）：「自定义」是**唯一有副作用**的档（点击要弹
+                        // 选择器），而 `ChoiceChip` 点「已选中」项时回调收到的是 `false`
+                        //（SDK `chip.dart:1128` = `onSelected(!widget.selected)`）——
+                        // 所以它**不能**吃 `!selected` 守卫：否则选过一段范围
+                        //（`_range == custom`）之后就再也打不开，必须先点别的档绕回来。
                         if (range == _TimeRange.custom) {
                           // 日期范围选择器要 await —— 不能在 setState 里做
                           unawaited(_pickCustomRange());
-                        } else {
+                        } else if (selected) {
                           setState(() => _range = range);
                         }
                       },

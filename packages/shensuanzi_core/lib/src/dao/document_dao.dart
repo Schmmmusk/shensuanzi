@@ -1,6 +1,7 @@
 import 'package:sqlite3/sqlite3.dart';
 
 import '../db/database.dart';
+import '../db/read_failures.dart';
 import '../db/schema.dart';
 import '../models/document.dart';
 import '../models/document_line.dart';
@@ -183,12 +184,18 @@ class DocumentDao {
       <Object?>[id],
     );
     if (rows.isEmpty) return null;
-    final Map<String, Object?> row = rows.first;
-    return DocumentSummary(
-      document: Document.fromRow(row),
-      partyName: row['party_name'] as String?,
-      returnedCents: returnedAgainst(id),
+    // #42 甲 · L1：坏行 ⇒ 跳过 + 计数（不再让单据详情页整页变灰）
+    final List<DocumentSummary> found = decodeRows(
+      rows,
+      (Map<String, Object?> row) => DocumentSummary(
+        document: Document.fromRow(row, failures: db.readFailures),
+        partyName: row['party_name'] as String?,
+        returnedCents: returnedAgainst(id),
+      ),
+      table: Schema.documents,
+      failures: db.readFailures,
     );
+    return found.isEmpty ? null : found.first;
   }
 
   List<DocumentSummary> _summaries({
@@ -302,32 +309,42 @@ class DocumentDao {
       '$tail',
       args,
     );
-    return <DocumentSummary>[
-      for (final Map<String, Object?> row in rows)
-        DocumentSummary(
-          document: Document.fromRow(row),
-          partyName: row['party_name'] as String?,
-          returnedCents: (row['returned_sum'] as int?) ?? 0,
-        ),
-    ];
+    // #42 甲 · L1：逐行保护（单据列表 —— 一条坏行不再让整页打不开）
+    return decodeRows(
+      rows,
+      (Map<String, Object?> row) => DocumentSummary(
+        document: Document.fromRow(row, failures: db.readFailures),
+        partyName: row['party_name'] as String?,
+        returnedCents: (row['returned_sum'] as int?) ?? 0,
+      ),
+      table: Schema.documents,
+      failures: db.readFailures,
+    );
   }
 
   Document? findById(String id) {
-    final ResultSet rows = _raw.select(
-      'SELECT * FROM ${Schema.documents} WHERE id = ?',
-      <Object?>[id],
+    final List<Document> found = decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.documents} WHERE id = ?',
+        <Object?>[id],
+      ),
+      (Map<String, Object?> row) =>
+          Document.fromRow(row, failures: db.readFailures),
+      table: Schema.documents,
+      failures: db.readFailures,
     );
-    if (rows.isEmpty) return null;
-    return Document.fromRow(rows.first);
+    return found.isEmpty ? null : found.first;
   }
 
-  List<DocumentLine> linesOf(String documentId) => _raw
-      .select(
-        'SELECT * FROM ${Schema.documentLines} WHERE document_id = ? ORDER BY rowid',
-        <Object?>[documentId],
-      )
-      .map(DocumentLine.fromRow)
-      .toList(growable: false);
+  List<DocumentLine> linesOf(String documentId) => decodeRows(
+    _raw.select(
+      'SELECT * FROM ${Schema.documentLines} WHERE document_id = ? ORDER BY rowid',
+      <Object?>[documentId],
+    ),
+    DocumentLine.fromRow,
+    table: Schema.documentLines,
+    failures: db.readFailures,
+  );
 
   /// **唯一允许的 UPDATE 入口**。只写 `status` / `paid_amount` / `updated_at`。
   ///

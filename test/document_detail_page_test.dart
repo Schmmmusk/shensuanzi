@@ -403,4 +403,138 @@ void main() {
 
     expect(find.textContaining('找不到这张单'), findsOneWidget);
   });
+
+  // #39（2026-10-14）：**全部退回之后不该再有「退货」入口** —— 否则可以再点一次、
+  // 误导用户继续退款。⚠️ 「客户拒收」会 `cancel` 原单（入口自然消失），
+  // 「退货」**不会**（原单不作废，只是被冲减）⇒ 必须显式判 `returnedCents >= 总额`。
+  testWidgets('#39 全部退回之后：退货入口消失 + 给一句说明', (WidgetTester tester) async {
+    final RuleEngine engine = RuleEngine(db);
+    Document mk(String id, DocType type, int total, {String? ref}) => Document(
+      id: id,
+      docNo: '${Document.pendingDocNoPrefix}$id',
+      docType: type,
+      status: DocStatus.confirmed,
+      partyId: 'pt1',
+      totalAmount: total,
+      refDocId: ref,
+      occurredAt: 1700000000000,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+    );
+
+    final Document sale = mk('xs-9', DocType.sale, 1000);
+    engine.dispatch(
+      document: sale,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: sale.id,
+          productId: 'p1',
+          quantity: 2,
+          unitPrice: 500,
+        ),
+      ],
+      now: 1700000000000,
+    );
+    // **整单退**：2 × ¥5.00 = ¥10.00（= 原单全额）
+    final Document ret = mk('th-9', DocType.saleReturn, 1000, ref: sale.id);
+    engine.dispatch(
+      document: ret,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: ret.id,
+          productId: 'p1',
+          quantity: 2,
+          unitPrice: 500,
+        ),
+      ],
+      now: 1700000000000,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DocumentDetailPage(
+          documentId: sale.id,
+          settlements: settlements,
+          products: ProductService(db),
+          returnService: ReturnService(engine: engine, queries: QueryDao(db)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('return-button')),
+      findsNothing,
+      reason: '#39：已全退 ⇒ 不能再退（否则用户可反复点、继续退款）',
+    );
+    expect(
+      find.text('这张单已经全部退过了，不能再退。'),
+      findsOneWidget,
+      reason: '#39：按钮凭空消失比点不动更让人困惑 ⇒ 要给一句说明',
+    );
+  });
+
+  // #38 甲（2026-10-14，用户裁定）：**全退之后不再显示「还要收多少 / 欠多少」**。
+  // 报告里那张单（全收 ¥120 + 全退 ¥120）原本显示「未收 ¥-120.00」——
+  // 现在只留一句「已全部退清」；**算术不动**（第二步口径的裁定对象）。
+  testWidgets('#38 甲：全收 + 全退 ⇒ 「未收」负数消失，改说「已全部退清」', (
+    WidgetTester tester,
+  ) async {
+    final RuleEngine engine = RuleEngine(db);
+    final Document sale = sellOnCredit(); // 夹具 = 2 × ¥5.00 = ¥10.00
+    // 先**收满** ¥10.00（顺序不能反：先全退的话未收已是 0，`settle()` 会拒绝）
+    settlements.settle(
+      targetDocId: sale.id,
+      accountId: 'a1',
+      amountCents: 1000,
+      now: 1700000000000,
+    );
+    // 再**整单退** ¥10.00（= 原单全额，走 `ref_doc_id` 挂到原单上）
+    final Document ret = Document(
+      id: 'th-38',
+      docNo: '${Document.pendingDocNoPrefix}th-38',
+      docType: DocType.saleReturn,
+      status: DocStatus.confirmed,
+      partyId: 'pt1',
+      totalAmount: 1000,
+      refDocId: sale.id,
+      occurredAt: 1700000000000,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+    );
+    engine.dispatch(
+      document: ret,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: ret.id,
+          productId: 'p1',
+          quantity: 2,
+          unitPrice: 500,
+        ),
+      ],
+      now: 1700000000000,
+    );
+
+    // ⛔ 算术照旧可为负 —— 本测试**故意**钉住它不被动过（第二步才裁口径）
+    expect(settlements.unsettledCentsOf(sale.id), -1000, reason: '算术不动');
+
+    await tester.pumpWidget(page(sale.id));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('已全部退清'),
+      findsOneWidget,
+      reason: '#38 甲：全退后只留一句结论，不再显示要收 / 欠多少',
+    );
+    expect(
+      find.textContaining('未收'),
+      findsNothing,
+      reason: '「未收」这一行不再出现（标签本身就是「还要收多少」）',
+    );
+    expect(
+      find.textContaining('¥-'),
+      findsNothing,
+      reason: '界面不再出现负数金额',
+    );
+  });
 }

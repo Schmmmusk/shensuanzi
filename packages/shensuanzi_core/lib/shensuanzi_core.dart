@@ -30,6 +30,22 @@ export 'src/db/schema.dart'
     show Schema, MissingMigrationException, SchemaTooNewException;
 export 'src/db/storage_error.dart'
     show StorageFailureKind, classifyStorageFailure, storageFailureNote;
+// #35（2026-10-14）：**本地文件写入失败**（导出 / 备份）—— 与上面同族，
+// 但认的是**文件系统 errno**（`OSError.errorCode`），不是 SQLite 结果码。
+export 'src/db/local_file_error.dart'
+    show LocalFileFailureKind, classifyLocalFileFailure, localFileFailureAdvice;
+// #42 甲（2026-10-14）：**读路径的坏数据兜底**（分层兜底 + 不静默）。
+// L2 枚举降级 + L1 逐行保护 + L4 的计数与文案都在这里；L3（`ErrorWidget.builder`）
+// 与提示条属 Flutter 层（次批）。
+export 'src/db/read_failures.dart'
+    show
+        ReadFailure,
+        ReadFailureLog,
+        RowDecodeException,
+        decodeRows,
+        readFailureNotice,
+        readFailureCause,
+        readFailureAdvice;
 
 // 工具
 export 'src/util/ids.dart' show newId;

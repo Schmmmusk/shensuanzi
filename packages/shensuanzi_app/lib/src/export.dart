@@ -21,6 +21,7 @@ library;
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'csv.dart';
 import 'format.dart';
@@ -137,10 +138,15 @@ class ExportEmpty extends ExportOutcome {
 }
 
 class ExportFailed extends ExportOutcome {
-  const ExportFailed(this.reason);
+  const ExportFailed(this.reason, {this.cause});
 
   /// 说「怎么办」（领域层写好，UI 不造句）
   final String reason;
+
+  /// **原始异常**（`#35`，2026-10-14）—— 只给日志用，**绝不进用户文案**
+  /// （`PathAccessException` + 绝对路径 + `errno` 既违反用户可见文本规范，
+  /// 用户也看不懂）。`null` = 本就没有异常（如列配置错误 / 目录不可写）。
+  final Object? cause;
 }
 
 /// 导出结果的**用户可见**文案。
@@ -169,8 +175,17 @@ abstract interface class ExportSink {
 
 /// 导出服务。判断都在这里；UI 只调 [write] 并把结果交给 SnackBar。
 class ExportService implements ExportSink {
-  ExportService({required this.exportDirectory, DateTime Function()? now})
-    : _now = now ?? DateTime.now;
+  ExportService({
+    required this.exportDirectory,
+    DateTime Function()? now,
+    void Function(Object error, StackTrace stack)? onFailure,
+  }) : _now = now ?? DateTime.now,
+       _onFailure = onFailure;
+
+  /// 写盘失败的**原始异常**出口（`#35`，2026-10-14）：界面只显示
+  /// `localFileFailureAdvice` 的分类文案，**细节走这里进日志**
+  /// （与三张开单页的 `onStorageFailure` 同款判定）。`null` = 不记（测试 / 自检）。
+  final void Function(Object error, StackTrace stack)? _onFailure;
 
   /// 导出目录（数据目录的**兄弟目录**「神算子导出」，与备份平级）
   final String exportDirectory;
@@ -239,10 +254,14 @@ class ExportService implements ExportSink {
     try {
       File(path).writeAsBytesSync(csvBytes(table.header, table.rows), flush: true);
       return ExportSuccess(path: path, rowCount: table.rows.length);
-    } catch (error) {
-      return ExportFailed(
-        '导出失败（$error）。请重试；若反复失败，请检查磁盘空间',
-      );
+    } catch (error, stack) {
+      // #35（2026-10-14）：**按 errno 分流**（映射表在 core 领域层），且
+      // **不再把原始异常拼进用户文案** —— 原来是 `PathAccessException`
+      // + 绝对路径 + errno 直出（违反用户可见文本规范，用户也看不懂），
+      // 建议还一律说「检查磁盘空间」（errno `32` = 文件被占用 ⇒ 按提示做**修不好**）。
+      // 细节交给注入的日志出口，`cause` 一并带回供上层使用。
+      _onFailure?.call(error, stack);
+      return ExportFailed(localFileFailureAdvice(error), cause: error);
     }
   }
 }

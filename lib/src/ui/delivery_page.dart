@@ -192,6 +192,28 @@ class _RowCtl {
     return (qty == null || qty <= 0) ? null : qty;
   }
 
+  /// 换算后的**最小单位数量**（`document_lines.quantity` 的值）。
+  ///
+  /// ⚠️ **与销售页 `_RowCtl.baseQuantityValue` 逐字同构**（#44 的硬前置：
+  /// 三页是**三份独立实现**，改一页必须 grep 另两页 —— `Agents.md` 纪律 18）。
+  /// 采购页**故意没有**这份 getter：进货是加库存，不做负库存判定。
+  ///
+  /// 语义（#44 裁定「甲」）：**数量没填 / 非法 ⇒ `null`**（**不换算、不兜底**）；
+  /// 换算失败也 `null`。⚠️ 不能写 `quantityValue ?? 0` —— 空框被 0 兜底会让
+  /// 「本行没数量」伪装成一个合法的 0，负库存判定（`qty > estimated`）就会
+  /// 在快照为负时**假告警**（销售页 #28① 踩过，见 §CV·三十三）。
+  int? get baseQuantityValue {
+    final int? entry = quantityValue;
+    if (entry == null) return null;
+    return toBaseQuantity(
+      entryQuantity: entry,
+      entryUnit: entryUnit.isEmpty ? null : entryUnit,
+      baseUnit: baseUnit ?? '',
+      packageUnit: packageUnit,
+      packageSize: packageSize,
+    ).baseQuantityOrNull;
+  }
+
   /// 本行小计（分）；字段没填全 ⇒ `null`（合计按 0 处理，校验会拦）
   int? get amountCents {
     final int? qty = int.tryParse(quantity.text.trim());
@@ -510,7 +532,14 @@ class _DeliveryPageState extends State<DeliveryPage> {
         const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
         const SingleActivator(LogicalKeyboardKey.escape): _cancel,
       },
-      child: Focus(
+      child: FocusScope(
+        // #37甲（2026-10-14）：这里**必须**是 `FocusScope`，不能降回 `Focus` ——
+        // `CallbackShortcuts` 内部是 `Focus(canRequestFocus: false)`，按键只能靠
+        // **后代节点上溯**经过它；而点页内空白会触发 `EditableText.onTapOutside`
+        // （桌面专属）调 `unfocus()`，默认 `disposition: scope` 把焦点升到
+        // **最近的外层 scope**。若是普通 `Focus`，焦点升到路由的 `FocusScope`
+        // （在 `CallbackShortcuts` **之上**）⇒ 上溯不再经过它 ⇒ Ctrl+S / Esc 静默失效。
+        // 换成 `FocusScope` ⇒ 最近 scope 就是本页 ⇒ 焦点留在页内 ⇒ 恒生效。
         autofocus: true,
         // C3·真机反馈 ④：键盘（含输入法候选栏）高度变化时，把焦点字段滚回可视区
         child: KeyboardReveal(
@@ -723,14 +752,19 @@ class _DeliveryPageState extends State<DeliveryPage> {
     ),
   );
 
-  Widget _actions(ThemeData theme) => Row(
-    mainAxisAlignment: MainAxisAlignment.end,
+  /// `Wrap` 放不下就换行；`spacing` 取代原来的 `SizedBox`（与销售 / 采购两页一致，
+  /// #29：这两页早已是 `Wrap`，送货页漏改 ⇒ 超大缩放下「取消 / 保存」并成一行并溢出）。
+  Widget _actions(ThemeData theme) => Wrap(
+    alignment: WrapAlignment.end,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    spacing: 16,
+    runSpacing: 8,
     children: <Widget>[
       TextButton(
         onPressed: _saving ? null : _cancel,
-        child: const Text('取消 (Esc)'),
+        // #37①：手机壳没有键盘 ⇒ 不显示快捷键后缀（判据 = AppShell.mobileShell）
+        child: Text('取消${widget.mobileShell ? '' : ' (Esc)'}'),
       ),
-      const SizedBox(width: 16),
       FilledButton.icon(
         // ⚠️ **稳定 Key**：测试按 Key 找，不按文案找（本项目约定）。
         // 送货单没有收款/找零 ⇒ 文案不会变，但 Key 仍作统一习惯留着。
@@ -743,7 +777,9 @@ class _DeliveryPageState extends State<DeliveryPage> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : const Icon(Icons.save_outlined),
-        label: Text(_saving ? '保存中…' : '保存 (Ctrl+S)'),
+        label: Text(
+          _saving ? '保存中…' : '保存${widget.mobileShell ? '' : ' (Ctrl+S)'}',
+        ),
       ),
     ],
   );
@@ -781,7 +817,11 @@ class _LineCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final int? qty = row.quantityValue;
+    // #44（2026-10-14）：**必须比「最小单位」** —— 库存（`snapshot` / `estimated`）
+    // 是最小单位口径，而 `quantityValue` 是**录入单位的原始数**（3 箱 = 3）
+    // ⇒ 按箱录入必然漏报（3 箱 = 36 瓶，只跟库存比了 3）。改用本页刚补的
+    // `baseQuantityValue`（与销售页逐字同构，空数量 ⇒ `null` 短路）。
+    final int? qty = row.baseQuantityValue;
     final int snapshot = stockOfProduct ?? 0;
     // M08（2026-10-08）：**估算库存 = 权威快照 + 本地未同步影响** ——
     // 手机上刚开的单还没推给电脑，权威快照不含它们；只报权威值

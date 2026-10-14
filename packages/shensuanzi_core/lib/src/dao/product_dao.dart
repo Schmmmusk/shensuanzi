@@ -1,6 +1,7 @@
 import 'package:sqlite3/sqlite3.dart';
 
 import '../db/database.dart';
+import '../db/read_failures.dart';
 import '../db/schema.dart';
 import '../models/product.dart';
 
@@ -56,12 +57,16 @@ class ProductDao {
   }
 
   Product? findById(String id) {
-    final ResultSet rows = _raw.select(
-      'SELECT * FROM ${Schema.products} WHERE id = ?',
-      <Object?>[id],
+    final List<Product> found = decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.products} WHERE id = ?',
+        <Object?>[id],
+      ),
+      Product.fromRow,
+      table: Schema.products,
+      failures: db.readFailures,
     );
-    if (rows.isEmpty) return null;
-    return Product.fromRow(rows.first);
+    return found.isEmpty ? null : found.first;
   }
 
   /// 列表查询。[query] 模糊匹配 `code` / `name` / `barcode`。
@@ -97,14 +102,16 @@ class ProductDao {
         : ' WHERE ${conditions.join(' AND ')}';
     final String tail = limit == null ? '' : ' LIMIT ?';
     if (limit != null) args.add(limit);
-    return _raw
-        .select(
-          'SELECT * FROM ${Schema.products}$where '
-          'ORDER BY created_at, id$tail',
-          args,
-        )
-        .map(Product.fromRow)
-        .toList(growable: false);
+    return decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.products}$where '
+        'ORDER BY created_at, id$tail',
+        args,
+      ),
+      Product.fromRow,
+      table: Schema.products,
+      failures: db.readFailures,
+    );
   }
 
   /// 当前最大的商品编码（`P0001` 里的 `P` 前缀 + 数字）。
@@ -135,14 +142,16 @@ class ProductDao {
   /// 条码该显示的归属还是它（不然用户会觉得条码凭空消失了）。
   List<Product> findByBarcode(String barcode) {
     if (barcode.isEmpty) return const <Product>[];
-    return _raw
-        .select(
-          'SELECT * FROM ${Schema.products} WHERE barcode = ? '
-          'ORDER BY created_at, id',
-          <Object?>[barcode],
-        )
-        .map(Product.fromRow)
-        .toList(growable: false);
+    return decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.products} WHERE barcode = ? '
+        'ORDER BY created_at, id',
+        <Object?>[barcode],
+      ),
+      Product.fromRow,
+      table: Schema.products,
+      failures: db.readFailures,
+    );
   }
 
   /// 主数据允许 UPDATE。`sync_version` 由调用方（`SyncServer`）决定新值。

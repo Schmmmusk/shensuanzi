@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:sqlite3/sqlite3.dart';
 
+import 'read_failures.dart';
 import 'schema.dart';
 
 /// SQLite 连接的薄封装：打开、迁移、**可重入事务**。
@@ -23,6 +24,13 @@ class Db {
   final Database raw;
 
   final bool _foreignKeys;
+
+  /// **读路径的坏数据计数**（#42 甲 · L4 的计数通道，2026-10-14 裁定）。
+  ///
+  /// 挂在 `Db` 上而不是每个 DAO 上：DAO 已经持有 `db` ⇒ **DAO 构造签名零改动**
+  /// （裁定 §二·接线 1 选 A）。**累计**语义、由 UI 在「知道了」时
+  /// [ReadFailureLog.clear] —— 详见 `read_failures.dart` 的「生命周期」一节。
+  final ReadFailureLog readFailures = ReadFailureLog();
 
   /// 事务嵌套深度。`0` = 不在事务中。
   int _depth = 0;

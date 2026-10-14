@@ -30,10 +30,21 @@ enum SyncOpType {
 
   final String wire;
 
+  /// 严格版：**不认识就抛**。用于 **wire 报文校验**（畸形请求要拒绝）。
   static SyncOpType fromWire(String value) => SyncOpType.values.firstWhere(
     (SyncOpType type) => type.wire == value,
     orElse: () => throw ArgumentError('未知同步操作：$value'),
   );
+
+  /// **读库用**（#42 甲 · L2）：未知值 ⇒ `null`，**不抛**。
+  /// 调用方（[SyncQueueEntry.fromRow]）遇到 `null` **跳过该行 + 计数** ——
+  /// 不知道要推什么，就不该假装知道。
+  static SyncOpType? fromWireOrNull(String value) {
+    for (final SyncOpType type in SyncOpType.values) {
+      if (type.wire == value) return type;
+    }
+    return null;
+  }
 }
 
 /// 客户端推送的**一条**队列条目。

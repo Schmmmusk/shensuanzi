@@ -696,6 +696,60 @@ void main() {
 
   check('两个方向都能查到这两笔', settlementService.settledBy(ssale.id).length == 2);
 
+  // ---- #38 甲 / #39（2026-10-14）：全退的**算术**、**展示值**与**判据** ----
+  // 与 `test/settlement_service_test.dart` 的 `#38 甲` 两条镜像。
+  //
+  // ⚠️ 顺序：**先收满、再全退** —— 反过来（先全退）未收就已是 0，
+  // `settle()` 会以「已经结清了」拒绝，构造不出报告里那个负数。
+  ReturnService(engine: engine, queries: QueryDao(db)).create(
+    ReturnDraft(
+      refDocId: ssale.id,
+      originalDocType: DocType.sale,
+      partyId: sparty,
+      partyName: '核销客户',
+      lines: <ReturnLineDraft>[
+        ReturnLineDraft(
+          productId: sp,
+          productName: '商品',
+          quantity: '1',
+          amount: '50.00',
+          baseUnit: '件',
+          originalQuantity: 1,
+          originalAmountCents: 5000,
+          packageSize: null,
+        ),
+      ],
+    ),
+  );
+  final Document returnedSale = documents.findById(ssale.id)!;
+  final int unsettledAfterFullReturn = settlementService.unsettledCentsOf(
+    ssale.id,
+  );
+  check(
+    '#38 甲：全收 + 全退 ⇒ 算术 = −总额（改它 = 越权改业务）',
+    unsettledAfterFullReturn == -5000,
+    '$unsettledAfterFullReturn',
+  );
+  check(
+    '#38 甲：展示值止血为 0（界面上不出现负数金额）',
+    settlementService.unsettledForDisplayCentsOf(ssale.id) == 0,
+  );
+  check(
+    '#38/#39 判据：已全退为真（退货入口隐去 + 改说「已全部退清」同一函数）',
+    SettlementService.isFullyReturned(returnedSale, 5000),
+  );
+  check(
+    '#38/#39 判据：只退一半 ⇒ 不为全退',
+    !SettlementService.isFullyReturned(returnedSale, 2500),
+  );
+  check(
+    '#38/#39 判据：金额 0 的空单不算全退（`>` 而非 `>=`，防空真）',
+    !SettlementService.isFullyReturned(
+      mdoc(type: DocType.sale, totalAmount: 0),
+      0,
+    ),
+  );
+
   db.close();
 
   stdout.writeln('\n${'=' * 46}');

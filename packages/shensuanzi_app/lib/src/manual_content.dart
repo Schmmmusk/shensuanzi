@@ -71,7 +71,8 @@ class ManualSection {
   final List<ManualBlock> blocks;
 }
 
-/// 手册章节（[versionLine] 印在「反馈与版本」一章，如 `v0.3.4（第四个可部署版本）`）。
+/// 手册章节（[versionLine] 印在「反馈与版本」一章 —— 始终传 `AppVersion.display`，
+/// 形如 `v0.3.5（第五个可部署版本）`；限定词的由来见 `version.dart` 文件头）。
 List<ManualSection> buildManualSections({required String versionLine}) => <ManualSection>[
   ManualSection(
     id: 'welcome',

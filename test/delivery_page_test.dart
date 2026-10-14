@@ -50,6 +50,8 @@ void main() {
   late PartyService parties;
   // B3b：页面提交改吃 Sink —— 桌面语义 = ServiceSink（与直连逐字同行为）
   late DocumentSink sink;
+  /// 默认商品「红富士苹果」的 id（#44 的入队夹具要用）
+  late String productId;
 
   setUp(() {
     box = Directory.systemTemp.createTempSync('shensuanzi_delivery_page_');
@@ -72,6 +74,7 @@ void main() {
       updatedAt: 1,
     );
     ProductDao(db).insert(product);
+    productId = product.id;
 
     final Party party = Party(
       id: newId(),
@@ -94,13 +97,15 @@ void main() {
     }
   });
 
-  Widget page() => MaterialApp(
+  /// [stockDelta] 缺省 `null`（桌面）⇒ 既有用例**零变化**；#44 的「未同步」组显式传入。
+  Widget page({StockDelta? stockDelta}) => MaterialApp(
     home: Scaffold(
       body: DeliveryPage(
         service: service,
         productService: products,
         partyService: parties,
         sink: sink,
+        stockDelta: stockDelta,
         masterDataPolicy: const MasterDataPolicy.desktop(),
         masterDataSink: ServiceMasterSink(products),
       ),
@@ -435,5 +440,180 @@ void main() {
     await tester.pumpAndSettle();
     expectPickerClosed(); // 前提断言（复用本文件顶层助手）
     expect(priceField().controller!.text, before, reason: '取消选择 ⇒ 不覆盖');
+  });
+
+  // #29（2026-10-14）：送货页底部按钮原来用**裸 `Row`**（销售 / 采购早已是 `Wrap`）
+  // ⇒ 超大字号下「取消 / 保存」并成一行并 `RenderFlex overflowed`。
+  testWidgets('#29 超大字号 + 窄屏：底部按钮**不溢出**（Wrap 会换行）', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 结构：保存按钮必须被 `Wrap` 包着（裸 `Row` 正是这次修的毛病）
+    expect(
+      find.ancestor(
+        of: find.byKey(const Key('delivery-save')),
+        matching: find.byType(Wrap),
+      ),
+      findsWidgets,
+      reason: '#29：送货页漏改 Wrap —— 「取消 / 保存」在超大档下并成一行会溢出',
+    );
+    // 行为：超大档下不该有 RenderFlex 溢出（仓内既有纪律：UI 一律可滚动）
+    expect(tester.takeException(), isNull, reason: '超大字号下不该有溢出');
+  });
+
+  // ---- #44（2026-10-14，甲裁定）：负库存提示的**单位口径** —— 送货页与销售页
+  // 是**三份独立实现**（§CV·二五 裁定 §四）⇒ 各钉各的。
+  // ⚠️ 送货页 `_RowCtl` **没有** `baseQuantityValue`（#28① 只改了销售页）
+  // ⇒ 第 ① 组在修复前**必红**（按箱录入漏报）；第 ② 组是同语义的空数量守卫。
+
+  /// 先采购 20 瓶建立正库存（页外直接走服务层）。
+  /// ⚠️ 本文件 `setUp` **故意不建资金账户**（第 3 条断言钉「送货不碰钱」）
+  /// ⇒ 这里自己建一个 —— 采购必须有账户。
+  void stockUp20(Product milk) {
+    final int t = 1700000000000;
+    final Account cash = Account(
+      id: newId(),
+      name: '现金',
+      type: AccountType.cash,
+      createdAt: t,
+      updatedAt: t,
+    );
+    AccountDao(db).insert(cash);
+    PurchaseService(engine: RuleEngine(db), queries: QueryDao(db)).create(
+      PurchaseDraft(
+        date: '2026-09-27',
+        lines: <PurchaseLineDraft>[
+          PurchaseLineDraft(
+            productId: milk.id,
+            productName: milk.name,
+            quantity: '20',
+            unitPrice: '1.00',
+          ),
+        ],
+        payments: <PurchasePaymentDraft>[
+          PurchasePaymentDraft(accountId: cash.id, amount: '20'),
+        ],
+      ),
+      now: t,
+    );
+  }
+
+  /// 一条「送出 1 件」的入队条目（#44 用；payload = createDocument wire 形状）。
+  /// `doc_type = delivery` ⇒ `StockDelta` 记 **−1**（货离店）。
+  void enqueueDelivery(String id, String productId) {
+    SyncQueueDao(db).enqueue(
+      SyncQueueEntry(
+        id: id,
+        entity: Schema.documents,
+        entityId: 'd-$id',
+        operation: SyncOpType.createDocument,
+        payload: <String, Object?>{
+          'document': <String, Object?>{
+            'id': 'd-$id',
+            'doc_no': '${Document.pendingDocNoPrefix}$id',
+            'doc_type': 'delivery',
+            'status': 'in_transit',
+            'occurred_at': 1700000000000,
+          },
+          'lines': <Object?>[
+            <String, Object?>{
+              'id': 'l-$id',
+              'document_id': 'd-$id',
+              'product_id': productId,
+              'quantity': 1,
+              'unit_price': 500,
+              'amount': 500,
+            },
+          ],
+        },
+        createdAt: 1700000000000,
+      ),
+    );
+  }
+
+  testWidgets('#44 送货页：按「箱」录入超库存 ⇒ 必须报负库存（原来拿 3 比 20 瓶，漏报）', (
+    WidgetTester tester,
+  ) async {
+    final Product milk = Product(
+      id: newId(),
+      code: 'P0002',
+      name: '蒙牛纯牛奶',
+      unit: '瓶',
+      sellPrice: 250,
+      packageUnit: '箱',
+      packageSize: 12,
+      createdAt: 2,
+      updatedAt: 2,
+    );
+    ProductDao(db).insert(milk);
+    stockUp20(milk); // 20 瓶正库存（页外直接走服务层）
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 选牛奶（⚠️ 结果行按 ListTile 找 —— 搜索框里的字也会被 find.text 命中）
+    await tester.tap(find.text('点此选商品'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('picker-search')), '蒙牛');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, '蒙牛纯牛奶'));
+    await tester.pumpAndSettle();
+    expectPickerClosed();
+
+    // 切到「箱」
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, '箱'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, '箱'));
+    await tester.pumpAndSettle();
+
+    // 反向对照：1 箱 = 12 瓶 ≤ 20 ⇒ **不该**报（不然就是「一律报」）
+    await tester.enterText(find.byKey(const Key('delivery-qty')), '1');
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('负库存记账'),
+      findsNothing,
+      reason: '1 箱（=12 瓶）没超过 20 瓶的库存 ⇒ 不该报',
+    );
+
+    // ⭐ 回归点：3 箱 = 36 瓶 > 20 ⇒ 必须报（改前拿「3」比「20」⇒ 漏报）
+    await tester.enterText(find.byKey(const Key('delivery-qty')), '3');
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('负库存记账'),
+      findsOneWidget,
+      reason: '#44：送货页也要换算到最小单位再比（与销售页 #28① 同款口径）',
+    );
+  });
+
+  testWidgets('#44 送货页：数量框还空着 + 本地快照为负 + 有未同步销售 ⇒ 不报负库存', (
+    WidgetTester tester,
+  ) async {
+    enqueueDelivery('q-44d', productId); // 未同步送货 1 件 ⇒ estimated = 0 + (-1) = -1
+
+    await tester.pumpWidget(
+      page(stockDelta: StockDelta(db: db, queue: SyncQueueDao(db))),
+    );
+    await tester.pumpAndSettle();
+    await pickFirstProduct(tester); // ⚠️ 只选商品，**不填数量**
+
+    expect(
+      find.textContaining('负库存记账'),
+      findsNothing,
+      reason: '#44：数量空 ⇒ 不判负库存（送货页新增 getter 时不得用 `?? 0` 兜底）',
+    );
+    expect(
+      find.textContaining('本地未同步'),
+      findsOneWidget,
+      reason: '#44：与销售页同语义 —— 空数量时 M08 的说明要正常显示',
+    );
   });
 }

@@ -8,6 +8,8 @@ library;
 
 import 'dart:convert';
 
+import '../db/read_failures.dart';
+
 import '../sync/sync_operation.dart';
 import '../util/ids.dart';
 
@@ -32,11 +34,24 @@ enum SyncQueueStatus {
 
   final String wire;
 
+  /// 严格版：**不认识就抛**。用于 **wire 报文校验**（畸形请求要拒绝）。
   static SyncQueueStatus fromWire(String value) =>
       SyncQueueStatus.values.firstWhere(
         (SyncQueueStatus status) => status.wire == value,
         orElse: () => throw ArgumentError('未知队列状态：$value'),
       );
+
+  /// **读库用**（#42 甲 · L2）：未知值 ⇒ `null`，**不抛**。
+  /// ⚠️ 调用方（[SyncQueueEntry.fromRow]）遇到 `null` **跳过该行 + 计数** ——
+  /// **不要兜底成 `failed`**（2026-10-14 裁定）：`failed` 的语义是
+  /// 「死信，退出自动重试，等人工处理」，拿来装「主机不认识的新状态」
+  /// 会把**兼容性问题伪装成同步失败**，误导用户去处理一个根本不需要处理的东西。
+  static SyncQueueStatus? fromWireOrNull(String value) {
+    for (final SyncQueueStatus status in SyncQueueStatus.values) {
+      if (status.wire == value) return status;
+    }
+    return null;
+  }
 }
 
 /// 一条待同步（或已同步待确认）的操作。
@@ -55,19 +70,44 @@ class SyncQueueEntry {
     this.nextRetryAt = 0,
   });
 
-  factory SyncQueueEntry.fromRow(Map<String, Object?> row) => SyncQueueEntry(
-    id: row['id']! as String,
-    entity: row['entity']! as String,
-    entityId: row['entity_id']! as String,
-    operation: SyncOpType.fromWire(row['operation']! as String),
-    baseVersion: row['base_version'] as int?,
-    payload: _decodePayload(row['payload']! as String),
-    status: SyncQueueStatus.fromWire(row['status']! as String),
-    retryCount: row['retry_count']! as int,
-    lastError: row['last_error'] as String?,
-    createdAt: row['created_at']! as int,
-    nextRetryAt: row['next_retry_at']! as int,
-  );
+  /// **#42 甲 · L2**（2026-10-14 裁定 §三）：两个枚举**认不出就跳过该行**
+  /// （抛 [RowDecodeException]，由 `decodeRows` 捕获 + 计数）——
+  /// **不兜底成 `pending` / `failed`**：
+  /// `failed` 会把「主机不认识的新状态」伪装成「同步失败，请处理」，
+  /// `pending` 则可能让一条永远推不动的条目无限重试。
+  factory SyncQueueEntry.fromRow(Map<String, Object?> row) {
+    final String rawOperation = row['operation']! as String;
+    final SyncOpType? operation = SyncOpType.fromWireOrNull(rawOperation);
+    if (operation == null) {
+      throw RowDecodeException(
+        column: 'operation',
+        reason: '认不出的同步操作',
+        value: rawOperation,
+      );
+    }
+    final String rawStatus = row['status']! as String;
+    final SyncQueueStatus? status = SyncQueueStatus.fromWireOrNull(rawStatus);
+    if (status == null) {
+      throw RowDecodeException(
+        column: 'status',
+        reason: '认不出的队列状态',
+        value: rawStatus,
+      );
+    }
+    return SyncQueueEntry(
+      id: row['id']! as String,
+      entity: row['entity']! as String,
+      entityId: row['entity_id']! as String,
+      operation: operation,
+      baseVersion: row['base_version'] as int?,
+      payload: _decodePayload(row['payload']! as String),
+      status: status,
+      retryCount: row['retry_count']! as int,
+      lastError: row['last_error'] as String?,
+      createdAt: row['created_at']! as int,
+      nextRetryAt: row['next_retry_at']! as int,
+    );
+  }
 
   static Map<String, Object?> _decodePayload(String raw) {
     final Object? decoded = jsonDecode(raw);

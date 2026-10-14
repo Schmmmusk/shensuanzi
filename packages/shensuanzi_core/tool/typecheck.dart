@@ -39,6 +39,8 @@ import '../test/return_test.dart' as return_test;
 // ignore: unused_import
 import '../test/rule_engine_test.dart' as rule_engine_test;
 // ignore: unused_import
+import '../test/read_failures_test.dart' as read_failures_test;
+// ignore: unused_import
 import '../test/document_build_test.dart' as document_build_test;
 import '../test/document_sink_test.dart' as document_sink_test;
 import '../test/sale_draft_test.dart' as sale_draft_test;
@@ -52,6 +54,7 @@ import '../test/settlement_view_test.dart' as settlement_view_test;
 import '../test/settlement_service_test.dart' as settlement_service_test;
 // ignore: unused_import
 import '../test/stocktake_service_test.dart' as stocktake_service_test;
+import '../test/local_file_error_test.dart' as local_file_error_test;
 // ignore: unused_import
 import '../test/stock_delta_test.dart' as stock_delta_test;
 import '../test/storage_error_test.dart' as storage_error_test;
@@ -127,6 +130,8 @@ void main() {
     settlement_service_test.main,
     stocktake_service_test.main,
     stock_delta_test.main,
+    local_file_error_test.main,
+    read_failures_test.main,
     storage_error_test.main,
     sync_client_test.main,
     sync_failure_test.main,

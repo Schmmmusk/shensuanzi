@@ -526,6 +526,46 @@ void main() {
   check('只读走「重新打开」（重试当前连接必然再失败）',
       storageFailureNote(SqliteException(8, 'x')).contains('重新打开'));
 
+  // ============================================ 本地文件写入失败（#35 / #36，2026-10-14）
+  //
+  // 与 `test/local_file_error_test.dart` 镜像：判据是 **errno**（不按文本），
+  // **平台重叠码必须按平台分叉**；给用户的话**不含路径 / errno / 类型名 / 动作前缀**。
+  FileSystemException fileEx(int code) => FileSystemException(
+      '写入失败', r'D:\神算子导出\商品_2026-10-14.csv', OSError('os message', code));
+  check(
+      'Windows 32 ⇒ busy（原来叫人「检查磁盘」= 永远修不好）',
+      classifyLocalFileFailure(fileEx(32), windows: true) ==
+          LocalFileFailureKind.busy);
+  check(
+      '满：Windows 112 / POSIX 28 ⇒ noSpace',
+      classifyLocalFileFailure(fileEx(112), windows: true) ==
+              LocalFileFailureKind.noSpace &&
+          classifyLocalFileFailure(fileEx(28), windows: false) ==
+              LocalFileFailureKind.noSpace);
+  check(
+      '⚠️ 重叠码 13 按平台分叉（POSIX=EACCES / Windows=ERROR_INVALID_DATA）',
+      classifyLocalFileFailure(fileEx(13), windows: false) ==
+              LocalFileFailureKind.readOnly &&
+          classifyLocalFileFailure(fileEx(13), windows: true) ==
+              LocalFileFailureKind.unknown);
+  check(
+      '非 IO 异常 / 无 osError ⇒ unknown（不抛、不猜）',
+      classifyLocalFileFailure(StateError('x')) ==
+              LocalFileFailureKind.unknown &&
+          classifyLocalFileFailure(const FileSystemException('x')) ==
+              LocalFileFailureKind.unknown);
+  check(
+      '给用户的话**不含路径 / errno / 类型名 / 动作前缀**',
+      !localFileFailureAdvice(fileEx(32)).contains('神算子导出') &&
+          !localFileFailureAdvice(fileEx(32)).contains('csv') &&
+          !localFileFailureAdvice(fileEx(32)).contains('32') &&
+          !localFileFailureAdvice(fileEx(32)).contains('FileSystemException') &&
+          !localFileFailureAdvice(fileEx(32)).contains('导出失败'));
+  check(
+      'busy 指向「关掉那个程序」、unknown 指向日志',
+      localFileFailureAdvice(fileEx(32)).contains('关掉') &&
+          localFileFailureAdvice(StateError('x')).contains('日志'));
+
   // ============================================================ 同步失败的中文原因（§CS·五 ③）
   //
   // 与 `test/sync_failure_test.dart` 镜像：约束冲突按**扩展结果码**细分；
@@ -564,6 +604,153 @@ void main() {
 
   db.close();
   check('close() 后可用', !db.inTransaction);
+
+  // ------------------------------------------------ #42 甲 · 读路径坏数据兜底
+  //
+  // 覆盖 `test/read_failures_test.dart` 的同一批结论（镜像纪律：改一边必须改另一边）。
+  // ⚠️ 触发源用**裸 SQL 写入**模拟「库外值」—— 与 `tool/seed_test_data.py --inject`
+  // 做的事同源（模型层写不出这种值，能写出来的只有外部注入 / 手工改库 / 旧备份）。
+  section('#42 读路径坏数据兜底（L1/L2/L4）');
+
+  final Db bad = Db.openInMemory();
+  check('新库的坏数据计数为 0', bad.readFailures.count == 0);
+
+  // ---- L2 严格版 vs 松版（wire 校验仍要拒绝畸形值，读库才降级）
+  check('PartyRole.fromWire 仍然抛（wire 校验通道不变）', () {
+    try {
+      PartyRole.fromWire('  　\t  ');
+      return false;
+    } on ArgumentError {
+      return true;
+    }
+  }());
+  check('PartyRole.fromWireOrNull 认不出 ⇒ null（不抛）',
+      PartyRole.fromWireOrNull('  　\t  ') == null);
+  check('PartyRole.fromWireOrNull 认得出', PartyRole.fromWireOrNull('supplier') == PartyRole.supplier);
+
+  // ---- L1 + L2：往来方（#42 的原始触发点）
+  bad.raw.execute(
+    'INSERT INTO ${Schema.parties} (id, name, roles, credit_limit, is_active, '
+    'created_at, updated_at, sync_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    <Object?>['pa-bad', '王老板', '["supplier","  　\t  "]', 0, 1, 1, 1, 0],
+  );
+  final List<Party> parties = PartyDao(bad).findAll();
+  check('坏角色**不再抛穿**，该往来方仍然查得到（整页不变灰）', parties.length == 1);
+  check('认得出的角色保留、认不出的丢弃',
+      parties.isNotEmpty &&
+          parties.first.roles.length == 1 &&
+          parties.first.roles.first == PartyRole.supplier);
+  check('记了 1 条读失败', bad.readFailures.count == 1);
+  check('记录带**列名 + 原值**（裁定 §二·④：区分「数据坏了」与「枚举拼错」）',
+      bad.readFailures.items.first.column == 'roles' &&
+          bad.readFailures.items.first.value == '  　\t  ');
+  check('日志行不含经营数据（只表名 / 列名 / 原值）',
+      !bad.readFailures.items.first.logLine.contains('王老板'));
+
+  // ---- 兜底政策：AccountType ⇒ other（**保留行**，余额必须看得见）
+  bad.raw.execute(
+    'INSERT INTO ${Schema.accounts} (id, name, type, initial_balance, is_active, '
+    'created_at, updated_at, sync_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    <Object?>['ac-bad', '怪账户', 'weird_type', 12345, 1, 1, 1, 0],
+  );
+  final List<Account> accounts = AccountDao(bad).findAll();
+  check('账户类型认不出 ⇒ 兜底 other，**该行保留**（钱不能少报）',
+      accounts.length == 1 &&
+          accounts.first.type == AccountType.other &&
+          accounts.first.initialBalance == 12345);
+  check('账户那条也计数了', bad.readFailures.count == 2);
+
+  // ---- 兜底政策：DocStatus ⇒ confirmed（**不是 draft**，裁定 §二·①）
+  bad.raw.execute(
+    'INSERT INTO ${Schema.documents} (id, doc_no, doc_type, status, total_amount, '
+    'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    <Object?>['doc-bad', 'XS-BAD', 'sale', 'weird_status', 5000, 0, 1, 0, 1, 1],
+  );
+  final Document? doc = DocumentDao(bad).findById('doc-bad');
+  check('单据状态认不出 ⇒ 兜底 confirmed（**不是 draft**）',
+      doc != null && doc.status == DocStatus.confirmed);
+  check('单据类型**认得出**时不受影响', doc != null && doc.docType == DocType.sale);
+  check('状态那条也计数了', bad.readFailures.count == 3);
+
+  // ---- 跳过政策：DocType 认不出 ⇒ **跳过该行**（类型决定一切，猜错比看不见更坏）
+  bad.raw.execute(
+    'INSERT INTO ${Schema.documents} (id, doc_no, doc_type, status, total_amount, '
+    'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    <Object?>['doc-worse', 'XS-WORSE', 'weird_type', 'confirmed', 100, 0, 1, 0, 1, 1],
+  );
+  final List<DocumentSummary> docs = DocumentDao(bad).listDocuments();
+  check('单据类型认不出 ⇒ **跳过该行**（不猜类型）',
+      docs.every((DocumentSummary s) => s.document.id != 'doc-worse') &&
+          docs.any((DocumentSummary s) => s.document.id == 'doc-bad'));
+  check('跳过的那条也计数了', bad.readFailures.count == 4);
+
+  // ---- 跳过政策：队列枚举认不出 ⇒ 跳过（**不兜底 failed**，裁定 §二·②）
+  bad.raw.execute(
+    'INSERT INTO ${Schema.syncQueue} (id, entity, entity_id, operation, payload, '
+    'status, retry_count, created_at, next_retry_at) '
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    <Object?>[
+      'q-bad', Schema.documents, 'doc-bad', 'createDocument', '{}',
+      'weird_status', 0, 1, 0,
+    ],
+  );
+  check('队列状态认不出 ⇒ 跳过该行（不伪装成 failed）',
+      SyncQueueDao(bad).all().isEmpty);
+  check('队列那条也计数了', bad.readFailures.count == 5);
+
+  // ---- L4：文案 + 计数通道的生命周期（裁定 §二·③）
+  check('提示文案带 N 且不含开发术语',
+      readFailureNotice(3) == '有 3 条记录暂时显示不全。' &&
+          !readFailureNotice(3).contains('异常') &&
+          !readFailureNotice(3).contains('SQL'));
+  check('「怎么办」给的是**动作**（恢复备份）', readFailureAdvice.contains('备份与恢复'));
+  // ⚠️ 去重是**跑出来才发现的**：第一版按「事件」计数 ⇒ 同一张单据被
+  // `listDocuments` 的多个子查询各解一次，N 会随查询次数（和页面重绘）不断长大。
+  final int countBefore = bad.readFailures.count;
+  DocumentDao(bad).listDocuments(); // 再读一遍**同一批**坏行
+  check('计数是**去重**的（同一行同一列反复读只算一条，N 不随重绘长大）',
+      countBefore == 5 && bad.readFailures.count == 5);
+  check('日志行带行标识（诊断用，不是经营数据）',
+      bad.readFailures.items.any((ReadFailure f) => f.rowId == 'doc-worse'));
+  bad.readFailures.clear();
+  check('clear() 后归零（UI 在「知道了」时调用）', bad.readFailures.count == 0);
+  // 已告知的坏行**不再重复提醒**，但**新的**坏行照常提醒（裁定 §二·③）
+  DocumentDao(bad).listDocuments();
+  check('clear() 后同一批坏行**不再重复提醒**', bad.readFailures.count == 0);
+  bad.raw.execute(
+    'INSERT INTO ${Schema.parties} (id, name, roles, credit_limit, is_active, '
+    'created_at, updated_at, sync_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    <Object?>['pa-bad2', '李姐', '["  　\t  "]', 0, 1, 1, 1, 0],
+  );
+  PartyDao(bad).findAll();
+  check('**新**坏行仍然提醒（另一条 id）', bad.readFailures.count == 1);
+
+  // ---- 变化通知：UI 的提示条靠它刷新
+  // ⚠️ 2026-10-14 被 `widget_test` 抓到：提示条第一版只在**自己 build 时**读一次计数
+  // ⇒ `record()` 不让任何人重建 ⇒ 界面上的提示条**永远不出现**。
+  // 所以「变化通知」是 UI 能工作的**前提**，必须在 core 这侧也钉住（镜像纪律）。
+  int notified = 0;
+  void onChanged() => notified++;
+  bad.readFailures.addListener(onChanged);
+  final int beforeNotify = bad.readFailures.count;
+  bad.raw.execute(
+    'INSERT INTO ${Schema.parties} (id, name, roles, credit_limit, is_active, '
+    'created_at, updated_at, sync_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    <Object?>['pa-bad3', '王老板', '["  　\t  "]', 0, 1, 1, 1, 0],
+  );
+  PartyDao(bad).findAll();
+  check('新增坏行 ⇒ 通知订阅者（UI 才能刷新）',
+      notified >= 1 && bad.readFailures.count == beforeNotify + 1);
+  final int notifiedOnce = notified;
+  PartyDao(bad).findAll(); // 同一批坏行（去重后计数不变）
+  check('计数没变 ⇒ 不惊动订阅者', notified == notifiedOnce);
+  bad.readFailures.clear();
+  check('clear ⇒ 再通知一次（提示条才会消失）',
+      notified == notifiedOnce + 1 && bad.readFailures.count == 0);
+  bad.readFailures.removeListener(onChanged);
+  bad.close();
 
   stdout.writeln('\n${'=' * 46}');
   if (_failures.isEmpty) {

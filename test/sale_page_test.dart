@@ -7,6 +7,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/sale_page.dart';
@@ -802,5 +803,144 @@ void main() {
       reason: '前提断言：选择器真的关掉了（否则下面那条会空过）',
     );
     expect(priceField().controller!.text, before, reason: '取消选择 ⇒ 不覆盖');
+  });
+
+  // #28①（2026-10-14）：负库存提示**必须比「最小单位」** —— 库存快照是「瓶」，
+  // 而录入框里的数字是**录入单位**的原始数（3 箱）。原来直接拿 3 去比 20 瓶
+  // ⇒ 按箱录入**必然漏报**（实际 36 > 20 已经超卖）。
+  testWidgets('#28 按「箱」录入超库存 ⇒ 必须报负库存（原来拿 3 比 20 瓶，漏报）', (
+    WidgetTester tester,
+  ) async {
+    final Product milk = Product(
+      id: newId(),
+      code: 'P0002',
+      name: '蒙牛纯牛奶',
+      unit: '瓶',
+      sellPrice: 250,
+      packageUnit: '箱',
+      packageSize: 12,
+      createdAt: 2,
+      updatedAt: 2,
+    );
+    ProductDao(db).insert(milk);
+    // 先建立 20 瓶的正库存（页外直接走服务层）
+    purchases.create(
+      PurchaseDraft(
+        date: '2026-09-27',
+        lines: <PurchaseLineDraft>[
+          PurchaseLineDraft(
+            productId: milk.id,
+            productName: '蒙牛纯牛奶',
+            quantity: '20',
+            unitPrice: '1.00',
+          ),
+        ],
+        payments: <PurchasePaymentDraft>[
+          PurchasePaymentDraft(accountId: accountId, amount: '20'),
+        ],
+      ),
+      now: 1700000000000,
+    );
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 选牛奶（⚠️ 结果行按 ListTile 找 —— 搜索框里的字也会被 `find.text` 命中）
+    await tester.tap(find.text('点此选商品'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('picker-search')), '蒙牛');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, '蒙牛纯牛奶'));
+    await tester.pumpAndSettle();
+
+    // 切到「箱」
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, '箱'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, '箱'));
+    await tester.pumpAndSettle();
+
+    // 反向对照：1 箱 = 12 瓶 ≤ 20 ⇒ **不该**报（不然就是「一律报」）
+    await tester.enterText(find.byKey(const Key('sale-qty')), '1');
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('负库存记账'),
+      findsNothing,
+      reason: '1 箱（=12 瓶）没超过 20 瓶的库存 ⇒ 不该报',
+    );
+
+    // ⭐ 回归点：3 箱 = 36 瓶 > 20 ⇒ 必须报（改前拿「3」比「20」⇒ 漏报）
+    await tester.enterText(find.byKey(const Key('sale-qty')), '3');
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('负库存记账'),
+      findsOneWidget,
+      reason: '#28①：录入单位是「箱」，库存是「瓶」—— 必须换算到最小单位再比',
+    );
+  });
+
+  // #44（甲裁定 2026-10-14）：**数量框还空着时不该报负库存**。
+  // `#28①` 把 `qty` 由 `row.quantityValue`（空 / ≤0 / 非法 ⇒ `null`）换成
+  // `row.baseQuantityValue`，而后者内部是 `quantityValue ?? 0` + `toBaseQuantity`
+  // （`entryUnit == null` ⇒ 原样返回 `entryQuantity`）⇒ **空框被 0 兜底**
+  // ⇒ 判定式退化成 `0 > estimated` ⇒ `estimated < 0`（本地快照为负 + 有未同步销售）
+  // 时**假告警**，还把 M08 的「本地未同步」说明挤掉（负库存分支在三元里优先）。
+  // ⚠️ 本用例第 ① 条在修复前**必红** —— 这就是它的反向灵敏度（裁定 §三）。
+  testWidgets('#44 数量框还空着 + 本地快照为负 + 有未同步销售 ⇒ 不报负库存，M08 说明不被挤掉', (
+    WidgetTester tester,
+  ) async {
+    enqueueSale('q-44', productId); // 未同步卖 1 ⇒ estimated = 0 + (-1) = -1
+
+    await tester.pumpWidget(
+      page(stockDelta: StockDelta(db: db, queue: SyncQueueDao(db))),
+    );
+    await tester.pumpAndSettle();
+    await pickFirstProduct(tester); // ⚠️ 只选商品，**不填数量**
+
+    // ① 回归点：没填数量 ⇒ 不该出红字「本单会按负库存记账」
+    expect(
+      find.textContaining('负库存记账'),
+      findsNothing,
+      reason: '#44：数量空 ⇒ qty 必须是 null（不是 0）—— 0 > -1 会让空框也报负库存',
+    );
+    // ② 双重要求：假告警走负库存分支 ⇒ 会挤掉 `local != 0` 分支的 M08 说明
+    expect(
+      find.textContaining('本地未同步'),
+      findsOneWidget,
+      reason: '#44：数量空着时 M08 的「权威 + 本地未同步」说明要正常显示',
+    );
+  });
+
+  // #37甲（2026-10-14）：**点过页内空白之后 `Ctrl+S` 仍必须能保存**。
+  // 机理：`EditableText.onTapOutside`（**桌面专属**）的默认动作就是 `unfocus()`，
+  // 默认 `UnfocusDisposition.scope` ⇒ 焦点升到**最近的外层 scope**。页级原来用
+  // `Focus`（不是 scope）⇒ 焦点会升到**路由的** `FocusScope`，而 `CallbackShortcuts`
+  // 在它**下面** ⇒ 按键上溯不再经过它 ⇒ 静默失效（用户实测：填好单子按 Ctrl+S 没反应）。
+  testWidgets('#37 点页内空白（unfocus 到 scope）之后 Ctrl+S 仍然能保存', (
+    WidgetTester tester,
+  ) async {
+    stockUp();
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    await fillRow(tester, qty: '1');
+    await tester.tap(find.text('全款'));
+    await tester.pumpAndSettle();
+
+    // 复现「点页内空白」：把焦点升到最近的外层 scope
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
+
+    // 真发按键（不是调回调）—— 必须真的**经过** `CallbackShortcuts`
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyS);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyS);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('已保存'),
+      findsOneWidget,
+      reason: '#37：页级是 `Focus` 时 `unfocus()` 会把焦点升到**路由的** scope ⇒ '
+          'Ctrl+S 静默失效；改成 `FocusScope` 后焦点留在页内 ⇒ 恒生效',
+    );
   });
 }

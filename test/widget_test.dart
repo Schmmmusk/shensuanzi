@@ -22,6 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/app_shell.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
+import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 void main() {
   // 沙箱配置（testing.md §K 红线：绝不指向真实 %APPDATA%）
@@ -40,18 +41,21 @@ void main() {
     }
   });
 
-  Widget shell({bool databaseReady = true}) => MaterialApp(
-    home: AppShell(
-      dataDirectory: r'D:\神算子数据',
-      backupDirectory: r'D:\神算子备份',
-      schemaVersion: 1,
-      databaseReady: databaseReady,
-      configStore: store,
-      onConfigChanged: (AppConfig config) {},
-      // 门控按能力走（§CV·七 ① 乙）；sink 缺省 = 各页照旧 `_PendingPage`
-      masterDataPolicy: const MasterDataPolicy.desktop(),
-    ),
-  );
+  Widget shell({bool databaseReady = true, ReadFailureLog? readFailures}) =>
+      MaterialApp(
+        home: AppShell(
+          dataDirectory: r'D:\神算子数据',
+          backupDirectory: r'D:\神算子备份',
+          schemaVersion: 1,
+          databaseReady: databaseReady,
+          configStore: store,
+          onConfigChanged: (AppConfig config) {},
+          // 门控按能力走（§CV·七 ① 乙）；sink 缺省 = 各页照旧 `_PendingPage`
+          masterDataPolicy: const MasterDataPolicy.desktop(),
+          // #42 甲 · L4：读路径坏数据的计数（缺省 null = 不显示提示条）
+          readFailures: readFailures,
+        ),
+      );
 
   Future<void> tapNav(WidgetTester tester, String id) async {
     await tester.tap(find.byKey(ValueKey<String>('nav-$id')));
@@ -134,5 +138,77 @@ void main() {
 
     expect(find.byKey(const Key('setting-scale')), findsOneWidget);
     expect(find.text('设置：正在开发'), findsNothing);
+  });
+
+  // ============================================ #42 甲 · L4 坏数据提示条（2026-10-14）
+  //
+  // core 的读路径现在会**跳过**读不出来的行（`decodeRows`）—— 跳过 = 那一条看不见，
+  // 所以必须让用户知道（甲的「不静默」）。这里钉三件事：
+  // ① 计数为 0 ⇒ **不出现**（现状零变化）② 有 N 条 ⇒ 出现且带 N
+  // ③ 「知道了」⇒ **真的清了计数**并消失（这是「已告知」的兑现）。
+
+  testWidgets('#42 L4：坏数据提示条 —— 0 条不出现；有 N 条出现；「知道了」清空并消失', (
+    WidgetTester tester,
+  ) async {
+    final ReadFailureLog log = ReadFailureLog();
+    await tester.pumpWidget(shell(readFailures: log));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('暂时显示不全'),
+      findsNothing,
+      reason: '没有坏数据 ⇒ 不显示（桌面现状零变化）',
+    );
+
+    // 模拟「子页面读数据时读出了坏行」—— 真实路径是 core 的 `decodeRows` 记账
+    log.record(
+      table: Schema.parties,
+      column: 'roles',
+      reason: '认不出的往来方角色',
+      value: '  　\t  ',
+      rowId: 'pa-1',
+    );
+    await tester.pumpAndSettle(); // 提示条最多晚一帧（见 `read_failure_banner.dart` 文件头）
+
+    expect(find.textContaining('有 1 条记录暂时显示不全'), findsOneWidget);
+    expect(
+      find.textContaining('旧备份'),
+      findsOneWidget,
+      reason: '要说清「可能是旧备份或手工改过的数据」，不是干巴巴一句',
+    );
+
+    // 「去设置看怎么办」⇒ 摆出 core 的「怎么办」原文（含动作，UI 不造句）
+    await tester.tap(find.text('去设置看怎么办'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('备份与恢复'), findsOneWidget);
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+
+    // 「知道了」= 已告知：清计数 + 提示条消失
+    await tester.tap(find.text('知道了'));
+    await tester.pumpAndSettle();
+    expect(log.count, 0, reason: '「知道了」必须真的清掉计数（不是只藏起来）');
+    expect(find.textContaining('暂时显示不全'), findsNothing);
+  });
+
+  testWidgets('#42 L4：提示条在 200% 字号下不溢出（仓内硬纪律）', (WidgetTester tester) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    final ReadFailureLog log = ReadFailureLog();
+    await tester.pumpWidget(shell(readFailures: log));
+    await tester.pumpAndSettle();
+
+    log.record(
+      table: Schema.parties,
+      column: 'roles',
+      reason: '认不出的往来方角色',
+      value: '  　\t  ',
+      rowId: 'pa-1',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('暂时显示不全'), findsOneWidget);
+    expect(tester.takeException(), isNull, reason: '200% 字号下不许溢出（正文换行 + 按钮 Wrap）');
   });
 }

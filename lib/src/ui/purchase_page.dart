@@ -48,6 +48,7 @@ class PurchasePage extends StatefulWidget {
     this.onStorageFailure,
     required this.masterDataPolicy,
     required this.masterDataSink,
+    this.mobileShell = false,
   });
 
   /// 开单页**查询**用（选择器 / 库存快照 —— 读）。
@@ -76,6 +77,10 @@ class PurchasePage extends StatefulWidget {
   /// 主数据提交**出口**（桌面 `ServiceMasterSink` / 手机 `QueueMasterSink`）。
   /// ⚠️ 商品表单**必须**走它 —— 手机端的 `ProductService` 建在镜像上。
   final MasterDataSink masterDataSink;
+
+  /// **壳类型**（#37①，2026-10-14）：手机壳**没有键盘** ⇒ 按钮文案不带
+  /// `(Esc)` / `(Ctrl+S)` 后缀。判据沿用 `AppShell.mobileShell`（**不新造 flag**）。
+  final bool mobileShell;
 
   /// 商品搜索与「＋新建商品」复用商品建档。
   final ProductService productService;
@@ -576,7 +581,14 @@ class _PurchasePageState extends State<PurchasePage> {
         const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
         const SingleActivator(LogicalKeyboardKey.escape): _cancel,
       },
-      child: Focus(
+      child: FocusScope(
+        // #37甲（2026-10-14）：这里**必须**是 `FocusScope`，不能降回 `Focus` ——
+        // `CallbackShortcuts` 内部是 `Focus(canRequestFocus: false)`，按键只能靠
+        // **后代节点上溯**经过它；而点页内空白会触发 `EditableText.onTapOutside`
+        // （桌面专属）调 `unfocus()`，默认 `disposition: scope` 把焦点升到
+        // **最近的外层 scope**。若是普通 `Focus`，焦点升到路由的 `FocusScope`
+        // （在 `CallbackShortcuts` **之上**）⇒ 上溯不再经过它 ⇒ Ctrl+S / Esc 静默失效。
+        // 换成 `FocusScope` ⇒ 最近 scope 就是本页 ⇒ 焦点留在页内 ⇒ 恒生效。
         autofocus: true,
         // C3·真机反馈 ④：键盘（含输入法候选栏）高度变化时，把焦点字段滚回可视区
         child: KeyboardReveal(
@@ -846,7 +858,8 @@ class _PurchasePageState extends State<PurchasePage> {
     children: <Widget>[
       TextButton(
         onPressed: _saving ? null : _cancel,
-        child: const Text('取消 (Esc)'),
+        // #37①：手机壳没有键盘 ⇒ 不显示快捷键后缀（判据 = AppShell.mobileShell）
+        child: Text('取消${widget.mobileShell ? '' : ' (Esc)'}'),
       ),
       FilledButton.icon(
         // ⚠️ **稳定 Key**：按钮文案会随「有没有找回」变（§AY·四），
@@ -863,7 +876,7 @@ class _PurchasePageState extends State<PurchasePage> {
         // §AY·四（与销售同构）：**按钮文字是用户动作的最终确认**。
         // 文案由 core 给（`PurchaseDraft.saveActionLabel`），这里只取值。
         label: Text(
-          _saving ? '保存中…' : '${_draft.saveActionLabel()} (Ctrl+S)',
+          _saving ? '保存中…' : '${_draft.saveActionLabel()}${widget.mobileShell ? '' : ' (Ctrl+S)'}',
         ),
       ),
     ],

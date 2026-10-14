@@ -542,5 +542,105 @@ void main() {
         DocStatus.cancelled,
       );
     });
+
+    // ============================================================ #38 甲（2026-10-14）
+    //
+    // 报告 `XS20261012-003` 同款：销售 ¥120 **既全收又全退** ⇒ 「未收」算成 −120。
+    // 用户裁定：**全退之后不再显示「还要收多少 / 欠多少」**，改说「已全部退清」；
+    // 而**算术不动**（「退货冲减」与「退款单核销」是否同一笔钱，是第二步的裁定对象）。
+    test('#38 甲：全收 + 全退 ⇒ 算术 −总额（不动），展示值 0，且判为已全退', () {
+      final String p = createProduct();
+      final String acc = createAccount();
+      final String party = createParty();
+      final Document sale = saleOnCredit(p, party, 12000);
+      final ReturnService returns = ReturnService(
+        engine: engine,
+        queries: QueryDao(db),
+      );
+
+      // 先**收满** 120 ⇒ 未收 0
+      // （⚠️ 顺序不能反：先全退的话未收已是 0，`settle()` 会以「已经结清了」拒绝，
+      //   也就构造不出报告里那个负数。）
+      service.settle(
+        targetDocId: sale.id,
+        accountId: acc,
+        amountCents: 12000,
+        now: now(),
+      );
+      expect(service.unsettledCentsOf(sale.id), 0);
+
+      // 再**整单退** 120 ⇒ 算术 120 − 120 − 120 = −120
+      returns.create(
+        ReturnDraft(
+          refDocId: sale.id,
+          originalDocType: DocType.sale,
+          partyId: party,
+          partyName: '老王批发',
+          lines: <ReturnLineDraft>[
+            ReturnLineDraft(
+              productId: p,
+              productName: '商品',
+              quantity: '1',
+              amount: '120.00',
+              baseUnit: '件',
+              originalQuantity: 1,
+              originalAmountCents: 12000,
+              packageSize: null,
+            ),
+          ],
+        ),
+      );
+
+      // ⛔ 算术**不动** —— 这个负数是「口径可能重复计入」的暴露点，不是显示 bug；
+      // 改它 = 拿一个未裁的量级去改业务（§AR·二 #38 第二步）。
+      expect(
+        service.unsettledCentsOf(sale.id),
+        -12000,
+        reason: '全收 + 全退 = 120 − 120 − 120；改它 = 越权改业务',
+      );
+      // ✅ 展示值止血为 0（界面不再出现负数金额）
+      expect(service.unsettledForDisplayCentsOf(sale.id), 0);
+      // ✅ 判为「已全退」⇒ 详情页那一行改说「已全部退清」
+      expect(
+        SettlementService.isFullyReturned(documents.findById(sale.id)!, 12000),
+        isTrue,
+      );
+    });
+
+    test('#38/#39 判据边界：只退一部分 / 金额为 0 的空单都不算「已全退」', () {
+      final String p = createProduct();
+      final String party = createParty();
+      final Document sale = saleOnCredit(p, party, 5000);
+      expect(documents.returnedAgainst(sale.id), 0, reason: '没退货 ⇒ 冲减额 0');
+
+      expect(
+        SettlementService.isFullyReturned(sale, 0),
+        isFalse,
+        reason: '没退过货',
+      );
+      expect(
+        SettlementService.isFullyReturned(sale, 2500),
+        isFalse,
+        reason: '只退一半（2500 < 5000）',
+      );
+      expect(
+        SettlementService.isFullyReturned(sale, 5000),
+        isTrue,
+        reason: '正好退光',
+      );
+
+      // ⚠️ 金额为 0 的空单不能被 `>=` **空真**判成「已全退」（`> 0` 就是为它守的）
+      final Document empty = Document(
+        id: newId(),
+        docNo: 'XS-0',
+        docType: DocType.sale,
+        status: DocStatus.confirmed,
+        totalAmount: 0,
+        occurredAt: now(),
+        createdAt: now(),
+        updatedAt: now(),
+      );
+      expect(SettlementService.isFullyReturned(empty, 0), isFalse);
+    });
   });
 }

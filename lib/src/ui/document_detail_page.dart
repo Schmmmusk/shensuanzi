@@ -304,6 +304,17 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     final Document doc = summary.document;
     // §审查 BUG-04：真实未收 = 金额 − 已核销 − 该单累计退货冲减
     final int unsettled = widget.settlements.unsettledCentsOf(widget.documentId);
+    // #38 甲（2026-10-14，用户裁定）：**全退之后不再显示「还要收多少 / 欠多少」**
+    // —— 那句数字本身会误导（原样显示是 `¥-120.00`），说一句「已全部退清」就够。
+    final bool fullyReturned = SettlementService.isFullyReturned(
+      doc,
+      summary.returnedCents,
+    );
+    // 其余会把「未收」算成负数的残角（如先全额收款、再退一部分货）⇒ 按 0 显示（止血）。
+    // ⚠️ 这**不是**口径修复：那笔退款该不该露出，是 #38 第二步的裁定对象。
+    final int unsettledShown = widget.settlements.unsettledForDisplayCentsOf(
+      widget.documentId,
+    );
     final bool isCancelled = doc.status == DocStatus.cancelled;
     final bool isMoneyDoc =
         doc.docType == DocType.receipt || doc.docType == DocType.payment;
@@ -339,12 +350,18 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                 '−¥${Money.formatGrouped(summary.returnedCents)}',
               ),
             // §审查 BUG-05：已作废的单不显示「未收」——避免对着废单收款的诱导
-            if (!isMoneyDoc && !isCancelled && unsettled != 0)
-              _kv(
-                theme,
-                isReturnDoc ? '未退款' : '未${_moneyVerb(doc)}',
-                '¥${Money.formatGrouped(unsettled)}',
-              ),
+            if (!isMoneyDoc && !isCancelled)
+              if (fullyReturned)
+                // #38 甲：全退之后没有「还要收 / 要欠」可言 ⇒ 只留一句结论。
+                // ⚠️ 标签留空是**有意的**：「未收」这个标签本身就是「还要收多少」，
+                // 在这一行里放它会把一句结论读成矛盾的。
+                _kv(theme, '', '已全部退清')
+              else if (unsettled != 0)
+                _kv(
+                  theme,
+                  isReturnDoc ? '未退款' : '未${_moneyVerb(doc)}',
+                  '¥${Money.formatGrouped(unsettledShown)}',
+                ),
             // §审查 BUG-04：状态展示用真实未收判定（已确认且结清 ⇒ 显示已结清）
             _kv(
               theme,
@@ -374,6 +391,16 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     final bool? inbound = SettlementService.isInbound(doc.docType);
     final int unsettled = widget.settlements.unsettledCentsOf(widget.documentId);
     final bool isDelivery = doc.docType == DocType.delivery;
+
+    // #39（2026-10-14）：**全退之后不该再有「退货」入口** —— 否则可以再点一次、
+    // 误导用户继续退款。⚠️ 只有**已作废/拒收**那种情况天然没有入口（原单被 cancel），
+    // 「退货」不会 cancel 原单 ⇒ 必须显式判。
+    // ⚠️ 判据**只此一处定义**（`SettlementService.isFullyReturned`）—— 上面的
+    // 「未收」行（#38 甲）用的是同一个函数，两处各写一份必然漂移。
+    final bool fullyReturned = SettlementService.isFullyReturned(
+      doc,
+      summary.returnedCents,
+    );
 
     final List<Widget> children = <Widget>[];
 
@@ -497,12 +524,14 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
 
     // ---- 退货入口（§BI R2）：原单类型可退 且 服务已接 ----
     // §审查 OBS-07：退货单**不能再退**（只列可退的原单类型）
-    if (widget.returnService != null &&
+    final bool returnable =
+        widget.returnService != null &&
         !isReturnDoc &&
         (doc.docType == DocType.sale ||
             doc.docType == DocType.purchase ||
             (isDelivery && doc.status != DocStatus.inTransit)) &&
-        doc.status != DocStatus.cancelled) {
+        doc.status != DocStatus.cancelled;
+    if (returnable && !fullyReturned) {
       children.add(const SizedBox(height: 8));
       children.add(
         Align(
@@ -513,6 +542,15 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
             icon: const Icon(Icons.undo_outlined),
             label: const Text('退货'),
           ),
+        ),
+      );
+    } else if (returnable) {
+      // #39：**说清「按钮为什么不见了」** —— 凭空消失比点不动更让人困惑
+      children.add(const SizedBox(height: 8));
+      children.add(
+        Text(
+          '这张单已经全部退过了，不能再退。',
+          style: TextStyle(height: 1.6, color: theme.hintColor),
         ),
       );
     }

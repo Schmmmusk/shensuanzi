@@ -21,6 +21,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'app_shell.dart';
+import 'read_failure_banner.dart';
 
 /// 底部导航的 5 个入口（§AH-5 裁定的入口名，不许增减改名）。
 class _MobileTab {
@@ -175,6 +176,11 @@ class _MobileShellState extends State<MobileShell> {
         child: Column(
           children: <Widget>[
             _SyncStatusBar(sync: widget.shell.mobileSync, version: widget.shell),
+            // #42 甲 · L4（2026-10-14）：读数据不全的提示条 —— 与桌面壳**共用
+            // 同一个 widget**（`read_failure_banner.dart`，照 `appShellPage` 的先例）。
+            // 位置放在三态条**下面**：三态条是「同步进度」（常态），这条是「异常提醒」，
+            // 不去挤已裁定「顶部常驻」的那个位置。计数为 0 时它自己收成 `SizedBox.shrink()`。
+            ReadFailureBanner(log: widget.shell.readFailures),
             Expanded(child: body),
           ],
         ),

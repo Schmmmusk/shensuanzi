@@ -1,3 +1,4 @@
+import '../db/read_failures.dart';
 import '../db/schema.dart';
 import 'base.dart';
 
@@ -21,10 +22,21 @@ enum DocType {
   /// 中文名（仅用于日志与调试；UI 文案走 i18n）
   final String label;
 
+  /// 严格版：**不认识就抛**。用于 **wire 报文校验**（畸形请求要拒绝）。
   static DocType fromWire(String value) => DocType.values.firstWhere(
     (DocType type) => type.wire == value,
     orElse: () => throw ArgumentError('未知单据类型：$value'),
   );
+
+  /// **读库用**（#42 甲 · L2）：未知值 ⇒ `null`，**不抛**。
+  /// ⚠️ 调用方（[Document.fromRow]）遇到 `null` **只能跳过该行** ——
+  /// **单据类型决定一切**（金额符号、成本口径、列表分组），猜错比看不见更坏。
+  static DocType? fromWireOrNull(String value) {
+    for (final DocType type in DocType.values) {
+      if (type.wire == value) return type;
+    }
+    return null;
+  }
 }
 
 /// 单据状态
@@ -40,10 +52,21 @@ enum DocStatus {
 
   final String wire;
 
+  /// 严格版：**不认识就抛**。用于 **wire 报文校验**（畸形请求要拒绝）。
   static DocStatus fromWire(String value) => DocStatus.values.firstWhere(
     (DocStatus status) => status.wire == value,
     orElse: () => throw ArgumentError('未知单据状态：$value'),
   );
+
+  /// **读库用**（#42 甲 · L2）：未知值 ⇒ `null`，**不抛**。
+  ///
+  /// 调用方兜底为 [confirmed]（**不是 `draft`**）—— 见 [Document.fromRow] 的说明。
+  static DocStatus? fromWireOrNull(String value) {
+    for (final DocStatus status in DocStatus.values) {
+      if (status.wire == value) return status;
+    }
+    return null;
+  }
 }
 
 /// 单据主表（业务数据）。
@@ -70,22 +93,54 @@ class Document extends ImmutableEntity {
     this.remark,
   });
 
-  factory Document.fromRow(Map<String, Object?> row) => Document(
-    id: row.requiredString('id'),
-    docNo: row.requiredString('doc_no'),
-    docType: DocType.fromWire(row.requiredString('doc_type')),
-    status: DocStatus.fromWire(row.requiredString('status')),
-    partyId: row.optionalString('party_id'),
-    accountId: row.optionalString('account_id'),
-    totalAmount: row.requiredInt('total_amount'),
-    paidAmount: row.requiredInt('paid_amount'),
-    refDocId: row.optionalString('ref_doc_id'),
-    occurredAt: row.requiredInt('occurred_at'),
-    timeEstimated: row.requiredBool('time_estimated'),
-    createdAt: row.requiredInt('created_at'),
-    updatedAt: row.requiredInt('updated_at'),
-    remark: row.optionalString('remark'),
-  );
+  /// [failures] 记录「哪一列被兜底了」（不传 = 只兜底不记录）。
+  ///
+  /// **#42 的两个处置**（2026-10-14 裁定 §三）：
+  ///
+  /// | 列 | 认不出时 | 为什么 |
+  /// |---|---|---|
+  /// | `doc_type` | **抛 [RowDecodeException] ⇒ 跳过该行** | **类型决定一切**（金额符号 / 成本口径 / 列表分组），猜成 `sale` 会让报表口径错 —— 那比「看不见」更坏 |
+  /// | `status` | **兜底 [DocStatus.confirmed]** | ⚠️ **不是 `draft`**：`draft` 在项目语义里是「未提交」（可能被筛掉、可能被当成草稿允许改）⇒ 兜底成它会让一张**真实存在的单看起来像没保存**。`confirmed` = 「已保存、未结清」才是安全的保守值 |
+  factory Document.fromRow(
+    Map<String, Object?> row, {
+    ReadFailureLog? failures,
+  }) {
+    final String rawType = row.requiredString('doc_type');
+    final DocType? docType = DocType.fromWireOrNull(rawType);
+    if (docType == null) {
+      throw RowDecodeException(
+        column: 'doc_type',
+        reason: '认不出的单据类型',
+        value: rawType,
+      );
+    }
+    final String rawStatus = row.requiredString('status');
+    final DocStatus? status = DocStatus.fromWireOrNull(rawStatus);
+    if (status == null) {
+      failures?.record(
+        table: Schema.documents,
+        column: 'status',
+        reason: '认不出的单据状态',
+        value: rawStatus,
+      );
+    }
+    return Document(
+      id: row.requiredString('id'),
+      docNo: row.requiredString('doc_no'),
+      docType: docType,
+      status: status ?? DocStatus.confirmed,
+      partyId: row.optionalString('party_id'),
+      accountId: row.optionalString('account_id'),
+      totalAmount: row.requiredInt('total_amount'),
+      paidAmount: row.requiredInt('paid_amount'),
+      refDocId: row.optionalString('ref_doc_id'),
+      occurredAt: row.requiredInt('occurred_at'),
+      timeEstimated: row.requiredBool('time_estimated'),
+      createdAt: row.requiredInt('created_at'),
+      updatedAt: row.requiredInt('updated_at'),
+      remark: row.optionalString('remark'),
+    );
+  }
 
   static const String table = Schema.documents;
 

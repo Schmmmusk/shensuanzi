@@ -793,6 +793,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       );
       final ExportService exports = ExportService(
         exportDirectory: location.exportDirectory,
+        // #35（2026-10-14）：写盘失败的**原始异常**进日志 —— 界面只显示
+        // `localFileFailureAdvice` 的分类文案（原来把异常全文拼进了 SnackBar）。
+        onFailure: (Object error, StackTrace stack) =>
+            _log.crash(error, stack, label: '导出失败'),
       );
       setState(() {
         _location = location;
@@ -1614,6 +1618,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       onStorageFailure: _onStorageFailure,
       stockDelta: stockDelta,
       pendingMarks: pendingMarks,
+      // #42 甲 · L4（2026-10-14 裁定）：读路径坏数据的计数。
+      // 手机壳读的是**镜像库**、桌面读的是**主库** ⇒ 取 `mirror ?? _db`
+      // （提示条只显示「这套壳正在读的那张库」的坏行；两张库不混算）。
+      readFailures: (mirror ?? _db)?.readFailures,
       // §CV·七 ① 乙：主数据门控 + 出口。按壳判定（与上面 readOnly 同一理由）：
       // **不按 mirror 是否取到** —— 门控是「策略」，取不到 mirror 时 sink 为 null，
       // 相关页面退回 `_PendingPage`（宁可「数据未就绪」，也不给写不通的路）。
