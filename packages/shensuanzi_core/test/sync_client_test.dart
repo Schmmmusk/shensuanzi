@@ -716,6 +716,89 @@ void main() {
         reason: '整批回滚 —— 不能留下半页',
       );
     });
+
+    test('#49：sent 条目的实体落在**非末页** ⇒ 整轮拉完后仍被确认清掉（R08）', () async {
+      final SyncClient paged = SyncClient(
+        db: db,
+        transport: transport,
+        baseUri: Uri.parse('http://127.0.0.1:17890'),
+        token: 'tok-abc',
+        clock: now,
+        pageLimit: 1,
+      );
+      final SyncQueueEntry entry = paged.queue.enqueue(
+        SyncQueueEntry.create(
+          SyncOperation(
+            entity: Schema.documents,
+            entityId: 'd1',
+            operation: SyncOpType.createDocument,
+            payload: <String, Object?>{
+              'document': <String, Object?>{'id': 'd1', 'doc_type': 'sale'},
+              'lines': <Object?>[],
+            },
+          ),
+          now: now(),
+        ),
+      );
+      paged.queue.markSent(entry.id);
+
+      // 两页：d1 在第 1 页、d2 在末页。旧实现每页新建集合、只在末页清理
+      // ⇒ d1 的条目永远清不掉（卡 sent ⇒ 「未同步影响」虚高，主机 1 显示 2）。
+      transport.replyJson(pullBody(
+        documents: <Map<String, Object?>>[docRow('d1', docNo: 'CG-49-1')],
+        hasMore: true,
+        cursors: <String, String>{'documents': 'c1'},
+      ));
+      transport.replyJson(pullBody(
+        documents: <Map<String, Object?>>[docRow('d2', docNo: 'CG-49-2')],
+        cursors: <String, String>{'documents': 'c2'},
+      ));
+
+      final SyncPullReport report = await paged.pull();
+
+      expect(report.pages, 2);
+      expect(
+        paged.queue.findById(entry.id),
+        isNull,
+        reason: '整轮累计清理 —— 实体在第 1 页也要清（旧实现清 0 条）',
+      );
+      expect(paged.queue.counts().pendingCount, 0);
+    });
+
+    test('#50：floor 早于默认窗口 ⇒ 窗口下界取 floor（离线 8 天兜底）', () async {
+      transport.replyJson(pullBody());
+      final int floor = now() - const Duration(days: 9).inMilliseconds;
+
+      await client.pull(docUpdatedSinceFloor: floor);
+
+      final int? actual = int.tryParse(
+        transport.last.uri.queryParameters['doc_updated_since'] ?? '',
+      );
+      expect(actual, isNotNull);
+      expect(
+        (actual! - floor).abs() <= 2,
+        isTrue,
+        reason: '下界 = min(默认 7 天窗口, floor) —— floor 更早 ⇒ 取 floor',
+      );
+    });
+
+    test('#50：floor 晚于默认窗口 ⇒ 仍取默认窗口（不许收紧）', () async {
+      transport.replyJson(pullBody());
+      await client.pull(
+        docUpdatedSinceFloor: now() - const Duration(days: 1).inMilliseconds,
+      );
+      final int clockAtRequest = now();
+      final int expected =
+          clockAtRequest - const Duration(days: 7).inMilliseconds;
+      final int? actual = int.tryParse(
+        transport.last.uri.queryParameters['doc_updated_since'] ?? '',
+      );
+      expect(
+        (actual! - expected).abs() <= 2,
+        isTrue,
+        reason: 'floor 比默认窗口晚 ⇒ 忽略 floor（用 7 天窗口）',
+      );
+    });
   });
 
   // ============================================================ 推送
@@ -988,6 +1071,106 @@ void main() {
       expect(report.attempts, 0);
       expect(transport.requests, isEmpty);
     });
+
+    test('#48：pushAll 连续推到队空；每批后拉一轮让 sent 被确认', () async {
+      // batchLimit=2、3 条待传 ⇒ 两批；每批后各一轮 pull（回传对应文档
+      // ⇒ 本批 sent 全部被确认清掉）
+      final SyncClient small = SyncClient(
+        db: db,
+        transport: transport,
+        baseUri: Uri.parse('http://127.0.0.1:17890'),
+        token: 'tok-abc',
+        clock: now,
+        batchLimit: 2,
+      );
+      void enqueueDoc(String id) => small.queue.enqueue(
+        SyncQueueEntry.create(
+          SyncOperation(
+            entity: Schema.documents,
+            entityId: id,
+            operation: SyncOpType.createDocument,
+            payload: <String, Object?>{
+              'document': <String, Object?>{'id': id, 'doc_type': 'sale'},
+              'lines': <Object?>[],
+            },
+          ),
+          now: now(),
+        ),
+      );
+      enqueueDoc('d1');
+      enqueueDoc('d2');
+      enqueueDoc('d3');
+
+      transport.replyJson(pushBody(<Map<String, Object?>>[
+        receipt('d1', 'applied'),
+        receipt('d2', 'applied'),
+      ]));
+      transport.replyJson(pullBody(
+        documents: <Map<String, Object?>>[
+          docRow('d1', docNo: 'CG-48-1'),
+          docRow('d2', docNo: 'CG-48-2'),
+        ],
+      ));
+      transport.replyJson(pushBody(
+        <Map<String, Object?>>[receipt('d3', 'applied')],
+      ));
+      transport.replyJson(pullBody(
+        documents: <Map<String, Object?>>[docRow('d3', docNo: 'CG-48-3')],
+      ));
+
+      final SyncPushReport report = await small.pushAll();
+
+      expect(report.batches, 2, reason: 'batchLimit=2 ⇒ 3 条要两批');
+      expect(report.sent, 3);
+      expect(report.confirmedTotal, 3, reason: '每批后的 pull 把 sent 全部确认清掉');
+      expect(report.remaining, 0, reason: '队空 ⇒ 不许报「还有待传」');
+      expect(small.queue.counts().pendingCount, 0);
+    });
+
+    test('#48：撞批数上限 ⇒ remaining 如实 > 0（不许假装完成）', () async {
+      final SyncClient small = SyncClient(
+        db: db,
+        transport: transport,
+        baseUri: Uri.parse('http://127.0.0.1:17890'),
+        token: 'tok-abc',
+        clock: now,
+        batchLimit: 2,
+      );
+      void enqueueDoc(String id) => small.queue.enqueue(
+        SyncQueueEntry.create(
+          SyncOperation(
+            entity: Schema.documents,
+            entityId: id,
+            operation: SyncOpType.createDocument,
+            payload: <String, Object?>{
+              'document': <String, Object?>{'id': id, 'doc_type': 'sale'},
+              'lines': <Object?>[],
+            },
+          ),
+          now: now(),
+        ),
+      );
+      enqueueDoc('d1');
+      enqueueDoc('d2');
+      enqueueDoc('d3');
+
+      transport.replyJson(pushBody(<Map<String, Object?>>[
+        receipt('d1', 'applied'),
+        receipt('d2', 'applied'),
+      ]));
+      transport.replyJson(pullBody());
+
+      final SyncPushReport report = await small.pushAll(maxBatches: 1);
+
+      expect(report.batches, 1);
+      expect(report.sent, 2);
+      expect(
+        report.remaining,
+        1,
+        reason: 'd3 仍 pending —— 调用方必须说「还有 N 条待传」，不许报完成',
+      );
+      expect(small.queue.counts().pendingCount, 1);
+    });
   });
 
   // ============================================================ 未同步影响
@@ -1247,6 +1430,74 @@ void main() {
           .first['cursor']! as String;
       expect(cursorAfter, '2026-01-01 00:00:00');
       expect(db.raw.select('SELECT COUNT(*) c FROM documents').first['c'], 1);
+    });
+  });
+
+  // ===== #47 丁（2026-10-16 裁定）：挂起条目的「重试 / 放弃」双出口 =====
+  //
+  // 切主机挂起（`markHeld` ⇒ failed + reason）按**设计语义继续计入**未同步影响
+  //（「已发生、但权威状态还没包含」—— 货真的出了店；外测报告的「排除」方向
+  // 被裁定否决）。两个出口改变的是条目本身：
+  // `requeue` ⇒ 回 pending（会再被推）；`delete` ⇒ 从估算中退出（放弃）。
+  group('#47 丁：挂起条目的重试 / 放弃出口', () {
+    SyncQueueEntry heldDoc(String id) => client.queue.enqueue(
+      SyncQueueEntry.create(
+        SyncOperation(
+          entity: Schema.documents,
+          entityId: id,
+          operation: SyncOpType.createDocument,
+          payload: <String, Object?>{
+            'document': <String, Object?>{'id': id, 'doc_type': 'sale'},
+            'lines': <Object?>[
+              <String, Object?>{
+                'product_id': productId,
+                'quantity': 3,
+                'unit_price': 100,
+                'amount': 300,
+              },
+            ],
+          },
+        ),
+        now: now(),
+      ),
+    );
+
+    test('挂起条目仍计入未同步影响（设计语义，不排除）', () {
+      final SyncQueueEntry entry = heldDoc('d-held');
+      client.queue.markHeld(entry.id, reason: '这条单是在连接上一台主机时开的');
+      expect(
+        client.unsyncedDelta()[productId],
+        -3,
+        reason: 'held = 已发生未包含 ⇒ 计入（这是显示「这里有货悬着」的唯一通道）',
+      );
+    });
+
+    test('放弃（delete）⇒ 从未同步影响中退出', () {
+      final SyncQueueEntry entry = heldDoc('d-gone');
+      client.queue.markHeld(entry.id, reason: 'x');
+      expect(client.unsyncedDelta()[productId], -3);
+      client.queue.delete(entry.id);
+      expect(
+        client.unsyncedDelta()[productId],
+        isNull,
+        reason: '放弃后估算立刻恢复准确（裁定快路径：先删；discarded 待办）',
+      );
+      expect(client.queue.findById(entry.id), isNull);
+    });
+
+    test('重试（requeue）⇒ 回 pending、立即到期、delta 仍在（未确认前）', () {
+      final SyncQueueEntry entry = heldDoc('d-retry');
+      client.queue.markHeld(entry.id, reason: 'x');
+      client.queue.requeue(entry.id);
+      final SyncQueueEntry requeued = client.queue.findById(entry.id)!;
+      expect(requeued.status, SyncQueueStatus.pending);
+      expect(requeued.isDue(now()), isTrue, reason: 'requeue 清了退避 ⇒ 立即到期');
+      expect(client.queue.due(now()), isNotEmpty, reason: '重试后会被再次推送');
+      expect(
+        client.unsyncedDelta()[productId],
+        -3,
+        reason: '还没被主机收下 ⇒ 仍计入（重试后显示不跳变）',
+      );
     });
   });
 }

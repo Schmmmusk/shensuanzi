@@ -186,7 +186,7 @@ python tool/destructive_acceptance.py --phase watch-write --exe "C:\\path\\shens
 | 开关 | 用途 |
 |---|---|
 | `--only 9.1,9.7` | 只跑这几条 |
-| `--report <路径>` | Markdown 报告落点（默认 `tool/desktop_acceptance_s9_report.md`） |
+| `--report <路径>` | Markdown 报告落点（默认写在 `destructive_acceptance.py` 同一目录） |
 | `--backup-dir <路径>` | 备份目录（默认 = 数据目录的兄弟「神算子备份」，与软件一致） |
 | `--use-system-time` | 表示你已授权改系统时间（只是让 9.4 的清单换个写法） |
 | `--allow-running-app` | 检测到实例在跑也继续（会让 9.3 的结论不可信；watch-write 不需要此项） |
@@ -195,7 +195,7 @@ python tool/destructive_acceptance.py --phase watch-write --exe "C:\\path\\shens
 | `--dry-run` | 只打印会做什么，不动任何东西 |
 
 退出码：`0` 无「不通过」 · `1` 有「不通过」 · `2` 脚本自身的规则复刻与 Dart 期望不符 ·
-`3` 数据目录不存在 · `4` 常规阶段检测到软件实例在运行。
+`3` 数据目录不存在 · `4` 常规阶段检测到软件实例在运行 · `6` 报告文件写入失败。
 
 ### 6. 脚本内部有一处**复刻**，它每次运行都自检
 

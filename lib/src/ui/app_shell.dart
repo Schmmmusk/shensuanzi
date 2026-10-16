@@ -267,6 +267,15 @@ class AppShell extends StatefulWidget {
 /// 也在这里：调用方不必重复判空。
 Widget appShellPage(AppShell shell, NavDestination destination) {
   final Widget page;
+  // #46（2026-10-14 外测 M01）：**手机不给「立即备份」** —— 执行既有裁定
+  // （`docs/reply.md` §4 B 方案，`app.dart` 的 `_exportBackupMobile` 文件头
+  // 引了原文；台账「Android 导出改口径」）：手机是移动开单终端、权威数据在
+  // Windows 主机，**主库在手机上是空壳** ⇒「立即备份」备份的是空库却报成功
+  // （外测实测：镜像里有 1 商品 1 待传，备份文件里 0 商品 0 队列）。
+  // 手机的数据安全出口 = 设置页「导出本机数据文件」（镜像库 + 主库 +
+  // 未同步单据清单）。判据放在**唯一装配点**（§BH B1a），两套壳不会漂移；
+  // 页面层本来的「`null` = 不显示」守卫直接复用，不新增 widget。
+  final bool allowBackup = !shell.mobileShell;
   if (destination.id == 'overview') {
     page = OverviewPage(
       shopName: shell.shopName,
@@ -274,8 +283,8 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
       backupDirectory: shell.backupDirectory,
       schemaVersion: shell.schemaVersion,
       databaseReady: shell.databaseReady,
-      backupReminder: shell.backupReminder,
-      onBackupNow: shell.onBackupNow,
+      backupReminder: allowBackup ? shell.backupReminder : null,
+      onBackupNow: allowBackup ? shell.onBackupNow : null,
       locationNote: shell.dataLocationNote,
       // M05：指路文案随壳走（桌面「左边」/ 手机「底部」）
       mobileShell: shell.mobileShell,
@@ -374,10 +383,12 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
     page = SettingsPage(
       config: shell.configStore.load(),
       configStore: shell.configStore,
-      backupDirectory: shell.backupDirectory,
-      backupStatusLine: shell.backupStatusLine,
-      backupNeedsAttention: shell.backupNeedsAttention,
-      onBackupNow: shell.onBackupNow,
+      // #46：手机不给备份区（上面的 allowBackup 注释）；「导出本机数据文件」
+      // 的条件**独立**于这几项 ⇒ 手机照常显示
+      backupDirectory: allowBackup ? shell.backupDirectory : null,
+      backupStatusLine: allowBackup ? shell.backupStatusLine : null,
+      backupNeedsAttention: allowBackup && shell.backupNeedsAttention,
+      onBackupNow: allowBackup ? shell.onBackupNow : null,
       hostService: shell.hostService,
       dataPathsNote: shell.dataPathsNote,
       hostSyncNote: shell.hostSyncNote,

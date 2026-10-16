@@ -70,8 +70,16 @@ class MasterDataSubmitResult {
 
   /// 入队成功的**用户告知**（判定与文案在 core，UI 不造句）。
   /// 主机路径为 `null`（桌面按既有文案，零变化）。
+  ///
+  /// #53（外测 M02）：触发词如实 —— 自动补传 = 开单后 + 回前台 + 手动。
+  ///
+  /// ⚠️ **deviation（2026-10-16 裁定的适配）**：开单路径用裁定原文
+  /// 「保存后会自动尝试传给电脑」，但**主数据保存不触发推送**（`app.dart`
+  /// 只有 `_onDocumentSubmitted` / 回前台 / 手动三处调 `autoPush`）——
+  /// 这里照抄会重新踩 M02，故按实际触发列「下次开单 / 切回来 / 立即同步」。
   String? get queuedNotice => isQueued
-      ? '已记入待同步（编码 ${product!.code}）。主机下次联网时会收到。'
+      ? '已记入待同步（编码 ${product!.code}）。'
+          '下次开单、切回来，或点「立即同步」时会传给电脑。'
       : null;
 
   @override

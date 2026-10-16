@@ -13,7 +13,11 @@
 /// | 给谁 | 内容 | 去哪 |
 /// |---|---|---|
 /// | **用户** | 一句中文结论 + 一句「怎么办」（本文件） | 界面 |
-/// | **技术支持** | 原始异常 + 堆栈 | 日志（调用方 `AppLog.crash`） |
+/// | **技术支持** | 分类 + 结果码 + 堆栈（[storageFailureLogLine]） | 日志 |
+///
+/// ⚠️ #54（2026-10-15 外测 M15）修正了上表的日志行：**SQLite 异常不再带原始
+/// 消息** —— `SqliteException.toString()` 的消息体带着整条 SQL 与绑定参数
+/// （= 这张单的 payload），日志文件会被用户打包转发，经营内容不许进。
 ///
 /// ## 分类依据是**结果码**，不是异常文本
 ///
@@ -100,4 +104,18 @@ String storageFailureNote(Object error) {
       return '没能保存。请再试一次；如果一直这样，'
           '请把软件的日志文件发给技术支持（日志里才有详细原因）。';
   }
+}
+
+/// 日志侧的**脱敏行**（#54，2026-10-15 外测 M15）：给技术支持看的
+/// 「分类 + 结果码」，**不含异常消息体** —— 配上调用方的堆栈就是排查所需的全部。
+///
+/// - [SqliteException]：只留类型名 / SQLite 结果码 / 分类。消息体带整条 SQL
+///   与绑定参数（= 这张单的 payload），日志不许带出经营内容。
+/// - 其它异常：**保留原文本** —— 路径类错误（找不到文件夹 / 权限）不含经营内容，
+///   丢掉消息才真正妨碍排查。
+String storageFailureLogLine(Object error) {
+  if (error is! SqliteException) return '$error';
+  final StorageFailureKind kind = classifyStorageFailure(error);
+  return 'SqliteException（SQLite 码 ${error.resultCode}，'
+      '分类 ${kind.name}）—— SQL 与参数已按 #54 脱敏';
 }

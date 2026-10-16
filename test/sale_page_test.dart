@@ -83,7 +83,11 @@ void main() {
     }
   });
 
-  Widget page({StockDelta? stockDelta, MasterDataPolicy? policy}) => MaterialApp(
+  Widget page({
+    StockDelta? stockDelta,
+    MasterDataPolicy? policy,
+    bool mobileShell = false,
+  }) => MaterialApp(
     home: Scaffold(
       body: SalePage(
         service: service,
@@ -94,9 +98,35 @@ void main() {
         // 缺省桌面 ⇒ 既有用例**零变化**；mobile() 组显式传入
         masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
         masterDataSink: ServiceMasterSink(products),
+        mobileShell: mobileShell,
       ),
     ),
   );
+
+  /// #51 夹具：把 [SalePage] **推成第二屏路由**（手机上的真实形态）——
+  /// 底下垫一页占位，才能断言「确认放弃后整屏被退出」。
+  Future<void> pushSalePage(WidgetTester tester, {required bool mobileShell}) async {
+    await tester.pumpWidget(
+      MaterialApp(home: const Scaffold(body: Center(child: Text(' beneath ')))),
+    );
+    final NavigatorState nav = tester.state(find.byType(Navigator));
+    nav.push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => Scaffold(
+          body: SalePage(
+            service: service,
+            productService: products,
+            partyService: partyService,
+            sink: sink,
+            masterDataPolicy: const MasterDataPolicy.desktop(),
+            masterDataSink: ServiceMasterSink(products),
+            mobileShell: mobileShell,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
 
   /// 一条「卖出 1 件」的入队条目（M08 用；payload = createDocument wire 形状）
   void enqueueSale(String id, String productId) {
@@ -271,7 +301,9 @@ void main() {
 
     // 裁定 ② 的文案（core `queuedNotice` 给，UI 不造句）
     expect(find.textContaining('已记入待同步'), findsOneWidget);
-    expect(find.textContaining('主机下次联网时会收到'), findsOneWidget);
+    // #53 二稿（2026-10-16 裁定）：「保存后会自动尝试」—— 开单路径准确；
+    // 旧「主机下次联网时会收到」承诺了不存在的触发
+    expect(find.textContaining('保存后会自动尝试传给电脑'), findsOneWidget);
     expect(StockLedgerDao(db).stockOf(productId), 10, reason: '客户端不落库 —— 库存不动');
     expect(SyncQueueDao(queueDb).count(), 1, reason: '入队 1 条');
   });
@@ -369,6 +401,50 @@ void main() {
 
     expect(find.text('点此选商品'), findsOneWidget);
     expect(find.text('放弃这次开单？'), findsNothing);
+  });
+
+  testWidgets('#51：手机（推入路由）确认放弃 ⇒ 整屏退出，不只清草稿', (
+    WidgetTester tester,
+  ) async {
+    await pushSalePage(tester, mobileShell: true);
+    await fillRow(tester); // 有内容 ⇒ canPop = false ⇒ 返回被拦
+
+    // Android 系统返回（返回键 / 手势 / AppBar 返回）= 一次 maybePop
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(find.text('放弃这次开单？'), findsOneWidget);
+    await tester.tap(find.text('放弃'));
+    await tester.pumpAndSettle();
+
+    // 旧实现只清草稿、人还留在开单页（外测 M09 的失败点）；
+    // 现在「放弃」= 退出整屏 —— 底下垫的那一页露出来
+    expect(find.text(' beneath '), findsOneWidget, reason: '确认放弃 ⇒ 路由退出');
+    expect(find.text('放弃这次开单？'), findsNothing);
+  });
+
+  testWidgets('#51/Alt+←：桌面系统返回被吞 —— 不弹确认、不退出、草稿保留', (
+    WidgetTester tester,
+  ) async {
+    await pushSalePage(tester, mobileShell: false);
+    await fillRow(tester);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('放弃这次开单？'),
+      findsNothing,
+      reason: '2026-10-15 裁定：Alt+← / 鼠标侧键不启用 —— '
+          '中老年用户不认识它，误触到「放弃确认」有丢草稿风险',
+    );
+    expect(find.text(' beneath '), findsNothing, reason: '不退出');
+    // 草稿原样保留：数量框还是填过的 10（没有被清空重置成空行）
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('sale-qty'))).controller!.text,
+      '10',
+      reason: '草稿原样保留',
+    );
   });
 
   // ---------------------------------------------------------------- §AJ·AI-4 现金找零

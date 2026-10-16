@@ -2,6 +2,8 @@
 //
 // 判据是**结果码**而不是异常文本 —— 所以夹具直接造 `SqliteException`。
 // 覆盖：锁 / 满 / 只读 / 损坏 / 打不开 / 非 SQLite / 扩展码回到主码。
+import 'dart:io';
+
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
@@ -79,6 +81,35 @@ void main() {
 
     test('unknown 指向日志（真实原因只在日志里）', () {
       expect(storageFailureNote(StateError('x')), contains('日志'));
+    });
+  });
+
+  group('storageFailureLogLine（日志侧的脱敏行，#54）', () {
+    // 外测 M15 的场景：写锁失败 → 旧实现把异常原样写进日志，
+    // `SqliteException.toString()` 带整条 SQL 与绑定参数（= 这张单的 payload）。
+    test('SqliteException 只留类型 / 码 / 分类 —— SQL 与参数不进日志', () {
+      final SqliteException real = SqliteException(
+        5,
+        'while executing INSERT',
+        null,
+        'INSERT INTO documents (id, total_amount) VALUES (?, ?)',
+        <Object?>['d-1', 6000],
+      );
+      final String line = storageFailureLogLine(real);
+      expect(line, contains('SqliteException'));
+      expect(line, contains('码 5'));
+      expect(line, contains('locked'), reason: '分类名要带上（技术支持的第一判据）');
+      // 经营内容一个都不许出现
+      expect(line, isNot(contains('INSERT')));
+      expect(line, isNot(contains('documents')));
+      expect(line, isNot(contains('6000')));
+      expect(line, isNot(contains('while executing')));
+    });
+
+    test('非 SQLite 异常保留原文本（路径类错误无经营内容，丢了才没法排查）', () {
+      const FileSystemException fs = FileSystemException('打不开', '/data/app.db');
+      expect(storageFailureLogLine(fs), contains('/data/app.db'));
+      expect(storageFailureLogLine(StateError('boom')), contains('boom'));
     });
   });
 }

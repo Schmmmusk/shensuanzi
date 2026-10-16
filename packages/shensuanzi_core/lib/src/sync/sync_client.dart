@@ -43,6 +43,7 @@ class SyncClient {
     this.batchLimit = 200,
     this.docUpdateWindow = const Duration(days: 7),
     this.maxPullPages = 200,
+    this.pushBatchCap = 5,
   })     : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
        cursors = SyncCursorDao(db),
        queue = SyncQueueDao(db),
@@ -95,6 +96,13 @@ class SyncClient {
   /// 到顶仍 `has_more` ⇒ 结果如实标 `hasMore: true`，让 UI 说「还没同步完」
   /// —— 与「假装完成」相比，这是唯一诚实的处置。
   final int maxPullPages;
+
+  /// **连续推送**的批数上限（#48，2026-10-15 裁定 3–5 批、取 5）。
+  ///
+  /// 5 批 × [batchLimit] 200 = 1000 条 —— 个体户离店期间攒不到这个量；
+  /// 真到顶说明「手机当独立系统用」已经越界，[pushAll] 会如实报剩余、
+  /// 让用户主动点下一次，而不是无界循环把同步卡死。
+  final int pushBatchCap;
 
   final int Function() _clock;
 
@@ -269,6 +277,61 @@ class SyncClient {
     );
   }
 
+  /// **有界连续推送**（#48，2026-10-15 裁定）。
+  ///
+  /// 单批 [push] 只推 [batchLimit] 条 —— 调用方只调一次的话，「250 待传
+  /// 只传 200 却报同步完成」（外测 R09）就是它的直接后果。本方法循环推到
+  /// 队空或撞上限，并守住三条裁定边界：
+  ///
+  /// - **上限** [maxBatches]（默认 [pushBatchCap] = 5 批 = 1000 条）：到顶仍有
+  ///   待传 ⇒ [SyncPushReport.remaining] 如实 > 0，调用方必须说
+  ///   「还有 N 条待传」，不许报「完成」；
+  /// - **每批后拉一轮**（裁定 §一③）：让本批 `sent` 尽快被确认清掉，
+  ///   否则 sent 堆积会让「未同步影响」虚高（与 #49 同一条边界）；
+  /// - **无进展即停**：整批被业务拒绝 / 排了退避时，继续循环只会空转
+  ///   （条目要等下次到期，不是这轮能解决的）。
+  ///
+  /// 返回的 [SyncPushReport] 是**各批合计**：`sent` / `conflicts` / `rejected` /
+  /// `retried` / `errors` 跨批累加，[SyncPushReport.batches] = 实际推的批数，
+  /// [SyncPushReport.remaining] = 推完后仍处 `pending` 的条数
+  /// （`failed` 不算 —— 它们走失败提示通道，不混进「待传」）。
+  Future<SyncPushReport> pushAll({int? maxBatches}) async {
+    final int cap = maxBatches ?? pushBatchCap;
+    int attempts = 0;
+    int sent = 0;
+    int conflicts = 0;
+    int rejected = 0;
+    int retried = 0;
+    int batches = 0;
+    int confirmed = 0;
+    final List<String> errors = <String>[];
+    while (batches < cap) {
+      final SyncPushReport report = await push();
+      if (report.attempts == 0) break; // 没有 due 条目 —— 队空
+      attempts += report.attempts;
+      sent += report.sent;
+      conflicts += report.conflicts;
+      rejected += report.rejected;
+      retried += report.retried;
+      errors.addAll(report.errors);
+      batches++;
+      if (report.sent + report.conflicts == 0) break; // 本批无进展 ⇒ 停
+      final SyncPullReport pulled = await pull();
+      confirmed += pulled.confirmedQueueEntries;
+    }
+    return SyncPushReport(
+      attempts: attempts,
+      sent: sent,
+      conflicts: conflicts,
+      rejected: rejected,
+      retried: retried,
+      errors: errors,
+      batches: batches,
+      remaining: queue.counts().pendingCount,
+      confirmedTotal: confirmed,
+    );
+  }
+
   /// 整批退避（传输层失败 / 非 200）
   void _retryAll(List<SyncQueueEntry> entries, String error, int now) {
     db.transaction<void>(() {
@@ -308,7 +371,7 @@ class SyncClient {
   /// - 「写了游标、没应用行」→ **静默丢数据**
   ///
   /// 同事务保证**永远不会出现后者** —— **每页**一个事务。
-  Future<SyncPullReport> pull({int? limit}) async {
+  Future<SyncPullReport> pull({int? limit, int? docUpdatedSinceFloor}) async {
     // ⚠️ **循环拉到 `has_more == false`**（2026-10-07，`docs/reply.md` §1）：
     // 从前只拉一页就返回，于是「首次同步」几乎必然只拉了前 500 行流水，
     // 而调用方对用户显示「同步完成」—— 库存与往来是照着**残缺镜像**算出来的
@@ -317,6 +380,13 @@ class SyncClient {
     // 「每页一个事务」是刻意的：页与页之间**已落库 + 游标已推进**，
     // 中断只需重跑（幂等 upsert + 开区间游标），不会退回去。
     final Map<String, int> totals = <String, int>{};
+    // #49（2026-10-15）：**整轮累计**「已落镜像」的 id。从前每页新建集合、
+    // 清理又只在最后一页跑 ⇒ 实体落在**非末页**的队列条目永远清不掉，
+    // 卡在 `sent` 让「未同步影响」持续虚高（外测 R08：主机 1 显示 2）。
+    // ⚠️ 仍守住 2026-10-07 的裁定：清理只发生在**整轮拉到底之后**——
+    // 中途任何一页抛异常，[pull] 把异常直接抛出去、根本走不到清理，
+    // ⇒ **「整轮失败 ⇒ 不清理」**（裁定 §二），不会出现「清了一半」。
+    final Set<String> appliedAll = <String>{};
     int pages = 0;
     int cleared = 0;
     bool hasMore = true;
@@ -324,6 +394,8 @@ class SyncClient {
       final SyncPullReport page = await _pullPage(
         limit: limit,
         firstPage: pages == 0,
+        appliedAll: appliedAll,
+        docUpdatedSinceFloor: docUpdatedSinceFloor,
       );
       pages++;
       hasMore = page.hasMore;
@@ -358,16 +430,33 @@ class SyncClient {
   ///
   /// 所以**只有第一页带窗口**：窗口是「这一轮同步开始时，最近动过的单据」，
   /// 一轮只要取一次就够（它本来就是拿来补 `created_at` 感知不到的状态变化）。
-  Future<SyncPullReport> _pullPage({int? limit, bool firstPage = true}) async {
+  ///
+  /// [docUpdatedSinceFloor]（#50，2026-10-15）= 窗口下界的**离线兜底**：
+  /// 固定 7 天窗口在「离线超过 7 天」时会把窗口外的改单**永远**漏掉
+  /// （主分页游标是 `created_at`，不回头）。调用方把「上次成功同步 − 缓冲」
+  /// 传进来，下界取**更早者** —— 整个离线跨度都被窗口盖住。协议不变
+  /// （仍是一个 `doc_updated_since` 参数）。
+  Future<SyncPullReport> _pullPage({
+    int? limit,
+    bool firstPage = true,
+    required Set<String> appliedAll,
+    int? docUpdatedSinceFloor,
+  }) async {
     final int now = _clock();
     final Map<String, String> since = cursors.getAll();
 
-    // 最近更新窗口的下界 = 「现在 − [docUpdateWindow]」。传绝对毫秒（不传天数）：
+    // 最近更新窗口的下界 = 「现在 − [docUpdateWindow]」，但**不晚于**
+    // [docUpdatedSinceFloor]（取更早者）。传绝对毫秒（不传天数）：
     // 客户端本地时钟可以歪，但歪的是**窗口边缘**，漏掉一行会在下一次同步的
     // 窗口里被补回来；而「主机时间」客户端拿不到，硬要反而要额外一次握手。
-    final int? docUpdatedSince = docUpdateWindow == null || !firstPage
-        ? null
-        : now - docUpdateWindow!.inMilliseconds;
+    int? docUpdatedSince;
+    if (docUpdateWindow != null && firstPage) {
+      final int defaultBound = now - docUpdateWindow!.inMilliseconds;
+      docUpdatedSince = docUpdatedSinceFloor == null ||
+              docUpdatedSinceFloor >= defaultBound
+          ? defaultBound
+          : docUpdatedSinceFloor;
+    }
 
     final TransportResponse response = await transport.send(
       TransportRequest(
@@ -392,17 +481,18 @@ class SyncClient {
       _jsonBody(response.body),
     );
 
-    final Set<String> applied = <String>{};
     int cleared = 0;
 
     db.transaction<void>(() {
-      // 按 [applyOrder] 落库（**不是** §8.2 的字段顺序）
+      // 按 [applyOrder] 落库（**不是** §8.2 的字段顺序）。
+      // 行 id 加进**整轮累计**的 [appliedAll]（#49）—— 各页共用同一个集合，
+      // 最后一页用它做 [SyncQueueDao.clearConfirmed]。
       for (final String table in applyOrder) {
         final List<Map<String, Object?>>? rows = result.entities[table];
         if (rows == null) continue;
         for (final Map<String, Object?> row in rows) {
           _upsertRow(table, row);
-          applied.add(row['id']! as String);
+          appliedAll.add(row['id']! as String);
         }
       }
       // 游标：原样保存主机返回值，**不解析**
@@ -410,10 +500,10 @@ class SyncClient {
       // ⚠️ **队列清理只在「这一轮拉到底」时做**（2026-10-07，`docs/reply.md` §2）：
       // 从前每页都清 —— 主单排在后面的页时，队列条目先被清掉、单据后到，
       // 而且清早了会让「未同步影响」的叠加提前消失 ⇒ 库存显示**少计**
-      // （Android 测试报告 ⑤）。`applied` 是**本轮已落镜像**的 id 集合，
-      // `clearConfirmed` 只删「已 sent 且确实见到」的条目，其余照留。
+      // （Android 测试报告 ⑤）。`appliedAll` 是**本轮全部已落镜像**的 id 集合
+      // （#49 整轮累计），`clearConfirmed` 只删「已 sent 且确实见到」的条目，其余照留。
       if (!result.hasMore) {
-        cleared = queue.clearConfirmed(applied);
+        cleared = queue.clearConfirmed(appliedAll);
       }
     });
 
@@ -568,6 +658,9 @@ class SyncPushReport {
     this.retried = 0,
     this.errors = const <String>[],
     this.lastError,
+    this.batches = 0,
+    this.remaining = 0,
+    this.confirmedTotal = 0,
   });
 
   static const SyncPushReport empty = SyncPushReport();
@@ -588,6 +681,18 @@ class SyncPushReport {
 
   final List<String> errors;
   final String? lastError;
+
+  /// **[pushAll] 专用**：实际推了几批（单批 [push] 恒为 0）。
+  /// 撞上 [SyncClient.pushBatchCap] 时它 = 上限，且 [remaining] > 0。
+  final int batches;
+
+  /// **[pushAll] 专用**：推完后仍处 `pending` 的条数。
+  /// `> 0` = 撞了批数上限 ⇒ 调用方**必须**如实说「还有 N 条待传」，
+  /// 不许报「同步完成」（#48，外测 R09 的直接教训）。
+  final int remaining;
+
+  /// **[pushAll] 专用**：批间 `pull` 确认清掉的队列条目总数。
+  final int confirmedTotal;
 }
 
 /// 单商品的库存视图：`权威 + 未同步`

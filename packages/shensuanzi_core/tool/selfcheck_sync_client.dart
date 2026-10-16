@@ -67,6 +67,7 @@ Map<String, Object?> pullBody({
   List<Map<String, Object?>> stock = const <Map<String, Object?>>[],
   List<Map<String, Object?>> products = const <Map<String, Object?>>[],
   Map<String, String> cursors = const <String, String>{},
+  bool hasMore = false,
 }) => <String, Object?>{
   'documents': documents,
   'document_lines': lines,
@@ -78,6 +79,8 @@ Map<String, Object?> pullBody({
   'parties': <Object?>[],
   'accounts': <Object?>[],
   'next_cursors': cursors,
+  // 旧主机不带这个字段（客户端按 false 处理）
+  'has_more': hasMore,
 };
 
 Map<String, Object?> docRow(String id,
@@ -819,6 +822,192 @@ Future<void> main() async {
     clocked.recordClockOffset(fixedClock + 2000);
     check('重复记录会覆盖', clocked.clockOffset.offsetMs == 2000);
     db5.close();
+  }
+
+  // ============================================================ #48/#49/#50（2026-10-15）
+  {
+    final Db db6 = Db.openInMemory(foreignKeys: false);
+    final FakeTransport t6 = FakeTransport();
+    final SyncClient c6 = SyncClient(
+      db: db6,
+      transport: t6,
+      baseUri: Uri.parse('http://127.0.0.1:17890'),
+      token: 'tok-abc',
+      clock: now,
+      pageLimit: 1,
+      batchLimit: 2,
+    );
+
+    section('#49：sent 条目落在非末页 ⇒ 整轮拉完仍被确认清掉');
+    final SyncQueueEntry entry49 = c6.queue.enqueue(
+      SyncQueueEntry.create(
+        SyncOperation(
+          entity: Schema.documents,
+          entityId: 'd1',
+          operation: SyncOpType.createDocument,
+          payload: <String, Object?>{
+            'document': <String, Object?>{'id': 'd1', 'doc_type': 'sale'},
+            'lines': <Object?>[],
+          },
+        ),
+        now: now(),
+      ),
+    );
+    c6.queue.markSent(entry49.id);
+    // 两页：d1 第 1 页、d2 末页 —— 旧实现只在末页清理、集合只含末页的行
+    t6.replyJson(pullBody(
+      documents: <Map<String, Object?>>[docRow('d1', docNo: 'SC-49-1')],
+      hasMore: true,
+      cursors: <String, String>{SyncCursorKeys.doc: 'a|1'},
+    ));
+    t6.replyJson(pullBody(
+      documents: <Map<String, Object?>>[docRow('d2', docNo: 'SC-49-2')],
+      cursors: <String, String>{SyncCursorKeys.doc: 'a|2'},
+    ));
+    final SyncPullReport paged49 = await c6.pull();
+    check('两页拉完', paged49.pages == 2);
+    check('#49 非末页的 sent 条目被清（旧实现清 0）',
+        c6.queue.findById(entry49.id) == null);
+    check('#49 清后无 pending', c6.queue.counts().pendingCount == 0);
+
+    section('#50：窗口下界 = min(默认窗口, floor)');
+    t6.replyJson(pullBody());
+    final int floor50 = now() - const Duration(days: 9).inMilliseconds;
+    await c6.pull(docUpdatedSinceFloor: floor50);
+    final int? seenFloor = int.tryParse(
+      t6.last.uri.queryParameters['doc_updated_since'] ?? '',
+    );
+    check('#50 floor 更早 ⇒ 下界取 floor',
+        seenFloor != null && (seenFloor - floor50).abs() <= 2,
+        '$seenFloor vs $floor50');
+    t6.replyJson(pullBody());
+    final int clockAtRequest = now();
+    await c6.pull(
+      docUpdatedSinceFloor:
+          clockAtRequest - const Duration(days: 1).inMilliseconds,
+    );
+    final int? seenDefault = int.tryParse(
+      t6.last.uri.queryParameters['doc_updated_since'] ?? '',
+    );
+    check('#50 floor 晚于默认窗口 ⇒ 取 7 天窗口（不许收紧）',
+        seenDefault != null &&
+            (seenDefault - (clockAtRequest - const Duration(days: 7).inMilliseconds))
+                    .abs() <=
+                2,
+        '$seenDefault');
+
+    section('#48：pushAll 有界连续推送（batchLimit=2、3 条 ⇒ 两批）');
+    c6.queue.enqueue(SyncQueueEntry.create(
+      docOp('p48-1', 'sale', <int>[1]),
+      now: now(),
+    ));
+    c6.queue.enqueue(SyncQueueEntry.create(
+      docOp('p48-2', 'sale', <int>[1]),
+      now: now(),
+    ));
+    c6.queue.enqueue(SyncQueueEntry.create(
+      docOp('p48-3', 'sale', <int>[1]),
+      now: now(),
+    ));
+    t6.replyJson(pushBody(<Map<String, Object?>>[
+      receipt('p48-1', 'applied'),
+      receipt('p48-2', 'applied'),
+    ]));
+    t6.replyJson(pullBody(
+      documents: <Map<String, Object?>>[
+        docRow('p48-1', docNo: 'SC-48-1'),
+        docRow('p48-2', docNo: 'SC-48-2'),
+      ],
+    ));
+    t6.replyJson(pushBody(<Map<String, Object?>>[receipt('p48-3', 'applied')]));
+    t6.replyJson(pullBody(
+      documents: <Map<String, Object?>>[docRow('p48-3', docNo: 'SC-48-3')],
+    ));
+    final SyncPushReport loopReport = await c6.pushAll();
+    check('#48 两批推完 3 条', loopReport.batches == 2 && loopReport.sent == 3,
+        'batches=${loopReport.batches} sent=${loopReport.sent}');
+    check('#48 每批后 pull 确认（confirmedTotal=3）',
+        loopReport.confirmedTotal == 3, '${loopReport.confirmedTotal}');
+    check('#48 队空 ⇒ remaining=0', loopReport.remaining == 0);
+
+    // 撞上限：再来 3 条、只许推 1 批 ⇒ remaining = 1
+    c6.queue.enqueue(SyncQueueEntry.create(
+      docOp('p48-4', 'sale', <int>[1]),
+      now: now(),
+    ));
+    c6.queue.enqueue(SyncQueueEntry.create(
+      docOp('p48-5', 'sale', <int>[1]),
+      now: now(),
+    ));
+    c6.queue.enqueue(SyncQueueEntry.create(
+      docOp('p48-6', 'sale', <int>[1]),
+      now: now(),
+    ));
+    t6.replyJson(pushBody(<Map<String, Object?>>[
+      receipt('p48-4', 'applied'),
+      receipt('p48-5', 'applied'),
+    ]));
+    t6.replyJson(pullBody());
+    final SyncPushReport capped = await c6.pushAll(maxBatches: 1);
+    check('#48 撞上限 ⇒ remaining 如实 > 0',
+        capped.batches == 1 && capped.remaining == 1,
+        'remaining=${capped.remaining}');
+
+    db6.close();
+  }
+
+  // ============================================================ #47 丁（2026-10-16）
+  //
+  // 与 `test/sync_client_test.dart` 的「#47 丁」组镜像：held 条目按设计语义
+  // **继续计入**未同步影响；`delete` ⇒ 退出；`requeue` ⇒ 回队列、立即到期。
+  {
+    final Db db7 = Db.openInMemory(foreignKeys: false);
+    final SyncClient c7 = SyncClient(
+      db: db7,
+      transport: FakeTransport(),
+      baseUri: Uri.parse('http://127.0.0.1:17890'),
+      token: 'tok-abc',
+      clock: now,
+    );
+    final String heldProduct = 'p-held';
+    SyncQueueEntry heldDoc(String id) => c7.queue.enqueue(
+      SyncQueueEntry.create(
+        SyncOperation(
+          entity: Schema.documents,
+          entityId: id,
+          operation: SyncOpType.createDocument,
+          payload: <String, Object?>{
+            'document': <String, Object?>{'id': id, 'doc_type': 'sale'},
+            'lines': <Object?>[
+              <String, Object?>{
+                'product_id': heldProduct,
+                'quantity': 3,
+                'unit_price': 100,
+                'amount': 300,
+              },
+            ],
+          },
+        ),
+        now: now(),
+      ),
+    );
+
+    section('#47 丁：挂起条目的重试 / 放弃出口');
+    final SyncQueueEntry held = heldDoc('d-held');
+    c7.queue.markHeld(held.id, reason: '这条单是在连接上一台主机时开的');
+    check('挂起条目仍计入未同步影响（设计语义）',
+        c7.unsyncedDelta()[heldProduct] == -3);
+    c7.queue.delete(held.id);
+    check('放弃（delete）⇒ 从估算中退出、条目消失',
+        c7.unsyncedDelta()[heldProduct] == null &&
+            c7.queue.findById(held.id) == null);
+    final SyncQueueEntry retried = heldDoc('d-retry');
+    c7.queue.markHeld(retried.id, reason: 'x');
+    c7.queue.requeue(retried.id);
+    check('重试（requeue）⇒ 回 pending、立即到期',
+        c7.queue.findById(retried.id)!.status == SyncQueueStatus.pending &&
+            c7.queue.due(now()).isNotEmpty);
+    db7.close();
   }
 
   stdout.writeln('\n${'=' * 46}');

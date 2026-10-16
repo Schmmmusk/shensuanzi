@@ -29,7 +29,11 @@ export 'src/db/database.dart' show Db;
 export 'src/db/schema.dart'
     show Schema, MissingMigrationException, SchemaTooNewException;
 export 'src/db/storage_error.dart'
-    show StorageFailureKind, classifyStorageFailure, storageFailureNote;
+    show
+        StorageFailureKind,
+        classifyStorageFailure,
+        storageFailureNote,
+        storageFailureLogLine;
 // #35（2026-10-14）：**本地文件写入失败**（导出 / 备份）—— 与上面同族，
 // 但认的是**文件系统 errno**（`OSError.errorCode`），不是 SQLite 结果码。
 export 'src/db/local_file_error.dart'

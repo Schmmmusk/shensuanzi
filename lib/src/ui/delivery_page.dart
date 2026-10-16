@@ -432,7 +432,11 @@ class _DeliveryPageState extends State<DeliveryPage> {
       _rows.any((_RowCtl row) => !row.isEmpty) ||
       _remark.text.trim().isNotEmpty;
 
-  Future<void> _cancel() async {
+  /// 「取消这次开单」：有内容先确认；确认（或本来为空）⇒ 清草稿并返回 `true`。
+  ///
+  /// ⚠️ 只回答「是否放弃」，**不负责退出页面**（#51 裁定乙）—— 退出是调用方
+  /// （`PopScope` 的返回拦截）的事：手机确认后 pop 路由，桌面不退出。
+  Future<bool> _cancel() async {
     if (_hasContent) {
       final bool? confirmed = await showDialog<bool>(
         context: context,
@@ -454,9 +458,9 @@ class _DeliveryPageState extends State<DeliveryPage> {
           ],
         ),
       );
-      if (confirmed != true) return;
+      if (confirmed != true) return false;
     }
-    if (!mounted) return;
+    if (!mounted) return false;
     setState(() {
       _partyId = null;
       _partyName = null;
@@ -469,6 +473,8 @@ class _DeliveryPageState extends State<DeliveryPage> {
       _addRow();
       _invalid = null;
     });
+    // #51（裁定乙）：本方法只回答「是否确认放弃」—— 退不退出由调用方定
+    return true;
   }
 
   // ------------------------------------------------------------ 选择器
@@ -522,10 +528,16 @@ class _DeliveryPageState extends State<DeliveryPage> {
     // M09（2026-10-08）：**返回键也要走放弃确认** —— AppBar 返回箭头（手机壳的
     // 整屏开单页）与系统返回都绕过下面绑定的 Escape，以前填了数量点返回直接丢草稿。
     return PopScope(
-      canPop: !_hasContent,
-      onPopInvokedWithResult: (bool didPop, Object? result) {
+      // #51（2026-10-15 裁定）：**手机** = 有内容拦返回，确认放弃 ⇒ 清草稿 +
+      // 退出页面（开单页是推入的整屏路由，返回键语义 = 离开）；**桌面** =
+      // 一律不 pop —— 系统返回键（Alt+← / 鼠标侧键）不启用：中老年用户不认识
+      // 它，误触会走到「放弃确认」、有丢草稿风险；桌面清空只走 Esc / 取消按钮。
+      canPop: widget.mobileShell && !_hasContent,
+      onPopInvokedWithResult: (bool didPop, Object? result) async {
         if (didPop) return;
-        _cancel();
+        if (!widget.mobileShell) return; // 桌面吞掉系统返回（见上）
+        final bool confirmed = await _cancel();
+        if (confirmed && context.mounted) Navigator.of(context).pop();
       },
       child: CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
@@ -691,12 +703,20 @@ class _DeliveryPageState extends State<DeliveryPage> {
     child: Row(
       children: <Widget>[
         Text('合计', style: theme.textTheme.titleMedium),
-        const Spacer(),
-        Text(
-          '¥ ${Money.formatGrouped(_draft.totalCents)}',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.w700,
-            fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+        const SizedBox(width: 12),
+        // #52（2026-10-15 外测 M13）：**窄屏 + 大金额不裁切** —— 原来是
+        // `Row[Text, Spacer, Text]`：金额那格没有弹性，360 宽 + 2.0 字号下
+        // 「¥ 19,999,980.00」被裁到不可读（外测截图实测）。改「Expanded +
+        // 右对齐」：放得下视觉同旧，放不下自动换行 —— 与 sale / purchase
+        // 的 `_totalBar` 同款（三页同构，纪律 18）。
+        Expanded(
+          child: Text(
+            '¥ ${Money.formatGrouped(_draft.totalCents)}',
+            textAlign: TextAlign.right,
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+            ),
           ),
         ),
       ],

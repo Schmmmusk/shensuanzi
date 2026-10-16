@@ -256,8 +256,14 @@ class MobileSyncService {
 
     // ③ pull + push
     try {
-      final SyncPullReport pulled = await client.pull();
-      await client.push(); // B2 里队列通常为空；计数暂不展示
+      final SyncPullReport pulled = await client.pull(
+        // #50（2026-10-15）：更新窗口下界的离线兜底 —— 固定 7 天窗口在
+        // 「离线超过 7 天」时永远漏改单；用「上次成功同步 − 1 天」盖住整个跨度
+        docUpdatedSinceFloor: _updateWindowFloor(pairing),
+      );
+      // #48（2026-10-15）：**有界连续推送** —— 从前只推一批（200 条），剩下的
+      // 留在队列里却照样报「同步完成」（外测 R09：250 传 200 报完成剩 50）
+      final SyncPushReport pushedReport = await client.pushAll();
       final int now = _clock() ?? DateTime.now().millisecondsSinceEpoch;
       pairingStore.save(pairing.withLastSyncAt(now));
       final int entities = pulled.entities.values.fold(0, (int a, int b) => a + b);
@@ -273,10 +279,21 @@ class MobileSyncService {
           rebuilt: rebuilt,
         );
       }
+      final int pushedCount = pushedReport.sent + pushedReport.conflicts;
+      // #48 裁定 §一②：撞批数上限仍有待传 ⇒ 文案必须与三触发的自动推送
+      // 对得上（回到本页 / 点「立即同步」都会继续），不许报「同步完成」
+      if (pushedReport.remaining > 0) {
+        return SyncOutcome.ok(
+          '已传 $pushedCount 条，还有 ${pushedReport.remaining} 条待传。'
+          '回到本页或点「立即同步」会继续。',
+          rebuilt: rebuilt,
+        );
+      }
+      final String pushedNote = pushedCount == 0 ? '' : '、推送 $pushedCount 条';
       return SyncOutcome.ok(
         rebuilt
-            ? '同步完成（镜像已重建）：拉取 $entities 条'
-            : '同步完成：拉取 $entities 条',
+            ? '同步完成（镜像已重建）：拉取 $entities 条$pushedNote'
+            : '同步完成：拉取 $entities 条$pushedNote',
         rebuilt: rebuilt,
       );
     } on SyncHttpException catch (error) {
@@ -337,13 +354,18 @@ class MobileSyncService {
       token: pairing.token,
     );
     try {
-      final SyncPushReport report = await client.push();
-      // 顶层兜底与 syncNow 同理：任何异常都变成结果，绝不抛给 UI
+      final SyncPushReport report = await client.pushAll();
+      // 顶层兜底与 syncNow 同理：任何异常都变成结果，绝不抛给 UI。
+      // #48（2026-10-15）：撞批数上限仍有待传 ⇒ 说「回到开单页会继续」，
+      // 与三触发的自动推送对上（不许让两个状态互相矛盾）
       final String message = report.attempts == 0
           ? '没有待同步的条目'
-          : (report.errors.isEmpty
-                ? '已推送 ${report.sent} 条'
-                : '推送未全部成功 —— 条目留在队列，稍后自动重试');
+          : (report.remaining > 0
+                ? '已推送 ${report.sent + report.conflicts} 条，'
+                      '还有 ${report.remaining} 条待传 —— 回到开单页会继续'
+                : (report.errors.isEmpty
+                      ? '已推送 ${report.sent + report.conflicts} 条'
+                      : '推送未全部成功 —— 条目留在队列，稍后自动重试'));
       return SyncOutcome.ok(message);
     } on SyncHttpException catch (error) {
       if (error.statusCode == 401 || error.statusCode == 403) {
@@ -356,6 +378,20 @@ class MobileSyncService {
         '自动推送失败（$error）—— 条目留在队列，稍后随同步重试',
       );
     }
+  }
+
+  /// #50（2026-10-15）：更新窗口下界的**离线兜底** = 「上次成功同步 − 1 天」。
+  ///
+  /// 固定 7 天窗口在「离线超过 7 天」时，窗口外的改单**永远**拉不到
+  /// （主分页游标是 `created_at`，不回头）；用上次成功同步兜底就能盖住
+  /// 整个离线跨度。⚠️ `lastSyncAt` 只在同步成功后写入（[syncNow] 里
+  /// pull + push 都完成才 save；失败路径不 save —— 2026-10-15 核对过），
+  /// 所以它不会把下界推到「从未成功过」的位置；首次同步（`null`）⇒
+  /// 不兜底，走 `SyncClient` 的默认窗口。
+  int? _updateWindowFloor(PairingInfo pairing) {
+    final int? last = pairing.lastSyncAt;
+    if (last == null) return null;
+    return last - const Duration(days: 1).inMilliseconds;
   }
 
   /// 解析扫码结果：合法配对码 → 存 `pairing.json` 并返回主机信息；

@@ -195,5 +195,73 @@ void main() {
         );
       }
     });
+
+    // ⚠️ 这条 pin 断的是**当前实现**（`Expanded`），不是语义 —— 2026-10-16 裁定：
+    // 「Flexible / ConstrainedBox 等合法布局同样能修 #52」，改用时三页一起改
+    // 并同步本 pin。真正咬住业务的断言是 `delivery_page_test` 的 #52 用例
+    // （窄屏 + 2.0 字号 + 大金额 ⇒ 不溢出 + 金额完整）。
+    test('合计行（#52）：三页 `_totalBar` 金额格必须是 **Expanded**（不得退回 Spacer）', () {
+      for (final String page in <String>[
+        'sale_page',
+        'purchase_page',
+        'delivery_page',
+      ]) {
+        final String source = pageSource(page);
+        final int head = source.indexOf('Widget _totalBar');
+        expect(
+          head,
+          isNonNegative,
+          reason: '$page 找不到 `_totalBar` —— 钳子失效（改名 / 挪走须同步改本测试）',
+        );
+        // 不用 blockOf：`_totalBar` 是**表达式体**（`=> Padding(...)`），且块内
+        // 注释带中文括号字样，按字符配对会截错。改按**成员边界**切：
+        // 到下一个两格缩进的成员 / 文档注释为止。
+        final int nextMember = source.indexOf(RegExp(r'\n  (Widget|///)'), head + 10);
+        expect(
+          nextMember,
+          isNonNegative,
+          reason: '$page 的 `_totalBar` 后面找不到下一个成员 —— 钳子失效',
+        );
+        final String bar = source.substring(head, nextMember);
+        expect(
+          bar,
+          contains('Expanded('),
+          reason: '$page 的合计金额格没有弹性 —— 窄屏 + 大字号会被裁切'
+              '（#52 外测 M13 的原始形态就是 `Spacer`）；有意改掉请三页一起改',
+        );
+        expect(
+          bar,
+          isNot(contains('Spacer(')),
+          reason: '$page 的合计金额格退回了 `Spacer()` —— 那格没有弹性，'
+              '#52 会复发；金额格必须 Expanded',
+        );
+      }
+    });
+
+    test('返回拦截（#51）：三页同款 —— 手机确认放弃退出、桌面吞掉系统返回', () {
+      // 三页是逐字复制的（M09 的教训：只改 sale 漏了 delivery/delivery 漏了
+      // purchase）⇒ 返回拦截的三个特征串必须**三页都在**。改法若有意变化，
+      // 三页同步改（本测试继续过）；只改一页 ⇒ 这里红。
+      const List<String> pins = <String>[
+        'canPop: widget.mobileShell && !_hasContent',
+        'if (!widget.mobileShell) return;',
+        'if (confirmed && context.mounted) Navigator.of(context).pop();',
+      ];
+      for (final String page in <String>[
+        'sale_page',
+        'purchase_page',
+        'delivery_page',
+      ]) {
+        final String source = normalize(pageSource(page));
+        for (final String pin in pins) {
+          expect(
+            source,
+            contains(pin),
+            reason: '$page 缺返回拦截特征串「$pin」—— 要么 #51 只改了别的页'
+                '（纪律 18），要么这页被有意改掉（那就三页一起改）',
+          );
+        }
+      }
+    });
   });
 }

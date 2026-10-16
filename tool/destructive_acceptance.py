@@ -134,8 +134,8 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def repo_root() -> str:
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def script_directory() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 def eprint(*args: Any) -> None:
@@ -1642,8 +1642,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--report",
-        default=os.path.join(repo_root(), "tool", "desktop_acceptance_s9_report.md"),
-        help="Markdown 报告的落点（默认写入仓库 tool/）",
+        default=os.path.join(script_directory(), "desktop_acceptance_s9_report.md"),
+        help="Markdown 报告的落点（默认写入脚本所在目录）",
     )
     p.add_argument(
         "--use-system-time",
@@ -1867,6 +1867,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("── %s 结束：%s ──" % (key, STATUS_LABEL[case.status]))
 
     report.print_console()
+    report_write_failed = False
     try:
         with open(ctx.report_path, "w", encoding="utf-8") as fh:
             fh.write(report.to_markdown())
@@ -1876,6 +1877,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("下一步：人去做现场动作，然后跑 `--phase verify` 出结论。")
     except Exception as exc:
         eprint("⚠️ 报告写不出来：%s" % exc)
+        report_write_failed = True
 
     if args.phase in ("prepare", "all"):
         manifest_path = os.path.join(ctx.data_dir, RUN_MANIFEST)
@@ -1888,6 +1890,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
 
     c = report.counts()
+    if report_write_failed:
+        return 6
     return 1 if c[FAIL] else 0
 
 

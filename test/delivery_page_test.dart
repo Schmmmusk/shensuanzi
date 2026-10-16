@@ -98,7 +98,7 @@ void main() {
   });
 
   /// [stockDelta] 缺省 `null`（桌面）⇒ 既有用例**零变化**；#44 的「未同步」组显式传入。
-  Widget page({StockDelta? stockDelta}) => MaterialApp(
+  Widget page({StockDelta? stockDelta, bool mobileShell = false}) => MaterialApp(
     home: Scaffold(
       body: DeliveryPage(
         service: service,
@@ -108,6 +108,7 @@ void main() {
         stockDelta: stockDelta,
         masterDataPolicy: const MasterDataPolicy.desktop(),
         masterDataSink: ServiceMasterSink(products),
+        mobileShell: mobileShell,
       ),
     ),
   );
@@ -313,7 +314,9 @@ void main() {
   testWidgets('M09：填了数量后按**返回** → 先问「放弃这次送货？」（以前直接丢草稿）', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(page());
+    // #51（2026-10-15）：「返回先确认」是**手机**语义 —— 桌面系统返回
+    // 已按 Alt+← 裁定整体不启用（sale_page_test 的 #51 组钉桌面侧）
+    await tester.pumpWidget(page(mobileShell: true));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const Key('delivery-qty')), '1');
@@ -330,7 +333,8 @@ void main() {
   testWidgets('M11：**只填了备注**，按返回 / 点取消都要先确认（以前直接清空）', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(page());
+    // #51（2026-10-15）：同 M09 —— 走手机壳（桌面系统返回不启用）
+    await tester.pumpWidget(page(mobileShell: true));
     await tester.pumpAndSettle();
 
     // 备注框没有 Key，按 label 定位
@@ -353,7 +357,8 @@ void main() {
     // ② 「继续填」之后再走「取消」这条路 —— 两条路一个判据
     await tester.tap(find.text('继续填'));
     await tester.pumpAndSettle();
-    final Finder cancel = find.text('取消 (Esc)');
+    // #37①：手机壳没有键盘 ⇒ 按钮不带「(Esc)」后缀
+    final Finder cancel = find.text('取消');
     await tester.ensureVisible(cancel);
     await tester.tap(cancel);
     await tester.pumpAndSettle();
@@ -614,6 +619,36 @@ void main() {
       find.textContaining('本地未同步'),
       findsOneWidget,
       reason: '#44：与销售页同语义 —— 空数量时 M08 的说明要正常显示',
+    );
+  });
+
+  // #52（2026-10-15 外测 M13）：`_totalBar` 原是 `Row[Text, Spacer, Text]` ——
+  // 金额格**没有弹性**，360 宽 + 2.0 字号下「¥ 19,999,980.00」被裁到不可读
+  // （外测截图实测）。改成 Expanded + 右对齐（sale / purchase 同款）。
+  testWidgets('#52：窄屏 + 2 倍字号 + 大金额 ⇒ 合计不溢出、金额完整', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(page());
+    await fillRow(tester, qty: '10');
+    // 单价改大金额：10 × 1,999,998.00 = 19,999,980.00（外测截图同款量级）
+    await tester.enterText(find.byKey(const Key('delivery-price')), '1999998.00');
+    await tester.pumpAndSettle();
+
+    // 溢出 = `RenderFlex overflow` 异常 ⇒ takeException 抓住。
+    // （金额格没有弹性时这里必抛；Expanded 后任何尺寸都放得下。）
+    expect(tester.takeException(), isNull, reason: '#52：大金额 + 窄屏不得溢出');
+    expect(
+      find.textContaining('19,999,980'),
+      findsWidgets,
+      reason: '#52：合计金额完整可读（外测报告 V05 的场景；'
+          '页内合计展示不止一处，两处都要在）',
     );
   });
 }

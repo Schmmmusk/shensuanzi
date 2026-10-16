@@ -16,6 +16,8 @@
 ///   不带返回导航，直接推会「进去出不来」。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -335,12 +337,14 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
               ListTile(
                 leading: const Icon(Icons.schedule_outlined),
                 title: Text(_docLabel(entry), style: const TextStyle(height: 1.4)),
+                // #53（外测 M02，二稿裁定 2026-10-16）：这里列的都是「没传上的」
+                // —— 直说补救动作，不承诺「联网自动推」。
                 subtitle: const Text(
-                  '待同步 —— 联网后自动推给电脑',
+                  '待同步 —— 没传上的，切回来或点「立即同步」会继续',
                   style: TextStyle(height: 1.4),
                 ),
               ),
-            for (final SyncQueueEntry entry in failed)
+            for (final SyncQueueEntry entry in failed) ...<Widget>[
               ListTile(
                 leading: Icon(
                   Icons.error_outline,
@@ -348,15 +352,109 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
                 ),
                 title: Text(_docLabel(entry), style: const TextStyle(height: 1.4)),
                 subtitle: Text(
-                  '推送没成功（${entry.lastError ?? '原因不明'}）—— '
-                  '到「我的 → 设置」点「立即同步」再试',
+                  // #47 丁（2026-10-16 裁定）：换主机挂起（`markHeld`）与普通推送失败
+                  // 共用 `failed` 状态；挂起的原因写在 `lastError`（机读标记 =
+                  // 登记待办，与 #24 同族）。有 reason 就如实显示 —— 挂起的
+                  // reason 本身就是写给用户看的一段话。
+                  entry.lastError ?? '推送没成功（原因不明）',
                   style: const TextStyle(height: 1.4),
                 ),
               ),
+              // 双出口（裁定丁）：并列、不预设用户意图 ——
+              // 「重试」把语义讲清（可能记到另一家店名下），「放弃」说清后果。
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: TextButton.icon(
+                      onPressed: () => _confirmRetry(sheetContext, entry),
+                      icon: const Icon(Icons.upload_outlined),
+                      label: const Text('重试，发给现在这台电脑'),
+                    ),
+                  ),
+                  Expanded(
+                    child: TextButton.icon(
+                      onPressed: () => _confirmDiscard(sheetContext, entry),
+                      icon: const Icon(Icons.block_outlined),
+                      label: const Text('放弃，不发送'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  /// #47 丁（2026-10-16 裁定）· 出口 ①：**重试 = 发给现在这台电脑**。
+  ///
+  /// 两种场景数据上无法区分（同店换电脑 / 换了经营主体）——
+  /// 所以不替用户判断，**把语义讲清让他自己选**（「二次确认」挡不住跨店错误，
+  /// 理解语义才能）。确认 ⇒ `requeue` 放回队列 + 立即推一次。
+  Future<void> _confirmRetry(BuildContext sheetContext, SyncQueueEntry entry) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: sheetContext,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('把这张单发给现在这台电脑？'),
+        content: const Text(
+          '如果现在的电脑是同一家店的另一台电脑，这张单会正确接上。\n\n'
+          '如果它属于另一家店，这张单会记到那家店的名下。\n\n'
+          '拿不准的话，选「先不发」。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('先不发'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('发给这台电脑'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final MobileSyncService? sync = widget.sync;
+    if (sync == null) return;
+    SyncQueueDao(sync.openMirror()).requeue(entry.id);
+    if (sheetContext.mounted) Navigator.of(sheetContext).pop();
+    _load(); // 三态条跟着变（回到「待同步 N 条」）
+    unawaited(sync.autoPush().then((_) => _load())); // 立即推，不等回前台
+  }
+
+  /// #47 丁 · 出口 ②：**放弃，不发送**。
+  ///
+  /// 裁定快路径 = **删除**（放弃后估算立刻恢复准确）；「标 `discarded` 可审计、
+  /// 可撤销 + 机读标记」登记为待办（与 #24 同族，动 schema 时一起做）。
+  /// 删除不可逆 ⇒ 必须确认，且文案写清后果（裁定原文：核对库存后手工校准）。
+  Future<void> _confirmDiscard(BuildContext sheetContext, SyncQueueEntry entry) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: sheetContext,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('放弃这张单，不再发送？'),
+        content: Text(
+          '「${_docLabel(entry)}」放弃后就不再发给任何电脑，也找不回来。\n\n'
+          '货和钱的实际变化请按实物核对，库存可在「库存」页手工校准。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('先不放弃'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('放弃'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final MobileSyncService? sync = widget.sync;
+    if (sync == null) return;
+    SyncQueueDao(sync.openMirror()).delete(entry.id);
+    if (sheetContext.mounted) Navigator.of(sheetContext).pop();
+    _load();
   }
 
   @override

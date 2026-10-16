@@ -526,6 +526,28 @@ void main() {
   check('只读走「重新打开」（重试当前连接必然再失败）',
       storageFailureNote(SqliteException(8, 'x')).contains('重新打开'));
 
+  // 与 `test/storage_error_test.dart` 镜像（#54，2026-10-15 外测 M15）：
+  // 日志侧只留分类 / 结果码，SQL 与绑定参数不进日志。
+  check(
+      '日志行（#54）：SqliteException 不带消息体（SQL / 参数不进日志）',
+      (() {
+        final String line = storageFailureLogLine(SqliteException(
+          5,
+          'while executing INSERT',
+          null,
+          'INSERT INTO documents (id, total_amount) VALUES (?, ?)',
+          <Object?>['d-1', 6000],
+        ));
+        return line.contains('SqliteException') &&
+            line.contains('码 5') &&
+            line.contains('locked') &&
+            !line.contains('INSERT') &&
+            !line.contains('documents') &&
+            !line.contains('6000');
+      })());
+  check('日志行（#54）：非 SQLite 异常保留原文本（排查要用）',
+      storageFailureLogLine(StateError('boom')).contains('boom'));
+
   // ============================================ 本地文件写入失败（#35 / #36，2026-10-14）
   //
   // 与 `test/local_file_error_test.dart` 镜像：判据是 **errno**（不按文本），

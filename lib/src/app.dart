@@ -423,8 +423,12 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 界面由三张开单页显示 `storageFailureNote(error)` 的分类文案 ——
   /// `SqliteException.toString()` 带着整条 SQL 与绑定参数（= 这张单的 payload），
   /// 直接给用户看既不可读、也把开单内容摊在了屏上。
+  ///
+  /// ⚠️ #54（2026-10-15 外测 M15）：**日志通道同样是漏网的那半** ——
+  /// 旧实现 `_log.crash(error, …)` 把同一条 payload 原样写进了日志文件
+  /// （用户打包转发日志 = 经营内容出框）。改为只留分类 / 结果码 / 堆栈。
   void _onStorageFailure(Object error, StackTrace stack) =>
-      _log.crash(error, stack, label: '保存失败');
+      _log.write('保存失败：${storageFailureLogLine(error)}\n$stack', level: '错误');
 
   void _prepareMobile() {
     final String? root = widget.dataRoot;
