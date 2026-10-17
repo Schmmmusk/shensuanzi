@@ -123,7 +123,12 @@ void main() {
       .ofProduct(productId)
       .fold(0, (int sum, StockLedger e) => sum + e.quantity);
 
-  Widget page(Document original, {bool fullReturn = false}) => MaterialApp(
+  Widget page(
+    Document original, {
+    bool fullReturn = false,
+    ReturnService? serviceOverride,
+    void Function(Object error, StackTrace stack)? onStorageFailure,
+  }) => MaterialApp(
     // ⚠️ 不能拿 ReturnPage 当 home（唯一路由）：保存成功后会 pop 回上一页，
     // pop 完没有底层 Scaffold ⇒ SnackBar 无处安放、找不到「退货单」（§BI·二·补 6）。
     // 垫一个「单据页」占位，与真实 App 的「详情页 → 退货页」结构一致。
@@ -131,8 +136,9 @@ void main() {
       '/': (_) => const Scaffold(body: SizedBox.shrink()),
       '/return': (_) => ReturnPage(
         original: original,
-        service: returns,
+        service: serviceOverride ?? returns,
         fullReturn: fullReturn,
+        onStorageFailure: onStorageFailure,
       ),
     },
     initialRoute: '/return',
@@ -292,4 +298,70 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  // ===== #23（2026-10-17 裁定甲）：业务拒绝的 UI 出口（RuleRejected 分支）=====
+  //
+  // 顺序钉（裁定⑤）：`on RuleRejected` 必须在通用 catch **之前**——
+  // 若被挪到后面，本用例会看到「请再试一次」而红。
+  testWidgets('#23：规则拒绝 ⇒ SnackBar 显示 reason（非「请再试一次」）、不走 storage 通道、草稿保留', (
+    WidgetTester tester,
+  ) async {
+    final Document original = sell3Boxes();
+    final List<Object> storageLogged = <Object>[];
+
+    await tester.pumpWidget(
+      page(
+        original,
+        serviceOverride: _RuleRejectingService(
+          engine: engine,
+          queries: queries,
+        ),
+        onStorageFailure: (Object error, StackTrace stack) =>
+            storageLogged.add(error),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 填一个合法数量再保存（走到服务层才被拒）；保存有确认对话框（裁定 4）
+    await tester.enterText(find.byKey(Key('return-qty-$productId')), '1');
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('return-save')),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('return-save')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('return-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('测试拒绝：本次退货超出了原单数量'), findsOneWidget,
+        reason: '#23：业务拒绝显示规则层文案（写「怎么办」）');
+    expect(find.textContaining('请再试一次'), findsNothing,
+        reason: '#23 的洞：通用 catch 的「请再试一次」对业务拒绝是死路');
+    expect(storageLogged, isEmpty,
+        reason: '业务拒绝不是内部错误 ⇒ 不走 onStorageFailure');
+    // 草稿保留：页面还开着（没 pop），已填的数量还在
+    expect(find.byKey(const Key('return-save')), findsOneWidget);
+    expect(
+      tester.widget<TextField>(
+        find.byKey(Key('return-qty-$productId')),
+      ).controller!.text,
+      '1',
+      reason: '#23：业务拒绝后草稿保留（改完能直接再交）',
+    );
+  });
 }
+
+/// #23 测试桩：保存时恒抛 `RuleRejected`（业务拒绝）—— 钉 UI 的
+/// 「`on RuleRejected` 分支在通用 catch **之前**」这一顺序（裁定⑤）：
+/// 若分支被挪到通用 catch 之后，本测试会看到「请再试一次」而红。
+class _RuleRejectingService extends ReturnService {
+  _RuleRejectingService({required super.engine, required super.queries});
+
+  @override
+  ReturnSaved create(ReturnDraft draft, {int? now}) =>
+      throw const RuleRejected('测试拒绝：本次退货超出了原单数量，请改小');
+}
+

@@ -3575,15 +3575,15 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 | ~~20~~ | ~~host 另有 5 处校验回执自身带开发术语~~ | ✅ **已裁定：甲，但定性为「重新分类」**（2026-10-09）+ **已落地**（§CV·十五）：这 5 处（+http 2 处）**本就是客户端 bug** ⇒ 走 `onInternalError` 记日志 + 通用中文；新增 core `malformedSyncRequestReason` | **§CV·十四·四 / §CV·十五** |
 | ~~21~~ | ~~另约 17 处校验类 `rejected` 仍是「说哪里错了」的措辞~~ | ✅ **已裁定（甲 + 方案 A `reason_code`）+ 已落地**（2026-10-09，**与 #22 合并执行**）：协议违反 12 码 + 落库失败 4 码，**测试改断 `reasonCode`**；`主数据不存在` ⇒ **行为改**（`deleteMasterData` 幂等） | **§CV·十六·五 / §CV·十七** |
 | ~~22~~ | ~~`RuleEngine` 的 rejected 会把 `Bad state: …` 灌进用户可见 `reason`~~ —— `dispatch` 兜底 catch 产出 `'规则执行失败，整单回滚：$error'`，而 `SyncServer._mapOutcome` **原样**透传给客户端；另 `'purchase 不适用「签收」动作（docs/rules.md RULE-003）'` 泄漏**内部文档路径**与 wire 类型名；且 `RuleEngine` **没有「机读码」通道**（兜底 catch 把「用户能改的领域拒绝」与「客户端 bug」压成同一种东西）。**今天无任何断言守着它** | ✅ **已裁定：乙（比提案大 —— 四件事）+ 已落地**（2026-10-09，**与 #21 合并执行**，§CV·十七）：① 修显式泄漏（`$error` / `docs/rules.md` 不再进 `reason`）② 加 `RuleEngine.onInternalError`（**与 `SyncServer` 同一通道**）③ **26 处 `StateError` 按判据分流**（业务拒绝 `RuleRejection` / 内部 bug 只进日志）④ 双方加 `reason_code`（不留 `rule_rejected` 伞码） | **§CV·十六·四 / §CV·十七** |
-| **23** | 🟠 **桌面的「业务拒绝」没有通道** —— `ServiceSink → *Service.create` 把**所有**拒绝转成裸 `StateError`，开单页只 catch `SaleDraftInvalid` ⇒ 业务拒绝（退货超额 / 核销超额…）在 Windows 上显示「没能保存。请再试一次」，而**重试必然再失败**（M15 自己那条「不承诺做不到的事」） | **未裁**（裁定 §六 点名「必须在做 #22 之前确认」⇒ 已确认，且**明确是另一个问题**，不许用「保留详细文案」掩盖）：甲 `*Service.create` 改抛带类型的 `RuleRejected(code, reason)`，开单页加一个 catch 分支（文案现成）/ 乙 维持现状，先修 Draft 校验缺口让业务拒绝在桌面不可达 / 丙 不动 | **§CV·十七·一 / §CV·十七·六** |
+| **23** | 🟠 **桌面的「业务拒绝」没有通道** —— `ServiceSink → *Service.create` 把**所有**拒绝转成裸 `StateError`，开单页只 catch `SaleDraftInvalid` ⇒ 业务拒绝（退货超额 / 核销超额…）在 Windows 上显示「没能保存。请再试一次」，而**重试必然再失败**（M15 自己那条「不承诺做不到的事」） | **✅ 裁「甲 + 5 处补强」⇒ 已落（`§CV·五十六`）且复跑全过（2026-10-17，用户确认）⇒ 闭环**：甲 `*Service.create` 改抛带类型的 `RuleRejected(code, reason)`，开单页加一个 catch 分支（文案现成）/ 乙 维持现状，先修 Draft 校验缺口让业务拒绝在桌面不可达 / 丙 不动 | **§CV·十七·一 / §CV·十七·六** |
 | **24** | ⚠️ **同步失败的分类处理**（原 D2b「失败明细关联引用 id」项 —— 裁定「**移出 D2b，独立成段**」） | **未裁（须先裁 schema）**：`sync_queue` 只有 `last_error`（中文文本），`reason_code` 在 `SyncClient.push` 里**被显式丢弃** ⇒ 要按码分支**必须加列 + 迁移**。裁定公认路径：`sync_queue` 加 `reason_code`（可空）+ 迁移一步 + `SyncClient.push` 保留 `receipt.reasonCode` + `reference_missing` 分支文案（「引用的客户 / 商品还没同步成功，主数据同步后自动重试」）；**并把 `unknown_action` / `target_missing` 一次分类完，别分两批**。⚠️ 三个「更便宜」的替代（从 `last_error` 反推中文 / 编码前缀 / 复用现有字段）**已在裁定里逐条否决** ⇒ 「**加列是唯一路径**」 | **§CV·二十** |
 | ~~25~~ | 🔴 **真 bug（三页同款）**：同一行内**换商品（含换回原商品）后，单价不再重新预填**（电脑版先行报告 1） | **未裁**。根因已定：`_pickProduct` 的守卫用 `pricePrefilled`（**一旦置 true 永不复位**），而语义正确的判据是 `priceTouched`（§BG 方案 A 裁定明令的**显式布尔**，`attachProduct` 里**已复位**它）；`pricePrefilled` 除此处**零引用** ⇒ 事实上冗余。**甲（推荐）**：守卫改 `!row.priceTouched` + **删掉 `pricePrefilled`**，**三页同改**（`sale_page:668` / `purchase_page:526` / `delivery_page:463`）；**乙（最小）**：`attachProduct` 里补 `pricePrefilled = false`（缺点：两个布尔表达同一件事 = 双源）。⚠️ 修必带 widget 断言 + **反向灵敏度**（改坏看红）。📄 **修复提案已出（待裁）**：行为目标 / 甲·乙 / 副作用与边界 / 断言 4 条 → 见 **§CV·二十四·一 · 修复提案**。**✅ 已裁定（2026-10-10）：选甲 · 断言加到 6 条 · 三页独立测 · 先红后改** ⇒ **阶段一已交付**（三页各 1 条用例）；**红已复跑确认**（三页 ② 断言全红，既有用例零新增红）；**阶段二已落地**（三页删 `pricePrefilled` + 无条件预填 + 注释 + `ui_principles.md §4.2`）⇒ **✅ 已闭环（2026-10-10）**：选甲落地，**三页 6 条断言全绿**（含红阶段未跑到的 ⑤⑥），既有用例零新增红 | **§CV·二十四·一 / §CV·二五** |
 | **26** | 🟡 **单据页三件事**（先行报告 2）：① 声称按时间排序「实则不然」② 信息量过大，中老年找不到单 ③ 同一张单的退货/结账**分散成不同单子**、难追踪 | **① 代码与文案一致**（`ORDER BY occurred_at DESC, created_at DESC`，`document_dao.dart:301`）—— **但「时间」有两套口径**：主单 `occurred_at` = 表单「单据日期」**当天 00:00**（`sale_draft:493` / `purchase_draft:474` / `delivery_draft:340`），退货/收付款单 `occurred_at = created_at = `**当前精确时刻**（`return_service:245` / `settlement_service:310`）⇒ 同日退货/收付款**压在当日主单之上**。⚠️ 且**默认档「最近 30 天」按 `occurred_at` 卡**（`document_dao:217`）⇒ **补录 30 天前的单在默认视图里根本不出现**。**需用户给一个具体例子**（相邻两行的「对方·日期」+ 录入先后）才能定论 —— 三种成因的修法完全不同（**改文案 / 改取值 / 改默认筛选**）。<br>**③ 是设计且有据**（`data_model.md §3.6` / §AN·二）：派生的自动收付款单**不进默认列表**、整单退货在原单作废时**折叠**、**部分退货必须显示** ⇒ 真相 = **能力在详情页已有**（「核销去向」`allocationsOf` / 「这张单被退过什么」/ 点进那张退货单），**列表层没有线索**。<br>⚠️ **裁定 §二·③（2026-10-14）：①②③ 必须拆开裁** —— **① 是 bug（排序口径）⇒ 需用户给例子，先看例子再定修法**；**②（信息量）与 ③（聚合）共用下面三选项、可一轮裁**。<br>**选项**（②③共用）：甲 列表行加线索（已有「已退 ¥x」，再加「未结 ¥z」）；乙 详情页加「**相关单据**」区（把散落的入口收成一块）；丙 **加「按原单聚合」视图** / 按日期分组、调默认档。⚠️ **2026-10-11 手机版验收也提了同一条**（原话：「能否将同一张单子下发生的各种行为（如退货、赊账后结账等）在界面上**聚合为一张单子**，便于用户查询？」——并强调「对我一个年轻人亦是如此」）⇒ **两端同一诉求，一起裁** | **§CV·二十四·二** |
-| **27** | 🟡 **账户页无法查看建账以来的流水**（电脑版先行报告 3，「应用没有提供入口所致」） | **已核实：能力在 core、UI 零消费点**。`MoneyLedgerDao.ofAccount()`（`ledger_dao.dart:289`，按 `seq_no`）**已存在**，但消费点只有 `rule_engine`（写）+ **core 测试/自检** ⇒ **`lib/` 与 app 层零引用**；且 `MoneyLedger` 只有 `accountId / documentId / amount / seqNo / occurredAt` ⇒ **只有 UUID，用户认不出** ⇒ 要做界面必须**新增 JOIN `documents` 的人可读查询**（照 `PartyLedgerDao.ofParty` 先例：单号/类型/金额/日期）。**甲**：照 `party_flow_page` 做 `account_flow_page` + 第 **6** 张导出表（≈半天）；**乙**：只做导出（≈1 小时）；**丙**：并入 A2b。⚠️ **2026-10-11 手机版验收扩充了这一条**：请求方列了三处（库存 / 往来方 / 账户），其中 **往来方已经有流水页**（`party_flow_page`）⇒ **实际缺的是「库存（商品流水）」+「账户（资金流水）」**，且 `StockPage` **连「新建商品」入口都没有**（`canCreateProducts=true` 但无入口）| **§CV·二十四·三** |
+| **27** | 🟡 **账户页无法查看建账以来的流水**（电脑版先行报告 3，「应用没有提供入口所致」） | **✅ 裁甲（批 1 + 批 2）⇒ 已落（`§CV·五十二/五十三`）且复跑全过（2026-10-17，用户确认）⇒ 闭环**——账户流水页（行 tap 跳详情 + 导出）· 商品流水页（成本/镜像/行可点三处分叉）· 库存页新建商品补充入口 · 第 6/7 张导出表| **§CV·二十四·三** |
 | **28** | 🔴 **手机端「负库存提示」两处缺陷**（手机版验收报告）—— ①**口径不一致**：提示拿**录入单位的原始数量**（`row.quantityValue`）去跟**最小单位**的库存比 ⇒ **按箱录入必然漏报**（3 箱 = 36 个，只比了 3）；**同文件里已有会换算的 `baseQuantityOrNull`，没用在这里**。②**未同步快照过期**：`_unsyncedDelta` 是 `late final`（**建页时算一次**），而 `_afterSaved` 是**原地清行、复用同一个 State** ⇒ 保存后接着开第二单时，估算库存**不含刚下的那一单** ⇒ **正是用户说的「上一单没同步、马上开下一单同一商品」场景**。③（关联）切单位**只换算价、不换算数量** ⇒ 数字含义随单位变、提示判定跟着跳。 | ✅ **已落地（2026-10-14，§CV·三十二）** —— **未裁**。修法：① 改用 `baseQuantityOrNull`；② 保存后重算（或改成 build 时取 / 持有 `StockDelta` 而不是快照值）；③ 属**独立设计问题**（切单位要不要换算数量）| **§CV·二十七·一** |
 | **29** | 🟡 **送货页底部按钮「漏改」**（手机版验收：超大缩放下「取消 / 保存」**并成一行**，保存按钮有 `RenderFlex` 溢出） | ✅ **已落地（2026-10-14，§CV·三十二）** —— **未裁**。根因明确：`sale_page.dart:1171` / `purchase_page.dart:841` 的 `_actions` 已用 **`Wrap`**（会换行），而 **`delivery_page.dart:725` 仍是裸 `Row`** ⇒ **§CJ 那批 UI 修复漏了送货页**。修法 = 照另两页改 `Wrap`（一处、风险低）| **§CV·二十七·二** |
 | **30** | 🟡 **手册编号「双重缩放」溢出**（手机版验收：超大档下**所有字符编号戳出圆圈**，**PC + Android 同现**） | ✅ **已落地（2026-10-14，§CV·三十二）** —— **未裁**。根因（可证）：`manual_page.dart:167` 写 `fontSize: MediaQuery.textScalerOf(context).scale(12)` —— **fontSize 本来就会被 textScaler 自动放大**，再手动 scale 一次 ⇒ 实际字号 ≈ **`12·s²`**，而圆圈只有 `22·s` ⇒ **s > 1.83 即溢出**（超大档 s=2.0 必现；PC/Android 同一份代码 ⇒ 两边同现）。**全仓仅此一处**（`entry_fields_row.dart:43` 那个只算比例、安全）。修法：该 `Text` 加 **`textScaler: TextScaler.noScaling`**（保留 `scale(12)`）⇒ 字号 `12s` 与圆圈 `22s` 比例恒定。用户另建议「编号改用 emoji」（同帮助页「四步上手」）—— 作**备选**，见 §CV·二十七·三 | **§CV·二十七·三** |
-| **31** | 🟠 **移动端「建档 / 期初 / 门控」要不要开放**（手机版验收 3 条诉求合并）：①「开单页新建商品**不能填当前库存** ⇒ 这单开完直接超卖」（建议：新建商品对话框加一个**当前库存**可选输入框）②「库存 / 往来方页补录入入口」③「尽早开放手机版『这一步在电脑上做』的限制 —— 中老年少用电脑、急着开单」 | **方案已出待裁（2026-10-16，`§CV·四十五`）** —— 且 **① 正落在已登记的「移动端期初的语义」缺口上**（§CV·七 缺口 2 的 A/B/C；`stock_page.dart:106` 的 `assert(!mobileShell)` **明令「移动端启用前先裁定」**）⇒ **必须先裁语义才能动手**。③ 与 `MasterDataPolicy.mobile()`（products=true / parties=false / accounts=false）是同一件事 | **§CV·二十七·四** |
+| **31** | 🟠 **移动端「建档 / 期初 / 门控」要不要开放**（手机版验收 3 条诉求合并）：①「开单页新建商品**不能填当前库存** ⇒ 这单开完直接超卖」（建议：新建商品对话框加一个**当前库存**可选输入框）②「库存 / 往来方页补录入入口」③「尽早开放手机版『这一步在电脑上做』的限制 —— 中老年少用电脑、急着开单」 | **✅ 裁「甲」+ 四处补强 ⇒ 已落（`§CV·四十六`）且复跑全过（2026-10-16，用户确认，含 #42 四处镜像补齐）⇒ 闭环** —— 且 **① 正落在已登记的「移动端期初的语义」缺口上**（§CV·七 缺口 2 的 A/B/C；`stock_page.dart:106` 的 `assert(!mobileShell)` **明令「移动端启用前先裁定」**）⇒ **必须先裁语义才能动手**。③ 与 `MasterDataPolicy.mobile()`（products=true / parties=false / accounts=false）是同一件事 | **§CV·二十七·四** |
 | **32** | 🟡 **概览页太薄**（手机版验收：只有数据存储 / 导航提示，建议加单据 / 库存 / 往来 / 账户的**简要图表或入口**，只展示近期与欠款） | **未裁**（**产品方向、非缺陷**）。建议排在 bug 之后 | **§CV·二十七·五** |
 | **33** | 🟡 **单据页「自定义时间」只能进一次**（用户补报，2026-10-11）：选过一段范围后回到单据页，**再点「自定义」打不开选择器**，必须先点别的档位才能再进 | ✅ **已落地（2026-10-14，§CV·三十二）** —— **未裁，但根因已读码坐实（单处、可证）**：chip 是 `ChoiceChip(selected: _range == range)`，而 `onSelected` 开头有 `if (!selected) return;` 守卫 —— **Flutter SDK `chip.dart:1128` 是 `widget.onSelected?.call(!widget.selected)`** ⇒ **点已选中的 chip 回调收到 `false`**，被守卫吃掉。「自定义」是**唯一有副作用的档**（点击要弹选择器）⇒ 一旦 `_range == custom` 就再也打不开。**另 5 档不受影响**（再点已选中项本就该是空操作，`_range` 不变）；另三处 `ChoiceChip`（销售/采购/送货的**单位切换**）写的是 `onSelected: (_)` **不看该布尔** ⇒ 无此问题；全仓 `if (!selected) return;` **仅此一处**。**修法**：甲（推荐）「自定义」分支**不看 `selected`**、永远弹选择器（写法与单位 chip 一致）／乙 换 `ActionChip`（丢选中态视觉）。症状可绕过（先点别的档）⇒ 建议并入 **#29 / #30 那批小改** | **§CV·二十八** |
 | **34** | 🟡 **桌面「超大档」溢出**（用户 2026-10-12 补报 + 报告「界面基线 1/2」） | **① 往来方流水（已定位）**：`_WideFlowTile` 是**全仓唯一没做过限幅 / 重排的流水行** —— `party_flow_page.dart:44-95` 的「整页限幅 `maxScaleFactor: 1.15` + 两行重排」**只在 `constraints.maxWidth < 600` 生效**（当时刻意写「宽屏保持现状」），而桌面在**超大档**下 `trailing`（17sp × 2.0 = 34px 的「还款 −¥260.00」）与标题行单号抢宽 ⇒ 溢出。**② 另一处（未定位）**：用户日志抓到溢出，但**不在往来方页**；截图指向**销售开单收款区**与**单据详情明细行** ⇒ ⚠️ **需日志原文**（`RenderFlex overflowed by … pixels` + widget 树）才能钉。**与 #29 同族**（窄屏改过、别的路径漏改）。修法候选（**✅ 丙 已澄清口径，2026-10-14**）：**丙（推荐）保留 `_WideFlowTile`，按条件切换** —— 判据 = 「窄屏，或 textScaler > 1.5」⇒ 重排行，否则原宽行（⚠️ **不是删宽行**：真删 ⇒ 桌面正常档也从 ~20 行/屏 退到 ~10 行/屏）／甲 桌面行也套同款限幅／乙 桌面行改「金额换到第二行」| **§CV·二十九·一** |
@@ -3595,7 +3595,7 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 | **40** | ⚪ **需求类一批**（报告「部分通过」里的产品诉求）：① 追加**同名**往来方的不同身份时提示已有同名（主数据 5）② 商品页加「**显示已停用**」按钮（主数据 6）③ 散采「必须结清」的提示**应点出未付金额**（规则 1）④ 把部分款填进「**顾客给了**」时，应提示**该填哪个框**而不是只说「全部赊账」（规则 2）⑤ **电脑端看不到手机已同步的结果**（库存 5：需说明/加刷新入口） | **未裁**（产品方向）。⑤ 与「主机永远赢 + pull 时机」有关，可能不是缺陷而是**说明不足**。 ⇒ ⚠️ **2026-10-12 精度订正（读码 + 截图双证）**：**商品页已经有这个开关了** —— `products_page.dart:50/180-185` 的「**显示已停用的商品**」（截图亦可见，与「共 7 种」同排）⇒ 报告那条实际指的是 **往来方页 / 账户页**（`parties_page.dart` / `account_page.dart` **均无**）⇒ 应精确化为「**往来方页 / 账户页**加同类开关」，且**有现成先例可抄**（商品页 / 库存页的「显示全部」）| **§CV·二十九·七** |
 | **41** | ⚪ **测试指引（`docs/desktop_acceptance.md`，我写的）据实订正 6 处** | ✅ **已订正 7 处（2026-10-14，§CV·三十二）** —— ① 让价提示是**橙色**、我写成「红色」（规则 3）② 送货单退货**须写明「在途状态下」**（规则 8）③ 库存页「底部解释文案」实际是 **`i` 图标悬浮提示**（库存 1）④ 备份**保留策略无法手工完成** ⇒ 判据要改（导出与备份 2）⑤ 第 6 项「非送货单没有签收按钮」要写进指引（规则 6）⑥ 补一句「横向压缩到不可用才大规模溢出」的已知边界（界面基线 2）。**这是我自己的文档，改它不动生产代码** ⇒ 一句话我就改。 ⇒ **新增第 ⑦ 处（2026-10-12，附实测）**：**「只读测试」的测法要改** —— 指引原写「把文件夹设为只读」，但**Windows 上只读【文件夹】根本不阻止写入**（实测：属性 `R D` 已设 ⇒ 在其内新建文件仍**成功**；而只读【文件】⇒ 追加**被拒** `PermissionError errno=13`）⇒ 这同时解释了报告里看似矛盾的两条：「异常与破坏性 2（只读文件夹仍能开单）」= **测法无效**、「7（新建商品 READONLY）」= **那次是文件级只读**（#36）。**订正为**：只读**数据库文件本身**（`shengsuanzi.db`，不是它所在的文件夹）| **§CV·二十九·八 / §CV·二十九·十一** |
 | **42** | 🔴 **一条「库外枚举值」就能让整页变灰不可用**（S9 验收：`tool/seed_test_data.py --inject` 注入后重启 ⇒ **往来方页整页灰**、其余页正常） | **根因（日志 + 读码锁定）：异常在同步 `build` 路径上抛穿** —— 注入载荷 `misc.spaces`（`"  　\t  "`）落进 `parties.roles` ⇒ `Party.decodeRoles` → **`PartyRole.fromWire`**（`party.dart:15-17`：`firstWhere(…, orElse: () => throw ArgumentError('未知往来方角色：$value'))`）**抛** ⇒ `Party.fromRow` → `PartyDao._select` → `PartyService.listVisible` → **`_PartiesPageState.build`（`parties_page.dart:65`）** ⇒ build 失败 ⇒ `ErrorWidget`（**release = 灰块**）⇒ 整页不可用（日志 **8 次同一异常**）。**⚠️ 同族已确认，且面比 enum 更大**：**四个 `fromWire` 全是 `orElse: throw`**（`AccountType` → 账户页 · `DocType`/`DocStatus` → 单据页/详情页/库存流水 · `SyncQueueStatus` → 队列）；**且 `base.dart` 的 `requiredString/optionalString/requiredInt/requiredBool` 遇类型不符也全抛**（`_typeError`）⇒ **任何列的库外值 / 类型不符都能走同一条路**。**触发源远不止注入**：手工改库 · **未来版本新增枚举值被旧版本读到**（forward-compat）· 同步来的新值 · 备份恢复旧库。**修法**：甲（推荐）**分层兜底 + 不静默** —— L2 枚举降级（`fromWireOrNull`：未知值丢弃 + 记日志）→ L1 读路径**逐行保护**（坏行跳过 + 计数 + 日志）→ L3 **UI 错误边界**（页面级 try/catch 或 `ErrorWidget.builder`，治「变灰」这个表现）→ **L4 必须显式提示**「有 N 条数据无法读取」⚠️（**跳过坏行可能隐藏一笔欠款** —— 对记账 App 是**真金白银**风险，**所以 L4 是 L1 的前提**）；乙 只改 `PartyRole`（**只堵一个洞，不推荐**）。✅ **无既有断言钉住这些抛出**（grep 仅命中生产代码）⇒ 修法**不涉及断言改写**。**📄 落地提案已出（2026-10-14）**：`docs/proposals/42-库外数据-分层兜底与不静默-落地方案.md`。**✅ core 部分已落地（2026-10-14，§CV·三十六）**：**接线 1/2/3 均按 A + 文案按裁定「显示不全」措辞** —— 新增 `core/lib/src/db/read_failures.dart`（`ReadFailureLog` **去重** + 「已告知」+ `decodeRows` 逐行保护 + `RowDecodeException` + 用户可见文案）· `Db.readFailures` 计数通道 · 6 枚举 `fromWireOrNull` · 4 模型兜底政策（`AccountType`⇒`other` 保行 · `DocStatus`⇒**`confirmed`** · `DocType`⇒跳过 · 队列⇒跳过 · `PartyRole`⇒丢角色保行）· **7 DAO / 18 处读路径逐行保护**。core selfcheck **148 ✓** · 反向灵敏度**真跑 3 处全咬住**。✅ **用户复跑全绿（2026-10-14）：core `dart test`（+9 条）与根侧同构测试（6 条）都过**。✅ **L3 + L4 已落地（同日，§CV·三十七）**：`ReadFailureBanner`（两套壳共用，桌面内容区顶部 / 手机三态条下方）+ `main.dart` 的 `ErrorWidget.builder` 兜底块；**四层全落，待复跑确认**。✅ **已闭环（2026-10-14）**：用户复跑 `flutter analyze` + `flutter test` **全过**（2 条 warning 消除、UI 两条断言转绿）| **§CV·三十 / §CV·三十六 / §CV·三十七** |
-| **43** | 🟠 **另有约 11 处仍把「原始异常」拼进用户文案**（本轮侦查 #35 时全仓扫出 —— **超出 #35 / #36 点名的范围**，按纪律**未擅自扩大**） | **已 grep 定位**：`lib/src/app.dart`（新建空账 L690 · 数据迁移 L1072 · 同步出错 L1190 · 手机导出备份 L1296 / L1328）· `document_detail_page.dart`（签收失败 L595）· `opening_stock_page.dart`（期初保存 L245）· `return_page.dart`（退货保存 L240）· `settlement_dialog.dart`（记账失败 L189）· `pairing_scan_page.dart`（扫码同步 L102）· `mobile_sync_service.dart`（L191 / L246）· `data_migrator.dart`（L238 / L258）· `backup.dart`（备份失败 L419）。⚠️ **与 M15 同族**：三张开单页早已改走 `storageFailureNote`，这些是**漏网的兄弟**<br>**建议分两批**：① **存储 / 文件类**（期初 · 退货 · 记账 · 签收 · 备份）改走 core 现成的 `storageFailureNote` / `localFileFailureAdvice`（一处一行）；② **同步类**（app / `mobile_sync_service` / `pairing_scan`）**等 #24 的 `reason_code` 落地后一起做**（它们要的正是「按码分支」）。⚠️ 交付前须**逐处确认日志出口**（有的已接 `onStorageFailure`，有的没有 —— 没有的要么补、要么文案降级为「详情见日志」） | **§CV·三十二** |
+| **43** | 🟠 **另有约 11 处仍把「原始异常」拼进用户文案**（本轮侦查 #35 时全仓扫出 —— **超出 #35 / #36 点名的范围**，按纪律**未擅自扩大**） | **已 grep 定位**：`lib/src/app.dart`（新建空账 L690 · 数据迁移 L1072 · 同步出错 L1190 · 手机导出备份 L1296 / L1328）· `document_detail_page.dart`（签收失败 L595）· `opening_stock_page.dart`（期初保存 L245）· `return_page.dart`（退货保存 L240）· `settlement_dialog.dart`（记账失败 L189）· `pairing_scan_page.dart`（扫码同步 L102）· `mobile_sync_service.dart`（L191 / L246）· `data_migrator.dart`（L238 / L258）· `backup.dart`（备份失败 L419）。⚠️ **与 M15 同族**：三张开单页早已改走 `storageFailureNote`，这些是**漏网的兄弟**<br>**✅ 批 ① 已落且复跑全过（2026-10-17，用户确认）⇒ 批 ① 闭环；批 ②（同步类 6 处）仍开放，等 #24**。⚠️ 交付前须**逐处确认日志出口**（有的已接 `onStorageFailure`，有的没有 —— 没有的要么补、要么文案降级为「详情见日志」） | **§CV·三十二** |
 | **44** | 🔴 **本批 #28 引入的回归：销售开单页「数量框还空着」也报负库存，并吞掉「本地未同步」说明**（用户复跑 `flutter test`：**105 绿 / 1 红**，唯一红点 = `sale_page_test.dart:161` **M08**） | **根因（读码可证 · 单处）**：`#28①` 把 `_LineCard` 的 `qty` 由 `row.quantityValue`（**空 / ≤0 ⇒ `null`**）换成 `row.baseQuantityValue`，而后者 = `toBaseQuantity(entryQuantity: quantityValue ?? 0, …)`，`entryUnit` 为空时走 `ConversionSuccess(entryQuantity)` ⇒ **数量框为空 ⇒ `qty = 0`（非 `null`）** ⇒ 判定式 `negativeStock = qty != null && qty > estimated` 变成 **`0 > estimated`**；M08 场景（快照 0 + 未同步卖 1 ⇒ `estimated = -1`）⇒ `0 > -1` 成立 ⇒ 走**负库存分支**（文案含「本单会按负库存记账」、**不含「本地未同步」**）⇒ M08 红。**改前之所以绿**：`quantityValue` 空 ⇒ `null` ⇒ `negativeStock = false` ⇒ 落 `local != 0` 分支。<br>⚠️ **真实后果不止测试**：手机端「本地快照 ≤ 0 + 有未同步销售」时**一选商品就出红字假告警**，并把 M08 要给的说明挤掉（#28 想解决的问题反被吃掉）。✅ **已裁定（2026-10-14）**：**选甲**（乙「口径留 UI」= 漂移源、丙「判定加 `qty > 0`」= 治标且分层错，均否决）+ **两个硬前置**（① grep 全仓确认「单页还是多页同构」② 补回归断言）+ **采购页豁免**（进货不涉及负库存 ⇒ **不加对称 getter**）。**先红后改（裁定 §三）**：**阶段一 = 4 组断言已落** ⇒ **复跑 3 红**（`M08` + 销售 #44 组 + 送货「按箱必报」组 —— 我预估的 2 红漏算了「M08 本身就是红的」）⇒ **反向灵敏度成立**；**阶段二 生产代码已落**（销售页甲 + 送货页新增 getter / 改判定一行，**两份 getter 已 `diff` 确认逐字同构**）。✅ **已闭环（2026-10-14）**：用户复跑 **全绿**（`M08` + 销售 #44 + 送货 #44 三条红点**全部转绿**，其余既有用例零新增红）。**修法**：**甲（推荐）**`_RowCtl.baseQuantityValue` 前置「`quantityValue == null` ⇒ `return null`」再换算（语义 = 「本行没有可比的数量」；#28 的按箱换算意图完整保留；**该 getter 全仓仅 `sale_page.dart:1260` 一处调用 ⇒ 零波及**）／乙 只改调用点（口径留在 UI ⇒ 三页各写一遍）／丙 判定加 `qty > 0`。<br>⚠️ **同族（一并裁）**：`delivery_page.dart:798` 用的**仍是** `row.quantityValue`（录入单位原始数）⇒ **按箱录入漏报**在送货页**依然存在**（#28 只改了销售页），且送货页 `_RowCtl` 没有 `baseQuantityValue` getter ⇒ 修它要新增。⇒ **两个方向同时存在：销售页过度报（空数量假红）· 送货页漏报（按箱）** | **§CV·三十三 / §CV·三十四** |
 | **45** | 🟠 **「三页同构」目前没有机械保证**（用户 2026-10-14 建议登记；本次 #28① 改销售页、漏送货页就是例证） | **未裁**（不阻塞 #44，但要做）。现状：开单三页（`sale` / `purchase` / `delivery`）的 `_RowCtl` / `_LineCard` **基本逐字复制**，而「与 `xxx_page.dart` 同构」**只是注释里的自我声明**（`sale_page.dart:3` / `delivery_page.dart:3`）—— **无测试断言、无共享基类、无 grep 守卫**。**四个候选**：**甲** 抽 `EntryRowCtl` 基类（大改）／**乙** 抽共用 widget 或工具函数（中改）／**丙** 加「三页同构特征串」的测试断言（小改；例：三页 `baseQuantityValue` 的实现必须一致）／**丁** 写进纪律「改同构代码必须先 grep 另两页」（零改动，靠人）。**用户倾向 = 丙 + 丁**（机械断言守关键口径 + 纪律守「先 grep 再动手」）；**抽基类另开批次**。⚠️ **与 #25 教训同源**（「两个布尔表达同一件事 = bug 温床」）—— 都是**同构代码容易漏改**。✅ **丙 + 丁 均已落地（2026-10-14）⇒ 闭环**：**丁** = `Agents.md` 纪律 18（见 §CV·三十四·三）；**丙** = 新 `test/page_isomorphism_test.dart`（读源码比「特征串」、**逐字同构**：`quantityValue` / `baseQuantityValue` / 负库存判定式 / 库存提示三态文案 + **采购页豁免**断言），已在本机用等价脚本做**正例 + 5 项反向灵敏度**验证（§CV·三十五）。✅ **收尾（2026-10-14，§CV·三十六）**：文案特征串改成**比对两页一致性**（不钉字面值 ⇒ 产品同步改文案不再红）+ `docs/testing.md` 登记「**前提断言会红是设计**」的处置路径（改名 ⇒ 判断是否有意 ⇒ 同步改特征串 / 回滚，⛔ 不许删断言）。⚠️ **甲 / 乙（抽 `EntryRowCtl` 基类 / 共用 widget）仍「另开批次」**（不在 #45 范围内）| **§CV·三十四 / §CV·三十五 / §CV·三十六** |
 | **46** | 🔴 **手机「立即备份」备的是空主库**（0.3.5 外测报告 M01，P1；手机经营数据在镜像+待传队列，手动备份却 0 商品 0 队列 —— 用户以为备份了、其实没有） | ✅ **我方读码坐实**：`BackupService.backupNow({required Db db})`（`app/backup.dart:325`）吃主库。**✅ 已落（2026-10-15，`§CV·四十一·四`）**：执行既有裁定（reply.md §4 B 方案）—— 手机不给「立即备份」，数据安全出口 = 已有的「导出本机数据文件」；+2 条互为反向灵敏度的断言；✅ **复跑全绿，关闭（2026-10-16，用户确认）** | **§CV·四十一** |
@@ -11627,3 +11627,351 @@ core/host/app 三包 typecheck 48/11/29 ✓ · app 五份自检 0 挂 · import_
 **方案丙**：不做（超卖缺口继续开着 —— 与 A1 验收结论矛盾，不推荐）。
 
 **断言计划（裁定后落地时执行）**：core —— `document_sink` 能否承载 stocktake 文档（doc_type 校验面核对）+ 队列两条 op 的 host 端「乱序自愈」真跑测试 + `selfcheck_sync` 镜像；根侧 —— 手机新建商品带库存 → 队列 2 条 + 既有表单断言零新增红。
+
+## §CV·四十六 **#31 落地（裁定甲 + 四处补强）** + **#42 镜像补齐**（2026-10-16，裁定 `docs/reply.md`）
+
+### 一、#31 落地形态（按裁定四处补强逐条）
+
+| 裁定 | 落地 |
+|---|---|
+| **① 绑定硬约束（选甲1：合成一条 op）** | **没有**「两条队列条目」—— `createProduct` 加可选 `openingQuantity`（最小单位）⇒ 队列 payload 加可选 `opening_quantity`；host `_createMasterData` 在**建档同一事务**内 `_dispatchOpeningStock`（`Db.transaction` 嵌套 = depth 合并 ⇒ 原子：期初失败 ⇒ 建档也回滚）。**结构上不分叉，「自愈」问题不存在了** |
+| **② UI 补偿** | `PendingMarks.openingQuantityByProduct()`（与 ids 同「未确认」口径）+ 库存页商品行加「**期初 N（单位）待同步**」提示行（只提示不参与计算）；**零流水可见性**扩展：带期初的待同步建档默认也显示（M14 同一条原理） |
+| **③ 编辑改库存** | 本批只做新建；对话框编辑模式连框都不出（widget 断言钉住）；「编辑时改库存」随整页期初批另裁 |
+| **④ 换算口径** | `lines.quantity` = 实际数量（最小单位）；**deviation（已标注）**：本批表单只按**商品单位**录入（无按箱切换入口）—— entry 原文由 `DocumentLine.entryQuantity` 缺省口径（= quantity）天然满足 v3；按箱录入随整页期初批做 |
+
+| 处 | 改动 |
+|---|---|
+| core | `MasterDataSink.createProduct` 契约 + `ServiceMasterSink`（收到 opening ⇒ `ArgumentError`，桌面期初走 StocktakeService）/ `QueueMasterSink`（payload 扩展 + 防御校验）/ `PendingMarks.openingQuantityByProduct` |
+| host | `_createMasterData`：先抽 `opening_quantity` 再过白名单（该键不是列）；类型/取值/重复建档/错表 ⇒ **malformed_parameter**（协议违反不重试）；`_dispatchOpeningStock`（stocktake 文档、占位号 → `_prepare` 正式 PD 号、RULE-009 / surplusCost） |
+| 协议 | `sync_protocol.md §8.1` 记 `opening_quantity`（正整数、仅 products 建、违规处置表） |
+| UI | 对话框可选框（Key `product-opening-stock`，桌面/编辑不显示）+ 三页 picker 传 `allowOpeningStock: mobileShell` + `StockPage` 提示行 + app_shell 注线 |
+
+**断言**：core sink test +4（payload 形状 / 负数防 / 主机出口抛）· host test +5（applied+stocktake+流水 / 纯建档 / 错表 / 类型取值 / 已存在）·
+`selfcheck_queue_sink` +8（**两端端到端**：入队→主机同事务落账，44 ✓）· `selfcheck_sync` +7 镜像（186 ✓）·
+根侧对话框 +5（可见性三态 / 端到端 / 非整数拦截）+ 库存页 +2（提示出现 / 确认后消失）。
+
+**我侧验证**：core `master_data_sink_test` **17 全绿** · host `sync_server_test` **75 全绿** ·
+`selfcheck_queue_sink` 44 ✓ · `selfcheck_sync` **186 ✓** · 三包 typecheck 48/11/29 ✓ ·
+根侧全量 `flutter test` **203 全绿** + `flutter analyze` **0 issues**。
+
+### 二、**#42 镜像补齐**（本批跑 host 套件时撞出的既有红 —— 非本批引入）
+
+host `sync_server_test` 与 `selfcheck_sync` 各有一条「缺必填列 doc_type ⇒ 日志含『缺少必填列 `doc_type``』」
+在 **HEAD 上就红**（A/B 验证过：换回 HEAD 版 sync_server 依旧红）。根因 = **#42** 把缺列异常改成
+`RowDecodeException(column: 'doc_type', reason: '缺少这一列')`，这对镜像当时漏改（#42 只复跑了 core）。
+按裁定「漏改一侧 ⇒ 补齐 = 完成批次」补上：断言改 `RowDecodeException(doc_type: 缺少这一列)`
+（只可能由被测路径给出，非空心）+ 注释记来历。补齐后 **host 套件 75 条全绿**。
+**复跑又抓出同族两处（`lines`/id 路径）**：`http_server_test`（HTTP 全链路，用户复跑抓出）+
+`selfcheck_host` —— 同批漏改 ⇒ 同规则补齐（`RowDecodeException(id: 缺少这一列)`）。
+**旧字面量全仓清零**（仅余注释里的来历记载）；新子串共 4 处（test ×2 + selfcheck ×2）；
+`selfcheck_host` 117 ✓ · `http_server_test` 19 全绿。
+
+### 三、其余裁定附记（不在本批实现）
+
+- **#27 提到第 3**（缺入口 = 用户以为功能不存在，信任问题）—— 优先级表更新见 §CV·四十五；
+- **#43 动手前先列三层清单**（UI / core / host 的「约 11 处」各自修法不同）；
+- **#23 补修法选项**（甲 = `RuleRejected` 类型化 + 页面 catch，倾向与 #43 同批复用判据）—— 届时按此出方案。
+
+### 四、闭环确认（2026-10-16，用户）
+
+用户复跑 **全过**（core / host / 根侧，含 #42 四处镜像补齐）⇒ **#31 闭环**。
+本轮总账：#31（超卖缺口）· #46–#54 外测残留 · #38 · #42 镜像补齐——当日全部收口。
+
+## §CV·四十七 **#43 批 ① 落地**（存储 / 文件类 10 处 —— 三层清单与处置，2026-10-16）
+
+### 一、三层清单（裁定「先列清单再动手」的交付物）
+
+| 层 | 清点结果 |
+|---|---|
+| **host 层** | ✅ **0 处** —— §CV·十四/十五 已清（回执固定文案 + 细节进日志） |
+| **UI / app 层 —— 存储/文件类（本批 ①，10 处）** | 期初保存 `opening_stock_page` · 退货保存 `return_page` · 记账失败 `settlement_dialog` · 签收失败 `document_detail_page` · 新建空账 `app.dart:694` · 数据迁移 `app.dart:1072` · 迁移遗留说明 `data_migrator.dart:238` · 备份失败 `backup.dart:419` · 建导出文件夹 / 导出 `app.dart:1304/1336` · 设置页导出兜底 `settings_page.dart:166` |
+| **UI / app 层 —— 同步类（批 ②，6 处，等 #24）** | `app.dart:1198` · `pairing_scan_page.dart:102` · `mobile_sync_service.dart:191/246/308/378` —— 要「按 reason_code 分支」的文案，#24 落地时一起做（本批**不动**） |
+| （日志通道本身） | `log.dart crash()` 不在 #43 范围 —— 它是技术支持通道；SQLite 类已由 #54 治理（`storageFailureLogLine`） |
+
+### 二、批 ① 落地明细
+
+| 处 | 修法 |
+|---|---|
+| 期初 / 退货 / 记账 / 签收（4 处） | **M15 两通道复制**：页面加可选 `onStorageFailure` 回调（链路：app_shell → DocumentsPage → DetailPage → {ReturnPage, SettlementDialog}；app_shell → StockPage → OpeningStockPage），catch 改 `storageFailureNote(error)` |
+| 新建空账（app.dart，自带 `_log`） | `_log.crash` + `storageFailureNote(error)` |
+| 数据迁移（app.dart） | `_log.crash` + `localFileFailureAdvice(error)`（迁移 = 文件操作） |
+| 备份（`BackupService`） | 加 `onFailure` 钩子（与 `ExportService.onFailure` 同款，构造点接 `_log.crash`）；failure 消息 → `localFileFailureAdvice`。**两条失败路径分清**：目录探测路径本来就是手写分类文案（探测不抛异常）；落盘异常（copy/rename）才走 catch |
+| 建导出文件夹 / 导出（app.dart） | `_log.crash` + `localFileFailureAdvice` |
+| 设置页导出兜底 | `localFileFailureAdvice`（兜底双故障路径 —— 回调内部已各自记日志） |
+| 迁移遗留说明（`data_migrator`，isolate 内） | `localFileFailureAdvice`；⚠️ **注册已知限制**：isolate 内无日志出口，原始细节不落盘（文件错误无经营内容，#54 判据下可接受） |
+
+**断言**：`backup_test` 改 1 + 新 1（探测路径 / 落盘异常路径**分开覆盖** —— 后者用「固定时钟 ⇒ 备份文件名确定 ⇒ 预置同名目录逼 rename 抛」造出 catch 路径，断言 `onFailure` 收原文 + failure == 同一异常的分类文案 + 无 `Exception` 字样）。
+
+**我侧验证**：app `backup_test` **34 全绿** · `data_migrator_test` **9 全绿** · app typecheck 29 ✓ ·
+根侧全量 `flutter test` **203 全绿** + `flutter analyze` **0 issues** ·
+**存储文件类旧拼接全仓清零**（grep 终扫 0；剩余 6 处全为同步类 = 批 ②）。
+
+### 三、批 ② 待办（不另立编号，随 #24）
+
+同步类 6 处的文案要按 `reason_code` 分支（如「主机拒绝」与「网络不通」说不同的话）—— #24 落地时在 `mobile_sync_service` / `pairing_scan_page` 统一接 `syncFailureReason` / 码分支，一次做完。
+
+## §CV·四十八 闭环确认（2026-10-17，用户）
+
+**#43 批 ① 复跑全过** ⇒ 闭环。当日队首顺延：**#27**（账户 / 库存流水入口 —— 裁定提序至信任层）→ #23（届时按甲出方案）→ #32 / #40 / #26②③；批 ② 随 #24。
+
+## §CV·四十九 **#27 方案已出（待裁 —— 未动生产代码）**（2026-10-17）
+
+### 一、读码事实（可逐条 grep）
+
+1. `MoneyLedgerDao.ofAccount()`（`ledger_dao.dart:308`）已有 **#42 逐行保护**，但只有 UUID ⇒ 做界面必须照
+   `PartyLedgerDao.ofParty`（:208，JOIN documents 带回单号/类型，decodeRows + RowDecodeException 跳行）新增**人可读查询**；
+2. `party_flow_page.dart` 是完整先例：行 = 单号+类型+金额+日期、窄屏（<600）限幅 1.15 + 行重排、导出按钮、
+   行不可点要**明说**；入口 = parties 行 `onTap`（:190/:337）；
+3. `account_page.dart` 行 `onTap: onEdit`（:194）—— 流水入口不能抢编辑，得用**行尾图标按钮**；
+4. **库存商品流水没有现成查询** —— `QueryDao` 只有聚合（`stockByProduct` 等），按商品的 stock_ledger
+   明细查询要新写（JOIN documents，同先例）；
+5. 手机壳可达面（5 tab）里**账户页无入口** ⇒ 账户流水天生是桌面入口；库存页是手机 tab ⇒ 商品流水双端可达；
+6. `StockPage` 无「新建商品」入口（`canCreateProducts=true` 但无消费点）—— #31 的 `allowOpeningStock`
+   恰好是库存页场景的天然拼图。
+
+### 二、方案甲（推荐 —— 一次补齐 #27 三个缺口）
+
+| 块 | 内容 |
+|---|---|
+| **core** | ① `MoneyLedgerDao.ofAccountReadable()`：JOIN documents，返回 `MoneyFlowEntry(docNo/docType/amount/occurredAt/timeEstimated)`（照 ofParty 先例，decodeRows 保护）；② `StockFlowDao.ofProduct()`：JOIN documents 按 product，返回 `StockFlowEntry(docNo/docType/quantity(±)/occurredAt)`（正 = 入库） |
+| **UI** | ① `account_flow_page`（照 party_flow_page：窄屏限幅 + 行重排 + 导出）；入口 = 账户行尾**「流水」图标按钮**（不抢 onTap=编辑）；② `stock_flow_page`（行 = 单号+类型+±数量+日期）；入口 = **库存行整行可点**（对齐 parties 行 tap 先例） |
+| **新建商品入口** | `StockPage` AppBar 加「新建商品」（**手机壳 + canCreateProducts** 时显示，走既有对话框 `allowOpeningStock: true` —— 与 #31 建档带期初天然衔接：库存页正是「建完看数量」的场景） |
+| **导出** | 第 6 张「账户流水」+ 第 7 张「商品流水」导出表（照 `partyFlowExportTable`） |
+| **测试** | core 两查询 test + `selfcheck_sync` 镜像；根侧两页 widget 测试 + 入口断言 + 导出表测试；三页同构 / 既有零新增红 |
+
+**方案乙**：只做账户流水（半天版；库存流水与新建商品入口另批）。
+**方案丙**：只做导出（1 小时版）。
+
+### 三、需要你裁的两点
+
+1. **甲 / 乙 / 丙**（甲 = 三缺口一次补齐）；
+2. 若裁甲：**库存行的流水入口形状** = 整行可点（推荐，对齐 parties 行 tap）还是行尾按钮？账户行的 = 行尾图标按钮（推荐，编辑已在 onTap 上）。
+
+## §CV·五十 **#27 v2 方案（答复 reply.md 七问 + 拆两批 —— 批 1 等 go-ahead）**（2026-10-17）
+
+### 一、两个硬问题的答复（含读码证据）
+
+**① 「新建商品入口」与 #31 的关系**：#31 **已落地**（昨日批次，`§CV·四十六`）——入口在**开单页三个 picker**（`allowOpeningStock: mobileShell`），带库存字段走的是同一份 `product_form_dialog`。库存页目前**没有**任何新建入口。⇒ #27 的库存页入口 = **补充入口**：同一份对话框（`allowOpeningStock: true`），零重复维护；两个入口对应两个场景（开单中途建档 vs 盘点时建档）。**登记为「补充入口」**，不重复实现任何 #31 语义。
+
+**② 手机壳的库**：`StockFlowDao(Db db)` 与其它 DAO 同款；手机壳的 `stock_flow_page` 用 **镜像 `Db`** 实例化——接线现成：app.dart 已把 `shell.products / shell.queries` 指向镜像（`shellQueries = QueryDao(mirror)`），stock_flow 拿**同一批对象**，与 `stock_page` 同源 ⇒ 不可能误用主库。批 2 加断言：手机壳打开商品流水后**至少能读到一条**（有流水才可见的行才入口，天然保证非空）。
+
+### 二、五个设计问题的落法（采纳 reviewer 建议为主）
+
+| # | 落法 |
+|---|---|
+| **成本显示** | 桌面：行显示 `total_cost`（+进价 = unit_cost，镜像/主库都有该列）；手机：**不显示成本列**（诚实口径，与 `stockViewOf` 同族）。页面构造拿 `mobileShell` 区分 |
+| **日期口径** | 行 = `occurred_at`（业务日期，`formatDate` 不含时分）；`time_estimated = 1` 标「离线」；不显示「录入于」（对齐 M01 结论与 party_flow 现状） |
+| **入口同构** | **读码定案**：parties 行 tap = 流水（`parties_page.dart:337`），编辑/停用收进行尾 **PopupMenuButton「更多操作」**（:418）⇒ **账户行照此同构**：tap 改开流水，编辑/停用挪进 PopupMenu（我原「行尾图标按钮」提案作废） |
+| **导出去重** | 采纳选项二：**只在流水页有「导出流水」**；库存页导出保持「当前库存」不动。命名区分：流水页按钮 = 「导出流水」（对齐 party_flow 现状），无新交互形态 |
+| **行可点性** | 采纳建议：**桌面流水行 tap ⇒ push 单据详情页**（`DocumentDetailPage` 是通用页，documents_page 已在用）；**手机行不可点** + 底部灰字照 party_flow 明说（手机壳无详情页）。两个流水页同规则 |
+
+### 三、拆两批（采纳工期建议）
+
+- **批 1（账户流水）**：core `MoneyLedgerDao.ofAccountReadable()` + `MoneyFlowEntry`（JOIN documents，decodeRows 保护）+ `selfcheck` 镜像；`account_flow_page`（照 party_flow，行不可点明说——**账户流水行在桌面也不可点？** 不：桌面可跳详情，同批 2 规则 ⇒ 行 tap 跳详情）+ 账户行 tap/PopupMenu 同构改造 + 第 6 张「账户流水」导出表 + 测试（core 查询 / 账户页入口 / 导出表）。**手机不可达登记**（账户页不在 5 tab）。
+- **批 2（商品流水 + 新建入口）**：`StockFlowDao.ofProduct` + `stock_flow_page`（成本分叉 / 日期口径 / 行可点分叉如上）+ 库存行 tap 入口 + 镜像实例化断言 + `StockPage`「新建商品」补充入口（#31 同款对话框）+ 第 7 张「商品流水」导出表 + 测试。
+- 批 1 先验证「流水页模板」，批 2 复用模板只处理差异。
+
+## §CV·五十一 **#27 v2 遗留四点核实完毕（全部有据）+ 批 1 就绪等 go-ahead**（2026-10-17）
+
+| # | 核实点 | 结果（可逐条 grep） |
+|---|---|---|
+| ① | 桌面库存页「新建商品」带不带库存字段 | **采纳乙**：桌面 `allowOpeningStock: false`（桌面期初入口就在同页「录入现有货物」，快速建档不带库存）；手机 `true`（走 #31 stocktake 同步通路） |
+| ② | `MirrorView` 是否暴露 `Db` | **不用暴露** —— app.dart:1566 手里就是 **`final Db? mirror = _mobileSyncService?.openMirror()`**（不是 MirrorView 包装），shell 装配处直接 `StockFlowDao(mirror)`（照 `shellQueries = QueryDao(mirror)` 同一行先例）， Db 不外泄 |
+| ③ | parties 行 tap = 流水有无 UX 依据 | **有** —— `parties_page.dart:330` 注释：「§审查 OBS-05 后半：停用的也能点开看流水……得让人查得到那笔账」（tap=流水是有意的查账设计，非巧合）⇒ **账户行对齐正确**：tap 改开流水，编辑/停用挪进行尾 PopupMenu（照 parties :418 先例） |
+| ④ | 库存页导出按钮叫什么 | **「导出库存」**（`stock_page.dart:202`）—— 与流水页「导出流水」天然区分，无需改名 |
+| ⑤ | `DocumentDetailPage` 能否处理 `stocktake` | **能，且有专门分支** —— `document_detail_page.dart:109-115`：`_stockFlow = docType == DocType.stocktake ? …`（详情页认识盘点单并展示其流水）⇒ 桌面流水行 tap 跳详情**对 stocktake 行同样成立**，无需排除或标注（优于原丙案） |
+
+**遗留矛盾清理**（按裁定）：最终表述一句 —— **桌面：流水行 tap ⇒ 跳单据详情；手机：行不可点 + 底部灰字明说**。
+
+**批 1（账户流水）就绪**：core `ofAccountReadable` + `MoneyFlowEntry`（照 ofParty）+ selfcheck 镜像；
+`account_flow_page`（行 tap 跳详情 + 导出流水）+ 账户行 tap/PopupMenu 同构 + 第 6 张「账户流水」导出表 + 测试。
+**批 2 待批 1 验证模板后开工**（`StockFlowDao` + `stock_flow_page` + 库存行 tap + 新建商品补充入口 + 第 7 张）。
+
+## §CV·五十二 **#27 批 1（账户流水）落地**（2026-10-17，按 §CV·五十/五十一 v2）
+
+| 块 | 实现 |
+|---|---|
+| **core** | `MoneyLedgerDao.ofAccountReadable()`（JOIN documents，照 `ofParty` 先例：decodeRows + `RowDecodeException` 跳行计数）+ `MoneyFlowEntry`（桶导出 show 补符号）；`AccountService.flowsOf()` 门面（照 `PartyService.flowsOf`） |
+| **UI** | 新 `account_flow_page.dart`（照 party_flow 模板：窄窗限幅 1.15 + 行重排 + 空态/底部灰字）；**行 tap ⇒ 跳单据详情**（回调缺省时降级不可点 + 灰字明说）；「导出流水」按钮（`extra` 带账户名，AF-7） |
+| **入口同构** | 账户行 **tap 改开流水**（读码依据：parties 行 tap=流水有 OBS-05 UX 记载）；编辑/停用**本就收在行尾「更多操作」PopupMenu**（账户页早就有，零新增） |
+| **导出** | 第 6 张 `accountFlowExportTable`（label「账户流水」，金额 `Money.format` 不带千分位） |
+| **注线** | app_shell `AccountsPage` + `exports / settlements / deliveries / products`（detail 跳转所需） |
+
+**断言**：core `query_test` +2 组 3 条（人可读行/口径/排序/只含本账户 + 坏行跳过计数）· app `export_test` +2（表头/行/无千分位/空表）·
+根侧 `account_page_test` +2（行 tap 开流水页 + 行跳详情；菜单同构不丢）+ 改 1（既有「编辑」用例改走 PopupMenu——行 tap 语义变化）。
+
+**我侧验证**：core `query_test` **17 全绿** · app `export_test` **17 全绿** · core typecheck 48 ✓ ·
+根侧全量 `flutter test` **205 全绿** + `flutter analyze` **0 issues**。
+
+**批 2 待批 1 验证后开工**（`StockFlowDao` + `stock_flow_page` + 库存行 tap + 新建商品补充入口 + 第 7 张导出表）。
+
+## §CV·五十三 **#27 批 2（商品流水 + 新建商品补充入口）落地**（2026-10-17，v2 + 复跑要求全落实）
+
+| 块 | 实现 |
+|---|---|
+| **core** | `StockLedgerDao.ofProductReadable()`（JOIN documents，照批 1 先例：decodeRows + 坏行跳过计数）+ `StockFlowEntry`（quantity 正入负出含盘点 diff；unitCost / totalCost 成本真相）。⚠️ **deviation（命名）**：方法落在既有 **`StockLedgerDao`** 类上（ledger_dao.dart 的库存 DAO），未新建 `StockFlowDao` 类 —— reviewer 命名是建议，既有类承载更合文件布局 |
+| **UI** | 新 `stock_flow_page.dart`（照批 1 模板）+ 三处分叉全落：**成本** = 桌面显示 total_cost/unit_cost、手机不显示 + 底部灰字「成本只在电脑上显示」；**库** = 手机壳镜像实例化（app.dart 装配 `StockLedgerDao(mirror)`，与 products/queries 同源）+ **非空断言**（手机打开即至少一条）；**行可点** = 桌面 tap 跳单据详情（stocktake 有专门分支）、手机不可点 + 灰字 |
+| **入口** | 库存**行 tap ⇒ 流水页**（双端；桌面行内再跳详情）；「新建商品」补充入口 = **手机壳 + canCreateProducts + sink** 三条件显示（裁定乙：桌面不带库存字段，桌面建档走商品页/期初页） |
+| **导出** | 第 7 张 `stockFlowExportTable`（label「商品流水」，数量带符号、成本原值） |
+| **注线** | app.dart `shellStockFlow`（按壳取库）→ AppShell.stockFlow → app_shell 'stock' 注 stockFlow/settlements/masterDataSink/canCreateProducts |
+
+**断言**：core `query_test` +1（入库正/出库负/成本同号/只含本商品）· app `export_test` +1 组（表头/行/数量带符号/成本同号/无千分位）·
+根侧 `stock_page_test` +3（桌面全链路含跳详情 / **手机镜像非空 + 无成本 + 行不可点** / 新建入口显隐）。
+
+**我侧验证**：core `query_test` **18 全绿** · app `export_test` **18 全绿** · core/app typecheck 48/29 ✓ ·
+根侧全量 `flutter test` **208 全绿** + `flutter analyze` **0 issues**。
+
+## §CV·五十四 闭环确认（2026-10-17，用户）
+
+**#27 批 1 + 批 2 复跑全过** ⇒ **#27 全闭环**（账户流水页 + 商品流水页 + 库存页新建商品补充入口 + 第 6/7 张导出表）。
+下一队首：**#23**（届时按裁定的「甲 = RuleRejected 类型化 + 页面 catch」方向出方案）→ #32 → #40 → #26②③；批 ②（#43 同步类）随 #24。
+
+## §CV·五十五 **#23 方案已出（待裁 —— 未动生产代码）**（2026-10-17）
+
+### 一、读码事实（可逐条 grep）
+
+1. **基建已在**：`RuleRejection`（`rules/rule_rejection.dart:25`）—— `reason` = 给用户看的中文（写「怎么办」）、
+   `code` 机读、`detail` 只进日志；`RuleEngine.dispatch` 捕获后转 `RuleOutcome.rejected(reason, code)`
+   （`rule_engine.dart:267`）。**业务拒绝的文案已达标**（如「核销金额超过了…请把金额改小」）。
+2. **#23 的缺口只剩「最后一厘米」**：5 个 Service 把 `outcome.reason` 包进**裸 `StateError`** ——
+   `sale_service:152` · `purchase_service:148` · `delivery_service:181/225`（建单/签收）· `return_service:285` ·
+   `stocktake_service:121`。UI 侧（#43 批①后）catch 全走 `storageFailureNote(error)` ⇒ `StateError` 落
+   `unknown` 分支 =「没能保存。请再试一次」—— **重试必然再失败**（#23 原文）。
+3. **核销超额已不在洞里**：`SettlementService` 抛 `SettlementInvalid(outcome.reason)`（`settlement_service.dart:354`），
+   `settlement_dialog:188` 单独 catch 显示原文 —— **现成的正确先例**，甲方案就是把其余 5 个 Service 改成同款。
+4. `RuleRejection` **未进桶导出**（新类型要补 `show`）。
+5. 「已保存但读不回来」（delivery:187 / return:291）是**内部 bug** 不是业务拒绝 ⇒ 保持 `StateError` 不动；
+   `return_service:229`「原单不存在」同理（桌面无删除入口，属不可达防御）—— 均不在本批范围。
+
+### 二、方案甲（推荐 —— 与核销先例同构，一次性收口）
+
+| 块 | 内容 |
+|---|---|
+| **core** | ① `RuleRejected implements Exception { reason, code }`（放 `rule_rejection.dart`，与 `RuleRejection` 同文件）；② 5 个 Service 的规则拒绝点改抛 `RuleRejected(outcome.reason!, outcome.code!)`（只在 `status == rejected` 分支；内部 bug 分支保持 `StateError`）；③ 桶导出补 `RuleRejected` |
+| **UI** | 5 个 catch 点（sale / purchase / delivery 建+签收 / return / opening）在通用 catch **之前**加 `on RuleRejected catch (error)` 分支：显示 `error.reason`（文案现成、写「怎么办」），**不调 `onStorageFailure`**（业务拒绝非内部错误；detail 已由规则层经 `onInternalError` 进日志），草稿保留与现状一致 |
+| **测试** | core：各 Service 测试断言抛 `RuleRejected` 且 `reason` 指向「怎么办」文案；UI：`ReturnPage` 注子类 Service 令其抛 `RuleRejected` ⇒ 断言显示 reason、**不**走 storageFailureNote、`onStorageFailure` 未被调（反向灵敏度：破坏断言看红） |
+
+**方案乙**（维持现状 + 修 Draft 校验缺口）：不可行——退货超额等依赖落库时点的 DB 状态，Draft 校验无法完全前置。
+**方案丙**（不动）：#23 悬置。
+
+### 三、范围边界
+
+- 手机端 `document_sink.dart:150` 的「`StateError` 继续向外抛」**不动** —— 那是同步回执通路（#24 批②一起按 `reason_code` 分支）。
+- `stocktake_service:121` 一并类型化（RULE-009 现无可达拒绝，但类型化后 UI 兜底语义正确，成本 1 行）。
+
+## §CV·五十六 **#23 落地（裁甲 + 5 处补强）**（2026-10-17，裁定 `docs/reply.md`）
+
+### 一、裁定五问的核实与落实
+
+| # | 裁定 | 落实 |
+|---|---|---|
+| ① #43 状态 | **已落地且闭环**（`§CV·四十七/四十八`，2026-10-17 复跑全过）—— 本批的 6 个 catch 点全部基于 #43 落地后的形态，无返工 | ✅ 无冲突 |
+| ② detail 去向 | **质疑成立**：桌面/手机壳的 9 处 `RuleEngine(db/mirror)` 构造**全都没接** `onInternalError`（只有 HostServiceController 接过）⇒ detail 静默丢失。选「规则层加日志出口」：app.dart 加 `_newEngine()` 统一构造（9 处全换），detail 经 `_log.crash` 进宿主日志 ——「不调 onStorageFailure」的前提自此成立 | ✅ 9 处接线 |
+| ③ 清单完整性 | grep 定案：**Service 7 处 / UI 6 处**（原提案「5 catch」错——delivery 建单与签收分属两页）。Service = sale / purchase / delivery 建 / delivery 签收 / return / stocktake / **return 原单不存在（裁定④新增）**；catch = sale / purchase / delivery / detail 签收 / return / opening | ✅ 7 / 6 对齐 |
+| ④ 原单不存在 | **采纳改判**：`return_service` 原单缺失改抛 `RuleRejected`（文案「要退货的那张原单不在了……」，写「怎么办」），core 测试钉住 | ✅ |
+| ⑤ catch 顺序 | 每个点顺序 = **最具体 Draft 无效 → RuleRejected → 通用 catch**；UI 测试用桩 Service 抛 `RuleRejected` ⇒ 若顺序错则显示「请再试一次」测试红 | ✅ 测试钉顺序 |
+
+**设计细节**：`RuleRejected { reason, code }` 放 `rule_rejection.dart`（与 `RuleRejection` 同文件）——**deviation（已登记）**：未按 reviewer 建议「持有 RuleRejection」，因 throw 点手里只有 `RuleOutcome`（detail 已在 dispatch 层消费进日志），reason+code 就是 UI 需要的全部表面；`SettlementInvalid` **继承** `RuleRejected`（核销 5 个抛点全是用户中文，统一类型）+ 保留 `message` getter 兼容既有消费点；手机端 `document_sink` 通路**登记为 #24 批②**（手机本地业务拒绝改善同批）；stocktake 类型化**登记为防御性、无测试覆盖**（RULE-009 现无可达拒绝）。
+
+### 二、验证（全我侧真跑）
+
+- core：新 `rule_rejected_test` **5 全绿**（sale/purchase/delivery/签收 桩引擎钉转换 + SettlementInvalid isA）·
+  `return_service_test` **16 全绿**（+2：原单不在了 / 桩拒绝）· `settlement_service_test` **19 全绿**（类型改造零破坏）·
+  `selfcheck.dart` **153 ✓** · typecheck **49 入口**（新文件已注册）；
+- 根侧：`return_page_test` **4 全绿**（+1：reason 显示 / 非「请再试一次」/ storage 通道未走 / 草稿保留）——
+  **反向灵敏度已做**：摘掉 `on RuleRejected` 分支跑 = 红，恢复 = 绿；全量 `flutter test` **209 全绿** + `flutter analyze` **0 issues**。
+
+## §CV·五十七 闭环确认（2026-10-17，用户）
+
+**#23 复跑全过** ⇒ 闭环。当日总账：#31 · #43 批① · **#27（批 1+批 2）** · **#23** · #42 镜像补齐（4 处）——全部收口。
+剩余队列：**#32 → #40 → #26②③**；挂起 #26①/#34②（用户自行解决）；将来 #24+#56（schema 同批，批② 同步类文案随 #24）、#55。
+
+## §CV·五十八 **#32 方案已出（待裁 —— 未动生产代码）**（2026-10-17）
+
+### 一、读码事实
+
+1. 概览页（`overview_page.dart`，224 行）目前只有「数据在哪 / 备份橙卡 / 导航提示」，**零业务数字**——
+   文件头注释**本来就预留**：「等核心闭环做完，这里才放『今日销售 / 库存告急 / 欠款』这类聚合」⇒ 核心闭环现已收口，正是兑现时点；
+2. `QueryDao` 现有 `partyBalances`（应收/应付）、`stockByProduct`（可数负库存）、`accountBalances`；**缺**「今日」聚合与未签收计数 ⇒ 需新增 2 个小查询；
+3. 概览页 = 启动落地页（桌面左导第一项 + 手机壳首屏，同一页 `mobileShell` 分叉）—— 两端同源；
+4. 手机壳聚合必须走**镜像**（与 stock_page 同源接线，app.dart 已有 `shellQueries = QueryDao(mirror)` 先例）。
+
+### 二、方案甲（推荐 —— 兑现原预留设计）
+
+概览页顶部新增两卡 + 入口行（**空库不显示**，不干扰首次开张引导）：
+
+| 卡 | 内容 | 数据源 |
+|---|---|---|
+| **今日经营** | 今日开单 N 笔 · 销售额 ¥X；小字：退货 Y 笔（−¥Z） | core 新增 `OverviewSummary todaySummary(DateTime dayStart)`（occurred_at ≥ 当日零点，dayStart 由调用方传入 ⇒ 测试可复现、跨日无歧义） |
+| **要留心** | 应收合计 ¥A（欠款 N 家，列 top 1 店名+金额）· 负库存 M 种（红字）· 未签收送货单 K 张 | `partyBalances` / `stockByProduct` 现成 + core 新增 `deliveryInTransitCount()`（1 行 SQL） |
+| **快捷入口** | 单据 / 库存 / 往来 / 账户 四按钮（跳转现有导航） | app_shell 已有的 destination 回调 |
+
+**测试**：core 两查询 test + selfcheck 镜像；根侧 widget 测试（有数字 / 空库不显示 / 入口跳转）+ 手机镜像实例化同源断言。
+预计规模：半天（与 #27 批 1 同量级）。
+
+**方案乙**：只加快捷入口行、无数字（≈1 小时）。
+**方案丙**：并入后续大改版（悬置）。
+
+## §CV·五十九 **#32 落地（裁定甲 + 审查十问全落实）**（2026-10-17，裁定 `docs/reply.md`）
+
+### 一、审查裁定的落实
+
+| # | 裁定 | 落实 |
+|---|---|---|
+| ① 今日口径 | occurred_at · 含赊账 · **sale 与 delivery 分两行**（送货模式用户不再看到 0） | `todaySummary(dayStart)` 分列返回；未签收 K 张缀在送货行 |
+| ② 补录文案 | 标题 =「今日销售（**按单据日期**）」 | ✅（测试钉） |
+| ③ 快捷入口 | **高频动作**（销售开单 / 采购入库 / 送货），查询类不重复导航 | `onNavigate(destinationId)` 回调：桌面切左导 / 手机推整屏（`appShellPage` 加可选参，两壳各接各的导航） |
+| ④ 手机新鲜度 | **诚实口径**：镜像算不出未同步金额 ⇒ 只报条数「仅已同步 · 有 N 条未同步」（`PendingMarks.unconfirmedCount`，pending+sent） | ✅ 手机专属行，桌面不显示 |
+| ⑤ 空库判据 | **documents 为空**（`hasAnyDocument()` 现成） | 整块不显示 |
+| ⑥ 布局 | 桌面三卡横排各 1/3；手机紧凑竖排（padding 14） | `mobileShell` 分叉 |
+| ⑦ 卡片可点 | **不可点**（静态；带筛选跳转超范围） | ✅ |
+| ⑧ 金额格式 | `Money.formatGrouped`（界面千分位） | ✅ |
+| ⑨ top1 欠款 | 显示 + **停用标注「（已停用）」**（OBS-05） | `receivablesSummary()` JOIN parties 带 name/is_active |
+| ⑩ M>5 提示 | 次要 ⇒ **登记后续优化**（M=0 不显示该行已做） | 登记待办 |
+
+### 二、实现
+
+- core：`QueryDao.todaySummary(dayStart)`（OverviewSummary：sale/delivery 分列、cancelled 不算、含赊账）·
+  `deliveryInTransitCount()` · `receivablesSummary()`（ReceivablesSummary：合计/家数/top1 名称+停用态）·
+  `PendingMarks.unconfirmedCount()`；桶导出补 OverviewSummary/ReceivablesSummary。
+- UI：概览页三卡（今日经营 / 要留心 / 要开工？）+ appShellPage 可选 `onNavigate` + 两壳接线；
+  queries 手机壳 = 镜像（shellQueries 同源）。
+- 测试：core `query_test` +7（分列/赊账与取消/**补录边界**/**跨日 dayStart**/未签收 1→0/receivables top1 停用/未同步计数）·
+  根侧 `overview_page_test` 7→**11 全绿**（+4：有单两行+入口跳转 / 空库不显示 / 手机未同步行 / 负库存红字）。
+
+**我侧验证**：core `query_test` **25 全绿** · `selfcheck` **153 ✓** · `selfcheck_sync` **186 ✓** · typecheck **49 入口** ·
+根侧全量 `flutter test` **213 全绿** + `flutter analyze` **0 issues**。
+
+**登记待办**：多时区同步的「今日」口径（个体户单机单时区，暂不考虑）；M>5 负库存的「忘记录期初？」提示。
+
+## §CV·六十 **#23 补丁：业务拒绝码分界（用户复跑抓出的回归）**（2026-10-17）
+
+### 一、回归与根因
+
+用户复跑 core 抓出：`delivery_draft_test`「真错误仍抛：单据不存在」红 —— `markDelivered` 指向不存在的单
+现在抛 `RuleRejected(target_missing)`，测试期望 `StateError`。
+
+**根因**：#23 批次把 `*Service` 的整个 `rejected` 分支一刀切转成 `RuleRejected`，但 `RejectCode` 的协议表
+（`reject_code.dart` 头表）把 **`target_missing` 归「协议违反」（客户端 bug，用户做不了什么）**——
+引擎对它给的 `reason` 恒为 `malformedSyncRequestReason`（「同步请求格式有误」），桌面签收场景给用户看
+这句既误导也不可操作。#23 自己的设计就写明「内部 bug 分支保持 StateError」，落地漏了这层分界。
+
+### 二、修法（补齐 = 完成批次）
+
+- `RuleOutcome.businessRejection` getter（`rule_engine.dart`）：**只有业务码**
+  （`returnExceedsOriginal` / `ruleValidationFailed` —— 协议表「规则拒绝」行的用户能改两类）才返回
+  `RuleRejected`；协议违反 / 内部 bug ⇒ `null`。
+- 6 个 outcome 抛点（sale / purchase / delivery 建+签收 / return / stocktake）改为：
+  `businessRejection != null` 才抛 `RuleRejected`，否则**保持既有 `StateError`**（reason 原样）——
+  协议/内部路径的行为与 #23 落地前**完全一致**（UI 通用 catch →「请再试一次」+ `onStorageFailure` 日志）。
+- `return_service` 原单不存在（裁定④直抛，不经 outcome）不变。
+
+### 三、验证
+
+- core：`rule_rejected_test` **6 全绿**（+1 钉子：`target_missing` 桩 ⇒ `throwsStateError`；业务码桩 ⇒ `RuleRejected`）·
+  `delivery_draft_test` **19 全绿**（用户抓的红复绿）· `return_service_test` 16 · `settlement_service_test` 19 ·
+  `query_test` 25 · `selfcheck` **153 ✓** · typecheck **49 入口**；
+- 根侧全量 `flutter test` **213 全绿** + `flutter analyze` **0 issues**。
+
+**教训**：转类型异常时必须对照 `RejectCode` 的三类表（协议违反 / 落库失败 / 规则拒绝）逐码问
+「用户能不能做点什么」—— 判据不是「引擎拒绝了」而是「用户能改」。

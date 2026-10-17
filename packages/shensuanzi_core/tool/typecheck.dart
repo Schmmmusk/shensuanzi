@@ -34,6 +34,7 @@ import '../test/purchase_draft_test.dart' as purchase_draft_test;
 import '../test/query_test.dart' as query_test;
 // ignore: unused_import
 import '../test/return_service_test.dart' as return_service_test;
+import '../test/rule_rejected_test.dart' as rule_rejected_test;
 // ignore: unused_import
 import '../test/return_test.dart' as return_test;
 // ignore: unused_import
@@ -118,6 +119,7 @@ void main() {
     quantity_conversion_test.main,
     query_test.main,
     return_service_test.main,
+    rule_rejected_test.main,
     return_test.main,
     rule_engine_test.main,
     document_build_test.main,

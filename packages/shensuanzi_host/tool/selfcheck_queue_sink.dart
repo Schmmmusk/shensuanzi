@@ -325,6 +325,83 @@ void main() {
     host.close();
   }
 
+  // ===== #31（2026-10-16 裁定甲·①）：建档带可选「当前库存」 =====
+  //
+  // 与 `test/master_data_sink_test.dart`（payload 形状）和
+  // `test/sync_server_test.dart`（host 落账）镜像 —— 这里把**两端串起来**：
+  // QueueMasterSink 带 opening 入队 ⇒ host 端 **同事务**造 stocktake 落账。
+  {
+    final Db mirror = Db.openInMemory(foreignKeys: false);
+    final Db host = Db.openInMemory(foreignKeys: true);
+    final SyncServer hostServer = SyncServer(host);
+    final QueueMasterSink masterSink = QueueMasterSink(
+      mirror: mirror,
+      queue: SyncQueueDao(mirror),
+      clock: tick,
+    );
+
+    final MasterDataSubmitResult created = masterSink.createProduct(
+      ProductDraft(
+        name: '带期初的商品',
+        unit: '瓶',
+        sellPrice: '2.00',
+        costPrice: '1.20',
+      ),
+      openingQuantity: 36,
+    );
+    check('#31 建档入队（带期初）', created.isQueued && created.product != null);
+    final SyncOperation op =
+        SyncQueueDao(mirror).all().single.toOperation();
+    check('#31 payload 带 opening_quantity（**一条条目**，不是两条）',
+        op.payload['opening_quantity'] == 36);
+
+    final SyncResponse resp = hostServer.handle(op, now: 1700000002010);
+    check('#31 主机 applied', resp.status == SyncStatus.applied,
+        '${resp.reason}');
+    check('#31 主机商品已建档',
+        ProductDao(host).findById(created.product!.id) != null);
+    check(
+      '#31 期初走 stocktake 单（RULE-009：总额 0）',
+      (host.raw.select(
+            "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
+          ).first['c']! as int) ==
+          1,
+    );
+    check(
+      '#31 库存流水 = 期初量（账面 0 ⇒ diff = +36）',
+      (host.raw.select(
+            'SELECT COALESCE(SUM(quantity),0) AS s FROM stock_ledger',
+          ).first['s']! as int) ==
+          36,
+    );
+
+    // 不填 opening ⇒ 纯建档（payload 不带该键，主机零感知）
+    final MasterDataSubmitResult plain = masterSink.createProduct(
+      ProductDraft(name: '没期初的商品', unit: '瓶', sellPrice: '1.00'),
+    );
+    check('#31 不填期初 ⇒ payload 不带该键',
+        plain.isQueued &&
+            !SyncQueueDao(mirror)
+                .all()
+                .last
+                .toOperation()
+                .payload
+                .containsKey('opening_quantity'));
+    final SyncResponse plainResp = hostServer.handle(
+      SyncQueueDao(mirror).all().last.toOperation(),
+      now: 1700000002020,
+    );
+    check('#31 纯建档 applied 且不产生第二张 stocktake',
+        plainResp.status == SyncStatus.applied &&
+            (host.raw.select(
+                  "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
+                ).first['c']! as int) ==
+                1);
+
+    mirror.close();
+    host.close();
+  }
+
   stdout.writeln('\n==============================================');
   if (_failures.isEmpty) {
     stdout.writeln('全部通过：$_passed 项');

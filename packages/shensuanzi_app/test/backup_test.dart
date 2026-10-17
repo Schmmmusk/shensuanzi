@@ -546,7 +546,7 @@ void main() {
       );
     });
 
-    test('备份目录不可写 → failure 说怎么办（遗漏 2）', () async {
+    test('备份目录不可写 → failure 说怎么办（遗漏 2）——探测路径是**手写分类文案**', () async {
       final File blocker = File(p.join(box.path, 'not-a-dir'));
       blocker.writeAsStringSync('占位');
       final BackupService blocked = BackupService(
@@ -558,8 +558,39 @@ void main() {
       final BackupOutcome r = await blocked.backupNow(db: db);
       expect(r.ok, isFalse);
       // ⚠️ 断言「备份文件夹」而不是某一句具体文案：目录不可写有两条路径
-      // （建不出来 / 探针写不进），两条都必须落到同一族「说怎么办」的话上
+      // （建不出来 / 探针写不进），两条都必须落到同一族「说怎么办」的话上。
+      // 这条走的是 `ensureWritableDirectory` 的探测路径 —— 文案本来就是
+      // 手写分类（无异常全文，#54 判据天然满足）。
       expect(r.message, contains('备份文件夹'));
+      expect(r.message, isNot(contains('Exception')), reason: '异常类型名不进用户面');
+    });
+
+    test('#43：落盘阶段异常 ⇒ onFailure 收原始异常、failure = 同一异常的分类文案', () async {
+      // 固定时钟 ⇒ 备份文件名确定（shensuanzi-m-schema1-20260928-1530.db）。
+      // 预先在那个位置放一个**目录** ⇒ renameSync 必然抛文件系统异常
+      // ⇒ 走 #43 新开的 catch 通道（异常原文不再进 failure 消息）。
+      final String targetName = BackupFileName(
+        manual: true,
+        schemaVersion: 1,
+        time: DateTime(2026, 9, 28, 15, 30),
+      ).fileName;
+      Directory(p.join(backupDir, targetName)).createSync(recursive: true);
+
+      final List<Object> logged = <Object>[];
+      final BackupService blocked = BackupService(
+        dataDirectory: dataDir,
+        backupDirectory: backupDir,
+        schemaVersion: 1,
+        now: () => base,
+        onFailure: (Object error, StackTrace stack) => logged.add(error),
+      );
+      final BackupOutcome r = await blocked.backupNow(db: db);
+      expect(r.ok, isFalse);
+      expect(logged, isNotEmpty, reason: '原始异常一个不落全进 onFailure');
+      expect(r.message, localFileFailureAdvice(logged.first),
+          reason: '#43：failure 只带**同一异常**的分类文案');
+      expect(r.message, isNot(contains('Exception')), reason: '异常类型名不进用户面');
+      expect(r.message, isNot(contains(r'$error')), reason: '旧拼接形态必须消失');
     });
   });
 }

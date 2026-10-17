@@ -69,7 +69,17 @@ class _MobileShellState extends State<MobileShell> {
           body: Column(
             children: <Widget>[
               _SyncStatusBar(sync: widget.shell.mobileSync, version: widget.shell),
-              Expanded(child: appShellPage(widget.shell, destination)),
+              Expanded(
+                child: appShellPage(
+                  widget.shell,
+                  destination,
+                  // #32：手机 = 推整屏（与「开单」tab 的入口同一通道）
+                  onNavigate: (String id) {
+                    final NavDestination? d = AppNavigation.byId(id);
+                    if (d != null) _openFull(d);
+                  },
+                ),
+              ),
             ],
           ),
         ),
@@ -162,7 +172,14 @@ class _MobileShellState extends State<MobileShell> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final Widget body = switch (_tabs[_tab].id) {
-      'overview' => appShellPage(widget.shell, AppNavigation.byId('overview')!),
+      'overview' => appShellPage(
+        widget.shell,
+        AppNavigation.byId('overview')!,
+        onNavigate: (String id) {
+          final NavDestination? d = AppNavigation.byId(id);
+          if (d != null) _openFull(d);
+        },
+      ),
       'stock' => appShellPage(widget.shell, AppNavigation.byId('stock')!),
       'parties' => appShellPage(widget.shell, AppNavigation.byId('parties')!),
       'billing' => _billingTab(theme),

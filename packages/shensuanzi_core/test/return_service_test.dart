@@ -211,6 +211,56 @@ void main() {
       );
     });
 
+    test('#23：create 时原单不在了 ⇒ RuleRejected（业务拒绝，不再裸 StateError）', () {
+      final ReturnDraft bogus = ReturnDraft(
+        refDocId: 'no-such-doc',
+        originalDocType: DocType.sale,
+        partyId: customerId,
+        partyName: '客户甲',
+        lines: <ReturnLineDraft>[
+          bottleLine(qty: '3', amount: '62.50'),
+        ],
+      );
+      expect(
+        () => returns.create(bogus),
+        throwsA(
+          isA<RuleRejected>().having(
+            (RuleRejected e) => e.reason,
+            'reason',
+            contains('原单不在了'),
+          ),
+        ),
+        reason: '裁定④改判：用户要知道「原单不在了」才能去确认，'
+            '而不是看到「请再试一次」',
+      );
+    });
+
+    test('#23：规则层拒绝（桩引擎）⇒ RuleRejected 带原样 reason', () {
+      final String refDocId = sell3Boxes();
+      final ReturnService rejecting = ReturnService(
+        engine: _StubRejectEngine(db),
+        queries: queries,
+      );
+      expect(
+        () => rejecting.create(
+          ReturnDraft(
+            refDocId: refDocId,
+            originalDocType: DocType.sale,
+            partyId: customerId,
+            partyName: '客户甲',
+            lines: <ReturnLineDraft>[bottleLine(qty: '1', amount: '20.83')],
+          ),
+        ),
+        throwsA(
+          isA<RuleRejected>().having(
+            (RuleRejected e) => e.reason,
+            'reason',
+            '测试拒绝：请把金额改小',
+          ),
+        ),
+      );
+    });
+
     test('超额报错按**最小单位**缀单位（不能缀录入单位 —— 真机踩过「原量 120 箱」）', () {
       // 箱录单：原量 36 瓶、按箱填。填 4 箱 = 48 瓶 > 36 ⇒ 超额。
       // 数字必须缀「瓶」；36 整除 12 ⇒ 附「= 3 箱」换算。
@@ -520,4 +570,23 @@ void main() {
       );
     });
   });
+}
+
+/// #23 测试桩：引擎恒拒绝 —— 只为钉「服务层把 RuleOutcome.rejected
+/// 转成 RuleRejected」这条转换（文案 + 码原样带出）。
+class _StubRejectEngine extends RuleEngine {
+  _StubRejectEngine(super.db);
+
+  @override
+  RuleOutcome dispatch({
+    required Document document,
+    required int now,
+    List<DocumentLine> lines = const <DocumentLine>[],
+    Map<String, int>? stocktakeActual,
+    List<PaymentEntry> immediatePayments = const <PaymentEntry>[],
+    List<Allocation> allocations = const <Allocation>[],
+  }) => RuleOutcome.rejected(
+    '测试拒绝：请把金额改小',
+    code: RejectCode.ruleValidationFailed,
+  );
 }

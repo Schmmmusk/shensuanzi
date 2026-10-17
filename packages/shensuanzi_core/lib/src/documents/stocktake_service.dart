@@ -26,6 +26,7 @@ import '../dao/document_dao.dart';
 import '../dao/query_dao.dart';
 import '../models/document.dart';
 import '../rules/rule_engine.dart';
+import '../rules/rule_rejection.dart';
 import '../util/ids.dart';
 import 'stocktake_draft.dart';
 
@@ -118,6 +119,11 @@ class StocktakeService {
       now: stamp,
     );
     if (outcome.status != RuleStatus.applied || outcome.document == null) {
+      // #23（裁定④）：**防御性类型化** —— RULE-009 现无可达拒绝，本行
+      // 无测试覆盖（登记在案）；类型化是为了与其它服务一致 + 将来规则
+      // 收紧时 UI 兜底语义自动正确。同 #23 补丁：仅业务拒绝转类型。
+      final RuleRejected? business = outcome.businessRejection;
+      if (business != null) throw business;
       throw StateError(outcome.reason ?? '期初录入被拒绝（${outcome.status.name}）');
     }
 

@@ -109,6 +109,8 @@ export 'src/export.dart'
         exportOutcomeMessage;
 export 'src/export_tables.dart'
     show
+        accountFlowExportTable,
+        stockFlowExportTable,
         documentExportTable,
         partyExportTable,
         partyFlowExportTable,

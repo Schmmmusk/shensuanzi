@@ -11,9 +11,11 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
-    show MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
+    show ExportSink, MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'account_flow_page.dart';
+import 'document_detail_page.dart';
 import 'mobile_guidance_dialog.dart';
 
 /// 账户类型的界面文案（wire 值是英文，界面上必须说人话）
@@ -32,6 +34,10 @@ class AccountsPage extends StatefulWidget {
     required this.service,
     required this.masterDataPolicy,
     this.pendingMarks,
+    this.exports,
+    this.settlements,
+    this.deliveries,
+    this.products,
   });
 
   final AccountService service;
@@ -48,6 +54,15 @@ class AccountsPage extends StatefulWidget {
   /// `AccountService` 建在**镜像**上 —— 写进去永远到不了电脑。
   /// 带默认值 = 忘了传就「手机上账户能建」且**看不出来**（M15 教训）⇒ 宁可编不过。
   final MasterDataPolicy masterDataPolicy;
+
+  /// **#27（2026-10-17 批 1）**：导出服务（`null` = 流水页不显示导出按钮）
+  final ExportSink? exports;
+
+  /// **#27**：流水行跳单据详情所需的服务（照 DocumentsPage 的传法）。
+  /// `settlements` 为 `null` ⇒ 流水行不可点（底部灰字明说）。
+  final SettlementService? settlements;
+  final DeliveryService? deliveries;
+  final ProductService? products;
 
   @override
   State<AccountsPage> createState() => _AccountsPageState();
@@ -119,6 +134,7 @@ class _AccountsPageState extends State<AccountsPage> {
                           account: accounts[i],
                           isPending: pending.contains(accounts[i].id),
                           balanceCents: balances[accounts[i].id] ?? 0,
+                          onOpenFlow: () => _openAccountFlow(context, accounts[i]),
                           onEdit: () => _editAccount(context, existing: accounts[i]),
                           onToggleActive: () => _toggleActive(accounts[i]),
                         ),
@@ -165,6 +181,39 @@ class _AccountsPageState extends State<AccountsPage> {
     widget.service.setActive(account.id, active: !account.isActive);
     if (mounted) setState(() {});
   }
+
+  /// **#27（2026-10-17 批 1）**：打开某账户的流水页（照往来页 `_openFlow` 先例）。
+  ///
+  /// 同构依据（§CV·五十一③）：parties 行 tap = 流水（OBS-05「查得到那笔账」），
+  /// 账户行照此对齐 —— 编辑/停用本就收在行尾「更多操作」菜单里，不抢 tap。
+  Future<void> _openAccountFlow(BuildContext context, Account account) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => AccountFlowPage(
+          account: account,
+          service: widget.service,
+          exports: widget.exports,
+          // 桌面行可点 ⇒ 跳单据详情（settlements 缺省时流水页自己降级为不可点）
+          onOpenDocument: widget.settlements == null
+              ? null
+              : (BuildContext context, String documentId) async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (BuildContext context) => DocumentDetailPage(
+                        documentId: documentId,
+                        settlements: widget.settlements!,
+                        deliveries: widget.deliveries,
+                        products: widget.products,
+                      ),
+                    ),
+                  );
+                  if (mounted) setState(() {}); // 详情里可能核销过，回来刷新余额
+                },
+        ),
+      ),
+    );
+    if (mounted) setState(() {}); // 返回后余额可能已变，防御性刷新
+  }
 }
 
 /// 列表里的一行
@@ -173,6 +222,7 @@ class _AccountRow extends StatelessWidget {
     required this.account,
     required this.isPending,
     required this.balanceCents,
+    required this.onOpenFlow,
     required this.onEdit,
     required this.onToggleActive,
   });
@@ -182,6 +232,9 @@ class _AccountRow extends StatelessWidget {
   /// 主机还没确认（乐观行）⇒ 名下列一行浅灰「待同步」
   final bool isPending;
   final int balanceCents;
+
+  /// **#27**：行 tap = 打开流水（照 parties 行同构；编辑/停用在行尾菜单里）
+  final VoidCallback onOpenFlow;
   final VoidCallback onEdit;
   final VoidCallback onToggleActive;
 
@@ -191,7 +244,9 @@ class _AccountRow extends StatelessWidget {
     return InkWell(
       // ⚠️ 测试用 Key 定位行 —— 账户名文字会与下拉选中项等重复（歧义）
       key: Key('account-row-${account.id}'),
-      onTap: onEdit,
+      // #27（§CV·五十一③）：tap = 流水（与 parties 行同构 —— 「点行查账」）；
+      // 编辑/停用照旧行尾「更多操作」菜单。
+      onTap: onOpenFlow,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(

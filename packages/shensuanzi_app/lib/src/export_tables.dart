@@ -182,3 +182,43 @@ ExportTable partyFlowExportTable({
       ],
   ],
 );
+
+/// 账户流水导出（#27 批 1：某账户的**全部**资金流水；`extra` 带账户名，AF-7）
+///
+/// `金额` 保持 `money_ledger` 原口径：**正 = 进账（余额增加）**，
+/// 负 = 出账 —— 与流水页/帮助页同一句话。
+/// 商品流水导出（#27 批 2：某商品的**全部**出入库；`extra` 带商品名，AF-7）
+///
+/// `数量` = `stock_ledger.quantity` 原口径：**正 = 入库，负 = 出库**（含盘点 diff）。
+/// `成本` = `total_cost`（成本真相；含盘点行 —— 其 total_cost 为 0）。
+ExportTable stockFlowExportTable({
+  required List<StockFlowEntry> flow,
+}) => ExportTable(
+  label: '商品流水',
+  header: const <String>['单号', '单据类型', '数量', '成本', '日期'],
+  rows: <List<String>>[
+    for (final StockFlowEntry entry in flow)
+      <String>[
+        entry.docNo,
+        entry.docType.label,
+        '${entry.quantity}',
+        Money.format(entry.totalCost),
+        formatDateTime(entry.occurredAt),
+      ],
+  ],
+);
+
+ExportTable accountFlowExportTable({required List<MoneyFlowEntry> flow}) =>
+    ExportTable(
+      label: '账户流水',
+      header: const <String>['单号', '单据类型', '金额', '日期'],
+      rows: <List<String>>[
+        for (final MoneyFlowEntry entry in flow)
+          <String>[
+            entry.docNo,
+            entry.docType.label,
+            Money.format(entry.amount),
+            formatDateTime(entry.occurredAt),
+          ],
+      ],
+    );

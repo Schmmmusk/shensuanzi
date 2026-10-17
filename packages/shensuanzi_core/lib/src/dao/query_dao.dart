@@ -87,6 +87,96 @@ class QueryDao {
     'FROM ${Schema.partyLedger} GROUP BY party_id',
   );
 
+  /// **#32（2026-10-17 裁定甲）**：今日经营速览（概览页「今日经营」卡）。
+  ///
+  /// 口径（裁定①，`docs/reply.md` 2026-10-17）：
+  /// - 按 **`occurred_at`（单据日期）** 算「今日」—— 用户补录昨天的单
+  ///   **不进**今日（UI 文案标「按单据日期」，裁定②）；
+  /// - **含赊账** —— 销售额是业务发生额，不是实收款；
+  /// - `sale` 与 `delivery` **分列**（送货模式多的用户不能看到 0 笔）；
+  ///   其它类型（收付款 / 退货 / 盘点）不进这张卡。
+  /// - 已取消（`cancelled`）不算。
+  ///
+  /// 「今日」的零点由**调用方**传入（[dayStart]，本地时间零点）——
+  /// core 不做时间判断（测试传固定值可复现；多时区是登记在案的将来待办）。
+  OverviewSummary todaySummary(DateTime dayStart) {
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT doc_type AS t, COUNT(*) AS c, '
+      'COALESCE(SUM(total_amount), 0) AS amt '
+      'FROM ${Schema.documents} '
+      "WHERE status != '${DocStatus.cancelled.wire}' "
+      '  AND occurred_at >= ? '
+      'GROUP BY doc_type',
+      <Object?>[dayStart.millisecondsSinceEpoch],
+    );
+    int saleCount = 0, saleCents = 0, deliveryCount = 0, deliveryCents = 0;
+    for (final Map<String, Object?> row in rows) {
+      final int count = row['c']! as int;
+      final int cents = row['amt']! as int;
+      // switch 的 case 要常量，`DocType.sale.wire` 不是 const 表达式 ⇒ if/else
+      final String type = row['t']! as String;
+      if (type == DocType.sale.wire) {
+        saleCount = count;
+        saleCents = cents;
+      } else if (type == DocType.delivery.wire) {
+        deliveryCount = count;
+        deliveryCents = cents;
+      }
+    }
+    return OverviewSummary(
+      saleCount: saleCount,
+      saleCents: saleCents,
+      deliveryCount: deliveryCount,
+      deliveryCents: deliveryCents,
+    );
+  }
+
+  /// **#32**：未签收送货单张数（`in_transit`；「送货 M 笔 · ¥Y」行的小注）。
+  int deliveryInTransitCount() =>
+      _raw
+          .select(
+            'SELECT COUNT(*) AS c FROM ${Schema.documents} '
+            "WHERE doc_type = '${DocType.delivery.wire}' "
+            "  AND status = '${DocStatus.inTransit.wire}'",
+          )
+          .first['c']! as int;
+
+  /// **#32**：应收速览（概览页「要留心」卡）—— 正余额 = 对方欠我（应收）。
+  ///
+  /// top1 = 欠得最多的那家（**停用的也显示**，OBS-05「账未结清要能查到」；
+  /// UI 标「（已停用）」）。没有应收 ⇒ 全零 + `topName == null`。
+  ReceivablesSummary receivablesSummary() {
+    final Map<String, int> balances = partyBalances();
+    final List<MapEntry<String, int>> receivables = balances.entries
+        .where((MapEntry<String, int> e) => e.value > 0)
+        .toList()
+      ..sort(
+        (MapEntry<String, int> a, MapEntry<String, int> b) =>
+            b.value.compareTo(a.value),
+      );
+    if (receivables.isEmpty) {
+      return const ReceivablesSummary(
+        totalCents: 0,
+        partyCount: 0,
+        topName: null,
+        topActive: true,
+        topCents: 0,
+      );
+    }
+    final MapEntry<String, int> top = receivables.first;
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT name, is_active FROM ${Schema.parties} WHERE id = ?',
+      <Object?>[top.key],
+    );
+    return ReceivablesSummary(
+      totalCents: receivables.fold(0, (int s, MapEntry<String, int> e) => s + e.value),
+      partyCount: receivables.length,
+      topName: rows.isEmpty ? null : rows.first['name']! as String,
+      topActive: rows.isEmpty || (rows.first['is_active']! as int) == 1,
+      topCents: top.value,
+    );
+  }
+
   /// 是否存在任何单据（§AE 遗漏 1：空库跳过**自动**备份的判定 ——
   /// 刚建好数据目录还没录东西时，不该生成一份份相同的空库备份；
   /// 「手动立即备份」不受此限制，那是用户的主动意图）。
@@ -189,4 +279,44 @@ class QueryDao {
     }
     return result;
   }
+}
+
+/// [QueryDao.todaySummary] 的一行结果（#32：概览页「今日经营」卡）。
+class OverviewSummary {
+  const OverviewSummary({
+    required this.saleCount,
+    required this.saleCents,
+    required this.deliveryCount,
+    required this.deliveryCents,
+  });
+
+  /// 今日**店内销售**（`sale`）笔数 / 金额（分）。含赊账；已取消不算。
+  final int saleCount;
+  final int saleCents;
+
+  /// 今日**送货**（`delivery`）笔数 / 金额（分）。
+  final int deliveryCount;
+  final int deliveryCents;
+}
+
+/// [QueryDao.receivablesSummary] 的结果（#32：概览页「要留心」卡）。
+class ReceivablesSummary {
+  const ReceivablesSummary({
+    required this.totalCents,
+    required this.partyCount,
+    required this.topName,
+    required this.topActive,
+    required this.topCents,
+  });
+
+  /// 应收合计（分）—— 所有正余额之和。
+  final int totalCents;
+
+  /// 欠款方家数（正余额的往来方数）。
+  final int partyCount;
+
+  /// 欠得最多的一家（`null` = 没有应收）。**停用的也在内**（OBS-05）。
+  final String? topName;
+  final bool topActive;
+  final int topCents;
 }

@@ -7,10 +7,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:shensuanzi/src/ui/account_flow_page.dart';
 import 'package:shensuanzi/src/ui/account_page.dart';
+import 'package:shensuanzi/src/ui/document_detail_page.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
+
+import 'support/fake_export.dart';
 
 void main() {
   useLocalSqlite();
@@ -34,7 +38,12 @@ void main() {
     }
   });
 
-  Widget page({MasterDataPolicy? policy, PendingMarks? pendingMarks}) =>
+  Widget page({
+    MasterDataPolicy? policy,
+    PendingMarks? pendingMarks,
+    SettlementService? settlements,
+    ExportSink? exports,
+  }) =>
       MaterialApp(
         home: Scaffold(
           body: AccountsPage(
@@ -42,6 +51,9 @@ void main() {
             // 缺省桌面（账户可建）⇒ 既有用例**零变化**；mobile() 组显式传入
             masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
             pendingMarks: pendingMarks,
+            // #27 批 1：流水页的导出与「跳单据详情」所需服务
+            settlements: settlements,
+            exports: exports,
           ),
         ),
       );
@@ -108,7 +120,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // ⚠️ 不能 tap 文字「现金」—— 列表行 + 对话框下拉选中项都叫这个名（歧义）
-    await tester.tap(find.byKey(Key('account-row-${account.id}')));
+    // #27（§CV·五十一③）：行 tap 改开流水后，编辑走行尾「更多操作」菜单
+    //（与 parties 行同构）
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('编辑'));
     await tester.pumpAndSettle();
 
     // 期初余额显示为**只读文本**，没有可编辑的期初输入框
@@ -193,5 +209,84 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('待同步'), findsNothing);
+  });
+
+  // ===== #27 批 1（2026-10-17）：账户流水页 + 行同构 =====
+
+  testWidgets('#27：点账户行打开流水页（人可读行 + 导出按钮 + 行跳详情）', (
+    WidgetTester tester,
+  ) async {
+    final Account account = service.create(
+      AccountDraft(name: '现金', type: AccountType.cash, initialBalance: '300'),
+      now: 1700000000000,
+    );
+    // 收款单 + 资金流水（规则引擎路径已由 core 测试覆盖，这里直种）
+    db.raw.execute(
+      "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
+      'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+      "VALUES ('d1', 'SK20260101-001', 'receipt', 'confirmed', 3000, 3000, "
+      '1700000100000, 0, 1700000100000, 1700000100000)',
+    );
+    MoneyLedgerDao(db).insert(
+      MoneyLedger(
+        id: newId(),
+        accountId: account.id,
+        documentId: 'd1',
+        amount: 3000,
+        seqNo: 1,
+        occurredAt: 1700000100000,
+        createdAt: 1700000100000,
+      ),
+    );
+
+    await tester.pumpWidget(
+      page(
+        settlements: SettlementService(db: db, engine: RuleEngine(db)),
+        exports: FakeExport(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 行 tap = 流水（裁定③：与 parties 行同构）
+    await tester.tap(find.byKey(Key('account-row-${account.id}')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AccountFlowPage), findsOneWidget);
+    expect(find.text('现金 的流水'), findsOneWidget);
+    expect(find.text('SK20260101-001'), findsOneWidget);
+    expect(find.textContaining('收款'), findsWidgets);
+    expect(find.byKey(const Key('export-account-flow')), findsOneWidget);
+    expect(find.text('点流水行可以打开对应单据。'), findsOneWidget);
+
+    // 流水行 tap ⇒ 跳单据详情（裁定⑤：桌面可跳）
+    await tester.tap(find.byKey(const Key('account-flow-row-d1')));
+    await tester.pumpAndSettle();
+    expect(find.byType(DocumentDetailPage), findsOneWidget);
+  });
+
+  testWidgets('#27：菜单同构不丢 —— 编辑 / 停用仍在行尾「更多操作」里', (
+    WidgetTester tester,
+  ) async {
+    final Account account = service.create(
+      AccountDraft(name: '现金', type: AccountType.cash),
+      now: 1700000000000,
+    );
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 行 tap 现在开的是流水页（不再是编辑）
+    await tester.tap(find.byKey(Key('account-row-${account.id}')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AccountFlowPage), findsOneWidget);
+    // 流水为空 ⇒ 空态文案（不是崩溃）
+    expect(find.text('还没有资金流水。'), findsOneWidget);
+
+    // 回到列表，行尾「更多操作」里编辑 / 停用照旧
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑'), findsOneWidget);
+    expect(find.text('停用'), findsOneWidget);
   });
 }

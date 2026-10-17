@@ -139,6 +139,17 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// **不会往开发者真实的 `%APPDATA%` 里写文件**（`docs/testing.md` §K 的红线）。
   late final AppLog _log = AppLog.besideConfig(_configStore);
 
+  /// **#23（2026-10-17 裁定甲·补强②）**：统一构造带 `onInternalError` 的引擎
+  /// —— 规则层的 `RuleRejection.detail`（诊断细节）经它进宿主日志。
+  /// ⚠️ 此前桌面/手机壳的引擎都没接这个钩子 ⇒ detail 被静默丢弃
+  ///（只有 `HostServiceController` 接过）—— 本批补上，业务拒绝的
+  /// 「为什么被拒」才有排查依据。
+  RuleEngine _newEngine(Db database) => RuleEngine(
+    database,
+    onInternalError: (String label, Object error, StackTrace stack) =>
+        _log.crash(error, stack, label: label),
+  );
+
   /// 壳形态：判断在 app 包（纯 Dart，`dart test` 覆盖），这里只取值分支。
   /// 平台不会中途变，`late final` 一次定死。
   late final ShellKind _shellKind =
@@ -689,9 +700,11 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         acceptForeignDirectory: true,
       );
       _service.createEmptyDatabase(location);
-    } catch (error) {
+    } catch (error, stack) {
+      // #43（2026-10-16）：原始异常只进日志，界面给分类文案（M15 同款两通道）
+      _log.crash(error, stack, label: '新建空账失败');
       if (!mounted) return;
-      setState(() => _dbFailure = '没能新建空账：$error\n请把这句话告诉技术支持。');
+      setState(() => _dbFailure = storageFailureNote(error));
       return;
     }
     await _retry();
@@ -794,6 +807,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         dataDirectory: location.directory,
         backupDirectory: location.backupDirectory,
         schemaVersion: schemaVersion,
+        // #43：备份失败的原始异常进日志（界面只显示分类文案 —— 与
+        // ExportService.onFailure 同款）
+        onFailure: (Object error, StackTrace stack) =>
+            _log.crash(error, stack, label: '备份失败'),
       );
       final ExportService exports = ExportService(
         exportDirectory: location.exportDirectory,
@@ -813,24 +830,24 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         _exports = exports;
         _products = ProductService(db);
         _purchases = PurchaseService(
-          engine: RuleEngine(db),
+          engine: _newEngine(db),
           queries: QueryDao(_db!),
         );
         _sales = SaleService(
-          engine: RuleEngine(db),
+          engine: _newEngine(db),
           queries: QueryDao(_db!),
         );
         _deliveries = DeliveryService(
-          engine: RuleEngine(db),
+          engine: _newEngine(db),
           queries: QueryDao(_db!),
         );
         _accounts = AccountService(AccountDao(db));
         _parties = PartyService(PartyDao(db));
         // ⚠️ State 的实例字段不做类型提升 —— 刚赋值的 `_engine` 仍是 `RuleEngine?`，
         // 必须先落局部变量再传（`_engine!` 也能过，但局部变量让两处共享同一实例更明确）。
-        final RuleEngine engine = RuleEngine(db);
+        final RuleEngine engine = _newEngine(db);
         _engine = engine;
-        _settlements = SettlementService(db: db, engine: RuleEngine(db));
+        _settlements = SettlementService(db: db, engine: _newEngine(db));
         _returns = ReturnService(engine: engine, queries: QueryDao(db));
         // §AH · AH-A：主机同步服务。**只建对象，不启服务** ——
         // 监听端口必须由用户在设置页显式打开（遗漏 5）。
@@ -1076,8 +1093,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 写成方法内闭包会沿作用域链把 State 的 Completer/Notifier 一起拖进
       // isolate 消息 —— 「object is unsendable」，真机炸过（§BK·三·补 2）
       result = await _runMigrationInIsolate(worker, progressSend);
-    } catch (error) {
-      result = DataMigrationResult.failed('$error');
+    } catch (error, stack) {
+      // #43：原始异常进日志；界面给「本地文件」分类文案（迁移 = 文件操作）
+      _log.crash(error, stack, label: '数据迁移失败');
+      result = DataMigrationResult.failed(localFileFailureAdvice(error));
     } finally {
       progressPort.close();
       await sub.cancel();
@@ -1300,8 +1319,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     try {
       if (outDir.existsSync()) outDir.deleteSync(recursive: true);
       outDir.createSync(recursive: true);
-    } catch (error) {
-      return '建不了导出文件夹（$error）—— 请检查手机存储空间';
+    } catch (error, stack) {
+      // #43：原始异常进日志；界面给「本地文件」分类文案（建目录 = 文件操作）
+      _log.crash(error, stack, label: '建导出文件夹失败');
+      return localFileFailureAdvice(error);
     }
 
     final List<XFile> files = <XFile>[];
@@ -1332,8 +1353,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         final File f = File(p.join(outDir.path, name));
         if (f.existsSync()) files.add(XFile(f.path));
       }
-    } catch (error) {
-      return '导出失败（$error）—— 请把这句话告诉技术支持';
+    } catch (error, stack) {
+      // #43：原始异常进日志；界面给「本地文件」分类文案（拷贝/写文件）
+      _log.crash(error, stack, label: '导出失败');
+      return localFileFailureAdvice(error);
     }
 
     final ShareResult result = await SharePlus.instance.share(
@@ -1556,13 +1579,13 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         : null;
     final SaleService? shellSales = mirror == null
         ? _sales
-        : SaleService(engine: RuleEngine(mirror), queries: QueryDao(mirror));
+        : SaleService(engine: _newEngine(mirror), queries: QueryDao(mirror));
     final PurchaseService? shellPurchases = mirror == null
         ? _purchases
-        : PurchaseService(engine: RuleEngine(mirror), queries: QueryDao(mirror));
+        : PurchaseService(engine: _newEngine(mirror), queries: QueryDao(mirror));
     final DeliveryService? shellDeliveries = mirror == null
         ? _deliveries
-        : DeliveryService(engine: RuleEngine(mirror), queries: QueryDao(mirror));
+        : DeliveryService(engine: _newEngine(mirror), queries: QueryDao(mirror));
     final ProductService? shellProducts = mirror == null
         ? _products
         : ProductService(mirror);
@@ -1574,7 +1597,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         : AccountService(AccountDao(mirror));
     final QueryDao? shellQueries = mirror == null ? _queries : QueryDao(mirror);
     // 仅库存页期初入口用；手机上该入口被引导接管（engine 不会被调）
-    final RuleEngine? shellEngine = mirror == null ? _engine : RuleEngine(mirror);
+    final RuleEngine? shellEngine = mirror == null ? _engine : _newEngine(mirror);
     final StockDelta? stockDelta = mirror == null
         ? null
         : StockDelta(db: mirror, queue: SyncQueueDao(mirror));
@@ -1583,6 +1606,11 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     final PendingMarks? pendingMarks = mirror == null
         ? null
         : PendingMarks(SyncQueueDao(mirror));
+    // #27 批 2：商品流水查询 —— 手机壳 = 镜像实例化（与 products/queries
+    // 同源，不存在误用主库）；桌面 = 主库（手机壳不显示成本列）。
+    final StockLedgerDao? shellStockFlow = _shellKind == ShellKind.mobile
+        ? (mirror == null ? null : StockLedgerDao(mirror))
+        : (_db == null ? null : StockLedgerDao(_db!));
 
     // §CV·七 ① 乙（2026-10-09）：**主数据门控 + 提交出口**，与 documentSink 同构。
     //
@@ -1622,6 +1650,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       onStorageFailure: _onStorageFailure,
       stockDelta: stockDelta,
       pendingMarks: pendingMarks,
+      // #27 批 2：商品流水查询（镜像 / 主库按壳取，同上）
+      stockFlow: shellStockFlow,
       // #42 甲 · L4（2026-10-14 裁定）：读路径坏数据的计数。
       // 手机壳读的是**镜像库**、桌面读的是**主库** ⇒ 取 `mirror ?? _db`
       // （提示条只显示「这套壳正在读的那张库」的坏行；两张库不混算）。

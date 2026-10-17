@@ -46,3 +46,27 @@ class RuleRejection implements Exception {
   @override
   String toString() => 'RuleRejection(${code.wire}: $reason)';
 }
+
+/// **#23（2026-10-17 裁定甲）**：服务层把规则引擎的**业务拒绝**转给 UI 的类型。
+///
+/// 与 [RuleRejection] 的关系（裁定设计细节①的落点）：`dispatch` 在捕获
+/// [RuleRejection] 时已把 `detail` 送进 `onInternalError`（宿主日志），
+/// 服务层手里只剩 `RuleOutcome.rejected` 的 `reason` + `code` —— **这正好就是
+/// UI 需要的全部表面**（文案给用户、码给机读），所以本类型持有这两个字段
+/// 而不是整个 `RuleRejection`：detail 不随异常走 UI，是数据流决定的，
+/// 不是遗漏（通道①：内部细节只进日志）。
+///
+/// [SettlementInvalid] 是它的特化（核销路径的既有类型，字段同形）。
+class RuleRejected implements Exception {
+  const RuleRejected(this.reason, {this.code = RejectCode.ruleValidationFailed});
+
+  /// 给用户看的中文，**写「怎么办」**（`ui_principles §五`）—— 来自
+  /// `RuleRejection.reason`，经 `RuleOutcome.rejected` 原样带出。
+  final String reason;
+
+  /// 机读码（同步协议 §8.5 同族；服务层异常不直接进协议，带上以备查）。
+  final RejectCode code;
+
+  @override
+  String toString() => 'RuleRejected(${code.wire}: $reason)';
+}

@@ -283,7 +283,12 @@ class BackupService {
     required this.backupDirectory,
     required this.schemaVersion,
     DateTime Function()? now,
+    this.onFailure,
   }) : _now = now ?? DateTime.now;
+
+  /// **#43（2026-10-16）**：备份失败的**原始异常**出口（与 `ExportService.onFailure`
+  /// 同款）—— 调用方接日志；`BackupOutcome.failure` 只给分类文案。
+  final void Function(Object error, StackTrace stack)? onFailure;
 
   /// 数据目录（`shensuanzi.db` 所在处）
   final String dataDirectory;
@@ -413,11 +418,12 @@ class BackupService {
 
       _applyRetention(dir);
       return BackupOutcome.ok(target);
-    } catch (error) {
+    } catch (error, stack) {
       _cleanupTmp(backupDirectory);
-      return BackupOutcome.failure(
-        '备份失败：$error。请重试；若反复失败，请检查备份文件夹所在磁盘',
-      );
+      // #43：原始异常走 onFailure 进日志（构造点接 `_log`）；界面只给
+      // 「本地文件」分类文案 —— 异常全文不再进用户可见面。
+      onFailure?.call(error, stack);
+      return BackupOutcome.failure(localFileFailureAdvice(error));
     }
   }
 

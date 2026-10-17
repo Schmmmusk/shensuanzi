@@ -48,6 +48,7 @@ class DocumentsPage extends StatefulWidget {
     this.deliveries,
     this.products,
     this.returnService,
+    this.onStorageFailure,
   });
 
   final DocumentDao dao;
@@ -66,6 +67,10 @@ class DocumentsPage extends StatefulWidget {
 
   /// 退货服务（详情页的 **[退货]** / **[客户拒收]** 入口；§BI R2）
   final ReturnService? returnService;
+
+  /// **#43（2026-10-16）**：详情链路保存失败的原始异常出口（透传给
+  /// 详情页 / 退货页 / 记账对话框 —— M15 两通道）。
+  final void Function(Object error, StackTrace stack)? onStorageFailure;
 
   @override
   State<DocumentsPage> createState() => _DocumentsPageState();
@@ -176,6 +181,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
           deliveries: widget.deliveries,
           products: widget.products,
           returnService: widget.returnService,
+          onStorageFailure: widget.onStorageFailure,
         ),
       ),
     );

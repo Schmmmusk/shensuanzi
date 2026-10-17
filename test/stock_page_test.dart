@@ -10,6 +10,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:shensuanzi/src/ui/document_detail_page.dart';
+import 'package:shensuanzi/src/ui/stock_flow_page.dart';
 import 'package:shensuanzi/src/ui/stock_page.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -130,17 +132,33 @@ void main() {
     );
   }
 
-  Widget page({ExportSink? exports, StockDelta? stockDelta}) => MaterialApp(
-    home: Scaffold(
-      body: StockPage(
-        engine: RuleEngine(db),
-        products: products,
-        queries: queries,
-        exports: exports,
-        stockDelta: stockDelta,
-      ),
-    ),
-  );
+  Widget page({
+    ExportSink? exports,
+    StockDelta? stockDelta,
+    StockLedgerDao? stockFlow,
+    SettlementService? settlements,
+    MasterDataSink? masterDataSink,
+    bool canCreateProducts = false,
+    bool mobileShell = false,
+  }) =>
+      MaterialApp(
+        home: Scaffold(
+          body: StockPage(
+            engine: RuleEngine(db),
+            products: products,
+            queries: queries,
+            exports: exports,
+            stockDelta: stockDelta,
+            // #27 批 2：商品流水 + 新建商品补充入口（手机壳 = 镜像实例化，
+            // 测试里主库/镜像同库模拟「同源接线」）
+            stockFlow: stockFlow,
+            settlements: settlements,
+            masterDataSink: masterDataSink,
+            canCreateProducts: canCreateProducts,
+            mobileShell: mobileShell,
+          ),
+        ),
+      );
 
   /// 一条「卖出 [quantity] 件」的入队条目（payload = createDocument wire 形状）
   void enqueueSale(String id, String productId, int quantity) {
@@ -383,5 +401,185 @@ void main() {
       isTrue,
       reason: '含停用的行要能一眼看出来',
     );
+  });
+
+  // ===== #27 批 2（2026-10-17 裁定）：商品流水页 + 行入口 + 新建商品补充入口 =====
+
+  testWidgets('#27：桌面点商品行打开流水页（±数量 + 成本列 + 行跳详情 + 导出）', (
+    WidgetTester tester,
+  ) async {
+    buy(10);
+    sell(3);
+    await tester.pumpWidget(
+      page(
+        stockFlow: StockLedgerDao(db), // 桌面 = 主库实例化
+        settlements: SettlementService(db: db, engine: RuleEngine(db)),
+        exports: FakeExport(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 行 tap = 打开本商品的流水页
+    await tester.tap(find.text('红富士苹果'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(StockFlowPage), findsOneWidget);
+    expect(find.text('红富士苹果 的流水'), findsOneWidget);
+    expect(find.text('10'), findsOneWidget, reason: '入库 = 正');
+    expect(find.text('-3'), findsOneWidget, reason: '出库 = 负');
+    expect(find.text('¥35.00'), findsOneWidget, reason: '桌面显示成本（10 × 3.50）');
+    expect(find.byKey(const Key('export-stock-flow')), findsOneWidget);
+
+    // 流水行 tap ⇒ 跳单据详情
+    final String docId = StockLedgerDao(db)
+        .ofProductReadable(productId)
+        .first
+        .documentId;
+    await tester.tap(find.byKey(Key('stock-flow-row-$docId')));
+    await tester.pumpAndSettle();
+    expect(find.byType(DocumentDetailPage), findsOneWidget);
+  });
+
+  testWidgets('#27：手机壳流水页 —— 镜像可读（非空）、无成本列、行不可点', (
+    WidgetTester tester,
+  ) async {
+    buy(6);
+    await tester.pumpWidget(
+      page(
+        mobileShell: true,
+        // 手机壳 = 镜像实例化（测试同库模拟同源接线）—— 裁定②的「非空」断言：
+        // 打开即至少一条流水，防「误接主库查不到数据」的坑
+        stockFlow: StockLedgerDao(db),
+        masterDataSink: QueueMasterSink(mirror: db, queue: SyncQueueDao(db)),
+        canCreateProducts: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('红富士苹果'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(StockFlowPage), findsOneWidget);
+    expect(find.text('6'), findsOneWidget, reason: '「至少能读到一条」—— 裁定②的点');
+    expect(find.textContaining('成本只在电脑上显示'), findsOneWidget);
+    expect(find.textContaining('每件'), findsNothing, reason: '手机不显示成本');
+    // 行不可点：点了仍在流水页（无详情页可跳）
+    final String docId = StockLedgerDao(db)
+        .ofProductReadable(productId)
+        .first
+        .documentId;
+    await tester.tap(find.byKey(Key('stock-flow-row-$docId')));
+    await tester.pumpAndSettle();
+    expect(find.byType(StockFlowPage), findsOneWidget);
+    expect(find.byType(DocumentDetailPage), findsNothing);
+  });
+
+  testWidgets('#27：新建商品补充入口 —— 手机壳在场、桌面缺省不在', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      page(
+        mobileShell: true,
+        masterDataSink: QueueMasterSink(mirror: db, queue: SyncQueueDao(db)),
+        canCreateProducts: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stock-create-product')), findsOneWidget);
+
+    // 桌面缺省（无 sink / 非手机壳）⇒ 不在场（桌面建档在「商品」页）
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stock-create-product')), findsNothing);
+  });
+
+  // ===== #31（2026-10-16 裁定②）：「期初 N 件待同步」提示 =====
+  //
+  // 手机建档带期初 = 一条 createMasterData 条目（payload 带 opening_quantity），
+  // stocktake 的 delta 客户端算不出 ⇒ 数字上不出现 —— 用提示行补。
+  testWidgets('#31：待同步期初 ⇒ 行显示「期初 N（单位）待同步」，零流水也可见', (
+    WidgetTester tester,
+  ) async {
+    // 手机形态：页面读**镜像**，PendingMarks 也挂在镜像队列上
+    final Db mirror = Db.openInMemory(foreignKeys: false);
+    addTearDown(mirror.close);
+    final ProductService mirrorProducts = ProductService(mirror);
+    final QueryDao mirrorQueries = QueryDao(mirror);
+
+    int tick = 1700000000000;
+    final QueueMasterSink sink = QueueMasterSink(
+      mirror: mirror,
+      queue: SyncQueueDao(mirror),
+      clock: () => ++tick, // 单调（§CV·十六 的 UUIDv7 教训）
+    );
+    // 真实通路：建档 + 期初（一条条目）
+    sink.createProduct(
+      const ProductDraft(name: '新建档商品', unit: '瓶', sellPrice: '2.00'),
+      openingQuantity: 10,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StockPage(
+            engine: RuleEngine(mirror),
+            products: mirrorProducts,
+            queries: mirrorQueries,
+            mobileShell: true,
+            pendingMarks: PendingMarks(SyncQueueDao(mirror)),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('期初 10（瓶）待同步'),
+      findsOneWidget,
+      reason: '裁定②：技术诚实（delta=0）之外要 UI 补偿',
+    );
+  });
+
+  testWidgets('#31：期初同步确认后（条目转 sent 且被确认清除）提示消失', (
+    WidgetTester tester,
+  ) async {
+    final Db mirror = Db.openInMemory(foreignKeys: false);
+    addTearDown(mirror.close);
+    final ProductService mirrorProducts = ProductService(mirror);
+    final QueryDao mirrorQueries = QueryDao(mirror);
+
+    int tick = 1700000002000;
+    final QueueMasterSink sink = QueueMasterSink(
+      mirror: mirror,
+      queue: SyncQueueDao(mirror),
+      clock: () => ++tick,
+    );
+    sink.createProduct(
+      const ProductDraft(name: '已同步商品', unit: '瓶', sellPrice: '2.00'),
+      openingQuantity: 6,
+    );
+    final SyncQueueDao queue = SyncQueueDao(mirror);
+    // 主机收下 + pull 确认（条目删除 ⇒ 提示随之消失）
+    for (final SyncQueueEntry entry in queue.all()) {
+      queue.markSent(entry.id);
+      queue.clearConfirmed(<String>{entry.entityId});
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StockPage(
+            engine: RuleEngine(mirror),
+            products: mirrorProducts,
+            queries: mirrorQueries,
+            mobileShell: true,
+            pendingMarks: PendingMarks(queue),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('期初'), findsNothing);
   });
 }

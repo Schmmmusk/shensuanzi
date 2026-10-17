@@ -36,6 +36,7 @@ class OpeningStockPage extends StatefulWidget {
     required this.isFirstTime,
     required this.bookQuantities,
     required this.onDone,
+    this.onStorageFailure,
   });
 
   final StocktakeService service;
@@ -54,6 +55,10 @@ class OpeningStockPage extends StatefulWidget {
 
   /// 完成（提交成功 / 用户放弃）→ 宿主关闭本页并刷新数字
   final VoidCallback onDone;
+
+  /// **#43（2026-10-16）**：保存失败的**原始异常**出口（M15 同款两通道：
+  /// 界面只给 `storageFailureNote` 的分类文案，异常全文进宿主日志）。
+  final void Function(Object error, StackTrace stack)? onStorageFailure;
 
   @override
   State<OpeningStockPage> createState() => _OpeningStockPageState();
@@ -239,11 +244,20 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
             '改好后重新点「记入库存」试试。';
       });
       return;
-    } catch (error) {
+    } on RuleRejected catch (error) {
+      // #23（裁定甲）：期初的业务拒绝（现无可达拒绝 —— 防御性分支，
+      // 与 stocktake 服务的类型化配套）。文案照实显示，表单保留。
       setState(() {
         _busy = false;
-        _topError = '保存失败（$error）。\n你填的内容都还在，'
-            '改好后重新点「记入库存」试试。';
+        _topError = error.reason;
+      });
+      return;
+    } catch (error, stack) {
+      // #43：原始异常进日志，界面只给分类文案（M15 两通道）
+      widget.onStorageFailure?.call(error, stack);
+      setState(() {
+        _busy = false;
+        _topError = storageFailureNote(error);
       });
       return;
     }

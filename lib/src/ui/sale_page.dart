@@ -533,6 +533,15 @@ class _SalePageState extends State<SalePage> {
         return;
       }
       _afterSaved(result);
+    } on RuleRejected catch (error) {
+      // #23（2026-10-17 裁定甲）：**业务拒绝** —— 规则层的文案已写「怎么办」，
+      // 照实显示（此前的「请再试一次」对它必然重试再败）。不调
+      // onStorageFailure：这不是内部错误（detail 已由引擎经 onInternalError
+      // 进宿主日志）。草稿保留，改完能直接再交。
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.reason), duration: const Duration(seconds: 8)),
+      );
     } catch (error, stack) {
       setState(() => _saving = false);
       // M15（2026-10-08）：界面只给**分类文案**，原始异常交给宿主记日志 ——
@@ -702,6 +711,7 @@ class _SalePageState extends State<SalePage> {
         // 商品：手机 v1 = 可建（走 sink 乐观写 + 入队）
         canCreate: widget.masterDataPolicy.canCreateProducts,
         sink: widget.masterDataSink,
+        allowOpeningStock: widget.mobileShell,
       ),
     );
   }
@@ -1712,6 +1722,8 @@ class _ProductPickerSheet extends StatefulWidget {
     required this.recentProducts,
     required this.sink,
     this.canCreate = false,
+    // #31：手机壳才显示「当前库存」框（桌面期初有独立入口）
+    this.allowOpeningStock = false,
   });
 
   final ProductService service;
@@ -1725,6 +1737,10 @@ class _ProductPickerSheet extends StatefulWidget {
 
   /// 建档 / 编辑的**提交出口**（桌面落库 / 手机乐观写 + 入队）。
   final MasterDataSink sink;
+
+  /// **#31（2026-10-16 裁定甲）**：`true` =「新建商品」对话框显示可选的
+  /// 「当前库存」框（手机壳）。桌面期初有独立入口 ⇒ 恒 false。
+  final bool allowOpeningStock;
 
   @override
   State<_ProductPickerSheet> createState() => _ProductPickerSheetState();
@@ -1761,6 +1777,8 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
       context,
       service: widget.service,
       sink: widget.sink,
+      // #31：手机建档带可选期初（堵「不能填库存 ⇒ 超卖」，A1 验收发现）
+      allowOpeningStock: widget.allowOpeningStock,
     );
     if (created == null || !mounted) return;
     Navigator.of(context).pop(created);

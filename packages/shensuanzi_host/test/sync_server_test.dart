@@ -389,10 +389,13 @@ void main() {
       // ⚠️ 断**精确子串**：`doc_type` 也出现在 detail 的「必填 id / doc_type / …」提示里，
       // 只断 `contains('doc_type')` 会在 `$error` 丢失时**照样绿**（空心断言，
       // 判据见 `docs/testing.md`）。
+      // #42 补正（2026-10-16）：#42 把缺列异常改成 `RowDecodeException`（旧文案
+      // 「缺少必填列 doc_type」消失），这对镜像当时漏改 ⇒ 按裁定「漏改一侧 ⇒
+      // 补齐 = 完成批次」补上；新子串只可能由被测路径给出（非空心）。
       // tool 侧镜像是 `tool/selfcheck_sync.dart:390`（**不是** `selfcheck_host` ——
       // 那个是「明细漏 id」= `lines` 路径）。
       expect(
-        internalErrors.any((String e) => e.contains('缺少必填列 `doc_type`')),
+        internalErrors.any((String e) => e.contains('RowDecodeException(doc_type: 缺少这一列)')),
         isTrue,
         reason: '缺了哪个列只进日志，且必须点到具体列名',
       );
@@ -1733,6 +1736,128 @@ void main() {
 
       expect(json.containsKey('documents'), isTrue);
       expect(json.containsKey('next_cursors'), isTrue);
+    });
+  });
+
+  // ===== #31（2026-10-16 裁定甲·①）：建档带可选「当前库存」（opening_quantity）=====
+  //
+  // 语义：products 建档 + opening_quantity ⇒ **同一事务**内造 stocktake 文档
+  // 落账（与桌面期初同一条 RULE-009 / surplusCost 通路）。原子：
+  // 期初失败 ⇒ 建档也回滚（裁定①「要么都成、要么都不做」）。
+  group('#31 建档期初（opening_quantity）', () {
+    Map<String, Object?> payload(Map<String, Object?> extra) => <String, Object?>{
+      'code': 'P900',
+      'name': '带期初的商品',
+      'cost_price': 0,
+      ...extra,
+    };
+
+    test('opening_quantity ⇒ applied + 商品存在 + stocktake 单落账', () {
+      final String id = newId();
+      final SyncResponse response = server.handle(
+        opMaster('products', id, SyncOpType.createMasterData,
+            payload: payload(<String, Object?>{'opening_quantity': 36})),
+        now: now(),
+      );
+      expect(response.status, SyncStatus.applied, reason: response.reason);
+
+      // 商品已建档
+      expect(
+        db.raw.select('SELECT COUNT(*) AS c FROM products WHERE id = ?',
+            <Object?>[id]).first['c'],
+        1,
+      );
+      // 期初 = 一张 stocktake 文档（桌面期初同一条 RULE-009 通路）
+      final Map<String, Object?> doc = db.raw
+          .select("SELECT * FROM documents WHERE doc_type = 'stocktake'")
+          .single;
+      expect(doc['ref_doc_id'] ?? doc['remark'], isNotNull);
+      expect(doc['total_amount'], 0, reason: 'RULE-009：盘点/期初总额必须为 0');
+      // 库存流水：实际数量 36（账面 0 ⇒ diff = +36）
+      expect(
+        db.raw
+            .select('SELECT COALESCE(SUM(quantity),0) AS s FROM stock_ledger '
+                'WHERE product_id = ?', <Object?>[id])
+            .first['s'],
+        36,
+      );
+    });
+
+    test('不带 opening_quantity ⇒ 纯建档（无 stocktake 单）', () {
+      final String id = newId();
+      final SyncResponse response = server.handle(
+        opMaster('products', id, SyncOpType.createMasterData,
+            payload: payload(const <String, Object?>{})),
+        now: now(),
+      );
+      expect(response.status, SyncStatus.applied);
+      expect(
+        db.raw.select(
+            "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'").first['c'],
+        0,
+      );
+    });
+
+    test('opening_quantity 出现在其它表 ⇒ malformed（客户端 bug 不重试）', () {
+      final String id = newId();
+      final SyncResponse response = server.handle(
+        opMaster('parties', id, SyncOpType.createMasterData, payload: {
+          'name': '某客户',
+          'opening_quantity': 5,
+        }),
+        now: now(),
+      );
+      // malformed = rejected + 专用码（协议违反 ⇒ 通用中文，客户端不重试）
+      expect(response.status, SyncStatus.rejected, reason: response.reason);
+      expect(response.reasonCode, RejectCode.malformedParameter);
+      expect(
+        db.raw.select('SELECT COUNT(*) AS c FROM parties').first['c'],
+        0,
+        reason: 'malformed = 协议违反 ⇒ 什么都没落',
+      );
+    });
+
+    test('opening_quantity 类型/取值不符 ⇒ malformed', () {
+      for (final Object? bad in <Object?>['36', 0, -3, 1.5]) {
+        final SyncResponse response = server.handle(
+          opMaster('products', newId(), SyncOpType.createMasterData,
+              payload: payload(<String, Object?>{'opening_quantity': bad})),
+          now: now(),
+        );
+        expect(response.status, SyncStatus.rejected,
+            reason: 'opening_quantity = $bad 应被拒');
+        expect(response.reasonCode, RejectCode.malformedParameter);
+      }
+      expect(
+        db.raw.select('SELECT COUNT(*) AS c FROM products').first['c'],
+        0,
+      );
+    });
+
+    test('已存在 + opening_quantity ⇒ malformed（期初只在建档路径处理）', () {
+      final String id = newId();
+      expect(
+        server
+            .handle(
+              opMaster('products', id, SyncOpType.createMasterData,
+                  payload: payload(const <String, Object?>{})),
+              now: now(),
+            )
+            .status,
+        SyncStatus.applied,
+      );
+      final SyncResponse again = server.handle(
+        opMaster('products', id, SyncOpType.createMasterData,
+            payload: payload(<String, Object?>{'opening_quantity': 10})),
+        now: now(),
+      );
+      expect(again.status, SyncStatus.rejected, reason: again.reason);
+      expect(again.reasonCode, RejectCode.malformedParameter);
+      // 商品未被第二次操作改动（行数不变）
+      expect(
+        db.raw.select('SELECT COUNT(*) AS c FROM products').first['c'],
+        1,
+      );
     });
   });
 }

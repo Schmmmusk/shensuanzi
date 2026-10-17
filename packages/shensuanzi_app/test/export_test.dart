@@ -482,4 +482,101 @@ void main() {
       );
     });
   });
+
+  // ===== #27 批 1（2026-10-17）：第 6 张导出表「账户流水」 =====
+  group('#27 账户流水导出表', () {
+    ExportTable table() => accountFlowExportTable(
+      flow: <MoneyFlowEntry>[
+        MoneyFlowEntry(
+          seqNo: 1,
+          documentId: 'd1',
+          docNo: 'SK20260101-001',
+          docType: DocType.receipt,
+          amount: 123456,
+          occurredAt: 1700000100000,
+          timeEstimated: false,
+        ),
+        MoneyFlowEntry(
+          seqNo: 2,
+          documentId: 'd2',
+          docNo: 'FK20260102-001',
+          docType: DocType.payment,
+          amount: -50000,
+          occurredAt: 1700100100000,
+          timeEstimated: true,
+        ),
+      ],
+    );
+
+    test('表头 / 行 / 金额不带千分位（AF-9 + 2026-09-28 裁定）', () {
+      final ExportTable t = table();
+      expect(t.label, '账户流水');
+      expect(t.header, <String>['单号', '单据类型', '金额', '日期']);
+      expect(t.rows, hasLength(2));
+      expect(t.rows.first, <String>[
+        'SK20260101-001',
+        '收款',
+        '1234.56',
+        formatDateTime(1700000100000),
+      ]);
+      expect(t.rows.last, <String>[
+        'FK20260102-001',
+        '付款',
+        '-500.00',
+        formatDateTime(1700100100000),
+      ]);
+      expectNoGroupedAmounts(t);
+    });
+
+    test('空流水 ⇒ 零行（空结果不生成文件的口径在 Sink 侧）', () {
+      expect(accountFlowExportTable(flow: <MoneyFlowEntry>[]).rows, isEmpty);
+    });
+  });
+
+  // ===== #27 批 2（2026-10-17）：第 7 张导出表「商品流水」 =====
+  group('#27 商品流水导出表', () {
+    ExportTable table() => stockFlowExportTable(
+      flow: <StockFlowEntry>[
+        StockFlowEntry(
+          seqNo: 1,
+          documentId: 'd1',
+          docNo: 'CG20260101-001',
+          docType: DocType.purchase,
+          quantity: 10,
+          unitCost: 100,
+          totalCost: 1000,
+          occurredAt: 1700000100000,
+          timeEstimated: false,
+        ),
+        StockFlowEntry(
+          seqNo: 2,
+          documentId: 'd2',
+          docNo: 'XS20260102-001',
+          docType: DocType.sale,
+          quantity: -3,
+          unitCost: 100,
+          totalCost: -300,
+          occurredAt: 1700100100000,
+          timeEstimated: false,
+        ),
+      ],
+    );
+
+    test('表头 / 行（数量带符号、成本原值）/ 金额不带千分位', () {
+      final ExportTable t = table();
+      expect(t.label, '商品流水');
+      expect(t.header, <String>['单号', '单据类型', '数量', '成本', '日期']);
+      expect(t.rows, hasLength(2));
+      expect(t.rows.first, <String>[
+        'CG20260101-001',
+        '采购入库',
+        '10',
+        '10.00',
+        formatDateTime(1700000100000),
+      ]);
+      expect(t.rows.last[2], '-3', reason: '数量原样带符号（正入负出）');
+      expect(t.rows.last[3], '-3.00', reason: '成本随数量同号（流出记负）');
+      expectNoGroupedAmounts(t);
+    });
+  });
 }

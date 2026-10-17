@@ -26,6 +26,7 @@ import '../models/document_line.dart';
 import '../models/product.dart';
 import '../rules/payment_entry.dart';
 import '../rules/rule_engine.dart';
+import '../rules/rule_rejection.dart';
 import '../util/ids.dart';
 import 'return_draft.dart';
 
@@ -226,7 +227,13 @@ class ReturnService {
     final DocumentDao documents = DocumentDao(_queries.db);
     final Document? original = documents.findById(draft.refDocId);
     if (original == null) {
-      throw StateError('原单不存在：${draft.refDocId}');
+      // #23（裁定④改判）：这不是内部 bug —— 手工改库 / 旧备份 / 多设备并发
+      // 都可能让表单指向的单不在了，**用户需要知道原因**才能去确认。归入
+      // 业务拒绝（refDocId 只进日志语义没有 —— 它本就在用户的表单上下文里）。
+      throw const RuleRejected(
+        '要退货的那张原单不在了。请回到单据列表确认这张单的状态，'
+        '再重新发起退货；如果反复出现，请联系技术支持。',
+      );
     }
     // 以**库里的原单**为准定退货类型（不信任表单带来的上下文）
     final DocType returnType = returnTypeFor(original.docType);
@@ -282,6 +289,11 @@ class ReturnService {
 
     final Document? applied = outcome.document;
     if (outcome.status != RuleStatus.applied || applied == null) {
+      // #23 补丁：只有**业务拒绝**（用户能改）才带类型抛出；协议违反 /
+      // 内部 bug（target_missing / rule_internal_error 等）保持既有
+      // StateError 真错误语义（UI「请再试一次」+ 日志，M15）。
+      final RuleRejected? business = outcome.businessRejection;
+      if (business != null) throw business;
       throw StateError(outcome.reason ?? '退货单被拒绝（${outcome.status.name}）');
     }
 

@@ -503,7 +503,7 @@ Future<void> main() async {
         '${badReceipt['reason_code']}｜${badReceipt['reason']}');
     // 「原因点到列名」这条要求没被削弱 —— 改由日志承担（回执不再回显）。
     check('漏列 ⇒ 细节（列名）进主机日志',
-        internalErrors.any((String e) => e.contains('缺少必填列 `id`')),
+        internalErrors.any((String e) => e.contains('RowDecodeException(id: 缺少这一列)')),
         internalErrors.join(' | '));
     check('被拒的单据不落库', DocumentDao(db).findById(badDoc) == null);
 

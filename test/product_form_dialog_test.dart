@@ -181,4 +181,134 @@ void main() {
     expect(saved.unit, '瓶');
     expect(saved.packageNote, '1 箱 = 48 瓶');
   });
+
+  // ===== #31（2026-10-16 裁定甲）：手机建档带可选「当前库存」 =====
+
+  Widget mobileHost(_CapturingSink sink, {Product? existing}) => MaterialApp(
+    home: Scaffold(
+      body: Builder(
+        builder: (BuildContext context) => Center(
+          child: FilledButton(
+            onPressed: () => showProductFormDialog(
+              context,
+              service: service,
+              sink: sink,
+              existing: existing,
+              allowOpeningStock: true,
+            ),
+            child: const Text('打开表单'),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  testWidgets('#31：手机新建显示可选「当前库存」框', (WidgetTester tester) async {
+    final _CapturingSink sink = _CapturingSink(service);
+    await tester.pumpWidget(mobileHost(sink));
+    await tester.tap(find.text('打开表单'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('product-opening-stock')), findsOneWidget);
+  });
+
+  testWidgets('#31：桌面（allowOpeningStock 缺省）不显示该框', (
+    WidgetTester tester,
+  ) async {
+    await openForm(tester);
+    expect(find.byKey(const Key('product-opening-stock')), findsNothing);
+  });
+
+  testWidgets('#31：编辑模式不显示该框（裁定③：编辑改库存本批不做）', (
+    WidgetTester tester,
+  ) async {
+    final Product existing = service.create(
+      const ProductDraft(name: '已有商品', unit: '瓶', sellPrice: '2.00'),
+    );
+    final _CapturingSink sink = _CapturingSink(service);
+    await tester.pumpWidget(mobileHost(sink, existing: existing));
+    await tester.tap(find.text('打开表单'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('product-opening-stock')), findsNothing);
+  });
+
+  testWidgets('#31 端到端：填 10 ⇒ openingQuantity=10 传给 sink；空着 ⇒ null', (
+    WidgetTester tester,
+  ) async {
+    final _CapturingSink sink = _CapturingSink(service);
+    await tester.pumpWidget(mobileHost(sink));
+    await tester.tap(find.text('打开表单'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(field(label: '商品名称'), '带期初的商品');
+    await tester.enterText(unitField, '瓶');
+    await tester.enterText(field(label: '售价'), '2.00');
+    await tester.enterText(find.byKey(const Key('product-opening-stock')), '10');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(sink.opening, 10, reason: '表单值原样进 sink（最小单位）');
+    expect(service.list().single.name, '带期初的商品');
+
+    // 空着 = 纯建档
+    final _CapturingSink sink2 = _CapturingSink(service);
+    await tester.pumpWidget(mobileHost(sink2));
+    await tester.tap(find.text('打开表单'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field(label: '商品名称'), '没期初的商品');
+    await tester.enterText(unitField, '瓶');
+    await tester.enterText(field(label: '售价'), '2.00');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(sink2.opening, isNull);
+  });
+
+  testWidgets('#31：非整数 ⇒ 内联错误、不保存', (WidgetTester tester) async {
+    final _CapturingSink sink = _CapturingSink(service);
+    await tester.pumpWidget(mobileHost(sink));
+    await tester.tap(find.text('打开表单'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(field(label: '商品名称'), '某商品');
+    await tester.enterText(unitField, '瓶');
+    await tester.enterText(field(label: '售价'), '2.00');
+    await tester.enterText(find.byKey(const Key('product-opening-stock')), 'abc');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('当前库存要是整数（可以是 0）'), findsOneWidget);
+    expect(sink.opening, isNull, reason: '没走到 sink');
+    expect(find.text('保存'), findsOneWidget, reason: '表单还开着（草稿保留）');
+  });
+}
+
+/// #31 夹具（见 main 内说明）。
+
+/// #31 夹具：捕获 `openingQuantity`，其余 = 主机落库。
+class _CapturingSink implements MasterDataSink {
+  _CapturingSink(this.service);
+
+  final ProductService service;
+  int? opening;
+
+  @override
+  MasterDataSubmitResult createProduct(
+    ProductDraft draft, {
+    int? now,
+    int? openingQuantity,
+  }) {
+    opening = openingQuantity;
+    return MasterDataSubmitResult.saved(service.create(draft, now: now));
+  }
+
+  @override
+  MasterDataSubmitResult updateProduct(String id, ProductDraft draft, {int? now}) =>
+      MasterDataSubmitResult.saved(service.update(id, draft, now: now));
+
+  @override
+  MasterDataSubmitResult setProductActive(String id, bool active, {int? now}) {
+    service.setActive(id, active, now: now);
+    return MasterDataSubmitResult.saved(service.byId(id)!);
+  }
 }

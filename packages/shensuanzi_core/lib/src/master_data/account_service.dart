@@ -9,6 +9,7 @@
 library;
 
 import '../dao/account_dao.dart';
+import '../dao/ledger_dao.dart';
 import '../dao/query_dao.dart';
 import '../models/account.dart';
 import '../util/ids.dart';
@@ -32,6 +33,11 @@ class AccountService {
   AccountService(this._dao);
 
   final AccountDao _dao;
+
+  /// **#27（2026-10-17 裁定批 1）**：某账户的人可读资金流水（照
+  /// `PartyService.flowsOf` 先例 —— DAO 在 core，服务给 UI 一个门面）。
+  List<MoneyFlowEntry> flowsOf(String accountId) =>
+      MoneyLedgerDao(_dao.db).ofAccountReadable(accountId);
 
   /// 新建账户。
   ///

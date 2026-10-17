@@ -394,8 +394,10 @@ void main() {
     check('缺必填列 → rejected', missingColumn.status == SyncStatus.rejected);
     // ⚠️ 断**精确子串**（§CV·十九）：`doc_type` 也出现在 detail 的「必填 id / doc_type / …」
     // 提示里 ⇒ 只断 `contains('doc_type')` 会在 `$error` 丢失时照样绿（空心断言）。
+    // #42 补正（2026-10-16）：#42 把缺列异常改成 `RowDecodeException`，本镜像与
+    // `sync_server_test` 同批漏改 ⇒ 补齐（新子串只可能由被测路径给出）。
     check('列名 doc_type 只进日志（不再进 reason）',
-        internalErrors.any((String e) => e.contains('缺少必填列 `doc_type`')),
+        internalErrors.any((String e) => e.contains('RowDecodeException(doc_type: 缺少这一列)')),
         internalErrors.join(' | '));
 
     final SyncResponse wrongEntity = server.handle(
@@ -489,6 +491,95 @@ void main() {
     check('target 是 documents ⇒ not_writable_table',
         toDocuments.reasonCode == RejectCode.notWritableTable,
         '${toDocuments.reasonCode}｜${toDocuments.reason}');
+    db.close();
+  }
+
+  // ============================================================ #31 建档期初（2026-10-16 裁定甲·①）
+  //
+  // 与 `test/sync_server_test.dart` 的「#31 建档期初」组镜像：products 建档 +
+  // 可选 `opening_quantity` ⇒ **同一事务**内造 stocktake 落账（RULE-009 /
+  // surplusCost）。原子：期初失败 ⇒ 建档也回滚。
+  section('#31 建档期初（opening_quantity）');
+  {
+    freshDb();
+    final String id = newId();
+    final SyncResponse ok = server.handle(
+      opMaster('products', id, SyncOpType.createMasterData, payload: {
+        'code': 'P0001',
+        'name': '带期初的商品',
+        'cost_price': 0,
+        'opening_quantity': 36,
+      }),
+      now: now(),
+    );
+    check('#31 applied', ok.status == SyncStatus.applied, '${ok.reason}');
+    check('#31 商品已建档', ProductDao(db).findById(id) != null);
+    check('#31 期初 = stocktake 单（RULE-009 总额 0）',
+        (db.raw.select(
+              "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
+            ).first['c']! as int) ==
+            1 &&
+            (db.raw.select(
+                  "SELECT total_amount FROM documents WHERE doc_type = 'stocktake'",
+                ).first['total_amount']! as int) ==
+                0);
+    check('#31 库存流水 = 期初量',
+        (db.raw.select(
+              'SELECT COALESCE(SUM(quantity),0) AS s FROM stock_ledger',
+            ).first['s']! as int) ==
+            36);
+
+    // 纯建档：payload 不带该键 ⇒ 零感知
+    final SyncResponse plain = server.handle(
+      opMaster('products', newId(), SyncOpType.createMasterData, payload: {
+        'code': 'P0002',
+        'name': '没期初的商品',
+        'cost_price': 0,
+      }),
+      now: now(),
+    );
+    check('#31 纯建档 applied 且无第二张 stocktake',
+        plain.status == SyncStatus.applied &&
+            (db.raw.select(
+                  "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
+                ).first['c']! as int) ==
+                1);
+
+    // 客户端 bug 三类 ⇒ malformed（不进重试）
+    final SyncResponse wrongTable = server.handle(
+      opMaster('parties', newId(), SyncOpType.createMasterData, payload: {
+        'name': '某客户',
+        'opening_quantity': 5,
+      }),
+      now: now(),
+    );
+    check('#31 opening 出现在其它表 ⇒ malformed_parameter',
+        wrongTable.reasonCode == RejectCode.malformedParameter,
+        '${wrongTable.reasonCode}｜${wrongTable.reason}');
+    final SyncResponse badType = server.handle(
+      opMaster('products', newId(), SyncOpType.createMasterData, payload: {
+        'code': 'P0003',
+        'name': '商品',
+        'cost_price': 0,
+        'opening_quantity': '36',
+      }),
+      now: now(),
+    );
+    check('#31 opening 类型不符 ⇒ malformed_parameter',
+        badType.reasonCode == RejectCode.malformedParameter,
+        '${badType.reasonCode}｜${badType.reason}');
+    final SyncResponse dup = server.handle(
+      opMaster('products', id, SyncOpType.createMasterData, payload: {
+        'code': 'P0001',
+        'name': '带期初的商品',
+        'cost_price': 0,
+        'opening_quantity': 10,
+      }),
+      now: now(),
+    );
+    check('#31 已存在 + opening ⇒ malformed_parameter（不静默丢期初）',
+        dup.reasonCode == RejectCode.malformedParameter,
+        '${dup.reasonCode}｜${dup.reason}');
     db.close();
   }
 

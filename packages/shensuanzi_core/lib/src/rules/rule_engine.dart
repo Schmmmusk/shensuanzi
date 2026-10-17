@@ -62,6 +62,26 @@ class RuleOutcome {
 
   bool get applied => status == RuleStatus.applied;
 
+  /// **#23 补丁（2026-10-17 复跑抓出）**：只有**业务拒绝**（用户能改 ——
+  /// `RejectCode.returnExceedsOriginal` / `ruleValidationFailed` 两码，
+  /// 见 `reject_code.dart` 头表「规则拒绝」行）才值得转成 [RuleRejected]
+  /// 给 UI 显示「怎么办」；**协议违反**（`target_missing` 等客户端 bug）
+  /// 与**内部 bug**（`rule_internal_error`）用户做不了什么 ⇒ 返回 `null`，
+  /// 服务层保持既有 `StateError` 真错误语义（UI「请再试一次」+ 日志，
+  /// M15 不承诺做不到的事）。
+  RuleRejected? get businessRejection {
+    final RejectCode? c = code;
+    if (c != null &&
+        (c == RejectCode.returnExceedsOriginal ||
+            c == RejectCode.ruleValidationFailed)) {
+      return RuleRejected(
+        reason ?? '本次操作被拒绝，请检查填写内容',
+        code: c,
+      );
+    }
+    return null;
+  }
+
   @override
   String toString() =>
       'RuleOutcome(${status.name}${reason == null ? '' : ', $reason'})';

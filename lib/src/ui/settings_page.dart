@@ -26,6 +26,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
+import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 
 import 'host_service_section.dart';
@@ -163,7 +164,8 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       message = await run();
     } catch (error) {
-      message = '导出失败（$error）—— 请把这句话告诉技术支持';
+      // #43：兜底双故障路径（回调内部已各自记日志）⇒ 这里只给分类文案
+      message = localFileFailureAdvice(error);
     }
     if (!mounted) return;
     setState(() => _exporting = false);

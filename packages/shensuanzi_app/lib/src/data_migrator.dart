@@ -28,7 +28,8 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'instance_lock.dart';
-import 'package:shensuanzi_core/shensuanzi_core.dart' show newId;
+import 'package:shensuanzi_core/shensuanzi_core.dart'
+    show localFileFailureAdvice, newId;
 
 /// 一次迁移的**计划**（执行前算好，给确认对话框与空间校验用）。
 class MigrationPlan {
@@ -234,8 +235,12 @@ class DataMigrator {
           newDataDirectory: newDataDirectory,
         );
       } catch (error) {
-        noteWarning = '数据已经搬好了，只是旧文件夹里没能留下「已迁移」说明'
-            '（$error）。不影响使用 —— 但**先别删旧文件夹**，确认新位置好用再说。';
+        // #43：旧文案把异常全文拼给了用户（本地文件错误无经营内容，
+        // 但不可读）⇒ 改「本地文件」分类文案。⚠️ 此处运行在 isolate 内、
+        // 没有日志出口 ⇒ 原始细节不落盘（注册为已知限制，台账 §CV·四十七）。
+        noteWarning = '数据已经搬好了，只是旧文件夹里没能留下「已迁移」说明。'
+            '${localFileFailureAdvice(error)} '
+            '不影响使用 —— 但**先别删旧文件夹**，确认新位置好用再说。';
       }
       if (!backupInPlace) {
         try {

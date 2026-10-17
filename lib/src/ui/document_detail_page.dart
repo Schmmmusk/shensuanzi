@@ -41,6 +41,7 @@ class DocumentDetailPage extends StatefulWidget {
     this.products,
     this.returnService,
     this.onChanged,
+    this.onStorageFailure,
   });
 
   final String documentId;
@@ -61,6 +62,11 @@ class DocumentDetailPage extends StatefulWidget {
 
   /// 核销成功后回调（列表页据此刷新）
   final VoidCallback? onChanged;
+
+  /// **#43（2026-10-16）**：保存失败的**原始异常**出口（M15 同款两通道：
+  /// 界面只给 `storageFailureNote` 的分类文案，异常全文进宿主日志）。
+  final void Function(Object error, StackTrace stack)? onStorageFailure;
+
 
   @override
   State<DocumentDetailPage> createState() => _DocumentDetailPageState();
@@ -145,6 +151,7 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
               partyLabel: '客户',
             )
           : null,
+      onStorageFailure: widget.onStorageFailure,
     );
     if (!mounted || saved == null) return;
 
@@ -568,6 +575,7 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
           original: doc,
           service: service,
           fullReturn: fullReturn,
+          onStorageFailure: widget.onStorageFailure,
         ),
       ),
     );
@@ -625,14 +633,23 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
           duration: const Duration(seconds: 3),
         ),
       );
-    } catch (error) {
+    } on RuleRejected catch (error) {
+      // #23（裁定甲）：签收的业务拒绝（如状态已变）—— 文案照实显示；
+      // 不调 onStorageFailure（detail 已由引擎进宿主日志）。
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            '没能签收（$error）。'
-            '先关掉这一页再试一次；如果一直这样，请把这句话告诉技术支持。',
-          ),
+          content: Text(error.reason),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    } catch (error, stack) {
+      // #43：原始异常进日志，界面只给分类文案（M15 两通道）
+      widget.onStorageFailure?.call(error, stack);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(storageFailureNote(error)),
           duration: const Duration(seconds: 6),
         ),
       );

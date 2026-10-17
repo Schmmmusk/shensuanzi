@@ -38,6 +38,56 @@ class StockLedgerDao {
     );
   }
 
+  /// **#27 批 2（2026-10-17 裁定）**：某商品的**人可读**库存流水 —— 照
+  /// [PartyLedgerDao.ofParty] / [MoneyLedgerDao.ofAccountReadable] 先例
+  /// （JOIN documents 带回单号 / 类型）。
+  ///
+  /// - [StockFlowEntry.quantity]：**正 = 入库，负 = 出库**（含盘点 diff）
+  /// - [StockFlowEntry.totalCost]：成本真相（`docs/data_model.md` §3.3）——
+  ///   **桌面显示**；手机端不显示成本（诚实口径，§CV·五十一）
+  /// - #42 甲 · L1 + L2：单据类型认不出 ⇒ **跳过该行 + 计数**
+  List<StockFlowEntry> ofProductReadable(String productId) {
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT sl.seq_no AS seq_no, sl.document_id AS document_id, '
+      '       d.doc_no AS doc_no, d.doc_type AS doc_type, '
+      '       sl.quantity AS quantity, sl.unit_cost AS unit_cost, '
+      '       sl.total_cost AS total_cost, sl.occurred_at AS occurred_at, '
+      '       sl.time_estimated AS time_estimated '
+      'FROM ${Schema.stockLedger} sl '
+      'JOIN ${Schema.documents} d ON d.id = sl.document_id '
+      'WHERE sl.product_id = ? '
+      'ORDER BY sl.seq_no',
+      <Object?>[productId],
+    );
+    return decodeRows(
+      rows,
+      (Map<String, Object?> row) {
+        final String rawType = row['doc_type']! as String;
+        final DocType? type = DocType.fromWireOrNull(rawType);
+        if (type == null) {
+          throw RowDecodeException(
+            column: 'doc_type',
+            reason: '认不出的单据类型',
+            value: rawType,
+          );
+        }
+        return StockFlowEntry(
+          seqNo: row['seq_no']! as int,
+          documentId: row['document_id']! as String,
+          docNo: row['doc_no']! as String,
+          docType: type,
+          quantity: row['quantity']! as int,
+          unitCost: row['unit_cost']! as int,
+          totalCost: row['total_cost']! as int,
+          occurredAt: row['occurred_at']! as int,
+          timeEstimated: (row['time_estimated']! as int) == 1,
+        );
+      },
+      table: Schema.stockLedger,
+      failures: db.readFailures,
+    );
+  }
+
   /// 账面库存 = `SUM(quantity)`（`docs/data_model.md` §五 不变量 1）
   int stockOf(String productId) {
     final Row row = _raw
@@ -324,4 +374,109 @@ class MoneyLedgerDao {
     table: Schema.moneyLedger,
     failures: db.readFailures,
   );
+
+  /// **#27（2026-10-17 裁定批 1）**：某账户的**人可读**资金流水 —— 照
+  /// [PartyLedgerDao.ofParty] 先例（JOIN documents 带回单号 / 类型；
+  /// 裸流水只有 UUID，用户认不出）。
+  ///
+  /// #42 甲 · L1 + L2：单据类型认不出 ⇒ **跳过该行 + 计数**（流水页不整页变灰）。
+  List<MoneyFlowEntry> ofAccountReadable(String accountId) {
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT ml.seq_no AS seq_no, ml.document_id AS document_id, '
+      '       d.doc_no AS doc_no, d.doc_type AS doc_type, '
+      '       ml.amount AS amount, ml.occurred_at AS occurred_at, '
+      '       ml.time_estimated AS time_estimated '
+      'FROM ${Schema.moneyLedger} ml '
+      'JOIN ${Schema.documents} d ON d.id = ml.document_id '
+      'WHERE ml.account_id = ? '
+      'ORDER BY ml.seq_no',
+      <Object?>[accountId],
+    );
+    return decodeRows(
+      rows,
+      (Map<String, Object?> row) {
+        final String rawType = row['doc_type']! as String;
+        final DocType? type = DocType.fromWireOrNull(rawType);
+        if (type == null) {
+          throw RowDecodeException(
+            column: 'doc_type',
+            reason: '认不出的单据类型',
+            value: rawType,
+          );
+        }
+        return MoneyFlowEntry(
+          seqNo: row['seq_no']! as int,
+          documentId: row['document_id']! as String,
+          docNo: row['doc_no']! as String,
+          docType: type,
+          amount: row['amount']! as int,
+          occurredAt: row['occurred_at']! as int,
+          timeEstimated: (row['time_estimated']! as int) == 1,
+        );
+      },
+      table: Schema.moneyLedger,
+      failures: db.readFailures,
+    );
+  }
+}
+
+/// [MoneyLedgerDao.ofAccountReadable] 的一行：**人可读**的账户资金流水
+/// （单号 / 单据类型 / 金额 / 日期 —— 照 [PartyFlowEntry] 先例）。
+class MoneyFlowEntry {
+  const MoneyFlowEntry({
+    required this.seqNo,
+    required this.documentId,
+    required this.docNo,
+    required this.docType,
+    required this.amount,
+    required this.occurredAt,
+    required this.timeEstimated,
+  });
+
+  final int seqNo;
+  final String documentId;
+
+  /// 正式单号（主机生成；用户在界面上认的是它）
+  final String docNo;
+  final DocType docType;
+
+  /// 正 = 进账（余额增加），负 = 出账（`money_ledger.amount` 原口径：
+  /// `balanceOf` = 期初 + SUM(amount)）
+  final int amount;
+  final int occurredAt;
+  final bool timeEstimated;
+}
+
+/// [StockLedgerDao.ofProductReadable] 的一行：**人可读**的商品库存流水
+/// （单号 / 单据类型 / ±数量 / 成本 / 日期）。
+class StockFlowEntry {
+  const StockFlowEntry({
+    required this.seqNo,
+    required this.documentId,
+    required this.docNo,
+    required this.docType,
+    required this.quantity,
+    required this.unitCost,
+    required this.totalCost,
+    required this.occurredAt,
+    required this.timeEstimated,
+  });
+
+  final int seqNo;
+  final String documentId;
+
+  /// 正式单号（主机生成；用户在界面上认的是它）
+  final String docNo;
+  final DocType docType;
+
+  /// 正 = 入库，负 = 出库（含盘点 diff —— 盘点的库存影响就是这一行）
+  final int quantity;
+
+  /// 派生展示字段 = `round_half_up(totalCost / quantity)`（`stock_ledger` 原口径）
+  final int unitCost;
+
+  /// **成本真相**（§3.3）：入库 = 数量 × 进价；出库 = 按库存总成本摊出
+  final int totalCost;
+  final int occurredAt;
+  final bool timeEstimated;
 }

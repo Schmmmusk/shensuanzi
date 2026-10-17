@@ -642,8 +642,10 @@ void main() {
       );
       // 列名的定位价值**没有丢** —— 它随原始异常进主机日志（回执不再回显）。
       // 「失败原因必须点到具体列名」这条要求因此改由这里承担。
+      // #42 补正（2026-10-16）：#42 把缺列异常改成 `RowDecodeException`，本条与
+      // `selfcheck_host` 同批漏改（复跑抓出）⇒ 补齐；新子串只可能由被测路径给出。
       expect(
-        internalErrors.any((String e) => e.contains('缺少必填列 `id`')),
+        internalErrors.any((String e) => e.contains('RowDecodeException(id: 缺少这一列)')),
         isTrue,
         reason: '细节必须点到具体列名，否则只能靠复跑定位',
       );

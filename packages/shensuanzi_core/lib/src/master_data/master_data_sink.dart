@@ -95,7 +95,14 @@ class MasterDataSubmitResult {
 /// 按同一份模式加（`docs/reply_review.md` §CH §8 的「三页与往来页」）。
 abstract class MasterDataSink {
   /// 建档。[now] 只为让单测可复现（主机侧原样转给 `ProductService`）。
-  MasterDataSubmitResult createProduct(ProductDraft draft, {int? now});
+  ///
+  /// **#31（2026-10-16 裁定甲·①）**：[openingQuantity] = 新建商品的**当前库存**
+  /// （**最小单位**的实际数量，≥ 0；`null` = 纯建档）。主机出口在同一事务内
+  /// 造一张 stocktake 文档落账 —— **建档与期初原子**（要么都成、要么都不做），
+  /// 不再有「两条队列条目乱序」的分支。
+  /// ⚠️ 只对**手机队列出口**有意义：主机落库路径的期初走 `StocktakeService`
+  /// （整页期初录入），所以 [ServiceMasterSink] 收到非空值即抛（见其文档）。
+  MasterDataSubmitResult createProduct(ProductDraft draft, {int? now, int? openingQuantity});
 
   /// 编辑。⚠️ **`code` 不变** —— 与 `ProductService.update` 同一口径。
   MasterDataSubmitResult updateProduct(String id, ProductDraft draft, {int? now});
@@ -115,7 +122,20 @@ class ServiceMasterSink implements MasterDataSink {
   final ProductService _products;
 
   @override
-  MasterDataSubmitResult createProduct(ProductDraft draft, {int? now}) {
+  MasterDataSubmitResult createProduct(
+    ProductDraft draft, {
+    int? now,
+    int? openingQuantity,
+  }) {
+    // #31：桌面期初走 `StocktakeService`（整页期初录入，有独立入口）——
+    // 这里出现非空 opening 是调用方接错了出口，静默忽略 = 用户以为记了库存。
+    if (openingQuantity != null) {
+      throw ArgumentError.value(
+        openingQuantity,
+        'openingQuantity',
+        '主机出口不支持建档带期初 —— 期初录入请走 StocktakeService',
+      );
+    }
     try {
       return MasterDataSubmitResult.saved(_products.create(draft, now: now));
     } on ProductDraftInvalid catch (error) {
@@ -198,10 +218,24 @@ class QueueMasterSink implements MasterDataSink {
   static int _systemClock() => DateTime.now().millisecondsSinceEpoch;
 
   @override
-  MasterDataSubmitResult createProduct(ProductDraft draft, {int? now}) {
+  MasterDataSubmitResult createProduct(
+    ProductDraft draft, {
+    int? now,
+    int? openingQuantity,
+  }) {
     final Map<ProductField, String> errors = draft.validate();
     if (errors.isNotEmpty) {
       return MasterDataSubmitResult.failure(ProductDraftInvalid(errors));
+    }
+
+    // #31：期初数量由表单校验过（非负整数）；这里是最后一道防线，
+    // 负数 / 非法值宁可抛也不静默写进队列（静默 = 用户以为记了库存）。
+    if (openingQuantity != null && openingQuantity < 0) {
+      throw ArgumentError.value(
+        openingQuantity,
+        'openingQuantity',
+        '当前库存不能是负数',
+      );
     }
 
     final int stamp = now ?? _clock();
@@ -231,7 +265,15 @@ class QueueMasterSink implements MasterDataSink {
             entity: Schema.products,
             entityId: product.id,
             operation: SyncOpType.createMasterData,
-            payload: masterDataCreatePayload(product.toRow()),
+            payload: <String, Object?>{
+              ...masterDataCreatePayload(product.toRow()),
+              // #31（裁定甲·①）：可选字段，只有用户填了「当前库存」才有。
+              // 主机端在建档**同一事务**内造 stocktake 落账（`sync_server`
+              // `_createMasterData`）—— 建档与期初要么都成、要么都不做。
+              // 单位 = 商品单位（本批表单只按最小单位录入，录入原文
+              // 由主机端 `DocumentLine.entryQuantity` 的缺省口径记）。
+              'opening_quantity': ?openingQuantity,
+            },
           ),
           now: stamp,
         ),

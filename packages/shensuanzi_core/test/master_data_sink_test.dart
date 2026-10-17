@@ -226,5 +226,51 @@ void main() {
       expect(op.entityId, result.product!.id);
       expect(op.payload['id'], result.product!.id, reason: 'payload.id 必须等于 entity_id');
     });
+
+    // ===== #31（2026-10-16 裁定甲·①）：建档带可选「当前库存」 =====
+    //
+    // **一条队列条目**（不是两条）：payload 加可选 `opening_quantity`（最小
+    // 单位实际数量），host 端在建档**同一事务**内造 stocktake 落账 ——
+    // 建档与期初要么都成、要么都不做（裁定：不再有「乱序自愈」分支）。
+    test('#31：openingQuantity ⇒ payload 带 opening_quantity（一条条目）', () {
+      final MasterDataSubmitResult result = sink.createProduct(
+        goodDraft(),
+        openingQuantity: 36,
+      );
+      expect(result.isQueued, isTrue);
+
+      final List<SyncQueueEntry> entries = SyncQueueDao(mirror).all();
+      expect(
+        entries.length,
+        1,
+        reason: '裁定甲·①：合成一条 op —— 不再有「建档 + 期初」两条条目',
+      );
+      expect(entries.single.toOperation().payload['opening_quantity'], 36);
+    });
+
+    test('#31：不填 openingQuantity ⇒ payload 不带该键（主机零感知）', () {
+      sink.createProduct(goodDraft());
+      final SyncOperation op = SyncQueueDao(mirror).all().single.toOperation();
+      expect(op.payload.containsKey('opening_quantity'), isFalse);
+    });
+
+    test('#31：openingQuantity 负数 ⇒ ArgumentError（宁抛不静默写队列）', () {
+      expect(
+        () => sink.createProduct(goodDraft(), openingQuantity: -1),
+        throwsArgumentError,
+      );
+      expect(SyncQueueDao(mirror).all(), isEmpty, reason: '什么都没写');
+    });
+
+    test('#31：主机出口（ServiceMasterSink）收 opening ⇒ ArgumentError', () {
+      final ServiceMasterSink hostSink = ServiceMasterSink(
+        ProductService(mirror),
+      );
+      expect(
+        () => hostSink.createProduct(goodDraft(), openingQuantity: 10),
+        throwsArgumentError,
+        reason: '桌面期初走 StocktakeService —— 接错出口不能静默',
+      );
+    });
   });
 }

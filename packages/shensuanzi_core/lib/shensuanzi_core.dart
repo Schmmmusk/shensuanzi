@@ -79,13 +79,16 @@ export 'src/dao/document_dao.dart'
 export 'src/dao/ledger_dao.dart'
     show
         MoneyLedgerDao,
+        MoneyFlowEntry,
         PartyFlowEntry,
         PartyLedgerDao,
         StockCostSnapshot,
+        StockFlowEntry,
         StockLedgerDao;
 export 'src/dao/party_dao.dart' show PartyDao;
 export 'src/dao/product_dao.dart' show ProductDao;
-export 'src/dao/query_dao.dart' show QueryDao;
+export 'src/dao/query_dao.dart'
+    show QueryDao, OverviewSummary, ReceivablesSummary;
 export 'src/dao/settlement_dao.dart' show SettlementDao;
 export 'src/dao/sync_dao.dart'
     show ClockOffsetDao, SyncCursorDao, SyncQueueDao, SyncQueueTriage;
@@ -96,6 +99,7 @@ export 'src/rules/doc_no_generator.dart' show DocNoGenerator;
 export 'src/rules/payment_entry.dart' show Allocation, PaymentEntry;
 export 'src/rules/product_code_generator.dart' show ProductCodeGenerator;
 export 'src/rules/rule_engine.dart' show RuleEngine, RuleOutcome, RuleStatus;
+export 'src/rules/rule_rejection.dart' show RuleRejected;
 export 'src/rules/seq_counter.dart' show SeqCounter;
 
 // 主数据建档（商品 / 账户 / 往来方最小建档）

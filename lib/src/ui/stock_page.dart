@@ -24,9 +24,12 @@ import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'document_detail_page.dart';
 import 'export_button.dart';
 import 'mobile_guidance_dialog.dart';
 import 'opening_stock_page.dart';
+import 'product_form_dialog.dart';
+import 'stock_flow_page.dart';
 
 /// 库存查询页。
 class StockPage extends StatefulWidget {
@@ -38,6 +41,12 @@ class StockPage extends StatefulWidget {
     this.exports,
     this.stockDelta,
     this.mobileShell = false,
+    this.pendingMarks,
+    this.onStorageFailure,
+    this.stockFlow,
+    this.settlements,
+    this.masterDataSink,
+    this.canCreateProducts = false,
   });
 
   /// 规则引擎（期初录入「重新清点」入口用 —— RULE-009 经 `StocktakeService`）
@@ -52,6 +61,26 @@ class StockPage extends StatefulWidget {
   /// 库存叠加（C2·§CC 裁定七：权威 + 未同步 + 拆解）。
   /// 手机端注入（镜像队列）；桌面 `null` = 现状零变化。
   final StockDelta? stockDelta;
+
+  /// **#31（2026-10-16 裁定②）**：「期初 N 件待同步」提示的数据源。
+  /// `null` = 桌面 / 测试缺省（不显示提示）。
+  final PendingMarks? pendingMarks;
+
+  /// **#43**：期初保存失败的原始异常出口（透传给 `OpeningStockPage`）。
+  final void Function(Object error, StackTrace stack)? onStorageFailure;
+
+  /// **#27 批 2**：商品流水查询（手机壳 = 镜像实例化；桌面 = 主库 ——
+  /// app.dart 装配，Db 不出服务层）。`null` = 行不可点开流水。
+  final StockLedgerDao? stockFlow;
+
+  /// **#27 批 2**：流水行跳单据详情所需（`null` ⇒ 行不可点）。
+  final SettlementService? settlements;
+
+  /// **#27 批 2**：「新建商品」提交出口（手机壳 = 队列出口）。`null` = 无按钮。
+  final MasterDataSink? masterDataSink;
+
+  /// **#27 批 2**：本机能不能建商品（门控）—— 按钮显隐用。
+  final bool canCreateProducts;
 
   /// **是不是手机壳**（`ShellKind.mobile`）。本页用它管两件事，**都与主数据权限无关**：
   ///
@@ -78,6 +107,52 @@ class _StockPageState extends State<StockPage> {
   void dispose() {
     _query.dispose();
     super.dispose();
+  }
+
+  /// **#27 批 2（裁定乙）**：库存页快速建档 —— 手机壳走 `masterDataSink`
+  /// （乐观写镜像 + 入队），对话框 `allowOpeningStock: true`（#31 建档带期初，
+  /// 库存页正是「建完看数量」的场景）。桌面无此入口（商品页/期初页）。
+  Future<void> _createProduct(BuildContext context) async {
+    final Product? created = await showProductFormDialog(
+      context,
+      service: widget.products,
+      sink: widget.masterDataSink!,
+      allowOpeningStock: true,
+    );
+    if (created == null || !mounted) return;
+    setState(() {}); // 新行可见（零流水也显示 —— openingPending 在场）
+  }
+
+  /// **#27 批 2**：打开某商品的流水页。桌面行可点 ⇒ 跳单据详情
+  ///（settlements 缺省时降级不可点）；手机壳行不可点 + 灰字明说（裁定⑤）。
+  Future<void> _openStockFlow(BuildContext context, Product product) async {
+    final StockLedgerDao? flowDao = widget.stockFlow;
+    if (flowDao == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => StockFlowPage(
+          product: product,
+          flowDao: flowDao,
+          exports: widget.exports,
+          mobileShell: widget.mobileShell,
+          onOpenDocument: widget.mobileShell || widget.settlements == null
+              ? null
+              : (BuildContext context, String documentId) async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (BuildContext context) => DocumentDetailPage(
+                        documentId: documentId,
+                        settlements: widget.settlements!,
+                        products: widget.products,
+                      ),
+                    ),
+                  );
+                  if (mounted) setState(() {}); // 回来库存可能变过（签收等）
+                },
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   @override
@@ -117,6 +192,7 @@ class _StockPageState extends State<StockPage> {
         isFirstTime: !hasAnyLedger,
         bookQuantities: book,
         onDone: () => setState(() => _showOpening = false),
+        onStorageFailure: widget.onStorageFailure,
       );
     }
 
@@ -127,6 +203,9 @@ class _StockPageState extends State<StockPage> {
     // 行内只查 map；点开拆解才逐商品取 contributors（IO 不进常驻路径）
     final Map<String, int> unsyncedByProduct = widget.stockDelta
         ?.unsyncedDelta() ?? const <String, int>{};
+    // #31（裁定②）：一次 build 取一次（PendingMarks 文档的 N 次 SQL 警告）
+    final Map<String, int> openingPending = widget.pendingMarks
+        ?.openingQuantityByProduct() ?? const <String, int>{};
     // 搜索：名称 / 编码 / 条码
     final List<Product> matched = _searchText.isEmpty
         ? all
@@ -144,10 +223,14 @@ class _StockPageState extends State<StockPage> {
     /// ⚠️ M14（2026-10-08）：**本地未同步影响也算流水**。手机上刚开的单还没推到
     /// 电脑，权威账面仍是 0 —— 只按权威过滤会把「已经卖了 1 件、估算 −1」的商品
     /// **默认藏起来**，负库存风险反而看不见（报告实测）。
+    ///
+    /// ⚠️ #31（裁定②，同一条原理）：**带了期初的待同步建档也算** —— 用户刚填了
+    /// 「当前库存 10」，列表里却找不到这个商品，只会以为没建成。
     bool hasFlow(Product product) =>
         (book[product.id] ?? 0) != 0 ||
         (inTransit[product.id] ?? 0) != 0 ||
-        (unsyncedByProduct[product.id] ?? 0) != 0;
+        (unsyncedByProduct[product.id] ?? 0) != 0 ||
+        openingPending.containsKey(product.id);
 
     final List<Product> shown = _showAll
         ? matched
@@ -206,6 +289,19 @@ class _StockPageState extends State<StockPage> {
             icon: const Icon(Icons.inventory_2_outlined, size: 18),
             label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
           ),
+          // #27 批 2（2026-10-17 裁定乙）：库存页的「新建商品」= **补充
+          // 快速建档入口**（手机壳专属；桌面建档在「商品」页，期初在同页
+          // 「录入现有货物」）。手机壳 ⇒ 对话框带「当前库存」字段（#31
+          // stocktake 通路）。桌面不显示 ⇒ 不存在「桌面带库存走什么通路」。
+          if (widget.mobileShell &&
+              widget.canCreateProducts &&
+              widget.masterDataSink != null)
+            OutlinedButton.icon(
+              key: const Key('stock-create-product'),
+              onPressed: () => _createProduct(context),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('新建商品'),
+            ),
             ],
           ),
               const SizedBox(height: 4),
@@ -320,6 +416,10 @@ class _StockPageState extends State<StockPage> {
                           costCents: cost[shown[i].id] ?? 0,
                           everInbound: inbound.contains(shown[i].id),
                           unsynced: unsyncedByProduct[shown[i].id] ?? 0,
+                          openingPending: openingPending[shown[i].id],
+                          onOpen: widget.stockFlow == null
+                              ? null
+                              : () => _openStockFlow(context, shown[i]),
                           delta: widget.stockDelta,
                         ),
                       ],
@@ -344,6 +444,8 @@ class _StockRow extends StatelessWidget {
     required this.everInbound,
     this.unsynced = 0,
     this.delta,
+    this.openingPending,
+    this.onOpen,
   });
 
   final Product product;
@@ -359,6 +461,14 @@ class _StockRow extends StatelessWidget {
 
   /// 叠加计算器（点开拆解时取 contributors；`null` = 桌面）。
   final StockDelta? delta;
+
+  /// **#31（2026-10-16 裁定②）**：本行的「建档期初待同步」数量。
+  /// `null` = 没有期初在队列里（不显示提示行）。
+  final int? openingPending;
+
+  /// **#27 批 2**：行 tap = 打开本商品的流水页。`null` = 行不可点
+  ///（手机壳 / 流水查询缺省 —— 由页面判定后传入）。
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -392,7 +502,11 @@ class _StockRow extends StatelessWidget {
               '下次进货的进价会把它校准回来。'
         : null;
 
-    return Padding(
+    // #27 批 2：行 tap = 打开本商品的流水页（onOpen 由页面判定可点性 ——
+    // 手机壳 / 流水查询缺省时为 null，行保持不可点）。
+    return InkWell(
+      onTap: onOpen,
+      child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -423,6 +537,16 @@ class _StockRow extends StatelessWidget {
                         color: theme.textTheme.bodySmall?.color,
                       ),
                     ),
+                    // #31（2026-10-16 裁定②）：同步前用户刚填的期初量在数字上
+                    // 不出现（stocktake 的 delta 客户端算不出）⇒ 在这里说清，
+                    // 否则「我刚填的 10 件呢？」（技术诚实 ≠ 用户体验）。
+                    // ⚠️ 只作提示，**不参与库存计算**。
+                    if (openingPending != null)
+                      Text(
+                        '期初 $openingPending（${product.unit}）待同步',
+                        key: Key('opening-pending-${product.id}'),
+                        style: TextStyle(height: 1.6, color: theme.hintColor),
+                      ),
                   ],
                 ),
               ),
@@ -552,6 +676,7 @@ class _StockRow extends StatelessWidget {
               unsynced: unsynced,
             ),
         ],
+      ),
       ),
     );
   }

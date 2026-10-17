@@ -48,6 +48,7 @@ class AppShell extends StatefulWidget {
     this.onStorageFailure,
     this.stockDelta,
     this.pendingMarks,
+    this.stockFlow,
     this.readFailures,
     required this.masterDataPolicy,
     this.masterDataSink,
@@ -123,6 +124,10 @@ class AppShell extends StatefulWidget {
   /// 有它，主数据列表才能对**乐观行**加一行浅灰小字「待同步」——
   /// 「我有的」与「主机确认的」一眼可分。
   final PendingMarks? pendingMarks;
+
+  /// **#27 批 2**：商品流水查询（手机壳 = 镜像实例化；桌面 = 主库）。
+  /// `null` = 库没打开（相关入口降级）。
+  final StockLedgerDao? stockFlow;
 
   /// **读路径坏数据的计数**（#42 甲 · L4，2026-10-14 裁定 §二·接线 1/2 = A）。
   ///
@@ -265,7 +270,13 @@ class AppShell extends StatefulWidget {
 /// （§BH B1a：两套壳各写一份必然漂移；摆放差异 —— 面包屑 / 底部导航 ——
 /// 留在各自的壳里，这里只管「id → 页面」）。服务的可空兜底（`_PendingPage`）
 /// 也在这里：调用方不必重复判空。
-Widget appShellPage(AppShell shell, NavDestination destination) {
+Widget appShellPage(
+  AppShell shell,
+  NavDestination destination, {
+  // #32：概览页「要开工？」快捷入口的跳转回调（两壳各给各的导航方式：
+  // 桌面切 destination / 手机推整屏）。`null` = 概览不显示入口卡。
+  void Function(String destinationId)? onNavigate,
+}) {
   final Widget page;
   // #46（2026-10-14 外测 M01）：**手机不给「立即备份」** —— 执行既有裁定
   // （`docs/reply.md` §4 B 方案，`app.dart` 的 `_exportBackupMobile` 文件头
@@ -288,6 +299,10 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
       locationNote: shell.dataLocationNote,
       // M05：指路文案随壳走（桌面「左边」/ 手机「底部」）
       mobileShell: shell.mobileShell,
+      // #32（裁定甲）：经营速览三卡 —— queries 手机壳 = 镜像（同源先例）
+      queries: shell.queries,
+      pendingMarks: shell.pendingMarks,
+      onNavigate: onNavigate,
     );
     } else if (destination.id == 'products') {
       // 商品是核心闭环的第一块 —— 已实现，不再是占位页
@@ -353,6 +368,15 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               queries: shell.queries!,
               exports: shell.exports,
               stockDelta: shell.stockDelta,
+              // #31（裁定②）：「期初 N 件待同步」提示（手机只读镜像队列）
+              pendingMarks: shell.pendingMarks,
+              // #43：期初保存失败的原始异常出口
+              onStorageFailure: shell.onStorageFailure,
+              // #27 批 2：商品流水 + 新建商品补充入口
+              stockFlow: shell.stockFlow,
+              settlements: shell.settlements,
+              masterDataSink: shell.masterDataSink,
+              canCreateProducts: shell.masterDataPolicy.canCreateProducts,
               // 期初入口 + 镜像空态按**壳**走（不是主数据权限 —— 盘点 delta
               // 客户端算不出，见 `stock_page.dart`）
               mobileShell: shell.mobileShell,
@@ -376,6 +400,7 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               deliveries: shell.deliveries,
               products: shell.products,
               returnService: shell.returns,
+              onStorageFailure: shell.onStorageFailure,
             );
     } else if (destination.id == 'settings') {
       // §AI-1：configStore / onConfigChanged 已是 required —— 设置页是常驻
@@ -412,6 +437,11 @@ Widget appShellPage(AppShell shell, NavDestination destination) {
               service: shell.accounts!,
               masterDataPolicy: shell.masterDataPolicy,
               pendingMarks: shell.pendingMarks,
+              // #27 批 1：流水页的导出与「跳单据详情」所需服务
+              exports: shell.exports,
+              settlements: shell.settlements,
+              deliveries: shell.deliveries,
+              products: shell.products,
             );
     } else if (destination.id == 'purchase') {
       // 采购入库是核心闭环的第二块 —— 库存与规则早就在 core 里（RULE-001）
@@ -476,7 +506,15 @@ class _AppShellState extends State<AppShell> {
 
     // 页面装配在 [appShellPage] —— 与 MobileShell **共用同一份**（§BH B1a），
     // 两套壳各写一份必然漂移；本方法只管「面包屑 / 工具栏」这层桌面摆设。
-    final Widget page = appShellPage(widget, current);
+    final Widget page = appShellPage(
+      widget,
+      current,
+      // #32：桌面 = 切左侧导航
+      onNavigate: (String id) {
+        final NavDestination? d = AppNavigation.byId(id);
+        if (d != null) _select(d);
+      },
+    );
     // #42 甲 · L4：坏数据提示条挂内容区顶部 —— **库级**状况，两套壳共用同一个
     // widget（`read_failure_banner.dart`）；计数为 0 时它自己收成 `SizedBox.shrink()`
     // ⇒ 现状零变化。

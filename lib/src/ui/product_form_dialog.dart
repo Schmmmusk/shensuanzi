@@ -63,10 +63,15 @@ Future<Product?> showProductFormDialog(
   required ProductService service,
   required MasterDataSink sink,
   Product? existing,
+  bool allowOpeningStock = false,
 }) => showDialog<Product>(
   context: context,
-  builder: (BuildContext dialogContext) =>
-      _ProductFormDialog(service: service, sink: sink, existing: existing),
+  builder: (BuildContext dialogContext) => _ProductFormDialog(
+    service: service,
+    sink: sink,
+    existing: existing,
+    allowOpeningStock: allowOpeningStock,
+  ),
 );
 
 class _ProductFormDialog extends StatefulWidget {
@@ -74,6 +79,7 @@ class _ProductFormDialog extends StatefulWidget {
     required this.service,
     required this.sink,
     this.existing,
+    this.allowOpeningStock = false,
   });
 
   /// **只读**用（条码查重）—— 写入一律走 [sink]。
@@ -84,6 +90,10 @@ class _ProductFormDialog extends StatefulWidget {
 
   /// `null` = 新增；非 null = 编辑
   final Product? existing;
+
+  /// **#31（2026-10-16 裁定甲）**：显示可选的「当前库存」框（手机新建专用）。
+  /// 桌面不显示 —— 桌面期初有独立入口（`OpeningStockPage`）。
+  final bool allowOpeningStock;
 
   @override
   State<_ProductFormDialog> createState() => _ProductFormDialogState();
@@ -109,6 +119,13 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   /// 服务层抛出的意外错误（说「怎么办」）
   String? _failure;
 
+  /// #31：「当前库存」框（[ProductFormDialog] 仅在 `allowOpeningStock &&
+  /// existing == null` 时显示）。`null` = 没建控制器（桌面 / 编辑模式）。
+  TextEditingController? _openingStock;
+
+  /// 「当前库存」的内联错误（不是 `ProductField` —— 它不是商品表的列）
+  String? _openingError;
+
   bool _saving = false;
 
   /// 条码重复的内联提示原文（`ProductDraft.barcodeNotice` 的返回值）
@@ -131,6 +148,11 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _packageSize = TextEditingController(text: draft.packageSize);
     // 编辑一条条码本身就已重复的商品时，一打开就该看到提示（不用等用户改动）
     _barcodeNotice = _computeBarcodeNotice();
+    // #31：只给「手机 + 新建」建控制器；桌面 / 编辑模式连框都不出现
+    //（裁定③：编辑时改库存**本批不做** —— 要走期初通路，随整页期初批另裁）。
+    if (widget.allowOpeningStock && widget.existing == null) {
+      _openingStock = TextEditingController();
+    }
   }
 
   @override
@@ -145,6 +167,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _packageUnit.dispose();
     _packageSize.dispose();
     _unitFocus.dispose();
+    _openingStock?.dispose();
     super.dispose();
   }
 
@@ -196,6 +219,21 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       return;
     }
 
+    // #31：「当前库存」解析（选填；非空必须是 ≥ 0 的整数）。
+    // 0 = 「现在没有」，与不填同义 ⇒ 不发（host 端只收正数）。
+    int? openingQuantity;
+    if (_openingStock != null) {
+      final String text = _openingStock!.text.trim();
+      if (text.isNotEmpty) {
+        final int? parsed = int.tryParse(text);
+        if (parsed == null || parsed < 0) {
+          setState(() => _openingError = '当前库存要是整数（可以是 0）');
+          return;
+        }
+        if (parsed > 0) openingQuantity = parsed;
+      }
+    }
+
     setState(() {
       _saving = true;
       _failure = null;
@@ -205,7 +243,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       // D2b：**写入走 sink**（桌面 = 落库；手机 = 乐观写镜像 + 入队）。出口把它
       // 自己的校验结论装进结果（不再抛 `ProductDraftInvalid`）。
       final MasterDataSubmitResult result = widget.existing == null
-          ? widget.sink.createProduct(draft)
+          ? widget.sink.createProduct(draft, openingQuantity: openingQuantity)
           : widget.sink.updateProduct(widget.existing!.id, draft);
 
       if (!mounted) return;
@@ -418,6 +456,33 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                 ],
               ),
               const SizedBox(height: 16),
+
+              // #31（2026-10-16 裁定甲）：可选「当前库存」—— 手机新建专用
+              //（`allowOpeningStock`；桌面期初有独立入口，编辑模式不显示 = 裁定③）。
+              // 只按**商品单位**填（本批不做按箱换算，见台账 §CV·四十六·deviation）；
+              // 空着 = 纯建档。
+              if (_openingStock != null) ...<Widget>[
+                const SizedBox(height: 16),
+                TextField(
+                  key: const Key('product-opening-stock'),
+                  controller: _openingStock,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.next,
+                  onChanged: (_) {
+                    if (_openingError != null) {
+                      setState(() => _openingError = null);
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: '当前库存（选填）',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    errorText: _openingError,
+                    helperText: '货架上现在实际有多少（按商品单位填）—— '
+                        '同步前库存页会标「期初 … 待同步」',
+                  ),
+                ),
+              ],
 
               // 条码独占一行：可能很长，且要接扫码枪
               TextField(

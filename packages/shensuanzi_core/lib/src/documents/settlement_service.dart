@@ -30,18 +30,21 @@ import '../models/document_line.dart';
 import '../models/settlement.dart';
 import '../rules/payment_entry.dart';
 import '../rules/rule_engine.dart';
+import '../rules/rule_rejection.dart';
 import '../util/ids.dart';
 import '../util/money.dart';
 import 'overpay.dart';
 
 /// 核销失败（文案已说清「怎么办」，UI 直接显示）。
-class SettlementInvalid implements Exception {
-  const SettlementInvalid(this.message);
+/// **#23（2026-10-17 裁定甲·设计②）**：核销路径的专用拒绝类型 —— 现改为
+/// 继承 [RuleRejected]（统一类型，避免分叉漂移）。5 个抛点的 `message`
+/// 本就是用户能照着改的中文，语义与 `RuleRejected.reason` 完全一致；
+/// 界面既有 `on SettlementInvalid` 分支不受影响（子类仍被它捕获）。
+class SettlementInvalid extends RuleRejected {
+  const SettlementInvalid(super.reason);
 
-  final String message;
-
-  @override
-  String toString() => message;
+  /// 旧字段名（既有 UI / 测试消费点用 `error.message`）—— 与 [reason] 同源。
+  String get message => reason;
 }
 
 /// 核销成功的结果

@@ -29,6 +29,7 @@ Future<SettlementSaved?> showSettlementDialog(
   required bool inbound,
   required String partyLabel,
   SettlementVerb? verbOverride,
+  void Function(Object error, StackTrace stack)? onStorageFailure,
 }) => showDialog<SettlementSaved>(
   context: context,
   builder: (BuildContext dialogContext) => _SettlementDialog(
@@ -38,6 +39,7 @@ Future<SettlementSaved?> showSettlementDialog(
     inbound: inbound,
     partyLabel: partyLabel,
     verbOverride: verbOverride,
+    onStorageFailure: onStorageFailure,
   ),
 );
 
@@ -67,6 +69,7 @@ class _SettlementDialog extends StatefulWidget {
     required this.inbound,
     required this.partyLabel,
     this.verbOverride,
+    this.onStorageFailure,
   });
 
   final SettlementService service;
@@ -83,6 +86,9 @@ class _SettlementDialog extends StatefulWidget {
 
   /// 动作词覆盖（退货单的退款入口用；`null` = 按 [inbound] 取默认词）
   final SettlementVerb? verbOverride;
+
+  /// **#43（2026-10-16）**：记账失败的**原始异常**出口（M15 同款两通道）。
+  final void Function(Object error, StackTrace stack)? onStorageFailure;
 
   @override
   State<_SettlementDialog> createState() => _SettlementDialogState();
@@ -184,10 +190,11 @@ class _SettlementDialogState extends State<_SettlementDialog> {
         _failure = error.message;
         _saving = false;
       });
-    } catch (error) {
+    } catch (error, stack) {
+      // #43：原始异常进日志，界面只给分类文案（M15 两通道）
+      widget.onStorageFailure?.call(error, stack);
       setState(() {
-        _failure = '没能记账（$error）。'
-            '先关掉这个窗口再试一次；如果一直这样，请把这句话告诉技术支持。';
+        _failure = storageFailureNote(error);
         _saving = false;
       });
     }

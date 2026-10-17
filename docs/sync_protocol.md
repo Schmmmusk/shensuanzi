@@ -304,6 +304,19 @@ pull 之前就推一条 `updateMasterData`，payload 里的 `code` 是**过期�
 主机格式将来变化（如改前缀）**不影响客户端** —— 客户端本来就不发它
 （`ProductCodeGenerator.pattern` 是格式的唯一定义，§CV·七 温和收紧）。
 
+**`createMasterData`（仅 products）的可选字段 `opening_quantity`（#31，2026-10-16）**：
+
+手机「新建商品 + 当前库存」**合成一条 op**（裁定甲·①：建档与期初要么都成、要么都不做，
+不再有「两条条目 + 乱序自愈」的分支）。语义：
+
+- `opening_quantity`：**正整数**，商品**最小单位**的实际数量（`0` 与缺省 = 纯建档，客户端不发 0）；
+- 主机在建档**同一事务**内造一张 **stocktake 文档**落账（`lines.quantity` = 实际数量，
+  RULE-009 总额 0、成本走 `CostPolicy.surplusCost`；`_actualFromLines` 既有语义，
+  diff 由主机按「实际 vs 账面」算 ⇒ 客户端镜像滞后不影响正确性）；
+- 违规（非 products 建 / 非正整数 / 目标已存在还带它）⇒ `malformed_parameter`
+  （协议违反，客户端不重试）；
+- `updateMasterData` / 其它表出现该键 ⇒ 走既有白名单 ⇒ `unwritable_column`。
+
 > ⚠️ 改派的**唯一出处**是 `ProductService.resolvePreferredCode`（`Agents.md 4.1`：
 > 建档只有一条路径）。`SyncServer` 只**调用**它，自己不算编码 —— 否则「桌面建档」与
 > 「同步建档」会各写一套（纪律 5）。

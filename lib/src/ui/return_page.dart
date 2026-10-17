@@ -21,6 +21,7 @@ class ReturnPage extends StatefulWidget {
     required this.original,
     required this.service,
     this.fullReturn = false,
+    this.onStorageFailure,
   });
 
   /// 原单（详情页带来的 Document，含类型 / 单号 / 往来方）
@@ -30,6 +31,11 @@ class ReturnPage extends StatefulWidget {
 
   /// 拒收模式：预填全部可退量（整单退回）
   final bool fullReturn;
+
+  /// **#43（2026-10-16）**：保存失败的**原始异常**出口（M15 同款两通道：
+  /// 界面只给 `storageFailureNote` 的分类文案，异常全文进宿主日志）。
+  final void Function(Object error, StackTrace stack)? onStorageFailure;
+
 
   @override
   State<ReturnPage> createState() => _ReturnPageState();
@@ -232,12 +238,23 @@ class _ReturnPageState extends State<ReturnPage> {
         _invalid = error;
         _saving = false;
       });
-    } catch (error) {
+    } on RuleRejected catch (error) {
+      // #23（裁定甲）：**业务拒绝**（退货超额 / 原单不在了…）—— 规则层文案
+      // 已写「怎么办」，照实显示；不调 onStorageFailure（detail 已由引擎
+      // 进宿主日志）。草稿保留。
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.reason), duration: const Duration(seconds: 8)),
+      );
+    } catch (error, stack) {
+      // #43：原始异常进日志，界面只给分类文案（M15 两通道，与三张开单页同款）
+      widget.onStorageFailure?.call(error, stack);
       if (!mounted) return;
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('没能保存（$error）。请检查后重试；一直这样请把这句话告诉技术支持。'),
+          content: Text(storageFailureNote(error)),
           duration: const Duration(seconds: 6),
         ),
       );

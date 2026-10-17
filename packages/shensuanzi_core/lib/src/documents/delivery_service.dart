@@ -19,6 +19,7 @@ import '../models/document.dart';
 import '../models/party.dart';
 import '../models/product.dart';
 import '../rules/rule_engine.dart';
+import '../rules/rule_rejection.dart';
 import 'delivery_draft.dart';
 import 'document_build.dart';
 import 'draft_invalid.dart';
@@ -178,6 +179,11 @@ class DeliveryService {
 
     final Document? applied = outcome.document;
     if (outcome.status != RuleStatus.applied || applied == null) {
+      // #23 补丁：只有**业务拒绝**（用户能改）才带类型抛出；协议违反 /
+      // 内部 bug（target_missing / rule_internal_error 等）保持既有
+      // StateError 真错误语义（UI「请再试一次」+ 日志，M15）。
+      final RuleRejected? business = outcome.businessRejection;
+      if (business != null) throw business;
       throw StateError(outcome.reason ?? '送货单被拒绝（${outcome.status.name}）');
     }
 
@@ -222,7 +228,12 @@ class DeliveryService {
           status: doc.status,
         );
       default:
-        throw StateError(outcome.reason ?? '签收被拒绝（${outcome.status.name}）');
+      // #23 补丁：只有**业务拒绝**（用户能改）才带类型抛出；协议违反 /
+      // 内部 bug（target_missing / rule_internal_error 等）保持既有
+      // StateError 真错误语义（UI「请再试一次」+ 日志，M15）。
+      final RuleRejected? business = outcome.businessRejection;
+      if (business != null) throw business;
+      throw StateError(outcome.reason ?? '签收被拒绝（${outcome.status.name}）');
     }
   }
 }

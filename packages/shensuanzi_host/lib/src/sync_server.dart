@@ -406,10 +406,46 @@ class SyncServer {
   /// ⚠️ 判定一律走 [ProductService.resolvePreferredCode]（**改派唯一出处**）；
   /// 本方法只决定「**什么时候**该改派」= 建商品时。其它主数据表原样落库。
   SyncResponse _createMasterData(SyncOperation op, int now) {
-    final SyncResponse? guard = _requireMasterData(op);
+    // #31（2026-10-16 裁定甲·①）：`opening_quantity` 是**可选**的建档期初
+    // （手机「新建商品 + 当前库存」）—— 它不是 products 的列，必须**先抽出来**，
+    // 否则 `_requireMasterData` 的白名单会把整条 op 拒成「不可写列」。
+    // 只允许 products 建；其它表 / 类型不符 / ≤ 0 都是客户端 bug ⇒ 通用中文 + 码
+    //（**malformed**，不进重试 —— 与 §CV·十五 的「协议违反」同一通道）。
+    final Object? rawOpening = op.payload['opening_quantity'];
+    final int? openingQuantity;
+    if (rawOpening == null) {
+      openingQuantity = null;
+    } else if (op.entity != Schema.products) {
+      return _malformedRequest(
+        op,
+        '期初字段用错表',
+        StateError('opening_quantity 只支持 products，实际 ${op.entity}'),
+        RejectCode.malformedParameter,
+      );
+    } else if (rawOpening is! int || rawOpening <= 0) {
+      return _malformedRequest(
+        op,
+        '期初字段类型/取值不符',
+        StateError('opening_quantity 必须是正整数，实际 $rawOpening'
+            '（${rawOpening.runtimeType}）'),
+        RejectCode.malformedParameter,
+      );
+    } else {
+      openingQuantity = rawOpening;
+    }
+
+    // 抽掉 opening 字段后才是纯行 payload（白名单校验与 INSERT 都吃它）
+    final Map<String, Object?> opPayload = openingQuantity == null
+        ? op.payload
+        : <String, Object?>{
+            for (final MapEntry<String, Object?> e in op.payload.entries)
+              if (e.key != 'opening_quantity') e.key: e.value,
+          };
+
+    final SyncResponse? guard = _requireMasterData(op, payload: opPayload);
     if (guard != null) return guard;
 
-    final Map<String, Object?> values = SyncValueCheck.normalize(op.payload);
+    final Map<String, Object?> values = SyncValueCheck.normalize(opPayload);
     if (values['id'] != null && values['id'] != op.entityId) {
       return _malformedRequest(
         op,
@@ -421,14 +457,79 @@ class SyncServer {
 
     return db.transaction<SyncResponse>(() {
       if (_exists(op.entity, op.entityId)) {
+        // 已存在还带期初 = 客户端 bug（期初只在建档路径处理，静默丢弃
+        // 会让用户以为记了库存）⇒ 按协议违反处理。
+        if (openingQuantity != null) {
+          return _malformedRequest(
+            op,
+            '重复建档带期初',
+            StateError('createMasterData 目标已存在（${op.entityId}）'
+                '却带 opening_quantity —— 期初只在建档路径处理'),
+            RejectCode.malformedParameter,
+          );
+        }
         return SyncResponse(
           entityId: op.entityId,
           status: SyncStatus.alreadyExists,
         );
       }
-      return _insertMasterData(op, values, now);
+      final SyncResponse response = _insertMasterData(op, values, now);
+      // **同一事务**内落期初（裁定①的硬约束：要么都成、要么都不做）——
+      // `Db.transaction` 支持嵌套（depth 计数），内层与外层合一并提交。
+      // dispatch 失败 ⇒ 异常抛出 ⇒ 外层整体回滚（商品行也不会留下）。
+      if (openingQuantity != null) {
+        _dispatchOpeningStock(op, openingQuantity, now);
+      }
+      return response;
     });
   }
+
+  /// 建档期初落账（#31 裁定甲·①）：造一张 **stocktake 文档**走
+  /// [RuleEngine.dispatch] —— 与桌面期初（`StocktakeService`）**同一条数据通路**
+  /// （RULE-009：总额 0；成本走 `CostPolicy.surplusCost`）。
+  ///
+  /// - **lines.quantity = 实际数量（最小单位）**，host 端按「实际 vs 账面」算
+  ///   diff（`_actualFromLines` 的既有语义）⇒ 客户端镜像滞后不影响正确性；
+  /// - **必须已在事务内调用** —— 与建档原子（裁定①）。
+  /// - 失败（商品侧约束等）⇒ 抛出 ⇒ 外层事务整体回滚 + `handle` 兜底分类。
+  void _dispatchOpeningStock(SyncOperation op, int openingQuantity, int now) {
+    final Document document = Document(
+      id: newId(),
+      // 占位号：`RuleEngine._prepare` 会换成正式单号（PD 前缀，与桌面期初同款）
+      docNo: '${Document.pendingDocNoPrefix}${op.entityId}',
+      docType: DocType.stocktake,
+      status: DocStatus.confirmed,
+      totalAmount: 0,
+      occurredAt: now,
+      createdAt: now,
+      updatedAt: now,
+      remark: '建档期初',
+    );
+    // 录入单位 = 商品单位（客户端本批只按最小单位录入）⇒ `entryQuantity`
+    // 缺省 = `quantity`（v3 口径：没切单位时录入原文就是最小单位数量）。
+    final DocumentLine line = DocumentLine(
+      id: newId(),
+      documentId: document.id,
+      productId: op.entityId,
+      quantity: openingQuantity,
+      unitPrice: 0,
+      amount: 0,
+    );
+    final RuleOutcome outcome = _engine.dispatch(
+      document: document,
+      lines: <DocumentLine>[line],
+      now: now,
+    );
+    if (outcome.status != RuleStatus.applied || outcome.document == null) {
+      // 自己构造的单据被规则层拒绝 = 客户端 payload 问题或内部 bug ⇒
+      // 抛给 `handle` 兜底（细节进日志，客户端拿通用中文 + 码；外层回滚）。
+      throw StateError(
+        '建档期初被规则层拒绝（${op.entityId}）：'
+        '${outcome.reason ?? outcome.status.name}',
+      );
+    }
+  }
+
 
   /// 主数据**落库**（建档路径的**唯一实现**）—— `createMasterData` 与
   /// `updateMasterData` 的 **upsert 分支**共用（§CV·3 裁定，2026-10-08）。
@@ -599,7 +700,10 @@ class SyncServer {
 
   /// 主数据操作的公共前置：表必须是主数据表，且 payload 列名全在白名单内。
   /// 返回非 null 表示已经可以短路返回。
-  SyncResponse? _requireMasterData(SyncOperation op) {
+  SyncResponse? _requireMasterData(SyncOperation op, {Map<String, Object?>? payload}) {
+    // #31：`_createMasterData` 会先抽掉 `opening_quantity` 再把**纯行 payload**
+    // 传进来做白名单校验（缺省 = 原样，update / delete 不受影响）。
+    final Map<String, Object?> checked = payload ?? op.payload;
     if (!SyncWhitelist.isMasterData(op.entity)) {
       return _malformedRequest(
         op,
@@ -611,7 +715,7 @@ class SyncServer {
     }
     final List<String> badColumns = SyncWhitelist.offendingColumns(
       op.entity,
-      op.payload.keys,
+      checked.keys,
     );
     if (badColumns.isNotEmpty) {
       return _malformedRequest(
