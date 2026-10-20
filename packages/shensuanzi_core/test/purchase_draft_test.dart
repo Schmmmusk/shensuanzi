@@ -126,6 +126,19 @@ void main() {
       expect(draft.validate()[PurchaseField.party], contains('散采要当场结清'));
     });
 
+    test('#40③ 提示的**第一句**必须是最致命的数：这一单还差多少钱', () {
+      // 10 × 3.50 = ¥35.00，一分没付
+      final String? message = goodDraft().validate()[PurchaseField.party];
+      expect(
+        message,
+        startsWith('这一单还差 ¥35.00 没付。'),
+        reason: '中老年用户扫视只看第一句 ⇒ 差额必须在最前面（docs/reply.md 2026-10-18）',
+      );
+      expect(message, contains('散采要当场结清'));
+      expect(message, contains('选一个供应商把欠款记到名下'),
+          reason: '说「怎么办」，不只说「哪里错了」');
+    });
+
     test('有供应商 + 欠款 → 不报（赊购合法）', () {
       final PurchaseDraft draft = goodDraft(
         partyId: 'party-1',
@@ -496,7 +509,8 @@ void main() {
     });
 
     test('createSupplier：最小建档（名称 + 电话可选），空名抛', () {
-      final Party party = service.createSupplier('王老板', phone: ' 13800000000 ');
+      final Party party =
+          service.createSupplier('王老板', phone: ' 13800000000 ').party;
       expect(party.name, '王老板');
       expect(party.phone, '13800000000', reason: '电话要 trim');
       expect(party.roles.map((PartyRole r) => r.wire), <String>['supplier']);

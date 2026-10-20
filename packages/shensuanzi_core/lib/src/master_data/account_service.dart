@@ -116,6 +116,27 @@ class AccountService {
   /// 列表。默认只看启用中的（[active] 传 `null` 看全部）。
   List<Account> list({bool? active = true}) => _dao.findAll(active: active);
 
+  /// 账户页的可见口径（#40② 裁定甲，2026-10-18）。
+  ///
+  /// **默认就把「停用但还有钱」的账户列出来** —— 与往来方页 `listVisible` 同口径。
+  /// 为什么这条极其重要：钱不会因为「停用」而消失，若默认藏起来，用户去银行取钱
+  /// 发现不够、打开软件却看不到那个账户的余额，会以为钱丢了（与 OBS-05 的
+  /// 「幽灵账」是同一种风险）。
+  ///
+  /// [includeInactiveWithoutBalance] = `true`（勾上开关）⇒ **所有**停用账户都列，
+  /// 包括余额为 0 的空账户。
+  List<Account> listVisible({bool includeInactiveWithoutBalance = false}) {
+    final List<Account> inactive = _dao.findAll(active: false);
+    if (includeInactiveWithoutBalance) {
+      return <Account>[..._dao.findAll(active: true), ...inactive];
+    }
+    final Map<String, int> byAccount = balances();
+    return <Account>[
+      ..._dao.findAll(active: true),
+      ...inactive.where((Account account) => (byAccount[account.id] ?? 0) != 0),
+    ];
+  }
+
   /// 每个账户的当前余额（含期初 + 全部流水）。
   Map<String, int> balances() {
     final QueryDao queries = QueryDao(_dao.db);

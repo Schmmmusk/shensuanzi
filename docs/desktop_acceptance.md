@@ -42,7 +42,7 @@
 | 2 | 全量门禁 4 条                                                                     | `windows_build.md` **§8.5**                  | `flutter analyze` 0 issue · `flutter test` · `import_guard` · 三包 `dart test` **全绿**         |
 | 3 | 出包 2 条 + 打包脚本的 4 道拦截                                                         | **§8.2**                                     | `make_release.py` 不中止；产出 zip + `.sha256`                                                    |
 | 4 | **干净环境首发 15 项**                                                              | **§8.4**                                     | 逐项照做；⚠️ **第 3 项（SmartScreen 后对话框是否在前台）只有真机可答**                                              |
-| 5 | 版本一致性                                                                        | `test/version_test.dart` + `make_release.py` | 三处一致：`pubspec.yaml` / `version.dart`（`v0.3.5（第五个可部署版本）`）/ `packaging/使用说明.txt`；手册 HTML 版本戳同 |
+| 5 | 版本一致性                                                                        | `test/version_test.dart` + `make_release.py` | 三处一致：`pubspec.yaml` / `version.dart`（`v0.6.1（第六个可部署版本）`）/ `packaging/使用说明.txt`；手册 HTML 版本戳同 |
 | 6 | ⚠️ **本次额外确认（§8.4 第 14 项已过期）**                                                | `manual_content.dart`                        | 手册 HTML 的**章数应与 `manual_content.dart` 一致 —— 当前是 20 章**；§8.4 里写的「15 章」是当时的值，别再照抄             |
 
 ---

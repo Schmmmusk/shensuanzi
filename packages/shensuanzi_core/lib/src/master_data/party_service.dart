@@ -174,7 +174,12 @@ class PartyService {
   /// - 内部按角色逐个走 [ensureParty]：**同名往来方自动复用并追加角色**，
   ///   与 Z-4「绝不出现两条同名 party」同一保证；[phone]/[address]
   ///   仍只在真正新建时写入
-  Party createFull({
+  ///
+  /// **返回 [PartyMutation]（#40① 裁定甲-改，2026-10-18）**：调用方必须能说出
+  /// 「到底发生了什么」—— 新建了一条 / 给老档加了身份 / 把停用档复活了。
+  /// 以前只回 `Party`，界面就只能静默复用（报告里「主数据 5」的原始不满）。
+  /// 多个角色逐个 ensure 时，action 取**信息量最大**的那个（见 [_mergeAction]）。
+  PartyMutation createFull({
     required String name,
     required List<PartyRole> roles,
     String? phone,
@@ -184,16 +189,21 @@ class PartyService {
     if (roles.isEmpty) {
       throw StateError('至少要选一个角色（供应商 / 客户）');
     }
+    PartyMutationAction action = PartyMutationAction.existing;
+    Party? latest;
     for (final PartyRole role in roles) {
-      ensureParty(
+      final PartyMutation mutation = ensureParty(
         name: name,
         role: role,
         phone: phone,
         address: address,
         now: now,
       );
+      latest = mutation.party;
+      action = _mergeAction(action, mutation.action);
     }
-    return findByName(name)!;
+    // `latest` 一定非空（roles 非空且循环至少跑一次）
+    return PartyMutation(party: latest!, action: action);
   }
 
   /// 编辑**资料与角色**（名称 / 电话 / 地址 / 角色）。`id` 不存在抛 [StateError]。
@@ -297,13 +307,18 @@ class PartyService {
   ///
   /// 用 `findAllForExport`（不分页）而不是 `findAll`（默认 200 条）——
   /// 显示口径不能因为条数上限漏掉欠款的往来方。
-  List<Party> listVisible() {
+  List<Party> listVisible({bool includeInactiveWithoutBalance = false}) {
     final Map<String, int> balances = partyBalances();
+    final List<Party> inactive = _dao.findAllForExport(active: false);
     return <Party>[
       ..._dao.findAllForExport(active: true),
-      ..._dao.findAllForExport(active: false).where(
-        (Party party) => (balances[party.id] ?? 0) != 0,
-      ),
+      // #40②（2026-10-18 裁定甲）：
+      // - 默认：停用但**还有余额**的照旧显示（OBS-05 的「幽灵账」防线）
+      // - 勾上「显示全部（含无欠款的停用档）」：连不欠钱的停用档也列出来
+      if (includeInactiveWithoutBalance)
+        ...inactive
+      else
+        ...inactive.where((Party party) => (balances[party.id] ?? 0) != 0),
     ];
   }
 
@@ -316,4 +331,19 @@ class PartyService {
   /// 全部往来方的余额（正 = 对方欠我，负 = 我欠对方）。
   /// 实现委托 `QueryDao.partyBalances`（从流水算，无余额表）。
   Map<String, int> partyBalances() => QueryDao(_dao.db).partyBalances();
+}
+
+/// 合并两次 `ensureParty` 的结果（[PartyService.createFull] 逐角色调用时用）。
+///
+/// 优先级 **created > revived > roleAppended > existing** —— 越「有信息量」越优先：
+/// 「新建了一条档」比「给老档加了个身份」更值得说；「把停用档复活了」
+/// 比「角色早就齐了、什么都没改」更值得说。
+PartyMutationAction _mergeAction(PartyMutationAction a, PartyMutationAction b) {
+  int rank(PartyMutationAction value) => switch (value) {
+    PartyMutationAction.created => 3,
+    PartyMutationAction.revived => 2,
+    PartyMutationAction.roleAppended => 1,
+    PartyMutationAction.existing => 0,
+  };
+  return rank(a) >= rank(b) ? a : b;
 }

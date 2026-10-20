@@ -31,6 +31,8 @@ class PartiesPage extends StatefulWidget {
     this.exports,
     required this.masterDataPolicy,
     this.pendingMarks,
+    this.partySink,
+    this.mobileShell = false,
   });
 
   final PartyService service;
@@ -50,11 +52,38 @@ class PartiesPage extends StatefulWidget {
   /// 而手机端的 `PartyService` 建在**镜像**上，写进去永远到不了电脑（静默丢数据）。
   final MasterDataPolicy masterDataPolicy;
 
+  /// **往来方写入口的队列出口**（2026-10-20 放开手机往来方，§CV·七十七）。
+  ///
+  /// 手机 = `QueuePartySink`（写镜像 + 入队 + 立即推）；桌面 / 未装配 = `null`
+  /// ⇒ 所有写走 [service]（`PartyService` 直连主库）—— **桌面零变化**。
+  /// ⚠️ 三者（新建 / 编辑 / 停用）**必须同进同退**：只放新建会留下
+  /// 「编辑只写镜像、不到电脑」的半身（手机 `service` 建在镜像上）。
+  final QueuePartySink? partySink;
+
+  /// 手机壳？（与 `StockPage` / `OverviewPage` 同一个壳级事实。）
+  /// 只为「门控开了但出口没装」的守卫用 —— 见 `_PartiesPageState._canWriteParties`。
+  final bool mobileShell;
+
   @override
   State<PartiesPage> createState() => _PartiesPageState();
 }
 
 class _PartiesPageState extends State<PartiesPage> {
+  /// **能不能在本机写往来方**：门控放开 **且** 出口齐备。
+  ///
+  /// ⚠️ 为什么多判一个出口：手机上的 `widget.service`（`PartyService`）
+  /// 建在**镜像**上，直接写会「只进镜像、不到电脑」—— 静默丢数据。
+  /// 桌面没有这个问题（`service` 直连主库）⇒ 只在**手机壳**上要求出口非空。
+  bool get _canWriteParties =>
+      widget.masterDataPolicy.canCreateParties &&
+      (!widget.mobileShell || widget.partySink != null);
+
+  /// #40②（2026-10-18 裁定甲）：勾上 ⇒ 连「停用且不欠钱」的也列出来。
+  ///
+  /// 默认 `false`：**停用但还有余额的本来就显示**（OBS-05 幽灵账防线），
+  /// 这个开关只决定「不欠钱的停用档要不要也占屏幕」。
+  bool _showInactiveWithoutBalance = false;
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -62,7 +91,9 @@ class _PartiesPageState extends State<PartiesPage> {
     final Set<String> pending = widget.pendingMarks?.ids ?? const <String>{};
     // §审查 OBS-05 后半：**停用但余额 ≠ 0 的也要显示** —— 停用只是
     //「不再出现在开单选择器里」，不是从账上消失（口径见 `listVisible`）
-    final List<Party> parties = widget.service.listVisible();
+    final List<Party> parties = widget.service.listVisible(
+      includeInactiveWithoutBalance: _showInactiveWithoutBalance,
+    );
     final Map<String, int> balances = widget.service.partyBalances();
 
     // AA-5：按 |余额| 降序，精确 0 沉底
@@ -117,6 +148,21 @@ class _PartiesPageState extends State<PartiesPage> {
                     icon: const Icon(Icons.add),
                     label: const Text('新建往来方'),
                   ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // #40②：照抄商品页的形态（Checkbox + **文字标签**，中老年不看纯图标）
+              Row(
+                children: <Widget>[
+                  Checkbox(
+                    key: const Key('parties-show-inactive'),
+                    value: _showInactiveWithoutBalance,
+                    onChanged: (bool? value) => setState(
+                      () => _showInactiveWithoutBalance = value ?? false,
+                    ),
+                  ),
+                  // 措辞按 `docs/reply.md` 2026-10-18 的建议
+                  const Text('显示全部（含无欠款的停用档）'),
                 ],
               ),
               const SizedBox(height: 8),
@@ -222,8 +268,8 @@ class _PartiesPageState extends State<PartiesPage> {
   /// 停用后该往来方不再出现在开单选择器里，但余额仍在账上；用户以为
   /// 「停用 = 结清了」，那笔应收就会在催款时被漏掉。
   Future<void> _toggleActive(Party party) async {
-    // 停用/启用同为主数据写（updateMasterData）—— 本机不能建就一并引导
-    if (!widget.masterDataPolicy.canCreateParties) {
+    // 停用/启用同为主数据写（updateMasterData）—— 不能写就一并引导
+    if (!_canWriteParties) {
       await showMobileGuideDialog(context, MobileGuideTopic.editParty);
       return;
     }
@@ -258,27 +304,46 @@ class _PartiesPageState extends State<PartiesPage> {
         if (sure != true || !mounted) return;
       }
     }
-    widget.service.setActive(party.id, active: !party.isActive);
+    final QueuePartySink? sink = widget.partySink;
+    if (sink == null) {
+      widget.service.setActive(party.id, active: !party.isActive);
+    } else {
+      // 手机：写镜像 + 入队 + 立即推（与「开单后」同一触发路径）
+      sink.setActive(party.id, active: !party.isActive);
+    }
     if (mounted) setState(() {});
   }
 
   /// 新建（[existing] 为 null）或编辑。
   /// 本机不能建 ⇒ 入口保留，点击后弹引导（不进表单）。
   Future<void> _editParty(BuildContext context, {Party? existing}) async {
-    if (!widget.masterDataPolicy.canCreateParties) {
+    if (!_canWriteParties) {
       await showMobileGuideDialog(
         context,
         existing == null ? MobileGuideTopic.newParty : MobileGuideTopic.editParty,
       );
       return;
     }
-    final bool? changed = await showDialog<bool>(
+    // #40①：新建时返回 `PartyMutation`（编辑返回 `null`）—— 页面要说出
+    // 「新建了 / 追加了身份 / 复活了停用档」；以前只回 bool，这些信息全丢了
+    final PartyMutation? mutation = await showDialog<PartyMutation>(
       context: context,
       builder: (BuildContext dialogContext) =>
-          _PartyFormDialog(service: widget.service, existing: existing),
+          _PartyFormDialog(
+            service: widget.service,
+            existing: existing,
+            sink: widget.partySink,
+          ),
     );
-    if (changed != true) return;
-    if (!mounted) return;
+    if (mutation == null) return;
+    // `context.mounted`（不是 `mounted`）：analyze 要求与 `context` 绑定的守卫
+    if (!context.mounted) return;
+    final String? notice = partyMutationNotice(mutation);
+    if (notice != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(notice), duration: const Duration(seconds: 4)),
+      );
+    }
     setState(() {});
   }
 }
@@ -356,38 +421,39 @@ class _PartyRow extends StatelessWidget {
                           : theme.hintColor,
                     ),
                   ),
-                  Row(
-                    children: <Widget>[
-                      Flexible(
-                        child: Text(
-                          roleLabels,
-                          style: TextStyle(
-                            height: 1.6,
-                            color: theme.textTheme.bodySmall?.color,
-                          ),
-                        ),
-                      ),
-                      if (!party.isActive)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 8),
-                          // §审查 OBS-05 后半：停用**且有余额**要显眼 ——
-                          // 它出现在列表里的唯一理由就是「这笔账还没结清」，
-                          // 不能和「干干净净停用掉的」长得一样
-                          child: Text(
-                            balanceCents != 0 ? '已停用 · 账未结清' : '已停用',
-                            style: TextStyle(
-                              height: 1.6,
-                              fontWeight: balanceCents != 0
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
-                              color: balanceCents != 0
-                                  ? theme.colorScheme.error
-                                  : theme.hintColor,
-                            ),
-                          ),
-                        ),
-                    ],
+                  // ⚠️ **角色独占一行**（2026-10-19 用户实测溢出）：
+                  // 原来是 `Row[Flexible(角色), 已停用标签]` —— 超大档（2.0）下
+                  // 左侧列只有 ~200px，`Flexible` 把「客户 / 供应商」压到
+                  // **一个字一行竖排**（截图：往来方页「鸿磐」那行），
+                  // 非弹性的标签再把整行撑爆（黄黑条纹）。
+                  //
+                  // 处置：角色单独一行（`maxLines: 1` + 省略），停用标记**下移
+                  // 到第三行** —— 与账户页/商品页同一思路（标签不与主字段抢宽）。
+                  Text(
+                    roleLabels,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
                   ),
+                  if (!party.isActive)
+                    // §审查 OBS-05 后半：停用**且有余额**要显眼 ——
+                    // 它出现在列表里的唯一理由就是「这笔账还没结清」，
+                    // 不能和「干干净净停用掉的」长得一样
+                    Text(
+                      balanceCents != 0 ? '已停用 · 账未结清' : '已停用',
+                      style: TextStyle(
+                        height: 1.6,
+                        fontWeight: balanceCents != 0
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                        color: balanceCents != 0
+                            ? theme.colorScheme.error
+                            : theme.hintColor,
+                      ),
+                    ),
                   Text(
                     party.phone ?? '',
                     style: TextStyle(
@@ -448,10 +514,18 @@ class _PartyRow extends StatelessWidget {
 /// 这正是「想给老王加供应商角色」的正路，不必再「停用 + 重建」）。
 /// 编辑时若把角色全部取消，保存后会提示「不会出现在开单选择器里」。
 class _PartyFormDialog extends StatefulWidget {
-  const _PartyFormDialog({required this.service, this.existing});
+  const _PartyFormDialog({required this.service, this.existing, this.sink});
 
   final PartyService service;
+
+  /// 被编辑的行（`null` = 新建）
   final Party? existing;
+
+  /// **手机队列出口**（`null` = 桌面 / 未装配 ⇒ 走 [service]）。
+  ///
+  /// 新建/编辑都改走它：手机上的 `service` 建在**镜像**上，直接写会「只进镜像、
+  /// 不到电脑」——2026-10-20 放开手机往来方建档时补的（§CV·七十七）。
+  final QueuePartySink? sink;
 
   @override
   State<_PartyFormDialog> createState() => _PartyFormDialogState();
@@ -470,10 +544,15 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
   String? _error;
   bool _saving = false;
 
+  /// #40①：名称框**失焦**时查同名（不在 `onChanged` 查 —— 每键一次库 + setState）
+  final FocusNode _nameFocus = FocusNode();
+  String? _sameNameHint;
+
   @override
   void initState() {
     super.initState();
     _roles = <PartyRole>{...?widget.existing?.roles};
+    _nameFocus.addListener(_onNameFocusChanged);
   }
 
   @override
@@ -481,7 +560,19 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
     _name.dispose();
     _phone.dispose();
     _address.dispose();
+    _nameFocus.removeListener(_onNameFocusChanged);
+    _nameFocus.dispose();
     super.dispose();
+  }
+
+  /// 名称框失焦 ⇒ 查同名并出内联提醒（#40①，不拦人）
+  void _onNameFocusChanged() {
+    if (_nameFocus.hasFocus) return;
+    final String name = _name.text.trim();
+    final Party? existing =
+        name.isEmpty ? null : widget.service.findByNameIncludingInactive(name);
+    final String? hint = partySameNameHint(existing, adding: _roles.toList());
+    if (hint != _sameNameHint) setState(() => _sameNameHint = hint);
   }
 
   Future<void> _save() async {
@@ -493,15 +584,25 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
     }
     setState(() => _saving = true);
     try {
+      final PartyMutation result;
+      final QueuePartySink? sink = widget.sink;
       if (widget.existing == null) {
-        widget.service.createFull(
-          name: _name.text,
-          roles: _roles.toList(),
-          phone: _phone.text,
-          address: _address.text,
-        );
+        result = sink == null
+            ? widget.service.createFull(
+                name: _name.text,
+                roles: _roles.toList(),
+                phone: _phone.text,
+                address: _address.text,
+              )
+            : sink.createFull(
+                name: _name.text,
+                roles: _roles.toList(),
+                phone: _phone.text,
+                address: _address.text,
+              );
       } else {
-        widget.service.updateProfile(
+        final Party updated = (sink == null
+            ? widget.service.updateProfile(
           widget.existing!.id,
           name: _name.text,
           // §审查 OBS-05 后半：编辑**连角色一起保存**（`_roles` 由现有角色
@@ -509,10 +610,22 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
           roles: _roles.toList(),
           phone: _phone.text,
           address: _address.text,
+        )
+            : sink.updateProfile(
+                widget.existing!.id,
+                name: _name.text,
+                roles: _roles.toList(),
+                phone: _phone.text,
+                address: _address.text,
+              ).party);
+        // 编辑 = 用户明确改了一条档，没有「复用 / 复活」要解释
+        result = PartyMutation(
+          party: updated,
+          action: PartyMutationAction.existing,
         );
       }
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(result);
     } on StateError catch (error) {
       if (!mounted) return;
       setState(() {
@@ -535,6 +648,7 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
             TextField(
               key: const Key('party-name'),
               controller: _name,
+              focusNode: _nameFocus,
               autofocus: true,
               textInputAction: TextInputAction.next,
               decoration: InputDecoration(
@@ -543,6 +657,16 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
                 errorText: _error,
               ),
             ),
+            // #40① 内联提醒（不拦人）：说清「保存后会发生什么」
+            if (_sameNameHint != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  _sameNameHint!,
+                  key: const Key('party-same-name-hint'),
+                  style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+                ),
+              ),
             const SizedBox(height: 8),
             // §审查 OBS-05 后半：**新建与编辑都能改角色** —— 原来编辑不给碰，
             // 用户想加一个角色只能「停用 + 重建」，而那会造出第二条同名

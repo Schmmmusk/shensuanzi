@@ -27,16 +27,19 @@
 /// 那条例外留在 UI 的引导对话框里。
 library;
 
+import '../dao/party_dao.dart';
 import '../dao/product_dao.dart';
 import '../dao/sync_dao.dart';
 import '../db/database.dart';
 import '../db/schema.dart';
+import '../models/party.dart';
 import '../models/product.dart';
 import '../models/sync_queue_entry.dart';
 import '../rules/product_code_generator.dart';
 import '../sync/sync_operation.dart';
 import '../sync/whitelist.dart';
 import '../util/ids.dart';
+import 'party_service.dart';
 import 'product_draft.dart';
 import 'product_service.dart';
 
@@ -200,15 +203,135 @@ Map<String, Object?> masterDataUpdatePayload(Map<String, Object?> row) =>
 /// 手机上 `SyncQueueDao` 就挂在镜像库上（B2 起如此），所以这里只收一个
 /// [mirror]：队列条目与乐观行**同库同事务**写 —— 不会出现「行写了、条目没写」
 /// 这种静默丢数据的中间态。
+/// **往来方的手机队列出口**（2026-10-20 放开，`docs/reply_review.md` §CV·七十七）。
+///
+/// ## 为什么是「包一层 `PartyService`」而不是重写一份
+///
+/// 同名去重 / 复活停用档 / trim / 角色合并 的实现**只应有一处**
+/// （`PartyService.ensureParty`，Z-4 裁定）。本类做三件事：
+///
+/// 1. 把写入目标指向**镜像库**（与手机上读的是同一张库）；
+/// 2. 写完把**行 payload 入队**（`createMasterData` / `updateMasterData`）；
+/// 3. 入队成功 ⇒ 回调 [onEnqueued]（与 `QueueMasterSink` 同一条触发路径）。
+///
+/// ⚠️ **返回 `PartyMutation`**：界面要据此说出「新建了 / 追加了身份 / 复活了停用档」
+/// （#40① 的 `partyMutationNotice` 就是吃这个的）。口径是**客户端镜像看到的样子** ——
+/// 主机那份可能更新，同步后自然收敛（主机永远赢）。
+///
+/// ⚠️ **与桌面 `PartyService` 的差别只有入队**：桌面直连主库，不入队、不回调。
+class QueuePartySink {
+  QueuePartySink({
+    required Db mirror,
+    required SyncQueueDao queue,
+    int Function()? clock,
+    this.onEnqueued,
+  }) : _queue = queue,
+       _services = PartyService(PartyDao(mirror)),
+       _clock = clock ?? _systemClock;
+
+  final SyncQueueDao _queue;
+  final PartyService _services;
+  final int Function() _clock;
+
+  /// 入队成功后立刻推一次（与 [QueueMasterSink.onEnqueued] 同一理由与口径）
+  final void Function()? onEnqueued;
+
+  static int _systemClock() => DateTime.now().millisecondsSinceEpoch;
+
+  /// 建档（**复用 `PartyService.createFull` 的同名去重 / 角色合并实现**）。
+  ///
+  /// [roles] 至少一个；空 ⇒ [StateError]（与桌面同款，UI 先拦）。
+  PartyMutation createFull({
+    required String name,
+    required List<PartyRole> roles,
+    String? phone,
+    String? address,
+    int? now,
+  }) {
+    final PartyMutation mutation = _services.createFull(
+      name: name,
+      roles: roles,
+      phone: phone,
+      address: address,
+      now: now,
+    );
+    _enqueue(
+      SyncOpType.createMasterData,
+      mutation.party,
+      now: now ?? _clock(),
+    );
+    return mutation;
+  }
+
+  /// 编辑资料与角色（同名复用语义与桌面逐字一致）。
+  PartyMutation updateProfile(
+    String id, {
+    required String name,
+    List<PartyRole>? roles,
+    String? phone,
+    String? address,
+    int? now,
+  }) {
+    final Party updated = _services.updateProfile(
+      id,
+      name: name,
+      roles: roles,
+      phone: phone,
+      address: address,
+      now: now,
+    );
+    _enqueue(SyncOpType.updateMasterData, updated, now: now ?? _clock());
+    return PartyMutation(party: updated, action: PartyMutationAction.existing);
+  }
+
+  /// 停用 / 恢复（软删，`Agents.md` 纪律 2）。
+  PartyMutation setActive(String id, {required bool active, int? now}) {
+    final Party updated = _services.setActive(id, active: active, now: now);
+    _enqueue(SyncOpType.updateMasterData, updated, now: now ?? _clock());
+    return PartyMutation(party: updated, action: PartyMutationAction.existing);
+  }
+
+  /// 把一行往来方打进同步队列（create / update 共用）。
+  void _enqueue(SyncOpType type, Party party, {required int now}) {
+    _queue.enqueue(
+      SyncQueueEntry.create(
+        SyncOperation(
+          entity: Schema.parties,
+          entityId: party.id,
+          operation: type,
+          // base_version = 镜像行的版本（§CH §6）；建档时主机收到
+          // `alreadyExists` 也只回 `applied`，不影响收敛
+          baseVersion: party.syncVersion,
+          payload: masterDataUpdatePayload(party.toRow()),
+        ),
+        now: now,
+      ),
+    );
+    onEnqueued?.call();
+  }
+}
+
 class QueueMasterSink implements MasterDataSink {
   QueueMasterSink({
     required Db mirror,
     required SyncQueueDao queue,
     int Function()? clock,
+    this.onEnqueued,
   }) : _mirror = mirror,
        _products = ProductDao(mirror),
        _queue = queue,
        _clock = clock ?? _systemClock;
+
+  /// **入队成功后立即推一次**（2026-10-20，用户实测：手机上建好的商品
+  /// 电脑上看不到，要手动同步才出现）。
+  ///
+  /// 根因：自动补传的三个触发点（**开单后 / 回前台 / 手动**，2026-10-07 裁定）
+  /// 只覆盖**单据**；手机 v1 后来才开放「商品建档」（§CH §8），
+  /// 建档走的是**另一条出口**（本类），那条路上**没有任何触发点**。
+  ///
+  /// ⇒ 这里补上与「开单后」同性质的触发：**用户刚做完一个可推送的动作，就推一次**。
+  /// `null` = 不推（主机侧不走这个出口；测试也不推）。
+  final void Function()? onEnqueued;
 
   final Db _mirror;
   final ProductDao _products;
@@ -281,6 +404,9 @@ class QueueMasterSink implements MasterDataSink {
       return product;
     });
 
+    // 2026-10-20：**入队成功 ⇒ 立刻推一次**（三个方法同一条路径）。
+    // 失败无感 —— `autoPush` 自己会把条目留在队列里重试。
+    onEnqueued?.call();
     return MasterDataSubmitResult.queued(row);
   }
 
@@ -338,6 +464,9 @@ class QueueMasterSink implements MasterDataSink {
       return updated;
     });
 
+    // 2026-10-20：**入队成功 ⇒ 立刻推一次**（三个方法同一条路径）。
+    // 失败无感 —— `autoPush` 自己会把条目留在队列里重试。
+    onEnqueued?.call();
     return MasterDataSubmitResult.queued(row);
   }
 
@@ -390,6 +519,9 @@ class QueueMasterSink implements MasterDataSink {
       return updated;
     });
 
+    // 2026-10-20：**入队成功 ⇒ 立刻推一次**（三个方法同一条路径）。
+    // 失败无感 —— `autoPush` 自己会把条目留在队列里重试。
+    onEnqueued?.call();
     return MasterDataSubmitResult.queued(row);
   }
 }

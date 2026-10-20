@@ -150,7 +150,10 @@ void main() {
         Allocation(targetDocId: sale2.id, amount: 1000),
       ]);
 
-      // ④ 销售退货 —— **ref_doc_id 指向原单，但它是独立交易、必须显示**
+      // ④ 销售退货 —— **平铺口径**下必须显示（`rootsOnly: false`）。
+      // ⚠️ 2026-10-18（#26 批 3）：**列表 UI 默认走 `rootsOnly: true`**（一笔生意一行），
+      // 退货单在那里是折进主单的；这条断言守的是**平铺**这条路径 ——
+      // 用户筛「销售退货」时走的就是它，漏掉就一片空白。
       final Document ret = doc(
         type: DocType.saleReturn,
         partyId: party,

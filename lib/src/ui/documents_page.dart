@@ -82,6 +82,45 @@ class _DocumentsPageState extends State<DocumentsPage> {
   /// 自定义时间范围（只在 `_range == _TimeRange.custom` 且选过之后有效）
   DateTimeRange? _customRange;
 
+  /// 搜索词（#26 批 2）—— **输入即筛**；空串 = 不筛。
+  ///
+  /// 匹配四路：本单号 / 对方名 / 子单号 / 明细里的商品名（全在 core 的
+  /// `DocumentDao._summaries` 里，本页只负责把词传下去）。
+  String _query = '';
+
+  /// 非空 = 搜索时**自动把时间范围切成了「全部」**，用它显示说明行。
+  ///
+  /// 为什么要自动切：默认档是「最近 30 天」，搜三个月前的单会**一条都搜不到**，
+  /// 用户会以为单丢了。为什么不静默切：静默跨范围 = UI 撒谎（显示的范围
+  /// 与实际过滤不一致）⇒ 必须**说出来**。用户手动点时间档时清掉它 —— 那是他自己的选择。
+  _TimeRange? _autoSwitchedFrom;
+
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// 搜索框变化：更新词；首次输入时把范围切到「全部」并记下原档位。
+  void _onQueryChanged(String value) {
+    setState(() {
+      _query = value;
+      if (value.trim().isNotEmpty && _range != _TimeRange.all) {
+        _autoSwitchedFrom = _range;
+        _range = _TimeRange.all;
+      }
+    });
+  }
+
+  void _clearQuery() {
+    _searchController.clear();
+    // ⚠️ 只清词，**不把范围切回去**：用户可能还想接着在「全部」里找
+    //（清空后说明行自然消失 —— 它是 `_query.isNotEmpty` 门控的）
+    _onQueryChanged('');
+  }
+
   /// 类型筛选 —— **多选**（空 = 全部）。可同时看「送货 + 退货」。
   final Set<DocType> _types = <DocType>{};
 
@@ -163,6 +202,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
     setState(() {
       _customRange = picked;
       _range = _TimeRange.custom;
+      // 手选范围 ⇒ 搜索的「已切到全部」说明不再成立
+      _autoSwitchedFrom = null;
     });
   }
 
@@ -196,6 +237,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
     // 否则「列表显示 30 天、导出却从 30 天前那一秒算起」这类缝隙就出来了
     final int? since = _sinceMillis;
     final int? until = _untilMillis;
+    final String query = _query.trim();
+    final bool hasQuery = query.isNotEmpty;
     // §审查 2026-10-05：退货冲减额由 `_summaries` 一次 JOIN 带出（`returnedCents`）
     // —— 不再单独发一条批量查询
     final List<DocumentSummary> rows = widget.dao.listDocuments(
@@ -206,6 +249,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
       limit: 200,
       // 明确按「退货 / 收付款」类目筛时，把派生单据放出来（否则一片空白）
       includeDerived: _includeDerived,
+      // **一笔生意一行**（#26 批 3 甲案）：默认只列「根」，退货 / 收付款折进去；
+      // 用户明确筛了子类目时平铺（`_includeDerived`），否则筛「收款」会一片空白。
+      rootsOnly: !_includeDerived,
+      query: hasQuery ? query : null,
     );
 
     return Scaffold(
@@ -226,8 +273,11 @@ class _DocumentsPageState extends State<DocumentsPage> {
                   if (widget.exports != null)
                     ExportButton(
                       key: const Key('export-documents'),
-                      // AF-2：说清导的是**当前筛选**，不是「这一屏 200 条」
-                      label: '导出当前筛选的单据',
+                      // AF-2：说清导的是**当前筛选**，不是「这一屏 200 条」。
+                      // ⚠️ 2026-10-18（#26 批 3）：屏幕上是**合并**的（一笔生意一行），
+                      // 导出**不合并**（退货单单独一行）—— 不写这句，会计核对时会
+                      // 以为软件导错了（`docs/reply.md` 裁定 6 甲）。
+                      label: '导出当前筛选的单据（不做合并：退货单独一行）',
                       export: () => widget.exports!.write(
                         documentExportTable(
                           // AF-5：导出走**独立查询**（无 200 上限），
@@ -238,6 +288,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                             sinceMillis: since,
                             untilMillis: until,
                             includeDerived: _includeDerived,
+                            // AF-5：导出必须带**同一个搜索词**，否则
+                            // 「导出当前筛选」在用户打字的那一刻就变成谎话
+                            query: hasQuery ? query : null,
                           ),
                         ),
                         from: since == null
@@ -247,12 +300,53 @@ class _DocumentsPageState extends State<DocumentsPage> {
                     ),
                 ],
               ),
+              const SizedBox(height: 12),
+              // 搜索（#26 批 2）：一个框，四路匹配（单号 / 对方 / 子单号 / 商品名）。
+              // ⚠️ 不做防抖：本地 SQLite + 200 行上限，防抖只会制造
+              // 「我打了字但列表没动」的错觉（中老年用户会重复输入）。
+              TextField(
+                key: const Key('doc-search'),
+                controller: _searchController,
+                onChanged: _onQueryChanged,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: '找单号、对方、商品名',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: hasQuery
+                      ? IconButton(
+                          key: const Key('doc-search-clear'),
+                          tooltip: '清空搜索',
+                          icon: const Icon(Icons.clear),
+                          onPressed: _clearQuery,
+                        )
+                      : null,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              // 自动切范围的**说明**：不写这句就是静默跨范围（UI 撒谎）
+              if (hasQuery && _autoSwitchedFrom != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '已切到「全部」来找（原来只显示${_autoSwitchedFrom!.label}）。',
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 4),
               Text(
                 // §审查 OBS-10：排序规则原来只写在代码里 —— 用户看到
                 // 「SK-005 排在 SH-002 前面」会以为软件乱排。说清楚就好。
+                // ⚠️ 2026-10-18（#26①）：这段话**本来就是对的**，是 SQL 没做到
+                // （按 occurred_at 排，主单是 00:00 ⇒ 同一天的派生单全压在上面）。
+                // 现在实现已对齐文案；末尾补一句解释「为什么有的行只写日期」。
                 '点一行看单据详情；收款、付款、复制单号都在详情页里。\n'
-                '最新的排在最上面：先按「单据日期」，同一天里按「录入时间」倒序。',
+                '最新的排在最上面：先按「单据日期」，同一天里按「录入时间」倒序'
+                '（退货、收款按记账时刻，所以带时分）。\n'
+                '退货和收款不单独占一行：折在对应的那笔生意里，行内会写「已退 N 次」。',
                 style: TextStyle(
                   height: 1.6,
                   color: theme.textTheme.bodySmall?.color,
@@ -286,7 +380,11 @@ class _DocumentsPageState extends State<DocumentsPage> {
                           // 日期范围选择器要 await —— 不能在 setState 里做
                           unawaited(_pickCustomRange());
                         } else if (selected) {
-                          setState(() => _range = range);
+                          setState(() {
+                            _range = range;
+                            // 用户**自己**选了范围 ⇒ 不再替他解释（说明行收起）
+                            _autoSwitchedFrom = null;
+                          });
                         }
                       },
                     ),
@@ -349,12 +447,29 @@ class _DocumentsPageState extends State<DocumentsPage> {
                     ),
                   ),
                 ),
+              // 平铺 / 聚合两种模式并存 ⇒ 必须告诉用户现在是哪种（#26 批 3）
+              if (_includeDerived)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '当前按单张单据平铺显示（你筛了收付款 / 退货）；'
+                      '清掉这些筛选就看「一笔生意一行」。',
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                    ),
+                  ),
+                ),
               const SizedBox(height: 8),
               if (rows.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 40),
                   child: Text(
-                    '这个范围里没有单据。',
+                    // 搜索无结果 ≠ 这个范围没单（口径不同，别让用户以为单丢了）
+                    hasQuery ? '没有找到和「$query」有关的单据。' : '这个范围里没有单据。',
                     textAlign: TextAlign.center,
                     style: TextStyle(height: 1.8, color: theme.hintColor),
                   ),
@@ -428,55 +543,85 @@ class _DocumentRow extends StatelessWidget {
         doc.docType != DocType.payment;
     final String unsettledVerb =
         SettlementService.isInbound(doc.docType) == false ? '未付' : '未收';
+    // 「已收 / 已付 N 笔」的动词 —— 与上面「未收/未付」同源，不另写一份判断
+    final String paidVerb =
+        SettlementService.isInbound(doc.docType) == false ? '已付' : '已收';
+
+    // 生命周期摘要（#26 批 3 甲案）：子单被折叠进本行，用户必须能看出
+    // 「这笔生意后来退过、收过」。**加粗 + 主色**是裁定要求的强制补偿项
+    //（`docs/reply.md` 2026-10-18：「不能是灰扑扑的辅助文字」）。
+    // 退货单 / 收付款单自己不显示（它们就是那些动作本身）。
+    final bool isMoneyDoc =
+        doc.docType == DocType.receipt || doc.docType == DocType.payment;
+    final List<String> trailParts = <String>[
+      if (!isReturnDoc && !isMoneyDoc && entry.returnedCount > 0)
+        '已退 ${entry.returnedCount} 次 ¥${Money.formatGrouped(returnedCents)}',
+      if (!isReturnDoc && !isMoneyDoc && entry.settlementCount > 0)
+        '$paidVerb ${entry.settlementCount} 笔',
+    ];
 
     return InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
+          // 首行（对方 / 金额）对齐 —— 右列有 3 行、左列 2 行，居中会让两个
+          // 「最重要的数」错开半行（#26②）
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
+            // ⚠️ 左列必须是 `Expanded`：**宽度 = 行宽 − 右列实宽**，
+            // 所以再长的对方名也撑不破行（配合下面 `maxLines: 1` + 省略号）。
+            // 2026-10-18 实证：一长串 `1` 曾把行撑成 3 行、把金额挤到屏幕边缘。
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Flexible(
-                        child: Text(
-                          doc.docNo,
-                          style: const TextStyle(
-                            height: 1.6,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        doc.docType.label,
-                        style: TextStyle(
-                          height: 1.6,
-                          color: theme.textTheme.bodySmall?.color,
-                        ),
-                      ),
-                    ],
-                  ),
+                  // 第 1 行 = **交易对象**（用户列的四项里，这是「谁」）
                   Text(
-                    '$party · ${_fmtDate(doc.occurredAt)}',
+                    party,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      height: 1.6,
+                      fontSize: theme.textTheme.bodyLarge?.fontSize,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  // 第 2 行 = **类型 · 时间 · 单号**（单号降级到灰小字，
+                  // 但**仍完整可见**、仍可搜索 —— #26② 裁定甲）
+                  Text(
+                    '${doc.docType.label} · '
+                    '${formatOccurredAt(doc.occurredAt)} · ${doc.docNo}',
                     style: TextStyle(
                       height: 1.6,
                       color: theme.textTheme.bodySmall?.color,
                     ),
                   ),
+                  // 第 3 行 = **生命周期摘要**（只在有子单时出现）
+                  if (trailParts.isNotEmpty)
+                    Text(
+                      trailParts.join(' · '),
+                      style: TextStyle(
+                        height: 1.6,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
                 ],
               ),
             ),
+            const SizedBox(width: 12),
+            // 右列**不参与弹性分配**（intrinsic 宽度）⇒ 金额永远完整显示。
+            // 左列是 `Expanded`，它只能吃剩下的宽度，抢不走右列的位置。
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: <Widget>[
+                // 第 1 行 = **交易金额**（用户列的第一位）
                 Text(
                   '¥ ${Money.formatGrouped(doc.totalAmount)}',
                   style: TextStyle(
                     height: 1.6,
+                    fontSize: theme.textTheme.bodyLarge?.fontSize,
                     fontWeight: FontWeight.w700,
                     color: doc.totalAmount >= 0
                         ? theme.colorScheme.onSurface
@@ -512,11 +657,5 @@ class _DocumentRow extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static String _fmtDate(int millis) {
-    final DateTime date = DateTime.fromMillisecondsSinceEpoch(millis);
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}-'
-        '${date.day.toString().padLeft(2, '0')}';
   }
 }

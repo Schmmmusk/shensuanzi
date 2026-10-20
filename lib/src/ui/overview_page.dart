@@ -114,11 +114,6 @@ class _OverviewPageState extends State<OverviewPage> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: <Widget>[
-        // ---- #32 经营速览（空库 = hasAnyDocument()==false ⇒ 整块不显示，
-        //      不干扰首次开张引导；裁定⑤空库判据 = documents 为空）----
-        if (widget.queries != null && widget.queries!.hasAnyDocument())
-          _businessCards(theme),
-
         // ---- 数据安全橙卡（AE-3：用户不会主动查，所以要主动呈现）----
         if (reminder != null)
           Padding(
@@ -239,6 +234,17 @@ class _OverviewPageState extends State<OverviewPage> {
             color: theme.textTheme.bodySmall?.color,
           ),
         ),
+        // ---- #32 经营速览（空库 = hasAnyDocument()==false ⇒ 整块不显示，
+        //      不干扰首次开张引导；裁定⑤空库判据 = documents 为空）----
+        //
+        // 2026-10-20（用户建议）：**从页首挪到「从这里开始」下方** ——
+        // 概览页先回答「数据在哪、能不能用、从哪开始」，经营数字是**第二眼**的东西。
+        // ⚠️ 必须带顶部间距：手机壳这里是 `Column` 竖排三卡，
+        // 紧贴上一段文字会看起来「卡片边缘叠在一起」（用户 2026-10-20 报的现象）。
+        if (widget.queries != null && widget.queries!.hasAnyDocument()) ...<Widget>[
+          const SizedBox(height: 20),
+          _businessCards(theme),
+        ],
       ],
     );
   }

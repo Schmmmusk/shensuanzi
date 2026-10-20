@@ -134,6 +134,22 @@ void main() {
           '2026-01-02 03:04');
     });
 
+    test('formatOccurredAt：零点只印日期，有真时刻印到分（#26① Q3 乙）', () {
+      // 主单：`occurred_at` = 当天 00:00（开单页只能选到日）⇒ **不许印 00:00**
+      expect(formatOccurredAt(DateTime(2026, 10, 12).millisecondsSinceEpoch),
+          '2026-10-12');
+      // 退货 / 手记收付款：`occurred_at` = 精确时刻 ⇒ 印到分
+      expect(
+        formatOccurredAt(DateTime(2026, 10, 12, 16, 48).millisecondsSinceEpoch),
+        '2026-10-12 16:48',
+      );
+      // 00:00:00.000 以外的「零点附近」仍算真时刻（不靠阈值判断）
+      expect(
+        formatOccurredAt(DateTime(2026, 10, 12, 0, 1).millisecondsSinceEpoch),
+        '2026-10-12 00:01',
+      );
+    });
+
     test('单据状态是中文，不是 confirmed（AF-9）', () {
       expect(docStatusLabel(DocStatus.draft), '草稿');
       expect(docStatusLabel(DocStatus.confirmed), '已确认');

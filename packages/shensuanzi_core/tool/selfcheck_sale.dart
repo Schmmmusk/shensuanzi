@@ -117,6 +117,13 @@ void main() {
           .contains('散客要当场结清');
     }());
 
+    // #40③：第一句必须是差额（与 test/ 成对）
+    check('散客提示的第一句是「还差多少钱」', () {
+      final String msg = goodDraft().validate()[SaleField.party] ?? '';
+      return msg.startsWith('这一单还差 ¥50.00 没收到。') &&
+          msg.contains('选一个客户把欠款记到名下');
+    }());
+
     check('有客户 + 欠款 → 不报（赊销合法）', () {
       return goodDraft(partyId: 'party-1').validate().isEmpty;
     }());

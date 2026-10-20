@@ -381,8 +381,11 @@ class SaleDraft {
     // ⚠️ 欠款按**落库金额**算（`recordedPaidCents`）：用户填 100 时
     // 落库是 93 ⇒ 欠款 0 ⇒ 散客**允许**（那 7 元是找零，不是欠款）。
     if (partyId == null && linesOk && paymentsOk && recordedDueCents > 0) {
+      // #40③（2026-10-18 裁定甲）：**第一句必须是最致命的数**。
+      // ⚠️ 与 `PurchaseDraft` **逐字同构**（只换「采/供应商」↔「客/客户」）。
       errors[SaleField.party] =
-          '散客要当场结清，或选一个客户把欠款记到名下';
+          '这一单还差 ¥${Money.format(recordedDueCents)} 没收到。'
+          '散客要当场结清：要么现在把款填上，要么选一个客户把欠款记到名下。';
     }
     return errors;
   }
@@ -469,6 +472,23 @@ class SaleDraft {
   /// （它在开单页的辅助框里，**不进草稿**）。
   String? get overpayNotice =>
       Overpay(givenCents: paidCents, dueCents: totalCents).notice();
+
+  /// #40④（2026-10-18 裁定甲）：**顾客给了钱、但收款框没填够** ⇒ 内联指路。
+  ///
+  /// 「顾客给了」只用来算找零，**不进草稿、不记账**（§AJ·AI-4）。用户很容易
+  /// 把它当成收款框：填了 100、点保存，结果整单赊账 —— 事后 SnackBar 才说欠款，
+  /// 事前没有任何提示。这个方法把「现在保存会发生什么」说在**提交之前**。
+  ///
+  /// 返回 `null` = 没什么要说（没填 / 收款框已经够 / 单据总额为 0）。
+  /// 文案由**领域层**给出（`ui_principles.md` §二：UI 不造句）。
+  String? cashGivenNotice(int givenCents) {
+    if (givenCents <= 0 || totalCents <= 0) return null;
+    final int due = totalCents - recordedPaidCents;
+    if (due <= 0) return null;
+    return '「顾客给了」只用来算找零，不会记账。'
+        '这 ¥${Money.format(givenCents)} 要填在收款框里才会记进去；'
+        '现在保存会整单赊账 ¥${Money.format(due)}。';
+  }
 
   /// **提交按钮文字** —— §AX·一 裁定：*按钮文字是用户动作的最终确认*。
   ///

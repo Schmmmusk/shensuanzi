@@ -76,9 +76,13 @@ class _SectionHeader extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
+          // ⚠️ **不写死 30×30**（2026-10-20 用户实测）：`特大` 及以上字号时
+          // 数字比方框还高 ⇒ 被方框裁掉，而且**没有任何黄黑提示**
+          //（`Text` 被紧约束裁切不算 RenderFlex 溢出，不会报警）。
+          // 改成「最小 30×30 + 随文字撑开」：小字号看起来与原来一致。
           Container(
-            width: 30,
-            height: 30,
+            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: theme.colorScheme.primary.withValues(alpha: 0.12),

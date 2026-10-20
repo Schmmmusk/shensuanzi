@@ -484,6 +484,27 @@ void main() {
     expect(find.textContaining('已保存'), findsOneWidget);
   });
 
+  // #40④（2026-10-18 裁定甲）：「顾客给了」**不记账**，但用户会当它是收款框
+  testWidgets('#40④ 填了「顾客给了」却没填收款框 ⇒ 提交前说清会整单赊账', (
+    WidgetTester tester,
+  ) async {
+    stockUp();
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await fillRow(tester); // 合计 50
+    await tester.enterText(find.byKey(const Key('sale-given')), '100');
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('sale-cash-given-notice')),
+      findsOneWidget,
+      reason: '不记账这件事必须在**提交前**说，不能只靠保存后的 SnackBar',
+    );
+    expect(find.textContaining('不会记账'), findsOneWidget);
+    expect(find.textContaining('整单赊账 ¥50.00'), findsOneWidget);
+  });
+
   testWidgets('「顾客给了」不记账：给 100 收 50 → money_ledger 只进 50', (
     WidgetTester tester,
   ) async {
@@ -775,7 +796,7 @@ void main() {
       expect(find.text('新增商品'), findsOneWidget, reason: '出的是建档表单');
     });
 
-    testWidgets('＋新建客户 ⇒ 出**引导**（往来 v1 仍禁建）', (
+    testWidgets('＋新建客户 ⇒ 出**引导**（手机没装队列出口 ⇒ 不给写不通的路）', (
       WidgetTester tester,
     ) async {
       await tester.pumpWidget(page(policy: const MasterDataPolicy.mobile()));

@@ -69,10 +69,18 @@ class AccountsPage extends StatefulWidget {
 }
 
 class _AccountsPageState extends State<AccountsPage> {
+  /// #40②（2026-10-18 裁定甲）：勾上 ⇒ **所有**停用账户都列（含余额为 0 的）。
+  ///
+  /// 默认 `false` 也**已经包含「停用但还有钱」的账户**（`listVisible` 的口径）——
+  /// 钱不会因为停用消失，藏起来就是「幽灵账」。
+  bool _showInactiveWithoutBalance = false;
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final List<Account> accounts = widget.service.list();
+    final List<Account> accounts = widget.service.listVisible(
+      includeInactiveWithoutBalance: _showInactiveWithoutBalance,
+    );
     final Map<String, int> balances = widget.service.balances();
     // ⚠️ 一次 build 取一次快照，再逐行 contains —— `ids` 每次访问都查库
     final Set<String> pending = widget.pendingMarks?.ids ?? const <String>{};
@@ -106,6 +114,20 @@ class _AccountsPageState extends State<AccountsPage> {
                   height: 1.6,
                   color: theme.textTheme.bodySmall?.color,
                 ),
+              ),
+              const SizedBox(height: 4),
+              // #40②：照抄商品页（Checkbox + 文字标签）
+              Row(
+                children: <Widget>[
+                  Checkbox(
+                    key: const Key('accounts-show-inactive'),
+                    value: _showInactiveWithoutBalance,
+                    onChanged: (bool? value) => setState(
+                      () => _showInactiveWithoutBalance = value ?? false,
+                    ),
+                  ),
+                  const Text('显示已停用的账户'),
+                ],
               ),
               const SizedBox(height: 12),
               if (accounts.isEmpty)
@@ -255,44 +277,30 @@ class _AccountRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Text(
-                        account.name,
-                        style: TextStyle(
-                          height: 1.6,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: account.isActive
-                              ? theme.colorScheme.onSurface
-                              : theme.hintColor,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        kAccountTypeLabels[account.type] ?? account.type.wire,
-                        style: TextStyle(
-                          height: 1.6,
-                          color: theme.textTheme.bodySmall?.color,
-                        ),
-                      ),
-                      if (!account.isActive)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 8),
-                          child: Text(
-                            '已停用',
-                            style: TextStyle(
-                              height: 1.6,
-                              color: theme.hintColor,
-                            ),
-                          ),
-                        ),
-                    ],
+                  // ⚠️ **名字独占一行，类型标签下移**（2026-10-19 用户实测溢出）：
+                  // 原来是 `Row[名字, 类型]` 且两个都不许收缩 —— 超大档（2.0）下
+                  // 「微信收款账户 + 微信」比左侧列还宽 ⇒ 黄黑溢出条纹
+                  // （截图：账户页，窗口与 VSCode 均分 960 宽）。
+                  //
+                  // 处置与**往来方行**（`parties_page.dart:378-380` 的 C3 裁定）
+                  // 和**商品行**（`products_page.dart:257` 的 `Flexible + ellipsis`）
+                  // 同一思路：名字不与标签抢宽，标签进第二行。
+                  Text(
+                    account.name,
+                    style: TextStyle(
+                      height: 1.6,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: account.isActive
+                          ? theme.colorScheme.onSurface
+                          : theme.hintColor,
+                    ),
                   ),
                   Text(
-                    account.isActive
-                        ? '期初 ¥${Money.format(account.initialBalance)}'
-                        : '停用的账户不参与开单，可随时恢复',
+                    // 第二行 = 「类型 · 期初」/「类型 · 停用说明」——
+                    // 单个 Text 会自然换行，**结构上不可能溢出**
+                    '${kAccountTypeLabels[account.type] ?? account.type.wire} · '
+                    '${account.isActive ? '期初 ¥${Money.format(account.initialBalance)}' : '停用的账户不参与开单，可随时恢复'}',
                     style: TextStyle(
                       height: 1.6,
                       color: theme.textTheme.bodySmall?.color,

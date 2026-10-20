@@ -96,6 +96,7 @@ void main() {
     ),
   );
 
+
   testWidgets('显示单号 / 对方 / 金额 / 状态 / 明细；赊账单给 [收款] 按钮', (
     WidgetTester tester,
   ) async {
@@ -324,8 +325,10 @@ void main() {
     expect(find.textContaining('¥4.00'), findsWidgets);
 
     // 退货记录区块：说清退过几次、共多少，并列出单号
-    expect(find.text('退货记录'), findsOneWidget);
-    expect(find.textContaining('退过 1 次'), findsOneWidget);
+    // ⚠️ 2026-10-18（#26 批 3）：标题带次数与金额（列表折叠后这是唯一入口，
+    // 所以标题要**醒目**）⇒ 用 `textContaining` 而不是精确匹配
+    expect(find.textContaining('退货记录 · 1 次'), findsOneWidget);
+    expect(find.textContaining('点下面任意一行'), findsOneWidget);
     expect(
       find.byKey(Key('return-row-${fixture.retId}')),
       findsOneWidget,
@@ -368,7 +371,7 @@ void main() {
     await tester.pumpWidget(page(doc.id));
     await tester.pumpAndSettle();
 
-    expect(find.text('退货记录'), findsNothing, reason: '没退过就别多一块空白');
+    expect(find.textContaining('退货记录'), findsNothing, reason: '没退过就别多一块空白');
     expect(find.text('已退货'), findsNothing);
   });
 

@@ -140,8 +140,15 @@ class _NarrowFlowCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            // ⚠️ `Wrap` 而不是 `Row + Spacer`（2026-10-19 用户实测）：
+            // `Spacer` 只会把剩余空间吃掉，**剩余为 0 时金额被推出卡片外**
+            // （截图：金额完整、但一半在卡片外，带 48px 溢出条）。
+            // `Wrap` 放不下就**换行**，金额永远在卡片里。
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 2,
               children: <Widget>[
                 Text(
                   entry.docType.label,
@@ -150,7 +157,6 @@ class _NarrowFlowCard extends StatelessWidget {
                     color: theme.textTheme.bodySmall?.color,
                   ),
                 ),
-                const Spacer(),
                 Text(
                   // 正 = 对方欠你增加（应收方向）；金额是流水页最关键的信息
                   // —— 放大加粗，避免被略过（用户反馈）
@@ -211,45 +217,61 @@ class _WideFlowTile extends StatelessWidget {
     final bool receivable = entry.amount > 0;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        dense: true,
-        title: Row(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        // #34①（2026-10-19 裁定甲）：**不再用 `ListTile`**。
+        //
+        // `ListTile.trailing` **不参与收缩**：字号 3.0（Windows 200% + 超大档）时
+        // 它要占 51sp 宽，`title` 里「单号 + 类型」的 Row 只剩一点点空间 ⇒
+        // `RenderFlex overflowed by 13 pixels`（真机红黄条 + 日志）。
+        //
+        // 现在的结构（与单据列表 #26② 同一套思路）：
+        //   左列 `Expanded`（单号 / 类型·日期，都可省略）
+        //   右列 **不包 Expanded**（自然占内容宽）⇒ 金额永远完整，先让左列让位。
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Expanded(
-              child: Text(
-                entry.docNo,
-                style: const TextStyle(
-                  height: 1.6,
-                  fontWeight: FontWeight.w600,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    entry.docNo,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      height: 1.6,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    '${entry.docType.label} · '
+                    '${PartyFlowPage._fmtDate(entry.occurredAt)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                ],
               ),
             ),
+            const SizedBox(width: 12),
+            // ⚠️ 右列**不加 Expanded / Flexible** —— 让金额按内容取宽；
+            // 挤的时候由左列省略（金额被截断是更严重的信息损失）
             Text(
-              entry.docType.label,
+              '${receivable ? '欠款 +' : '还款 -'}'
+              '¥${Money.formatGrouped(entry.amount.abs())}',
               style: TextStyle(
                 height: 1.6,
-                color: theme.textTheme.bodySmall?.color,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: receivable ? theme.colorScheme.onSurface : theme.hintColor,
+                fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
               ),
             ),
           ],
-        ),
-        subtitle: Text(
-          PartyFlowPage._fmtDate(entry.occurredAt),
-          style: TextStyle(
-            height: 1.6,
-            color: theme.textTheme.bodySmall?.color,
-          ),
-        ),
-        trailing: Text(
-          '${receivable ? '欠款 +' : '还款 -'}'
-          '¥${Money.formatGrouped(entry.amount.abs())}',
-          style: TextStyle(
-            height: 1.6,
-            fontSize: 17,
-            fontWeight: FontWeight.w800,
-            color: receivable ? theme.colorScheme.onSurface : theme.hintColor,
-            fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
-          ),
         ),
       ),
     );

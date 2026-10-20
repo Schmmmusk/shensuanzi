@@ -41,9 +41,13 @@ void main() {
     }
   });
 
-  Widget shell({bool databaseReady = true, ReadFailureLog? readFailures}) =>
-      MaterialApp(
+  Widget shell({
+    bool databaseReady = true,
+    ReadFailureLog? readFailures,
+    UiScale uiScale = UiScale.standard,
+  }) => MaterialApp(
         home: AppShell(
+          uiScale: uiScale,
           dataDirectory: r'D:\神算子数据',
           backupDirectory: r'D:\神算子备份',
           schemaVersion: 1,
@@ -61,6 +65,50 @@ void main() {
     await tester.tap(find.byKey(ValueKey<String>('nav-$id')));
     await tester.pumpAndSettle();
   }
+
+  // 2026-10-19 用户实测（系统 200% + 应用超大 + 与编辑器分屏）：
+  // 导航宽 = 220 × 2.0 = 440，而窗口只有 ~480 逻辑像素 ⇒ 工作区只剩一条缝。
+  // 判据：**导航不许超过可用宽度的 40%**。
+  testWidgets('分屏 + 超大档：导航列被夹紧，工作区留得住', (WidgetTester tester) async {
+    // 1920 的屏幕 + 200% 系统缩放 ⇒ 960 逻辑宽；再与编辑器分屏 ⇒ 480
+    tester.view.physicalSize = const Size(960, 1000);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(shell(uiScale: UiScale.giant));
+    await tester.pumpAndSettle();
+
+    final double navWidth = tester
+        .getSize(find.byKey(const ValueKey<String>('nav-overview')))
+        .width;
+    expect(
+      navWidth,
+      lessThanOrEqualTo(480 * 0.4 + 1),
+      reason: '导航超过可用宽度的 40% ⇒ 工作区不可用（用户截图：只剩「往来方」竖排三字）',
+    );
+    expect(
+      navWidth,
+      greaterThan(AppNavigation.iconOnlyWidth),
+      reason: '还有空间，不该直接退成「仅图标」（入口必须有文字标签）',
+    );
+  });
+
+  testWidgets('正常窗口（1200 宽 + 标准档）：导航宽度**不变**（别把好的一起改）', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(shell());
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getSize(find.byKey(const ValueKey<String>('nav-overview'))).width,
+      AppNavigation.widthFor(scale: UiScale.standard.factor),
+      reason: '40% 上限只在挤的时候生效',
+    );
+  });
 
   testWidgets('左侧导航把所有入口常驻显示，且每个都带文字标签', (WidgetTester tester) async {
     await tester.pumpWidget(shell());

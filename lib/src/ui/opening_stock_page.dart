@@ -37,7 +37,15 @@ class OpeningStockPage extends StatefulWidget {
     required this.bookQuantities,
     required this.onDone,
     this.onStorageFailure,
+    this.documentSink,
   });
+
+  /// **盘点单的提交出口**（2026-10-20 放开手机「重新清点」，§CV·七十八）。
+  ///
+  /// `null`（桌面 / 未装配）⇒ 走 [service]（`StocktakeService` 直连主库）。
+  /// 手机 ⇒ `QueueSink`：把「实际数量」打进一条 stocktake 单据入队，
+  /// **差额由主机算**（`RuleEngine._stocktake`）—— 客户端零规则。
+  final DocumentSink? documentSink;
 
   final StocktakeService service;
   final ProductService productService;
@@ -226,10 +234,38 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
       _lineErrors = const <int, String>{};
     });
 
+    final StocktakeDraft draft = _draft();
+    // 手机：走队列出口（差额由主机算）—— 桌面 / 未装配：原路径零变化
+    if (widget.documentSink != null) {
+      final DocumentSubmitResult submitted = widget.documentSink!
+          .submitStocktake(draft);
+      if (!mounted) return;
+      if (!submitted.isQueued) {
+        final Object? error = submitted.error;
+        setState(() {
+          _busy = false;
+          _topError = error == null
+              ? '没能记上，你填的内容都还在，改好后重试。'
+              : (error as DraftInvalidException).summary;
+        });
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '已记录 ${draft.filledCount} 件商品，等同步后电脑上的库存会按实际数量校正',
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      widget.onDone();
+      return;
+    }
+
     final StocktakeResult result;
     try {
       // ⚠️ 遗漏 4：失败路径**一律不清输入** —— 没有撤销余地，改完重交
-      result = widget.service.create(_draft());
+      result = widget.service.create(draft);
     } on StocktakeDraftInvalid catch (error) {
       setState(() {
         _busy = false;

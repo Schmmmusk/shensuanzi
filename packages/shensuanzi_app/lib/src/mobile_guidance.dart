@@ -12,14 +12,17 @@
 /// （v1 Android 未发布 ⇒ 无历史数据，不迁移）—— 详见 `MirrorView` 类文档。
 library;
 
-/// 引导话题（六处入口：往来方新建 / 编辑、商品新建、账户新建 / 编辑、期初录入）
+/// 引导话题（五处入口：往来方新建 / 编辑、商品新建、账户新建 / 编辑）。
+///
+/// ⚠️ 原来的 `openingStock` 已于 2026-10-20 删除：手机**能清点**了
+/// （清点单走单据队列，差额由主机算，§CV·七十八）⇒ 引导不再需要。
+/// 留着一个没人用的枚举值 = 死代码（§BE），也会让人以为「手机上做不了期初」。
 enum MobileGuideTopic {
   newParty,
   editParty,
   newProduct,
   newAccount,
   editAccount,
-  openingStock,
 }
 
 /// 引导对话框标题
@@ -49,10 +52,6 @@ String mobileGuideMessage(MobileGuideTopic topic) => switch (topic) {
     '账户资料的修改在电脑上做。\n\n'
     '请到电脑上打开神算子，在「账户」页改好后，'
     '手机点「立即同步」就能看到最新的。',
-  MobileGuideTopic.openingStock =>
-    '期初录入在电脑上做。\n\n'
-    '请到电脑上打开神算子，在「库存」页点「录入现有货物」一次记完；'
-    '手机点「立即同步」后数字就对上了。',
 };
 
 /// 镜像空状态的正文（§CC 裁定六：镜像还没拉到数据时，别让用户以为数据丢了）。

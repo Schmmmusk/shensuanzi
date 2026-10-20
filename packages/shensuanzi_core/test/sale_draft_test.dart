@@ -110,6 +110,37 @@ void main() {
       );
     });
 
+    test('#40④ 「顾客给了」没填进收款框 ⇒ 说清现在保存会整单赊账', () {
+      final SaleDraft draft = goodDraft(partyName: '顾客'); // ¥50.00，一分没收
+      expect(draft.cashGivenNotice(0), isNull, reason: '没填就别啰嗦');
+      final String? notice = draft.cashGivenNotice(10000); // 顾客给了 ¥100
+      expect(notice, isNotNull);
+      expect(notice, contains('只用来算找零，不会记账'));
+      expect(notice, contains('现在保存会整单赊账 ¥50.00'),
+          reason: '必须说清「现在会发生什么」，不能只说「填错框了」');
+
+      // 收款框已经填够 ⇒ 不用再说
+      final SaleDraft paid = goodDraft(
+        partyName: '顾客',
+        payments: <SalePaymentDraft>[
+          const SalePaymentDraft(accountId: 'a1', amount: '50.00'),
+        ],
+      );
+      expect(paid.cashGivenNotice(10000), isNull);
+    });
+
+    test('#40③ 提示的**第一句**必须是最致命的数：这一单还差多少钱', () {      // 10 × 5.00 = ¥50.00，一分没收
+      final String? message =
+          goodDraft(partyName: '顾客').validate()[SaleField.party];
+      expect(
+        message,
+        startsWith('这一单还差 ¥50.00 没收到。'),
+        reason: '与采购页同构：差额在最前（docs/reply.md 2026-10-18）',
+      );
+      expect(message, contains('散客要当场结清'));
+      expect(message, contains('选一个客户把欠款记到名下'));
+    });
+
     test('有客户 + 欠款 → 不报（赊销合法）', () {
       expect(goodDraft(partyId: 'party-1', partyName: '李姐').validate(), isEmpty);
     });

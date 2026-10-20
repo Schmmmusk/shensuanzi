@@ -124,8 +124,11 @@ export 'src/format.dart'
         formatDate,
         formatDateTime,
         formatFileDate,
+        formatOccurredAt,
         partyRoleLabel,
-        partyRolesLabel;
+        partyRolesLabel,
+        partyMutationNotice,
+        partySameNameHint;
 export 'src/fs.dart' show ensureWritableDirectory;
 export 'src/entry_layout.dart'
     show entryFieldsMinWidth, entryFieldsShouldStack;

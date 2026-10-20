@@ -42,7 +42,10 @@ import '../test/rule_engine_test.dart' as rule_engine_test;
 // ignore: unused_import
 import '../test/read_failures_test.dart' as read_failures_test;
 // ignore: unused_import
+// ignore: unused_import
 import '../test/document_build_test.dart' as document_build_test;
+// ignore: unused_import
+import '../test/documents_list_test.dart' as documents_list_test;
 import '../test/document_sink_test.dart' as document_sink_test;
 import '../test/sale_draft_test.dart' as sale_draft_test;
 import '../test/sync_queue_triage_test.dart' as sync_queue_triage_test;
@@ -123,6 +126,7 @@ void main() {
     return_test.main,
     rule_engine_test.main,
     document_build_test.main,
+    documents_list_test.main,
     document_sink_test.main,
     sale_draft_test.main,
     sync_queue_triage_test.main,

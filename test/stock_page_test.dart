@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/document_detail_page.dart';
+import 'package:shensuanzi/src/ui/opening_stock_page.dart';
 import 'package:shensuanzi/src/ui/stock_flow_page.dart';
 import 'package:shensuanzi/src/ui/stock_page.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
@@ -138,6 +139,7 @@ void main() {
     StockLedgerDao? stockFlow,
     SettlementService? settlements,
     MasterDataSink? masterDataSink,
+    DocumentSink? documentSink,
     bool canCreateProducts = false,
     bool mobileShell = false,
   }) =>
@@ -154,6 +156,7 @@ void main() {
             stockFlow: stockFlow,
             settlements: settlements,
             masterDataSink: masterDataSink,
+            documentSink: documentSink,
             canCreateProducts: canCreateProducts,
             mobileShell: mobileShell,
           ),
@@ -472,6 +475,40 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(StockFlowPage), findsOneWidget);
     expect(find.byType(DocumentDetailPage), findsNothing);
+  });
+
+  // 2026-10-20（§CV·七十八，用户要求）：手机上「重新清点 / 录入现有货物」
+  // 以前是引导（裁定说客户端算不出盘点 delta）—— 现在**清点单走单据队列**，
+  // 差额由主机算 ⇒ 直接开页面，不再引导。
+  testWidgets('#78：手机「重新清点」⇒ 进期初页（不再弹「这一步在电脑上做」）', (
+    WidgetTester tester,
+  ) async {
+    buy(6); // 有流水 ⇒ 按钮文案是「重新清点」
+    final QueueSink sink = QueueSink(
+      queue: SyncQueueDao(db),
+      clock: () => 1700000000000,
+    );
+
+    await tester.pumpWidget(
+      page(
+        mobileShell: true,
+        documentSink: sink,
+        masterDataSink: QueueMasterSink(mirror: db, queue: SyncQueueDao(db)),
+        canCreateProducts: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('重新清点'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('这一步在电脑上做'), findsNothing, reason: '不再引导');
+    expect(
+      find.text('录入现有货物'),
+      findsNothing,
+      reason: '二次进来是「重新清点」语义 —— 页面标题不打首次文案',
+    );
+    expect(find.byType(OpeningStockPage), findsOneWidget);
   });
 
   testWidgets('#27：新建商品补充入口 —— 手机壳在场、桌面缺省不在', (

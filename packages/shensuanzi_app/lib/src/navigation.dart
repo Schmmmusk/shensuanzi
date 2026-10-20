@@ -202,4 +202,23 @@ class AppNavigation {
     final double scaled = base * scale;
     return scaled < iconOnlyWidth ? iconOnlyWidth : scaled;
   }
+
+  /// **导航列实际宽度**（2026-10-19，用户实测：分屏 + 系统 200% + 应用超大）。
+  ///
+  /// [widthFor] 只保证「不低于 60」，**没有上限**：`220 × 2.0 = 440`，
+  /// 而那时窗口只有 ~480 逻辑像素（1920 的屏幕被 200% 缩放砍半、再与编辑器分屏）
+  /// ⇒ 导航吃掉 92%，工作区只剩一条缝（截图：只剩「往来方」三个竖字）。
+  ///
+  /// 规则：取 [widthFor]，但**不超过可用宽度的 40%**；
+  /// 连 40% 都装不下 [iconOnlyWidth]（极端窄窗口）时才退到 60 —— 那时是
+  /// 「有总比没有强」，不是默认形态。
+  static double navWidth({
+    required double scale,
+    required double availableWidth,
+  }) {
+    final double wanted = widthFor(scale: scale);
+    final double cap = availableWidth * 0.4;
+    if (wanted <= cap) return wanted;
+    return cap < iconOnlyWidth ? iconOnlyWidth : cap;
+  }
 }

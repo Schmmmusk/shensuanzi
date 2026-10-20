@@ -1233,6 +1233,23 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     _toast(outcome.message);
   }
 
+  /// **主数据提交成功**（2026-10-20）—— 与 [_onDocumentSubmitted] 逐字同构。
+  ///
+  /// 为什么单独一个而不是复用那个：`onDocumentSubmitted` 判的是
+  /// `result.isQueued`（[DocumentSubmitResult]），这里是主数据的
+  /// [MasterDataSubmitResult]，两个类型不通。**行为口径一致**：
+  /// 先刷三态条（「待同步 N 条」立刻可见）→ 异步推一次 → 推完再刷。
+  void _onMasterDataSubmitted() {
+    setState(() {}); // 三态条重查
+    final MobileSyncService? sync = _mobileSyncService;
+    if (sync == null) return;
+    unawaited(
+      sync.autoPush().then((SyncOutcome _) {
+        if (mounted) setState(() {}); // 失败也刷新：条目可能进了退避 / 死信
+      }),
+    );
+  }
+
   /// 开单提交成功（B3b·§CA，手机端装配；桌面为 `null` 不走这里）。
   ///
   /// - **立即刷新**三态条（裁定 ②：保存后三态条马上变「待同步 N 条」）；
@@ -1621,13 +1638,32 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         ? const MasterDataPolicy.mobile()
         : const MasterDataPolicy.desktop();
     final MasterDataSink? masterDataSink;
+    // 2026-10-20（§CV·七十七）：**往来方**的手机队列出口。与商品同一条
+    // `onEnqueued`（用户刚做完动作就推）；桌面恒 null ⇒ 走 PartyService。
+    final QueuePartySink? partySink;
     if (_shellKind == ShellKind.mobile) {
       masterDataSink = mirror == null
           ? null
-          : QueueMasterSink(mirror: mirror, queue: SyncQueueDao(mirror));
+          : QueueMasterSink(
+              mirror: mirror,
+              queue: SyncQueueDao(mirror),
+              // 2026-10-20（用户实测：手机上建好的商品电脑看不到，要手动同步）：
+              // 自动补传的触发点原本**只管单据**（开单后 / 回前台 / 手动）——
+              // 手机 v1 后开的「商品建档」走的是另一条出口，那条路上没人推。
+              // ⇒ 与「开单后」同性质：**用户刚做完一个可推送的动作就推一次**
+              onEnqueued: _onMasterDataSubmitted,
+            );
+      partySink = mirror == null
+          ? null
+          : QueuePartySink(
+              mirror: mirror,
+              queue: SyncQueueDao(mirror),
+              onEnqueued: _onMasterDataSubmitted,
+            );
     } else {
       final ProductService? products = _products;
       masterDataSink = products == null ? null : ServiceMasterSink(products);
+      partySink = null;
     }
 
     final AppShell shell = AppShell(
@@ -1661,6 +1697,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 相关页面退回 `_PendingPage`（宁可「数据未就绪」，也不给写不通的路）。
       masterDataPolicy: masterDataPolicy,
       masterDataSink: masterDataSink,
+      partySink: partySink,
       // M05 / M07（2026-10-08）：同一份页面代码按壳给不同指引文案
       mobileShell: _shellKind == ShellKind.mobile,
       accounts: shellAccounts,

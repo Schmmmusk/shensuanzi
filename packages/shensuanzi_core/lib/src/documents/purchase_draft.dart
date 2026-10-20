@@ -375,8 +375,12 @@ class PurchaseDraft {
     // ⚠️ 欠款按**落库金额**算（`recordedPaidCents`）：填超时落库是应付，
     // 欠款 0 ⇒ 散采**允许**（多出的部分是找回，不是欠款）。
     if (partyId == null && linesOk && paymentsOk && recordedDueCents > 0) {
+      // #40③（2026-10-18 裁定甲）：**第一句必须是最致命的数** —— 中老年用户
+      // 扫视只看开头，先告诉他「还差多少钱」，再解释「为什么不行 + 怎么办」。
+      // ⚠️ 与 `SaleDraft` **逐字同构**（只换「采/供应商」↔「客/客户」）。
       errors[PurchaseField.party] =
-          '散采要当场结清，或选一个供应商把欠款记到名下';
+          '这一单还差 ¥${Money.format(recordedDueCents)} 没付。'
+          '散采要当场结清：要么现在把款填上，要么选一个供应商把欠款记到名下。';
     }
     return errors;
   }

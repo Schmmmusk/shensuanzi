@@ -74,13 +74,19 @@ class HostHttpServer {
     InternetAddress? address,
     int Function()? clock,
     void Function()? onAuthenticated,
+    void Function(int appliedCount)? onDataApplied,
     void Function(String label, Object error, StackTrace stack)? onInternalError,
   }) async {
     final int Function() now =
         clock ?? () => DateTime.now().millisecondsSinceEpoch;
     final _HostRoutes routes = _HostRoutes(
       // `onInternalError` = 主机侧「原始异常只进日志」的出口（§CS·五 ③）
-      sync: SyncServer(db, onInternalError: onInternalError),
+      sync: SyncServer(
+        db,
+        onInternalError: onInternalError,
+        // #40⑤：**真的落库了**才通知界面刷新（纯 pull 不触发）
+        onApplied: onDataApplied,
+      ),
       identity: identity,
       clock: now,
       onAuthenticated: onAuthenticated,

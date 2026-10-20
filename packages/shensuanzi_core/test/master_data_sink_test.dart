@@ -84,6 +84,198 @@ void main() {
     });
   });
 
+  // 2026-10-20（用户实测：手机上建好的商品电脑上看不到，要手动同步）：
+  // 入队之后**必须**有人触发推送 —— 自动补传的三个触发点原本只管单据。
+  group('QueueMasterSink.onEnqueued（入队即推）', () {
+    late Db mirror;
+
+    setUp(() {
+      mirror = newMemoryDb(foreignKeys: false);
+    });
+
+    ProductDraft draft({String name = '矿泉水'}) => ProductDraft(
+      name: name,
+      unit: '瓶',
+      sellPrice: '2.00',
+      costPrice: '1.50',
+    );
+
+    test('建档入队成功 ⇒ 回调被调用一次', () {
+      int calls = 0;
+      final QueueMasterSink sink = QueueMasterSink(
+        mirror: mirror,
+        queue: SyncQueueDao(mirror),
+        clock: () => 1700000000000,
+        onEnqueued: () => calls++,
+      );
+
+      final MasterDataSubmitResult result = sink.createProduct(draft());
+      expect(result.isQueued, isTrue);
+      expect(calls, 1);
+    });
+
+    test('编辑 / 停用恢复 也各推一次', () {
+      int calls = 0;
+      final QueueMasterSink sink = QueueMasterSink(
+        mirror: mirror,
+        queue: SyncQueueDao(mirror),
+        clock: () => 1700000000000,
+        onEnqueued: () => calls++,
+      );
+      final Product product = sink.createProduct(draft()).product!;
+      calls = 0; // 只看建档之后
+
+      sink.updateProduct(product.id, draft(name: '矿泉水 600ml'));
+      sink.setProductActive(product.id, false);
+      expect(calls, 2, reason: '编辑与停用同样是「用户刚做完的动作」');
+    });
+
+    test('校验失败（没入队）⇒ 不推', () {
+      int calls = 0;
+      final QueueMasterSink sink = QueueMasterSink(
+        mirror: mirror,
+        queue: SyncQueueDao(mirror),
+        clock: () => 1700000000000,
+        onEnqueued: () => calls++,
+      );
+
+      expect(sink.createProduct(draft(name: '   ')).isQueued, isFalse);
+      expect(calls, 0, reason: '没写进队列就没有可推的东西');
+    });
+
+    test('默认 null ⇒ 不推（主机侧 / 老调用方零行为变化）', () {
+      final QueueMasterSink sink = QueueMasterSink(
+        mirror: mirror,
+        queue: SyncQueueDao(mirror),
+        clock: () => 1700000000000,
+      );
+      expect(sink.createProduct(draft()).isQueued, isTrue);
+    });
+  });
+
+  // 2026-10-20（§CV·七十七，用户要求放开手机往来方）：手机往来方写入口。
+  group('QueuePartySink（客户端：乐观写镜像 + 入队 + 立即推）', () {
+    late Db mirror;
+    late SyncQueueDao queue;
+
+    setUp(() {
+      mirror = newMemoryDb(foreignKeys: false);
+      queue = SyncQueueDao(mirror);
+    });
+
+    tearDown(() => mirror.close());
+
+    List<SyncQueueEntry> pending() => queue.all();
+
+    test('建档 ⇒ 镜像里立刻有 + 队列里一条 createMasterData', () {
+      int pushes = 0;
+      final QueuePartySink sink = QueuePartySink(
+        mirror: mirror,
+        queue: queue,
+        clock: () => 1700000000000,
+        onEnqueued: () => pushes++,
+      );
+
+      final PartyMutation mutation = sink.createFull(
+        name: '  王老板 ',
+        roles: <PartyRole>[PartyRole.supplier, PartyRole.customer],
+        phone: ' 138 ',
+        now: 1700000000000,
+      );
+
+      expect(mutation.action, PartyMutationAction.created);
+      expect(mutation.party.name, '王老板', reason: 'trim 与桌面同源');
+      expect(
+        mutation.party.roles.toSet(),
+        <PartyRole>{PartyRole.supplier, PartyRole.customer},
+      );
+      final List<SyncQueueEntry> entries = pending();
+      expect(entries, hasLength(1));
+      // `SyncQueueEntry` 摊平了 `SyncOperation` 的字段（不是 `entry.operation.*`）
+      expect(entries.single.entity, Schema.parties);
+      expect(entries.single.operation, SyncOpType.createMasterData);
+      expect(pushes, 1, reason: '入队即推（与商品同一条触发路径）');
+    });
+
+    test('同名复用 ⇒ 复用同一条档 + 角色追加，**仍然只入队一条**（主机收了 alreadyExists 也不炸）', () {
+      final QueuePartySink sink = QueuePartySink(
+        mirror: mirror,
+        queue: queue,
+        clock: () => 1700000000000,
+      );
+      final Party first = sink
+          .createFull(
+            name: '老王',
+            roles: <PartyRole>[PartyRole.customer],
+            now: 1700000000000,
+          )
+          .party;
+
+      final PartyMutation second = sink.createFull(
+        name: '老王',
+        roles: <PartyRole>[PartyRole.supplier],
+        now: 1700000000001,
+      );
+
+      expect(second.action, PartyMutationAction.roleAppended);
+      expect(second.party.id, first.id, reason: '绝不新建第二条同名（Z-4）');
+      expect(pending(), hasLength(2));
+    });
+
+    test('编辑 / 停用 ⇒ updateMasterData，且带 base_version', () {
+      final QueuePartySink sink = QueuePartySink(
+        mirror: mirror,
+        queue: queue,
+        clock: () => 1700000000000,
+      );
+      final Party party = sink
+          .createFull(
+            name: '李姐',
+            roles: <PartyRole>[PartyRole.customer],
+            now: 1700000000000,
+          )
+          .party;
+
+      sink.updateProfile(
+        party.id,
+        name: '李姐',
+        roles: <PartyRole>[PartyRole.customer],
+        phone: '139',
+        now: 1700000000001,
+      );
+      sink.setActive(party.id, active: false, now: 1700000000002);
+
+      final List<SyncQueueEntry> entries = pending();
+      expect(entries, hasLength(3));
+      // ⚠️ `SyncQueueEntry` 把 `SyncOperation` 摊平成自己的字段
+      // （`entity` / `entityId` / `operation` / `baseVersion` / `payload`）
+      expect(entries[1].operation, SyncOpType.updateMasterData);
+      expect(entries[2].operation, SyncOpType.updateMasterData);
+      expect(
+        entries[2].baseVersion,
+        isNotNull,
+        reason: '主机乐观锁要它（§CH §6）',
+      );
+      expect(
+        entries[1].payload['name'],
+        '李姐',
+        reason: 'payload 带用户改的字段（SyncQueueEntry 自带 payload）',
+      );
+    });
+
+    test('默认 null 回调 ⇒ 不推（桌面 / 老调用方零行为变化）', () {
+      final QueuePartySink sink = QueuePartySink(
+        mirror: mirror,
+        queue: queue,
+        clock: () => 1700000000000,
+      );
+      expect(sink.createFull(
+        name: '老赵',
+        roles: <PartyRole>[PartyRole.supplier],
+      ).action, PartyMutationAction.created);
+    });
+  });
+
   group('QueueMasterSink（客户端：乐观写镜像 + 入队）', () {
     late Db mirror;
     late QueueMasterSink sink;

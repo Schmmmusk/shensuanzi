@@ -27,6 +27,21 @@ void main() {
     expect(find.text('采购入库 / 销售开单'), findsOneWidget);
   });
 
+  // 2026-10-20 用户实测：原文写「每一步在**左侧**导航都有常驻入口」——
+  // 手机壳是**底部**导航（`NavigationBar`），桌面才是左侧列 ⇒ 措辞必须中性。
+  testWidgets('2026-10-20：指路措辞不带「左 / 右」（两端共用一页）', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+
+    expect(find.textContaining('导航栏里都有常驻入口'), findsOneWidget);
+    expect(
+      find.textContaining('左侧'),
+      findsNothing,
+      reason: '手机版导航不在左侧 —— 写了「左侧」就是错的（纪律 17：描述与实现一致）',
+    );
+  });
+
   testWidgets('FAQ 覆盖「期初成本为什么是 0」（AB-2 第三层）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
 

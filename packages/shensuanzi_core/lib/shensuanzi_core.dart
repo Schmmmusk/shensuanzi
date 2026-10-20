@@ -75,7 +75,7 @@ export 'src/models/sync_queue_entry.dart' show SyncQueueEntry, SyncQueueStatus;
 // DAO
 export 'src/dao/account_dao.dart' show AccountDao;
 export 'src/dao/document_dao.dart'
-    show DocumentDao, DocumentStatusView, DocumentSummary;
+    show DocumentDao, DocumentStatusView, DocumentSummary, ReturnAgg;
 export 'src/dao/ledger_dao.dart'
     show
         MoneyLedgerDao,
@@ -116,6 +116,7 @@ export 'src/master_data/master_data_sink.dart'
         MasterDataSink,
         MasterDataSubmitResult,
         QueueMasterSink,
+        QueuePartySink,
         ServiceMasterSink,
         masterDataCreatePayload,
         masterDataUpdatePayload;

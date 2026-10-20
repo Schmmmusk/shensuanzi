@@ -37,7 +37,10 @@ import '../sync/sync_operation.dart';
 import 'delivery_draft.dart';
 import 'delivery_service.dart';
 import 'document_build.dart';
+import '../util/ids.dart';
 import 'draft_invalid.dart';
+import 'stocktake_draft.dart';
+import 'stocktake_service.dart';
 import 'purchase_draft.dart';
 import 'purchase_service.dart';
 import 'sale_draft.dart';
@@ -141,6 +144,13 @@ abstract class DocumentSink {
   DocumentSubmitResult submitPurchase(PurchaseDraft draft, {int? now});
 
   DocumentSubmitResult submitDelivery(DeliveryDraft draft, {int? now});
+
+  /// **盘点 / 期初录入**（2026-10-20 放开手机「重新清点」，§CV·七十八）。
+  ///
+  /// 行的 `quantity` = **店里实际数量**（不是差额）—— 主机
+  /// `RuleEngine._stocktake` 用 `_actualFromLines(lines)` 兜底取它，
+  /// 再按**自己的**账面算差额。客户端零规则、零差额计算。
+  DocumentSubmitResult submitStocktake(StocktakeDraft draft, {int? now});
 }
 
 /// 主机出口：把三个服务包成 [DocumentSink]。
@@ -153,13 +163,18 @@ class ServiceSink implements DocumentSink {
     required SaleService sales,
     required PurchaseService purchases,
     required DeliveryService deliveries,
+    StocktakeService? stocktakes,
   }) : _sales = sales,
        _purchases = purchases,
-       _deliveries = deliveries;
+       _deliveries = deliveries,
+       _stocktakes = stocktakes;
 
   final SaleService _sales;
   final PurchaseService _purchases;
   final DeliveryService _deliveries;
+  /// 盘点 / 期初的提交出口（2026-10-20 放开手机「重新清点」；桌面期初页
+  /// **不用它** —— 直连 `StocktakeService.create`，见 `opening_stock_page`）。
+  final StocktakeService? _stocktakes;
 
   @override
   DocumentSubmitResult submitSale(SaleDraft draft, {int? now}) {
@@ -210,6 +225,25 @@ class ServiceSink implements DocumentSink {
       );
     } on DeliveryDraftInvalid catch (error) {
       return DocumentSubmitResult.failure(error);
+    }
+  }
+
+  @override
+  DocumentSubmitResult submitStocktake(StocktakeDraft draft, {int? now}) {
+    final StocktakeService? service = _stocktakes;
+    if (service == null) {
+      throw StateError('这个出口没有装配盘点服务（ServiceSink.stocktakes）');
+    }
+    try {
+      final StocktakeResult saved = service.create(draft, now: now);
+      return DocumentSubmitResult(
+        finalDocNo: saved.docNo,
+        isQueued: false,
+        totalCents: 0,
+        status: DocStatus.confirmed,
+      );
+    } on StocktakeDraftInvalid catch (error) {
+      return DocumentSubmitResult.failure(_StocktakeInvalid(error));
     }
   }
 }
@@ -320,6 +354,54 @@ class QueueSink implements DocumentSink {
     );
   }
 
+  @override
+  DocumentSubmitResult submitStocktake(StocktakeDraft draft, {int? now}) {
+    if (draft.filledCount == 0) {
+      return DocumentSubmitResult.failure(
+        _StocktakeInvalid(StocktakeDraftInvalid(draft.validate())),
+      );
+    }
+
+    final int stamp = now ?? _clock();
+    // 盘点单：无收款、无金额；行 = 商品 + 实际数量（单价 0，金额 0）
+    final String id = newId();
+    final Document document = Document(
+      id: id,
+      // 占位号：主机 dispatch 时换成正式单号（PD…）
+      docNo: '${Document.pendingDocNoPrefix}${id.substring(0, 8)}',
+      docType: DocType.stocktake,
+      status: DocStatus.confirmed,
+      // RULE-009 硬约束：盘点单 total_amount 必须为 0
+      totalAmount: 0,
+      occurredAt: stamp,
+      createdAt: stamp,
+      updatedAt: stamp,
+      remark: draft.remark,
+    );
+    final List<DocumentLine> lines = <DocumentLine>[
+      for (final StocktakeLineDraft line in draft.lines)
+        if (line.quantityValue != null)
+          DocumentLine.create(
+            documentId: id,
+            productId: line.productId,
+            quantity: line.quantityValue!,
+            unitPrice: 0,
+          ),
+    ];
+    _enqueue(
+      DocumentBuild(document: document, lines: lines, payments: const <PaymentEntry>[]),
+      now: stamp,
+    );
+
+    return DocumentSubmitResult(
+      finalDocNo: document.docNo,
+      isQueued: true,
+      totalCents: 0,
+      status: DocStatus.confirmed,
+      documentId: id,
+    );
+  }
+
   void _enqueue(
     DocumentBuild build, {
     List<PaymentEntry> immediatePayments = const <PaymentEntry>[],
@@ -337,4 +419,16 @@ class QueueSink implements DocumentSink {
     );
     _queue.enqueue(SyncQueueEntry.create(op, now: now));
   }
+}
+
+
+/// 把 `StocktakeDraftInvalid` 适配成 [DraftInvalidException]
+/// （`DocumentSubmitResult.failure` 的形参类型）—— 只转类型，不动文案。
+class _StocktakeInvalid implements DraftInvalidException {
+  _StocktakeInvalid(this.inner);
+
+  final StocktakeDraftInvalid inner;
+
+  @override
+  String get summary => inner.summary;
 }

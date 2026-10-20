@@ -128,7 +128,7 @@ void main() {
         engine: RuleEngine(db),
         queries: QueryDao(db),
       );
-      final Party supplier = purchases.createSupplier('老赵');
+      final Party supplier = purchases.createSupplier('老赵').party;
       final PartyMutation asCustomer = service.ensureParty(
         name: '老赵',
         role: PartyRole.customer,
@@ -213,7 +213,7 @@ void main() {
         phone: ' 138 ',
         address: ' 东门 3 号 ',
         now: now(),
-      );
+      ).party;
       bool ok = party.name == '王老板' &&
           party.phone == '138' &&
           party.address == '东门 3 号' &&
@@ -240,14 +240,14 @@ void main() {
         phone: '138',
         address: '东门',
         now: now(),
-      );
+      ).party;
       final Party second = fresh.createFull(
         name: '老陈',
         roles: <PartyRole>[PartyRole.customer],
         phone: '999',
         address: '西门',
         now: now() + 1,
-      );
+      ).party;
       final bool ok = second.id == first.id &&
           second.roles.toSet().containsAll(<PartyRole>[
             PartyRole.supplier,

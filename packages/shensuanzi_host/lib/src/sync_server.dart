@@ -23,7 +23,7 @@ import 'package:sqlite3/sqlite3.dart';
 /// - **一条 op 一个事务**。失败只影响该条，不回滚同一批里的其它条目
 ///   （它们是各自独立的队列条目，见 §六）。
 class SyncServer {
-  SyncServer(this.db, {this.onInternalError})
+  SyncServer(this.db, {this.onInternalError, this.onApplied})
     // ⚠️ **单一通道**（#22 裁定 §二②，2026-10-09）：`RuleEngine` 的内部错误也走
     // 这一个出口 —— 它自己不再另开日志。否则同一条错误（规则内部 bug）会在
     // 「规则层」和「同步层」各记一次，且两边标签不同，日志里看不出是一件事。
@@ -40,6 +40,13 @@ class SyncServer {
   /// 自检里常见），不影响任何行为。
   final void Function(String label, Object error, StackTrace stack)?
   onInternalError;
+
+  /// **真的落库了 N 条**（`applied`）时回调一次（#40⑤，2026-10-18 裁定甲）。
+  ///
+  /// ⚠️ **只在 `applied > 0` 时调**，且**不是**「任何认证请求」：
+  /// 手机每 30 秒来 pull 一次也会过鉴权，拿那个当信号会让电脑端每半分钟
+  /// 重建一次界面（`docs/reply.md` 明确要求「宁可多一个精确回调」）。
+  final void Function(int appliedCount)? onApplied;
 
   /// 商品建档的**编码改派**（D1，2026-10-08）。
   ///
@@ -76,9 +83,17 @@ class SyncServer {
   List<SyncResponse> push(
     List<SyncOperation> operations, {
     required int now,
-  }) => <SyncResponse>[
-    for (final SyncOperation op in operations) handle(op, now: now),
-  ];
+  }) {
+    final List<SyncResponse> responses = <SyncResponse>[
+      for (final SyncOperation op in operations) handle(op, now: now),
+    ];
+    // #40⑤：只有**真的写进去了**才通知界面刷新
+    final int applied = responses
+        .where((SyncResponse r) => r.status == SyncStatus.applied)
+        .length;
+    if (applied > 0) onApplied?.call(applied);
+    return responses;
+  }
 
   /// 处理单条操作。
   SyncResponse handle(SyncOperation op, {required int now}) {

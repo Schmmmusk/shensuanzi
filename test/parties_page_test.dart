@@ -56,11 +56,13 @@ void main() {
     }
   });
 
-  Party createCustomer(String name) => service.createFull(
-    name: name,
-    roles: <PartyRole>[PartyRole.customer],
-    now: 1700000000000,
-  );
+  Party createCustomer(String name) => service
+      .createFull(
+        name: name,
+        roles: <PartyRole>[PartyRole.customer],
+        now: 1700000000000,
+      )
+      .party;
 
   /// 客户赊销 [yuan] 元（欠款挂名下）
   void creditSale(Party customer, int yuan) {
@@ -86,6 +88,8 @@ void main() {
     ExportSink? exports,
     MasterDataPolicy? policy,
     PendingMarks? pendingMarks,
+    QueuePartySink? partySink,
+    bool mobileShell = false,
   }) => MaterialApp(
     home: Scaffold(
       body: PartiesPage(
@@ -94,6 +98,8 @@ void main() {
         // 缺省桌面（三族全开）⇒ 既有用例**零变化**；mobile() 组显式传入
         masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
         pendingMarks: pendingMarks,
+        partySink: partySink,
+        mobileShell: mobileShell,
       ),
     ),
   );
@@ -185,11 +191,177 @@ void main() {
     final String docNo = service.flowsOf(customer.id).single.docNo;
     expect(find.text(docNo), findsOneWidget);
     expect(docNo.startsWith(Document.pendingDocNoPrefix), isFalse);
-    expect(find.text('店内销售'), findsOneWidget, reason: 'doc_type 的中文标签');
+    // #34①：类型与日期合成一行（`类型 · 日期`）—— 用 textContaining 守「类型仍在」
+    expect(
+      find.textContaining('店内销售'),
+      findsOneWidget,
+      reason: 'doc_type 的中文标签',
+    );
     expect(find.text('欠款 +¥100.00'), findsOneWidget);
     // C3·§CJ·补 1：底部文案两版 —— 默认宽表面（800×600）走桌面版
     expect(find.textContaining('在「单据」页找到对应单号'), findsOneWidget);
     expect(find.textContaining('功能开发中'), findsNothing);
+  });
+
+  // 2026-10-19 用户实测（往来方页截图，超大档，窗口与 VSCode 均分 960 宽）：
+  // 「鸿磐」那行的「客户 / 供应商」被压成**竖排单字**，停用标记再撑爆整行。
+  // 根因：`Row[Flexible(角色), 非弹性标签]` —— 左侧列只有 ~200px。
+  testWidgets('#34③ 超大档 + 窄窗口：往来方行不溢出，角色不竖排', (
+    WidgetTester tester,
+  ) async {
+    final Party both = service
+        .createFull(
+          name: '鸿磐',
+          roles: <PartyRole>[PartyRole.supplier, PartyRole.customer],
+          now: 1700000000000,
+        )
+        .party;
+    creditSale(both, 159);
+    service.setActive(both.id, active: false, now: 1700000000001);
+
+    tester.view.physicalSize = const Size(960, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (BuildContext context, Widget? child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2.0)),
+          child: child!,
+        ),
+        home: Scaffold(
+          // 真实条件：窗口 960，左侧导航占 435 ⇒ 内容区 ~520
+          body: Align(
+            alignment: Alignment.centerLeft,
+            child: SizedBox(width: 520, child: page()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '往来方行在 2.0 档下溢出（用户截图：黄黑条纹 + 角色竖排）',
+    );
+    // 角色标签在**一行**里 —— 竖排时它是多个单字 Text 吗？不是，但宽度会塌成 ~1 字宽
+    final Size roleSize = tester.getSize(find.text('供应商 / 客户'));
+    expect(
+      roleSize.height,
+      lessThan(roleSize.width),
+      reason: '角色必须是横排（竖排时 height 会远大于 width）',
+    );
+  });
+
+  // 2026-10-19 用户实测（窄窗口 + 超大档）：**金额被推出卡片外** ——
+  // 原来第 1 行是 `Row[类型, Spacer(), 金额]`，剩余宽度为 0 时 `Spacer` 帮不上忙，
+  // 金额整块溢出（截图：金额完整、一半在卡片外，48px 溢出条）。
+  testWidgets('#34⑦ 窄窗口 + 超大档：金额不许被推出卡片', (
+    WidgetTester tester,
+  ) async {
+    final Party customer = createCustomer('甲客户');
+    creditSale(customer, 100);
+
+    tester.view.physicalSize = const Size(280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (BuildContext context, Widget? child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2.0)),
+          child: child!,
+        ),
+        home: Scaffold(body: PartyFlowPage(party: customer, service: service)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '窄卡片里金额被推到卡片外（用户截图：48px 溢出条）',
+    );
+    // 金额必须**整块**在屏幕内
+    final Rect amount = tester.getRect(find.textContaining('¥100.00'));
+    expect(
+      amount.right,
+      lessThanOrEqualTo(280.0),
+      reason: '金额的右边缘不许超出窗口（这就是「被挤到外面去」）',
+    );
+  });
+
+  // #34①（2026-10-19 裁定甲）：桌面宽屏 + **超大档**字号。
+  //
+  // 以前 `_WideFlowTile` 用 `ListTile.trailing`（17sp，**不参与收缩**）：
+  // 字号一大，trailing 就把 `title` 里「单号 + 类型」的 Row 挤爆 ⇒
+  // `RenderFlex overflowed by 13 pixels`（真机红黄条 + 日志）。
+  //
+  // ⚠️ 实测阈值：2.0 倍在 600 / 800 宽下**还挤得下**（我跑过，绿），
+  // **3.0 倍**（Windows 200% 显示缩放 × 超大档）才溢出。同一处结构缺陷，
+  // 2.0 只是没到阈值 —— 所以断言定在 3.0，修法覆盖所有倍率。
+  testWidgets('#34① 宽屏 + 3.0 倍字号：流水行不溢出，金额完整可见', (
+    WidgetTester tester,
+  ) async {
+    final Party customer = createCustomer('甲客户');
+    creditSale(customer, 260);
+
+    tester.view.physicalSize = const Size(800, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (BuildContext context, Widget? child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(3.0)),
+          child: child!,
+        ),
+        home: Scaffold(body: PartyFlowPage(party: customer, service: service)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '宽屏 2.0 倍下溢出 = #34① 的真机症状',
+    );
+    expect(
+      find.textContaining('¥260.00'),
+      findsOneWidget,
+      reason: '金额是这页最关键的信息 —— 不许用省略号把它截掉（假修）',
+    );
+  });
+
+  // 反向灵敏度的一半：**常规字号**下这行该有的东西一样不少
+  testWidgets('#34① 常规字号：单号 / 类型·日期 / 金额都在（别把好的改坏）', (
+    WidgetTester tester,
+  ) async {
+    final Party customer = createCustomer('甲客户');
+    creditSale(customer, 260);
+
+    tester.view.physicalSize = const Size(800, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: PartyFlowPage(party: customer, service: service)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('¥260.00'), findsOneWidget);
+    expect(find.textContaining('店内销售'), findsOneWidget);
+    expect(find.textContaining('XS'), findsOneWidget, reason: '单号还在');
   });
 
   testWidgets('窄屏（<600）流水页：两行卡片 + 「到电脑上」底部说明（B1′）', (
@@ -462,10 +634,53 @@ void main() {
   // ============================================================ §CV·七 ① 乙
   // `mobile()` 下**本页消费值对象**的分支（值对象本身由 `master_data_policy_test` /
   // `selfcheck_app` 钉）—— 这里钉「往来 = false ⇒ 走引导，不进表单」。
-  testWidgets('mobile()：＋新建往来方 ⇒ 出**引导**（往来 v1 禁建）', (
+  // 2026-10-20（§CV·七十七，用户要求放开手机往来方建档）：
+  // 手机新建 ⇒ 走 `QueuePartySink`（写镜像 + 入队 + 立即推），**不再弹引导**。
+  testWidgets('2026-10-20：mobile() 新建往来方 ⇒ 进表单、入队一条、列表立即可见', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(page(policy: const MasterDataPolicy.mobile()));
+    final QueuePartySink sink = QueuePartySink(
+      mirror: db,
+      queue: SyncQueueDao(db),
+      clock: () => 1700000000000,
+    );
+    await tester.pumpWidget(
+      page(
+        policy: const MasterDataPolicy.mobile(),
+        partySink: sink,
+        mobileShell: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 入口不再是「引导」
+    await tester.tap(find.text('新建往来方'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('party-name')), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('party-name')), '  新客户 ');
+    // 新建：按钮是「创建」（编辑时才是「保存」）；角色默认两边都没勾 ⇒ 勾客户
+    await tester.tap(find.byKey(const Key('party-role-customer')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('创建'));
+    await tester.pumpAndSettle();
+
+    // ① 列表立即可见（乐观写镜像）
+    expect(find.text('新客户'), findsOneWidget);
+    // ② 队列里有一条 createMasterData
+    final List<SyncQueueEntry> entries = SyncQueueDao(db).all();
+    expect(entries, hasLength(1));
+    expect(entries.single.entity, Schema.parties);
+    expect(entries.single.operation, SyncOpType.createMasterData);
+  });
+
+  testWidgets('mobile()：**没装配 partySink** 时 ⇒ 仍然弹引导（不给写不通的路）', (
+    WidgetTester tester,
+  ) async {
+    // 手机壳 + **没装出口** ⇒ 仍然引导（门控开了但没出口 = 会写进镜像到不了电脑）
+    await tester.pumpWidget(
+      page(policy: const MasterDataPolicy.mobile(), mobileShell: true),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('新建往来方'));
@@ -474,7 +689,7 @@ void main() {
     expect(
       find.text('这一步在电脑上做'),
       findsOneWidget,
-      reason: '往来 v1 禁建 ⇒ 保留入口 + 引导到电脑',
+      reason: '出口没装配 ⇒ 保留入口 + 引导到电脑（不给写不通的路）',
     );
     expect(
       find.byKey(const Key('party-name')),

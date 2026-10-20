@@ -327,6 +327,7 @@ class HostServiceController {
         identity: _identity!,
         ports: _ports,
         onAuthenticated: _noteTraffic,
+        onDataApplied: _noteDataApplied,
         onInternalError: onInternalError,
       );
       _state = HostServiceState.running;
@@ -361,6 +362,33 @@ class HostServiceController {
     _trafficCount++;
     _lastTrafficAt = _clock();
   }
+
+  /// 主机**真的落库了**手机推上来的数据（#40⑤）⇒ 打一个版本号，
+  /// 让界面自己决定什么时候重读（开单页会推迟，见 `AppShell`）。
+  void _noteDataApplied(int appliedCount) {
+    _dataAppliedCount += appliedCount;
+    // 复制一份再遍历：监听者可能在回调里 remove（比如页面被销毁）
+    for (final void Function() listener in List<void Function()>.of(_dataListeners)) {
+      listener();
+    }
+  }
+
+  /// 界面订阅它（#40⑤）：被调一次 = 「库里有新东西，该重读了」。
+  ///
+  /// ⚠️ 用**纯 Dart 回调表**而不是 `ValueNotifier` —— host 包**不依赖 Flutter**
+  /// （pubspec 里没有 flutter），引 `foundation` 会把整包拖进 UI 层。
+  final List<void Function()> _dataListeners = <void Function()>[];
+
+  void addDataListener(void Function() listener) =>
+      _dataListeners.add(listener);
+
+  void removeDataListener(void Function() listener) =>
+      _dataListeners.remove(listener);
+
+  int _dataAppliedCount = 0;
+
+  /// 累计落库条数（自检 / 日志用）
+  int get dataAppliedCount => _dataAppliedCount;
 }
 
 /// `host.json` 在数据目录里的位置（`auth.dart` 的口径：主机设施放文件、

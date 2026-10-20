@@ -184,8 +184,21 @@ class PurchaseService {
   /// 同名启用往来方已存在时**追加 supplier role 或直接返回**，
   /// 不再造出第二条同名 party（往来账分流是对账灾难）。
   /// 完整的往来方建档页在「送货」阶段做。
-  Party createSupplier(String name, {String? phone, int? now}) =>
-      PartyService(PartyDao(_queries.db))
-          .ensureParty(name: name, role: PartyRole.supplier, phone: phone, now: now)
-          .party;
+  ///
+  /// **返回 [PartyMutation]（#40① 裁定甲-改，2026-10-18）**：以前只回 `Party`，
+  /// 采购页就把「追加了身份 / 复活了停用档」这件事**整个丢掉**了 ——
+  /// 用户看到供应商出现在列表里，却不知道软件刚刚改了一条老档。
+  PartyMutation createSupplier(String name, {String? phone, int? now}) =>
+      PartyService(PartyDao(_queries.db)).ensureParty(
+        name: name,
+        role: PartyRole.supplier,
+        phone: phone,
+        now: now,
+      );
+
+  /// 按名称查**含停用**的往来方（#40① 名称框失焦时的内联提示用）。
+  ///
+  /// 为什么含停用：停用档也可能是「还欠着钱的同名」—— 看不到就会造第二条（OBS-05）。
+  Party? findPartyByNameIncludingInactive(String name) =>
+      PartyService(PartyDao(_queries.db)).findByNameIncludingInactive(name);
 }

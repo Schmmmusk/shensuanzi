@@ -26,7 +26,12 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
-    show MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
+    show
+        MasterDataPolicy,
+        MobileGuideTopic,
+        mirrorEmptyMessage,
+        partyMutationNotice,
+        partySameNameHint;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'keyboard_reveal.dart';
@@ -47,6 +52,7 @@ class PurchasePage extends StatefulWidget {
     this.onSubmitted,
     this.onStorageFailure,
     required this.masterDataPolicy,
+    this.partySink,
     required this.masterDataSink,
     this.mobileShell = false,
   });
@@ -74,6 +80,11 @@ class PurchasePage extends StatefulWidget {
   /// 那版默默漏装就是「手机上一切都能建」（静默丢数据），宁可编不过。
   final MasterDataPolicy masterDataPolicy;
 
+
+  /// **往来方写入口的队列出口**（2026-10-20，§CV·七十七）。
+  ///
+  /// 手机 = `QueuePartySink`（写镜像 + 入队 + 立即推）；桌面 = `null`（服务直连主库）。
+  final QueuePartySink? partySink;
   /// 主数据提交**出口**（桌面 `ServiceMasterSink` / 手机 `QueueMasterSink`）。
   /// ⚠️ 商品表单**必须**走它 —— 手机端的 `ProductService` 建在镜像上。
   final MasterDataSink masterDataSink;
@@ -208,6 +219,15 @@ class _PayCtl {
 }
 
 class _PurchasePageState extends State<PurchasePage> {
+  /// **本机能不能建往来方**：策略放开 **且** 出口齐备。
+  ///
+  /// 手机上的 `partyService` / `service` 建在**镜像**上，直写不入队 ⇒ 到不了电脑
+  ///（静默丢数据）。桌面没有这个问题（直连主库）⇒ 只在策略就是「手机」且
+  /// 没装出口时拦住。
+  bool get _canCreateParty =>
+      widget.masterDataPolicy.canCreateParties &&
+      (widget.partySink != null ||
+          widget.masterDataPolicy != const MasterDataPolicy.mobile());
   List<Account> _accounts = <Account>[];
 
   // ---- 表单状态 ----
@@ -350,13 +370,23 @@ class _PurchasePageState extends State<PurchasePage> {
 
   /// 选供应商：底部弹层（搜索 + 新建）。返回后刷新供应商列表。
   Future<void> _pickParty() async {
-    final Party? picked = await _showPartyPicker(context, widget.service);
+    final PartyMutation? picked =
+        await _showPartyPicker(context, widget.service);
     if (picked == null) return;
+    final Party party = picked.party;
     setState(() {
-      _partyId = picked.id;
-      _partyName = picked.name;
+      _partyId = party.id;
+      _partyName = party.name;
       _invalid = null;
     });
+    // #40①：提交后**如实告知**发生了什么（以前采购页整个丢掉这个信息）
+    final String? notice =
+        partyMutationNotice(picked, role: PartyRole.supplier);
+    if (notice != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(notice), duration: const Duration(seconds: 4)),
+      );
+    }
   }
 
   /// 清除供应商 = 改为散采（当场结清）
@@ -549,13 +579,20 @@ class _PurchasePageState extends State<PurchasePage> {
   }
 
   /// 选供应商 + 最小新建
-  Future<Party?> _showPartyPicker(BuildContext context, PurchaseService service) {
-    return showModalBottomSheet<Party>(
+  ///
+  /// 返回 [PartyMutation]（#40① 裁定甲-改）：页面要据此说出「新建了 / 追加了身份 /
+  /// 复活了停用档」。选中已有供应商时 action = `existing`（没什么要解释的）。
+  Future<PartyMutation?> _showPartyPicker(
+    BuildContext context,
+    PurchaseService service,
+  ) {
+    return showModalBottomSheet<PartyMutation>(
       context: context,
       isScrollControlled: true,
       builder: (BuildContext sheetContext) => _PartyPickerSheet(
         service: service,
-        canCreate: widget.masterDataPolicy.canCreateParties,
+        canCreate: _canCreateParty,
+        partySink: widget.partySink,
       ),
     );
   }
@@ -1176,12 +1213,22 @@ class _PayCard extends StatelessWidget {
 ///
 /// 空查询列出全部启用中的供应商；搜索按名称过滤（客户端过滤，量级足够）。
 class _PartyPickerSheet extends StatefulWidget {
-  const _PartyPickerSheet({required this.service, this.canCreate = false});
+  const _PartyPickerSheet({
+    required this.service,
+    this.canCreate = false,
+    this.partySink,
+  });
 
   final PurchaseService service;
 
   /// 本机能不能建供应商（`MasterDataPolicy.canCreateParties`）。
   final bool canCreate;
+
+  /// **手机队列出口**（`null` = 桌面 / 未装配 ⇒ 走 `service.createSupplier`）。
+  ///
+  /// 手机上的 `service` 建在**镜像**上，直写不入队 ⇒ 到不了电脑（2026-10-20
+  /// 放开手机往来方建档时补的，§CV·七十七）。
+  final QueuePartySink? partySink;
 
   @override
   State<_PartyPickerSheet> createState() => _PartyPickerSheetState();
@@ -1189,14 +1236,40 @@ class _PartyPickerSheet extends StatefulWidget {
 
 class _PartyPickerSheetState extends State<_PartyPickerSheet> {
   final TextEditingController _query = TextEditingController();
+
+  /// #40①：名称框失焦时查同名（**不在 `onChanged` 查** —— 每敲一个字查一次库
+  /// 再 `setState`，中老年用户打字慢，会一直闪；`docs/reply.md` 2026-10-18）
+  final FocusNode _nameFocus = FocusNode();
+  String? _sameNameHint;
+
   late List<Party> _items = widget.service.activeSuppliers();
   String? _newNameError;
   bool _creating = false;
 
   @override
+  void initState() {
+    super.initState();
+    _nameFocus.addListener(_onNameFocusChanged);
+  }
+
+  @override
   void dispose() {
+    _nameFocus.removeListener(_onNameFocusChanged);
+    _nameFocus.dispose();
     _query.dispose();
     super.dispose();
+  }
+
+  void _onNameFocusChanged() {
+    if (_nameFocus.hasFocus) return;
+    final String name = _query.text.trim();
+    final Party? existing =
+        name.isEmpty ? null : widget.service.findPartyByNameIncludingInactive(name);
+    final String? hint = partySameNameHint(
+      existing,
+      adding: const <PartyRole>[PartyRole.supplier],
+    );
+    if (hint != _sameNameHint) setState(() => _sameNameHint = hint);
   }
 
   void _search(String text) {
@@ -1224,9 +1297,14 @@ class _PartyPickerSheetState extends State<_PartyPickerSheet> {
     final String name = _query.text.trim();
     setState(() => _creating = true);
     try {
-      final Party party = widget.service.createSupplier(name);
+      final PartyMutation mutation = widget.partySink == null
+          ? widget.service.createSupplier(name)
+          : widget.partySink!.createFull(
+              name: name,
+              roles: const <PartyRole>[PartyRole.supplier],
+            );
       if (!mounted) return;
-      Navigator.of(context).pop(party);
+      Navigator.of(context).pop(mutation);
     } on StateError {
       if (!mounted) return;
       setState(() {
@@ -1254,6 +1332,7 @@ class _PartyPickerSheetState extends State<_PartyPickerSheet> {
           TextField(
             key: const Key('picker-search'),
             controller: _query,
+            focusNode: _nameFocus,
             autofocus: true,
             onChanged: _search,
             onSubmitted: _search,
@@ -1264,6 +1343,16 @@ class _PartyPickerSheetState extends State<_PartyPickerSheet> {
               errorText: _newNameError,
             ),
           ),
+          // #40① 内联提醒（不拦人）：说清「保存后会发生什么」
+          if (_sameNameHint != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                _sameNameHint!,
+                key: const Key('party-same-name-hint'),
+                style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+              ),
+            ),
           const SizedBox(height: 8),
           Flexible(
             child: ListView.builder(
@@ -1275,7 +1364,13 @@ class _PartyPickerSheetState extends State<_PartyPickerSheet> {
                 subtitle: _items[index].phone == null
                     ? null
                     : Text(_items[index].phone!),
-                onTap: () => Navigator.of(context).pop(_items[index]),
+                // 选中已有供应商 = 什么都没改 ⇒ `existing`
+                onTap: () => Navigator.of(context).pop(
+                  PartyMutation(
+                    party: _items[index],
+                    action: PartyMutationAction.existing,
+                  ),
+                ),
               ),
             ),
           ),

@@ -52,6 +52,8 @@ class AppShell extends StatefulWidget {
     this.readFailures,
     required this.masterDataPolicy,
     this.masterDataSink,
+    // 2026-10-20（§CV·七十七）：往来方的手机队列出口（桌面 = null，走 PartyService）
+    this.partySink,
     this.mobileShell = false,
     this.returns,
     this.onMigrateData,
@@ -154,6 +156,12 @@ class AppShell extends StatefulWidget {
   /// `null` = 装配没给（摆放层测试）⇒ 相关页面退回 `_PendingPage`（与
   /// [documentSink] **同一惯用法**：宁可显示「数据未就绪」，也不给一条写不通的路径）。
   final MasterDataSink? masterDataSink;
+
+  /// **往来方**的提交出口（2026-10-20 放开手机往来方建档，§CV·七十七）。
+  ///
+  /// 手机 = `QueuePartySink`（乐观写镜像 + 入队 `parties`）；桌面 = `null`
+  /// ⇒ 往来方页照旧走 `PartyService`（直连主库，**零变化**）。
+  final QueuePartySink? partySink;
 
   /// **是不是手机壳**（M05 / M07，2026-10-08）。
   ///
@@ -331,6 +339,7 @@ Widget appShellPage(
               stockDelta: shell.stockDelta,
               // §CV·七 ① 乙：主数据门控按**能力**走（商品 v1 可建 / 往来仍引导）
               masterDataPolicy: shell.masterDataPolicy,
+              partySink: shell.partySink,
               masterDataSink: shell.masterDataSink!,
               // #37①：手机壳不显示快捷键后缀（判据与送货页同一处）
               mobileShell: shell.mobileShell,
@@ -355,6 +364,7 @@ Widget appShellPage(
               // M08：本地未同步影响（手机端才有；桌面 null）
               stockDelta: shell.stockDelta,
               masterDataPolicy: shell.masterDataPolicy,
+              partySink: shell.partySink,
               masterDataSink: shell.masterDataSink!,
               mobileShell: shell.mobileShell,
             );
@@ -376,6 +386,8 @@ Widget appShellPage(
               stockFlow: shell.stockFlow,
               settlements: shell.settlements,
               masterDataSink: shell.masterDataSink,
+              // 2026-10-20（§CV·七十八）：手机「重新清点」走单据队列
+              documentSink: shell.documentSink,
               canCreateProducts: shell.masterDataPolicy.canCreateProducts,
               // 期初入口 + 镜像空态按**壳**走（不是主数据权限 —— 盘点 delta
               // 客户端算不出，见 `stock_page.dart`）
@@ -389,6 +401,10 @@ Widget appShellPage(
               exports: shell.exports,
               masterDataPolicy: shell.masterDataPolicy,
               pendingMarks: shell.pendingMarks,
+              // 2026-10-20（§CV·七十七）：手机 = 队列出口（新建 / 编辑 / 停用
+              // 都入队并推给电脑）；桌面 = null ⇒ 走 PartyService，零变化
+              partySink: shell.partySink,
+              mobileShell: shell.mobileShell,
             );
     } else if (destination.id == 'documents') {
       page = shell.documents == null
@@ -457,6 +473,7 @@ Widget appShellPage(
               onSubmitted: shell.onDocumentSubmitted,
               onStorageFailure: shell.onStorageFailure,
               masterDataPolicy: shell.masterDataPolicy,
+              partySink: shell.partySink,
               masterDataSink: shell.masterDataSink!,
               // #37①：手机壳不显示快捷键后缀（判据与送货页同一处）
               mobileShell: shell.mobileShell,
@@ -476,6 +493,25 @@ class _AppShellState extends State<AppShell> {
     // 用 initState 而不是 late 字段初始化表达式：后者读 `widget` 是合法但
     // 容易看错，显式写出来读代码的人不用再确认一次时序
     _current = AppNavigation.initial(widget.initialDestinationId);
+    // #40⑤：主机**真的落库**时才回调（纯 pull 不触发）
+    widget.hostService?.addDataListener(_onHostDataApplied);
+  }
+
+  @override
+  void dispose() {
+    widget.hostService?.removeDataListener(_onHostDataApplied);
+    super.dispose();
+  }
+
+  void _onHostDataApplied() {
+    if (!mounted) return;
+    // `immersive` = 开单页（销售 / 送货 / 采购，`navigation.dart`）
+    //
+    // 开单页上**什么都不做**：用户正在低头算账，界面突然重绘会打断他
+    // （`docs/reply.md` 2026-10-18）。不需要「攒一个标志位」—— 切页本身就会
+    // `setState` 重建，那一刻自然读到新数据。
+    if (_current.immersive) return;
+    setState(() {});
   }
 
   void _select(NavDestination destination) {
@@ -486,17 +522,24 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          _NavColumn(
-            current: _current,
-            onSelect: _select,
-            scaleFactor: widget.uiScale.factor,
-          ),
-          const VerticalDivider(width: 1, thickness: 1),
-          Expanded(child: _content()),
-        ],
+      // 2026-10-19（用户实测：分屏 + 系统 200% + 应用超大 ⇒ 导航吃掉 92%）：
+      // 导航宽度**必须**按可用宽度设上限，否则工作区只剩一条缝。
+      body: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) => Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _NavColumn(
+              current: _current,
+              onSelect: _select,
+              width: AppNavigation.navWidth(
+                scale: widget.uiScale.factor,
+                availableWidth: constraints.maxWidth,
+              ),
+            ),
+            const VerticalDivider(width: 1, thickness: 1),
+            Expanded(child: _content()),
+          ],
+        ),
       ),
     );
   }
@@ -546,14 +589,15 @@ class _NavColumn extends StatelessWidget {
   const _NavColumn({
     required this.current,
     required this.onSelect,
-    required this.scaleFactor,
+    required this.width,
   });
 
   final NavDestination current;
   final ValueChanged<NavDestination> onSelect;
 
-  /// 界面缩放系数（设置页的档位；导航宽度随它缩放）
-  final double scaleFactor;
+  /// 导航列宽度 —— **由外壳按「可用宽度」算好传进来**（`AppNavigation.navWidth`），
+  /// 本类不再自己乘缩放系数（那正是 2026-10-19 那次的病根：只有下限没有上限）。
+  final double width;
 
   @override
   Widget build(BuildContext context) {
@@ -580,7 +624,7 @@ class _NavColumn extends StatelessWidget {
 
     // 滚动兜底：窗口很矮时也能看到全部入口（入口**不能藏**）
     return SizedBox(
-      width: AppNavigation.widthFor(scale: scaleFactor),
+      width: width,
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -638,6 +682,8 @@ class _NavItem extends StatelessWidget {
                 destination.label,
                 maxLines: 1,
                 softWrap: false,
+                // 宽度被夹紧后（40% 上限）标签仍可能不够 —— 省略号而不是硬切
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: foreground,
                   height: 1.6,

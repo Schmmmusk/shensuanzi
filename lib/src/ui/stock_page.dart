@@ -26,7 +26,6 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'document_detail_page.dart';
 import 'export_button.dart';
-import 'mobile_guidance_dialog.dart';
 import 'opening_stock_page.dart';
 import 'product_form_dialog.dart';
 import 'stock_flow_page.dart';
@@ -46,6 +45,7 @@ class StockPage extends StatefulWidget {
     this.stockFlow,
     this.settlements,
     this.masterDataSink,
+    this.documentSink,
     this.canCreateProducts = false,
   });
 
@@ -79,6 +79,11 @@ class StockPage extends StatefulWidget {
   /// **#27 批 2**：「新建商品」提交出口（手机壳 = 队列出口）。`null` = 无按钮。
   final MasterDataSink? masterDataSink;
 
+  /// **盘点单的提交出口**（2026-10-20 放开手机「重新清点」，§CV·七十八）。
+  ///
+  /// 手机 = `QueueSink`；桌面 = `ServiceSink`（两支都由桌面/手机各自的
+  /// 装配传入）。`null` = 未装配（摆放层测试）⇒ 期初页退回 `StocktakeService`。
+  final DocumentSink? documentSink;
   /// **#27 批 2**：本机能不能建商品（门控）—— 按钮显隐用。
   final bool canCreateProducts;
 
@@ -170,25 +175,24 @@ class _StockPageState extends State<StockPage> {
     if (_showOpening) {
       // ⚠️ 期初录入当前**只在主机开放**（§CV·七 缺口 2，2026-10-09）。
       //
-      // `_showOpening` 只可能由**非手机壳**的按钮置起（见 [mobileShell]：手机端
-      // 点「录入现有货物」走 `showMobileGuideDialog(openingStock)` 引导，不置本标志），
-      // 所以能进到这里的只有桌面 == 主机 ⇒ 宿主预置 `ServiceMasterSink` 是正确的。
+      // 2026-10-20（§CV·七十八）：**手机上也能清点了** —— 裁定「走 stocktake 单据」
+      // （§CV·七 缺口 2 的 A 案）：清点单走**单据队列**，差额由主机算，客户端零规则。
       //
-      // 将来手机上要开期初**必须先裁「移动端期初的语义」**（走 stocktake 单据？
-      // 加新 op？不做？—— `reply_review.md` §CV·七 缺口 2 列的 A/B/C），
-      // 再决定 sink 是注入还是另写页面。**别为了「留位置」先造一个可能用不上的接口。**
-      // 这道门不为现在防什么，是为将来有人加移动端入口时，撞到它就必须先回答语义问题。
+      // ⇒ 这道门改为拦「**手机壳但没装配 documentSink**」：那意味着写进镜像就到不了电脑。
       assert(
-        !widget.mobileShell,
-        '期初录入当前只在主机开放；移动端启用前请先裁定「移动端期初的语义」'
-        '（§CV·七 缺口 2：走 stocktake 单据 / 新 op / 不做，三选一）',
+        !(widget.mobileShell && widget.documentSink == null),
+        '手机壳开放清点必须装配 documentSink（QueueSink）——'
+        '否则清点单只写镜像、到不了电脑',
       );
       return OpeningStockPage(
         service: StocktakeService(engine: widget.engine, queries: widget.queries),
         productService: widget.products,
-        // 期初里的「新建商品」走**主机落库** —— 本入口在手机端被引导接管
-        //（见 [mobileShell]），所以能进到这里的只有桌面 == 主机（§CV·七 ① 乙）。
-        masterDataSink: ServiceMasterSink(widget.products),
+        // 期初里的「新建商品」：桌面走主机落库；手机壳本页被「重新清点」放开，
+        // 所以这里两种壳都要给（§CV·七十八）——手机 = `QueueMasterSink`。
+        masterDataSink: widget.masterDataSink ?? ServiceMasterSink(widget.products),
+        // 2026-10-20（§CV·七十八）：**盘点单的出口**。手机 = `QueueSink`
+        //（入队 + 立即推，差额由主机算）；桌面 / 未装配 = null ⇒ 走 [service]。
+        documentSink: widget.documentSink,
         isFirstTime: !hasAnyLedger,
         bookQuantities: book,
         onDone: () => setState(() => _showOpening = false),
@@ -279,13 +283,9 @@ class _StockPageState extends State<StockPage> {
             ),
           TextButton.icon(
             key: const Key('stock-open-entry'),
-            // C2·§CC：手机端期初录入保留入口 + 引导（客户端算不出盘点 delta）
-            onPressed: widget.mobileShell
-                ? () => showMobileGuideDialog(
-                    context,
-                    MobileGuideTopic.openingStock,
-                  )
-                : () => setState(() => _showOpening = true),
+            // 2026-10-20（§CV·七十八）：手机端**也能清点** —— 清点单走
+            // 单据通道入队，差额由主机算（客户端零规则）。原引导删除。
+            onPressed: () => setState(() => _showOpening = true),
             icon: const Icon(Icons.inventory_2_outlined, size: 18),
             label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
           ),

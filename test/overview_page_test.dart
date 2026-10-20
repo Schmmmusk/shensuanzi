@@ -65,6 +65,14 @@ void main() {
     final QueryDao queries = QueryDao(db);
     final ProductDao products = ProductDao(db);
     final int t0 = todayMs;
+    // ⚠️ 草稿的「单据日期」必须**从 `todayMs` 派生**，不能写死 `'2026-10-17'`。
+    // 写死的后果（2026-10-18 真实发生）：断言按「今天」算，而单据落在写死的那天
+    // ⇒ 跨日零点起这条测试**必红**，而且和真回归混在一起（狼来了）。
+    // 用 `todayMs` 派生既保持「同种子同结果」，又不再耦合真实日历。
+    final DateTime today = DateTime.fromMillisecondsSinceEpoch(t0);
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    final String day =
+        '${today.year}-${twoDigits(today.month)}-${twoDigits(today.day)}';
     final Product product = Product(
       id: newId(),
       code: 'P001',
@@ -110,7 +118,7 @@ void main() {
     final int stockIn = oversell ? 2 : 10;
     purchases.create(
       PurchaseDraft(
-        date: '2026-10-17',
+        date: day,
         lines: <PurchaseLineDraft>[
           PurchaseLineDraft(
             productId: product.id,
@@ -135,7 +143,7 @@ void main() {
         SaleDraft(
           partyId: jia.id,
           partyName: '客户甲',
-          date: '2026-10-17',
+          date: day,
           lines: <SaleLineDraft>[
             SaleLineDraft(
               productId: product.id,
@@ -153,7 +161,7 @@ void main() {
       // 散客现结（不产生应收）
       sales.create(
         SaleDraft(
-          date: '2026-10-17',
+          date: day,
           lines: <SaleLineDraft>[
             SaleLineDraft(
               productId: product.id,
@@ -180,7 +188,7 @@ void main() {
       DeliveryDraft(
         partyId: jia.id,
         partyName: '客户甲',
-        date: '2026-10-17',
+        date: day,
         lines: <DeliveryLineDraft>[
           DeliveryLineDraft.fromProduct(product, quantity: '3'),
         ],
@@ -320,6 +328,29 @@ void main() {
     );
   });
   // ===== #32（2026-10-17 裁定甲）：经营速览三卡 =====
+
+  // 2026-10-20（用户建议）：三张经营卡**从页首挪到「从这里开始」下方** ——
+  // 概览页先回答「数据在哪 / 能不能用 / 从哪开始」，经营数字是第二眼的东西。
+  testWidgets('2026-10-20：经营三卡在「从这里开始」**下方**', (
+    WidgetTester tester,
+  ) async {
+    final QueryDao queries = await seedBiz(
+      todayMs: DateTime.now().millisecondsSinceEpoch,
+      withReceivable: true,
+    );
+    await tester.pumpWidget(page(queries: queries, onNavigate: (_) {}));
+    await tester.pumpAndSettle();
+
+    final double yHint = tester.getTopLeft(find.text('从这里开始')).dy;
+    final double yCards = tester
+        .getTopLeft(find.byKey(const Key('overview-card-today')))
+        .dy;
+    expect(
+      yCards,
+      greaterThan(yHint),
+      reason: '三卡必须在「从这里开始」下方（用户 2026-10-20 建议）',
+    );
+  });
 
   testWidgets('#32：有单 ⇒ 今日经营两行 + 要留心应收 + 快捷入口跳转', (
     WidgetTester tester,

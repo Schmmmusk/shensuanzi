@@ -120,9 +120,17 @@ void main() {
               .contains('请选一个资金账户');
     }());
 
-    check('散采且有欠款 → party 报「散采要当场结清」',
-        (goodDraft().validate()[PurchaseField.party] ?? '')
-            .contains('散采要当场结清'));
+    check('散采且有欠款 → party 报「散采要当场结清」', () {
+      return (goodDraft().validate()[PurchaseField.party] ?? '')
+          .contains('散采要当场结清');
+    }());
+
+    // #40③：第一句必须是差额（与 test/ 成对）
+    check('散采提示的第一句是「还差多少钱」', () {
+      final String msg = goodDraft().validate()[PurchaseField.party] ?? '';
+      return msg.startsWith('这一单还差 ¥35.00 没付。') &&
+          msg.contains('选一个供应商把欠款记到名下');
+    }());
 
     check('有供应商 + 欠款 → 不报，欠款 = 3500', () {
       final PurchaseDraft d = goodDraft(partyId: 'party-1');
@@ -391,7 +399,7 @@ void main() {
     check('createSupplier：最小建档，空名抛', () {
       final (:db, :service, productId: _, accountId: _, partyId: _) = setup();
       try {
-        final Party party = service.createSupplier('李老板', phone: ' 139 ');
+        final Party party = service.createSupplier('李老板', phone: ' 139 ').party;
         final bool ok = party.name == '李老板' &&
             party.phone == '139' &&
             party.roles.map((PartyRole r) => r.wire).join(',') == 'supplier';

@@ -289,4 +289,62 @@ void main() {
     expect(find.text('编辑'), findsOneWidget);
     expect(find.text('停用'), findsOneWidget);
   });
+
+  // 2026-10-19 用户实测（账户页截图，超大档，窗口与 VSCode 均分 960 宽）：
+  // 「微信收款账户」+ 类型标签「微信」+ 右侧金额挤在同一行 ⇒ 黄黑溢出条纹。
+  // 根因：`Row[名字, 类型]` 两个都不许收缩。
+  testWidgets('超大档（2.0）+ 窄窗口：账户行不溢出，名字完整显示', (
+    WidgetTester tester,
+  ) async {
+    service.create(
+      AccountDraft(name: '微信收款账户', type: AccountType.wechat),
+      now: 1700000000000,
+    );
+    service.create(
+      AccountDraft(name: '店内现金', type: AccountType.cash, initialBalance: '100'),
+      now: 1700000000000,
+    );
+
+    tester.view.physicalSize = const Size(960, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (BuildContext context, Widget? child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2.0)),
+          child: child!,
+        ),
+        // ⚠️ 真实条件是「窗口 960 宽，左侧导航占 435」⇒ 内容区只有 ~525。
+        // 直接给 960 会测不出问题（我第一版就是这么写的，绿得毫无意义）。
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.centerLeft,
+            child: SizedBox(
+              width: 520,
+              child: AccountsPage(
+                service: service,
+                masterDataPolicy: const MasterDataPolicy.desktop(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '账户行在 2.0 档下溢出（用户截图：黄黑条纹压在「微信」上）',
+    );
+    expect(
+      find.text('微信收款账户'),
+      findsOneWidget,
+      reason: '名字是账户的唯一标识 —— 不许被省略号截成「微信收款账…」',
+    );
+    expect(find.textContaining('微信 · 期初'), findsOneWidget);
+  });
 }

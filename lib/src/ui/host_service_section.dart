@@ -51,6 +51,25 @@ class HostServicePanel extends StatefulWidget {
 class _HostServicePanelState extends State<HostServicePanel> {
   late HostServiceSnapshot _snapshot = widget.controller.snapshot;
 
+  @override
+  void initState() {
+    super.initState();
+    // #40⑤：手机推上来的数据**真的落库**后，这一块（「最近连接」/流量）
+    // 必须跟着走 —— 否则它永远停在打开设置页那一刻的快照上
+    widget.controller.addDataListener(_onHostData);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeDataListener(_onHostData);
+    super.dispose();
+  }
+
+  void _onHostData() {
+    if (!mounted) return;
+    setState(() => _snapshot = widget.controller.snapshot);
+  }
+
   /// 正在等启停结果（按钮与开关都要禁用，否则能连点出好几次启停）
   bool _busy = false;
 

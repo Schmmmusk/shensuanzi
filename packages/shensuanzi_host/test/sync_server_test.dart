@@ -1860,4 +1860,33 @@ void main() {
       );
     });
   });
+
+  // #40⑤（2026-10-18 裁定甲）：只有**真的落库了**才通知界面刷新
+  group('#40⑤ 落库回调', () {
+    test('push 成功 ⇒ onApplied(1)；重复推（already_exists）⇒ 不再响', () {
+      final List<int> calls = <int>[];
+      final SyncServer s = SyncServer(db, onApplied: calls.add);
+      final String id = newId();
+      final SyncOperation create = opMaster(
+        'products',
+        id,
+        SyncOpType.createMasterData,
+        payload: <String, Object?>{
+          'code': 'P900',
+          'name': '回调商品',
+          'cost_price': 0,
+        },
+      );
+
+      s.push(<SyncOperation>[create], now: now());
+      expect(calls, <int>[1], reason: '真的写进去了 ⇒ 界面该重读');
+
+      s.push(<SyncOperation>[create], now: now());
+      expect(
+        calls,
+        <int>[1],
+        reason: 'already_exists 不是新数据 —— 拿它当信号会让界面反复重建',
+      );
+    });
+  });
 }

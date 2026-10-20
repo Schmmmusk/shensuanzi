@@ -63,7 +63,7 @@ class HelpPage extends StatelessWidget {
               Text('帮助', style: theme.textTheme.titleLarge),
               const SizedBox(height: 4),
               Text(
-                '四步用起来。每一步在左侧导航都有常驻入口，随时可以点。',
+                '四步用起来。每一步在导航栏里都有常驻入口，随时可以点。',
                 style: TextStyle(height: 1.6, color: secondary),
               ),
               const SizedBox(height: 16),

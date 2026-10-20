@@ -28,6 +28,7 @@ import '../models/document.dart';
 import '../rules/rule_engine.dart';
 import '../rules/rule_rejection.dart';
 import '../util/ids.dart';
+import 'document_sink.dart';
 import 'stocktake_draft.dart';
 
 /// 保存成功后给 UI 的结果。
@@ -72,10 +73,36 @@ class StocktakeDraftInvalid implements Exception {
 class StocktakeService {
   StocktakeService({required RuleEngine engine, required QueryDao queries})
     : _engine = engine,
-      _queries = queries;
+      _queries = queries,
+      _sink = null,
+      _clock = _systemClock;
 
-  final RuleEngine _engine;
+  /// **手机端队列版**（2026-10-20 放开「重新清点」，§CV·七十八）。
+  ///
+  /// 与主机版的区别只有一件：`create()` 不 dispatch、不写库，而是把
+  /// 盘点单**入队**（`createDocument`），由主机 `RuleEngine` 落账。
+  ///
+  /// ⚠️ 为什么主机零改动：`RuleEngine._stocktake(prepared, actual)` 的
+  /// actual 取 `stocktakeActual ?? _actualFromLines(lines)` —— 客户端把
+  /// **实际数量写进行里**，主机照自己的账面算差额。语义天然正确。
+  ///
+  /// ⚠️「账面数」由宿主页面从**镜像**查（可能略旧）⇒ 行内差额只是参考，
+  /// 真相以主机落账为准（主机永远赢）。
+  StocktakeService.queue({
+    required DocumentSink sink,
+    required QueryDao queries,
+    int Function()? clock,
+  }) : _sink = sink,
+       _queries = queries,
+       _clock = clock ?? _systemClock,
+       _engine = null;
+
+  final RuleEngine? _engine;
+  final DocumentSink? _sink;
   final QueryDao _queries;
+  final int Function() _clock;
+
+  static int _systemClock() => DateTime.now().millisecondsSinceEpoch;
 
   /// 提交期初录入。
   ///
@@ -91,7 +118,26 @@ class StocktakeService {
     }
 
     final Map<String, int> actual = draft.toActualQuantities();
-    final int stamp = now ?? DateTime.now().millisecondsSinceEpoch;
+    final int stamp = now ?? _clock();
+
+    // **手机队列模式**（2026-10-20 放开「重新清点」，§CV·七十八）：
+    // 不 dispatch、不写库，把盘点单入队，由**主机** `RuleEngine` 落账。
+    // 与主机版的差异只有「谁来应用规则」这一件。
+    final DocumentSink? sink = _sink;
+    if (sink != null) {
+      final DocumentSubmitResult submitted = sink.submitStocktake(draft, now: stamp);
+      if (!submitted.isQueued) {
+        // 出口配错（例如塞了主机的 ServiceSink）—— 宁可抛，不静默走错路
+        throw StateError('盘点出口没有入队；主机侧请用 StocktakeService() 主构造');
+      }
+      // 客户端只知道 id 与占位号；正式单号与 changedCount 要等 pull 回来
+      return StocktakeResult(
+        documentId: submitted.documentId ?? '',
+        docNo: submitted.finalDocNo,
+        changedCount: actual.length,
+        unchangedCount: 0,
+      );
+    }
 
     // 变化统计的基准：dispatch **前**的账面数（引擎在事务内算 diff，
     // 与这里的快照是同一口径：账面 = SUM(stock_ledger.quantity)）
@@ -113,7 +159,7 @@ class StocktakeService {
       remark: draft.remark,
     );
 
-    final RuleOutcome outcome = _engine.dispatch(
+    final RuleOutcome outcome = _engine!.dispatch(
       document: document,
       stocktakeActual: actual,
       now: stamp,

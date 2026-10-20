@@ -17,20 +17,51 @@ void resetClock() => _clock = 1700000000000;
 Db newMemoryDb({bool foreignKeys = true}) =>
     Db.openInMemory(foreignKeys: foreignKeys);
 
-void insertProduct(Database db, String id, {String? code, int? costPrice}) {
+void insertProduct(
+  Database db,
+  String id, {
+  String? code,
+  String? name,
+  int? costPrice,
+}) {
   final int t = now();
   db.execute(
     'INSERT INTO products (id, code, name, cost_price, created_at, updated_at) '
     'VALUES (?,?,?,?,?,?)',
-    <Object?>[id, code ?? id, '商品-$id', costPrice ?? 0, t, t],
+    <Object?>[id, code ?? id, name ?? '商品-$id', costPrice ?? 0, t, t],
   );
 }
 
-void insertParty(Database db, String id) {
+void insertParty(Database db, String id, {String? name}) {
   final int t = now();
   db.execute(
     'INSERT INTO parties (id, name, created_at, updated_at) VALUES (?,?,?,?)',
-    <Object?>[id, '往来方-$id', t, t],
+    <Object?>[id, name ?? '往来方-$id', t, t],
+  );
+}
+
+/// 插一条明细行 —— 搜索「商品名」的用例要它（#26 搜索 ④）。
+void insertDocumentLine(
+  Database db,
+  String id, {
+  required String document,
+  required String product,
+  int quantity = 1,
+  int unitPrice = 0,
+  int? amount,
+}) {
+  db.execute(
+    'INSERT INTO document_lines '
+    '(id, document_id, product_id, quantity, unit_price, amount) '
+    'VALUES (?,?,?,?,?,?)',
+    <Object?>[
+      id,
+      document,
+      product,
+      quantity,
+      unitPrice,
+      amount ?? quantity * unitPrice,
+    ],
   );
 }
 
@@ -49,13 +80,35 @@ void insertDocument(
   String docType = 'purchase',
   String status = 'confirmed',
   int totalAmount = 0,
+  String? refDocId,
+  String? partyId,
+  int? occurredAt,
+  int? createdAt,
 }) {
   final int t = now();
+  // `occurred_at` / `created_at` 可显式给：排序口径的用例必须能分开摆
+  // 「业务日期（主单 = 当天 00:00）」与「录入时刻」（#26① / §CV·六十二）。
+  // 只给 `occurredAt` 时 `created_at` 跟它走 —— 退货 / 收付款单现实里就是
+  // `occurred_at == created_at == 那一刻`（`return_service` / `settlement_service`）。
+  final int occurred = occurredAt ?? t;
+  final int created = createdAt ?? occurred;
   db.execute(
     'INSERT INTO documents '
-    '(id, doc_no, doc_type, status, total_amount, occurred_at, created_at, updated_at) '
-    'VALUES (?,?,?,?,?,?,?,?)',
-    <Object?>[id, docNo, docType, status, totalAmount, t, t, t],
+    '(id, doc_no, doc_type, status, total_amount, ref_doc_id, party_id, '
+    'occurred_at, created_at, updated_at) '
+    'VALUES (?,?,?,?,?,?,?,?,?,?)',
+    <Object?>[
+      id,
+      docNo,
+      docType,
+      status,
+      totalAmount,
+      refDocId,
+      partyId,
+      occurred,
+      created,
+      created,
+    ],
   );
 }
 
@@ -108,6 +161,31 @@ void insertMoney(
       amount,
       seqNo ?? nextSeq(db, 'money_ledger'),
       t,
+      t,
+    ],
+  );
+}
+
+/// 插一条核销（`settlements`）—— 列表「已收 N 笔」的用例要它（#26 批 3）。
+void insertSettlement(
+  Database db,
+  String id, {
+  required String receiptDoc,
+  required String targetDoc,
+  int amount = 100,
+  int? seqNo,
+}) {
+  final int t = now();
+  db.execute(
+    'INSERT INTO settlements '
+    '(id, receipt_doc_id, target_doc_id, amount, seq_no, created_at) '
+    'VALUES (?,?,?,?,?,?)',
+    <Object?>[
+      id,
+      receiptDoc,
+      targetDoc,
+      amount,
+      seqNo ?? nextSeq(db, 'settlements'),
       t,
     ],
   );

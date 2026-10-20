@@ -106,7 +106,7 @@ void main() {
       engine: RuleEngine(db),
       queries: QueryDao(db),
     );
-    final Party supplier = purchases.createSupplier('老王');
+    final Party supplier = purchases.createSupplier('老王').party;
 
     final PartyMutation asCustomer = PartyService(PartyDao(db)).ensureParty(
       name: '老王',
@@ -199,7 +199,7 @@ void main() {
         phone: ' 138 ',
         address: ' 东门 3 号 ',
         now: now(),
-      );
+      ).party;
 
       expect(party.name, '王老板');
       expect(party.phone, '138');
@@ -223,7 +223,7 @@ void main() {
         phone: '138',
         address: '东门',
         now: now(),
-      );
+      ).party;
 
       final Party second = service.createFull(
         name: '老王',
@@ -231,7 +231,7 @@ void main() {
         phone: '999',
         address: '西门',
         now: now() + 1,
-      );
+      ).party;
 
       expect(second.id, first.id, reason: '同一条 party');
       expect(second.roles.toSet(), <PartyRole>{
@@ -388,17 +388,17 @@ void main() {
         name: '在用的',
         roles: <PartyRole>[PartyRole.customer],
         now: now(),
-      );
+      ).party;
       final Party idleDisabled = service.createFull(
         name: '停用无账',
         roles: <PartyRole>[PartyRole.customer],
         now: now(),
-      );
+      ).party;
       final Party owingDisabled = service.createFull(
         name: '停用有账',
         roles: <PartyRole>[PartyRole.supplier],
         now: now(),
-      );
+      ).party;
       service.setActive(idleDisabled.id, active: false, now: now());
       service.setActive(owingDisabled.id, active: false, now: now());
 
@@ -418,6 +418,110 @@ void main() {
         reason: '§审查 OBS-05：停用但**还欠着钱**的必须还能看到 —— 否则就是「幽灵账」',
       );
     });
+
+    // #40②（2026-10-18 裁定甲）：勾上开关 ⇒ 连「停用且不欠钱」的也列出来
+    test('listVisible(includeInactiveWithoutBalance)：把空停用档也放出来', () {
+      final Party active = service.createFull(
+        name: '在用的',
+        roles: <PartyRole>[PartyRole.customer],
+        now: now(),
+      ).party;
+      final Party idleDisabled = service.createFull(
+        name: '停用无账',
+        roles: <PartyRole>[PartyRole.customer],
+        now: now(),
+      ).party;
+      service.setActive(idleDisabled.id, active: false, now: now());
+
+      expect(
+        service.listVisible().map((Party p) => p.id),
+        isNot(contains(idleDisabled.id)),
+        reason: '默认不列（没有余额，列出来只是噪音）',
+      );
+      expect(
+        service
+            .listVisible(includeInactiveWithoutBalance: true)
+            .map((Party p) => p.id),
+        containsAll(<String>[active.id, idleDisabled.id]),
+        reason: '开关打开 = 「我就是要找那条老档」',
+      );
+    });
   });
 
+  // ------------------------------------------------ #40① 回传「发生了什么」
+  //
+  // 以前 `createSupplier` / `createFull` 只回 `Party` ⇒ 采购页与往来方页
+  // **把「追加身份 / 复活停用档」整个丢掉**，用户只看到名字出现在列表里。
+  group('#40① 建档入口必须回传 PartyMutation', () {
+    test('createSupplier：新名字 ⇒ created', () {
+      final PartyMutation m = PurchaseService(
+        engine: RuleEngine(db),
+        queries: QueryDao(db),
+      ).createSupplier('新供应商');
+      expect(m.action, PartyMutationAction.created);
+      expect(m.party.roles, <PartyRole>[PartyRole.supplier]);
+    });
+
+    test('createSupplier：已有同名客户 ⇒ roleAppended（不是新建）', () {
+      final PartyMutation first = service.ensureParty(
+        name: '老王',
+        role: PartyRole.customer,
+        now: now(),
+      );
+      final PartyMutation m = PurchaseService(
+        engine: RuleEngine(db),
+        queries: QueryDao(db),
+      ).createSupplier('老王');
+
+      expect(m.action, PartyMutationAction.roleAppended);
+      expect(m.party.id, first.party.id, reason: '同一条档，绝不新建第二条');
+      expect(m.party.roles.toSet(),
+          <PartyRole>{PartyRole.customer, PartyRole.supplier});
+    });
+
+    test('createSupplier：同名停用档 ⇒ revived（复活并补齐角色）', () {
+      final Party idle = service.createFull(
+        name: '老李',
+        roles: <PartyRole>[PartyRole.customer],
+        now: now(),
+      ).party;
+      service.setActive(idle.id, active: false, now: now());
+
+      final PartyMutation m = PurchaseService(
+        engine: RuleEngine(db),
+        queries: QueryDao(db),
+      ).createSupplier('老李');
+
+      expect(m.action, PartyMutationAction.revived);
+      expect(m.party.isActive, isTrue);
+      expect(m.party.roles.toSet(),
+          <PartyRole>{PartyRole.customer, PartyRole.supplier});
+    });
+
+    test('createFull：全新双角色 ⇒ created（优先级压过 roleAppended）', () {
+      final PartyMutation m = service.createFull(
+        name: '张老板',
+        roles: <PartyRole>[PartyRole.supplier, PartyRole.customer],
+        now: now(),
+      );
+      expect(m.action, PartyMutationAction.created);
+      expect(m.party.roles.toSet(),
+          <PartyRole>{PartyRole.supplier, PartyRole.customer});
+    });
+
+    test('createFull：已有供应商再加客户 ⇒ roleAppended', () {      service.createFull(
+        name: '赵老板',
+        roles: <PartyRole>[PartyRole.supplier],
+        now: now(),
+      );
+      final PartyMutation m = service.createFull(
+        name: '赵老板',
+        roles: <PartyRole>[PartyRole.supplier, PartyRole.customer],
+        now: now() + 1,
+      );
+      expect(m.action, PartyMutationAction.roleAppended);
+      expect(m.party.roles.toSet(),
+          <PartyRole>{PartyRole.supplier, PartyRole.customer});
+    });
+  });
 }

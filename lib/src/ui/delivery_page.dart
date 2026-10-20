@@ -26,7 +26,12 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
-    show MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
+    show
+        MasterDataPolicy,
+        MobileGuideTopic,
+        mirrorEmptyMessage,
+        partyMutationNotice,
+        partySameNameHint;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'keyboard_reveal.dart';
@@ -47,6 +52,7 @@ class DeliveryPage extends StatefulWidget {
     this.onStorageFailure,
     this.stockDelta,
     required this.masterDataPolicy,
+    this.partySink,
     required this.masterDataSink,
     this.mobileShell = false,
   });
@@ -74,6 +80,10 @@ class DeliveryPage extends StatefulWidget {
   /// 那版默默漏装就是「手机上一切都能建」（静默丢数据），宁可编不过。
   final MasterDataPolicy masterDataPolicy;
 
+
+  /// **往来方写入口的队列出口**（2026-10-20，§CV·七十七）。
+  /// 手机 = `QueuePartySink`（写镜像 + 入队 + 立即推）；桌面 = `null`。
+  final QueuePartySink? partySink;
   /// 主数据提交**出口**（桌面 `ServiceMasterSink` / 手机 `QueueMasterSink`）。
   /// ⚠️ 商品表单**必须**走它 —— 手机端的 `ProductService` 建在镜像上。
   final MasterDataSink masterDataSink;
@@ -229,6 +239,15 @@ class _RowCtl {
 }
 
 class _DeliveryPageState extends State<DeliveryPage> {
+  /// **本机能不能建往来方**：策略放开 **且** 出口齐备。
+  ///
+  /// 手机上的 `partyService` / `service` 建在**镜像**上，直写不入队 ⇒ 到不了电脑
+  ///（静默丢数据）。桌面没有这个问题（直连主库）⇒ 只在策略就是「手机」且
+  /// 没装出口时拦住。
+  bool get _canCreateParty =>
+      widget.masterDataPolicy.canCreateParties &&
+      (widget.partySink != null ||
+          widget.masterDataPolicy != const MasterDataPolicy.mobile());
   // ---- 表单状态 ----
   String? _partyId;
   String? _partyName;
@@ -525,7 +544,8 @@ class _DeliveryPageState extends State<DeliveryPage> {
       builder: (BuildContext sheetContext) => _CustomerPickerSheet(
         service: widget.service,
         partyService: widget.partyService,
-        canCreate: widget.masterDataPolicy.canCreateParties,
+        partySink: widget.partySink,
+        canCreate: _canCreateParty,
       ),
     );
   }
@@ -1040,6 +1060,7 @@ class _CustomerPickerSheet extends StatefulWidget {
     required this.service,
     required this.partyService,
     this.canCreate = false,
+    this.partySink,
   });
 
   final DeliveryService service;
@@ -1047,6 +1068,11 @@ class _CustomerPickerSheet extends StatefulWidget {
 
   /// 本机能不能建客户（`MasterDataPolicy.canCreateParties`）。
   final bool canCreate;
+
+  /// **手机队列出口**（`null` = 桌面 / 未装配 ⇒ 走 `partyService`）。
+  /// 手机上的 `partyService` 建在**镜像**上，直写不入队 ⇒ 到不了电脑
+  ///（2026-10-20 放开手机往来方建档时补的，§CV·七十七）。
+  final QueuePartySink? partySink;
 
   @override
   State<_CustomerPickerSheet> createState() => _CustomerPickerSheetState();
@@ -1059,10 +1085,34 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
   String? _newNameError;
   bool _creating = false;
 
+  /// #40①：名称框**失焦**才查同名（不在 `onChanged` 查 —— 每键一次库 + setState）
+  final FocusNode _nameFocus = FocusNode();
+  String? _sameNameHint;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameFocus.addListener(_onNameFocusChanged);
+  }
+
   @override
   void dispose() {
+    _nameFocus.removeListener(_onNameFocusChanged);
+    _nameFocus.dispose();
     _query.dispose();
     super.dispose();
+  }
+
+  void _onNameFocusChanged() {
+    if (_nameFocus.hasFocus) return;
+    final String name = _query.text.trim();
+    final Party? existing =
+        name.isEmpty ? null : widget.partyService.findByNameIncludingInactive(name);
+    final String? hint = partySameNameHint(
+      existing,
+      adding: const <PartyRole>[PartyRole.customer],
+    );
+    if (hint != _sameNameHint) setState(() => _sameNameHint = hint);
   }
 
   void _search(String text) {
@@ -1087,15 +1137,23 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
     final String name = _query.text.trim();
     setState(() => _creating = true);
     try {
-      final PartyMutation result = widget.partyService.ensureParty(
-        name: name,
-        role: PartyRole.customer,
-      );
+      final PartyMutation result = widget.partySink == null
+          ? widget.partyService.ensureParty(
+              name: name,
+              role: PartyRole.customer,
+            )
+          : widget.partySink!.createFull(
+              name: name,
+              roles: const <PartyRole>[PartyRole.customer],
+            );
       if (!mounted) return;
-      if (result.action == PartyMutationAction.roleAppended) {
+      // #40①：与销售页同源（`partyMutationNotice`）—— 追加身份 / 复活停用档都要说
+      final String? notice =
+          partyMutationNotice(result, role: PartyRole.customer);
+      if (notice != null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('已有往来方「${result.party.name}」，已加为你的客户'),
+            content: Text(notice),
             duration: const Duration(seconds: 4),
           ),
         );
@@ -1128,6 +1186,7 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
           TextField(
             key: const Key('picker-search'),
             controller: _query,
+            focusNode: _nameFocus,
             autofocus: true,
             onChanged: _search,
             onSubmitted: _search,
@@ -1138,6 +1197,16 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
               errorText: _newNameError,
             ),
           ),
+          // #40① 内联提醒（不拦人）：说清「保存后会发生什么」
+          if (_sameNameHint != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                _sameNameHint!,
+                key: const Key('party-same-name-hint'),
+                style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+              ),
+            ),
           const SizedBox(height: 4),
           Text(
             _searched ? '搜索结果' : '最近往来',

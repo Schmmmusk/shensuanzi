@@ -20,17 +20,17 @@ void main() {
   group('MasterDataPolicy.mobile（手机 v1）', () {
     const MasterDataPolicy policy = MasterDataPolicy.mobile();
 
-    test('只开商品（§CH §8 的 v1 范围）', () {
+    test('开商品 + 往来方，账户仍未开（2026-10-20 放开往来方）', () {
       expect(policy.canCreateProducts, isTrue, reason: '手机能离线建商品');
       expect(
         policy.canCreateParties,
-        isFalse,
-        reason: '往来 v1 仍「保留入口 + 引导到电脑」',
+        isTrue,
+        reason: '2026-10-20 用户要求放开（§CV·七十七）—— 出口 QueuePartySink 已补',
       );
       expect(
         policy.canCreateAccounts,
         isFalse,
-        reason: '账户 v1 仍「保留入口 + 引导到电脑」',
+        reason: '账户的出口还没写 ⇒ 仍是「保留入口 + 引导到电脑」',
       );
     });
   });

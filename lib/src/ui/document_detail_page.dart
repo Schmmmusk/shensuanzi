@@ -186,6 +186,9 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
           deliveries: widget.deliveries,
           products: widget.products,
           returnService: widget.returnService,
+          // ⚠️ 必须透传：否则从「退货记录」点进去的那一页会**丢掉**保存失败的
+          // 原始异常出口（#43 / M15 两通道），错误只剩一句「请再试一次」
+          onStorageFailure: widget.onStorageFailure,
         ),
       ),
     );
@@ -242,6 +245,23 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                     _header(theme, summary),
                     const SizedBox(height: 16),
                     _amountCard(theme, summary),
+                    // §审查 2026-10-05：退过货才显示（没退过的单不该多一块空白）
+                    //
+                    // ⚠️ **位置在 2026-10-18 上移到这里**（#26 批 3 甲案的**强制补偿项**）：
+                    // 列表把退货单折进了主单行，如果这一块还压在页面底部，用户会
+                    // 真的以为「退货单没了」（`docs/reply.md`：「这是甲案的救生圈」）。
+                    if (_returns.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 16),
+                      _returnsSection(theme),
+                    ],
+                    // 核销去向：**有内容就上移**（#26 批 3 收尾）。
+                    // 列表把「只核销了这一张单」的收付款单折进了主单行，
+                    // 所以这一块是那些单的**唯一入口** —— 压到页面底部
+                    // 就等于「还得自己翻」（用户复跑的意见）。
+                    if (_links.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 16),
+                      _linksSection(theme, summary),
+                    ],
                     const SizedBox(height: 16),
                     _actionRow(theme, summary),
                     const SizedBox(height: 20),
@@ -251,12 +271,8 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                       _linesTable(theme),
                       const SizedBox(height: 20),
                     ],
-                    // §审查 2026-10-05：退过货才显示（没退过的单不该多一块空白）
-                    if (_returns.isNotEmpty) ...<Widget>[
-                      _returnsSection(theme),
-                      const SizedBox(height: 20),
-                    ],
-                    _linksSection(theme, summary),
+                    // 空态留在底部：没有核销时不该在首屏占一块「还没有被核销过」
+                    if (_links.isEmpty) _linksSection(theme, summary),
                   ],
                 ),
               ),
@@ -761,19 +777,40 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
   /// 「单子要 60，怎么后来给 40 就结清了」。把每一次退货摆出来就自洽了。
   /// 整单拒收的退货单**不在列表里单独出现**（见 `DocumentDao._summaries`），
   /// 但在这里一定看得到 —— 它是原单的一部分历史，不是另一个入口。
+  ///
+  /// ⚠️ 2026-10-18（#26 批 3）：列表改成「一笔生意一行」后，这一块成了
+  /// 退货单的**唯一入口** ⇒ ① 位置从页面底部上移到金额卡下方；
+  /// ② 标题带次数与金额（**醒目**，不是灰字）；③ 每行可点进退货单详情。
   Widget _returnsSection(ThemeData theme) {
     final int total = _returns.fold<int>(
       0,
       (int sum, DocumentSummary e) => sum + e.document.totalAmount,
     );
     return Column(
+      key: const Key('detail-returns'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        _sectionTitle(theme, '退货记录'),
+        Row(
+          children: <Widget>[
+            Icon(
+              Icons.assignment_return_outlined,
+              size: 20,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '退货记录 · ${_returns.length} 次 · ¥${Money.formatGrouped(total)}',
+              style: TextStyle(
+                fontSize: theme.textTheme.titleSmall?.fontSize,
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 6),
         Text(
-          '这张单退过 ${_returns.length} 次，共 ¥${Money.formatGrouped(total)}。'
-          '收款 / 付款按扣掉退货后的金额算。',
+          '点下面任意一行可以看那张退货单；收款 / 付款按扣掉退货后的金额算。',
           style: TextStyle(
             height: 1.8,
             color: theme.textTheme.bodySmall?.color,
@@ -868,30 +905,50 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
               children: <Widget>[
                 for (int i = 0; i < _links.length; i++) ...<Widget>[
                   if (i > 0) const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
-                    ),
-                    child: Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: Text(
-                            _links[i].docNo ?? '预收 / 预付（未指定单据）',
-                            style: const TextStyle(height: 1.6),
+                  // 可点 ⇒ 打开那张收付款单（#26 批 3 收尾）：
+                  // 列表把这些单折进主单后，这里是**唯一入口**，
+                  // 不可点就等于「还得人工去找那张单」—— 正是用户复跑的意见。
+                  // `docId == null`（预收 / 预付）没有单据可开，保持不可点。
+                  InkWell(
+                    key: _links[i].docId == null
+                        ? null
+                        : Key('settle-row-${_links[i].docId}'),
+                    onTap: _links[i].docId == null
+                        ? null
+                        : () => _openDoc(_links[i].docId!),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: Text(
+                              _links[i].docNo ?? '预收 / 预付（未指定单据）',
+                              style: const TextStyle(height: 1.6),
+                            ),
                           ),
-                        ),
-                        Text(
-                          '¥${Money.formatGrouped(_links[i].amount)}',
-                          style: const TextStyle(
-                            height: 1.6,
-                            fontWeight: FontWeight.w600,
-                            fontFeatures: <FontFeature>[
-                              FontFeature.tabularFigures(),
-                            ],
+                          Text(
+                            '¥${Money.formatGrouped(_links[i].amount)}',
+                            style: const TextStyle(
+                              height: 1.6,
+                              fontWeight: FontWeight.w600,
+                              fontFeatures: <FontFeature>[
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                          if (_links[i].docId != null) ...<Widget>[
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.chevron_right,
+                              size: 18,
+                              color: theme.textTheme.bodySmall?.color,
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ),
                 ],

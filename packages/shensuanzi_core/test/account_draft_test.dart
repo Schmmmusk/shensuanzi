@@ -217,5 +217,40 @@ void main() {
       // 余额 = 期初 100 元（没流水）
       expect(service.balances()[cash.id], 10000);
     });
+
+    // #40②（2026-10-18 裁定甲）：账户页默认就要显示「停用但还有钱」的账户
+    test('listVisible：停用**有余额**默认就显示；勾上开关才含空账户', () {
+      final Account cash = service.create(
+        AccountDraft(name: '现金', type: AccountType.cash, initialBalance: '100'),
+        now: now(),
+      );
+      final Account retiredWithMoney = service.create(
+        AccountDraft(name: '旧卡', type: AccountType.bank, initialBalance: '50'),
+        now: now(),
+      );
+      final Account retiredEmpty = service.create(
+        AccountDraft(name: '作废卡', type: AccountType.bank),
+        now: now(),
+      );
+      service.setActive(retiredWithMoney.id, active: false, now: now());
+      service.setActive(retiredEmpty.id, active: false, now: now());
+
+      final List<String> defaults =
+          service.listVisible().map((Account a) => a.name).toList();
+      expect(defaults, contains('现金'));
+      expect(
+        defaults,
+        contains('旧卡'),
+        reason: '钱不会因为停用消失 —— 默认藏起来就是「幽灵账」',
+      );
+      expect(defaults, isNot(contains('作废卡')), reason: '余额 0 的停用档默认不占屏幕');
+
+      final List<String> all = service
+          .listVisible(includeInactiveWithoutBalance: true)
+          .map((Account a) => a.name)
+          .toList();
+      expect(all, containsAll(<String>['现金', '旧卡', '作废卡']));
+      expect(cash.isActive, isTrue);
+    });
   });
 }
