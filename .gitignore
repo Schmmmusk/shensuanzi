@@ -50,6 +50,9 @@ app.*.map.json
 
 # AI assistant related
 /.workbuddy/
+/.workbuddy-ai/
+# 本机 MCP 配置（只有 localhost 地址，每次会话端口会变）
+/.mcp.json
 
 # DeepSeek Harness related temporary files
 .dsh_acceptance/
