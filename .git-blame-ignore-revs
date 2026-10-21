@@ -1,0 +1,10 @@
+# git blame 忽略清单（格式类提交）
+#
+# 用法（一次性）：
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub 网页端会自动读取本文件（"Ignore whitespace"/blame 视图）。
+#
+# 只放「纯格式」提交的完整哈希，每行一个。
+
+# 2026-10-21 dart format 全仓（纯空白 + 尾随逗号，206 文件；门禁全绿）
+a990ab25114b60fc57d4e00e36fe18d3c81501ed
