@@ -75,8 +75,7 @@ class DataDirectoryDialogModel {
   DirectoryAdvice get advice => _advice;
 
   /// 容量提示，如 `D 盘剩余 128 GB`；拿不到为 `null`（不编一个值）
-  String? get capacityHint =>
-      _path.isEmpty ? null : service.spaceHint(_path);
+  String? get capacityHint => _path.isEmpty ? null : service.spaceHint(_path);
 
   /// 能不能点「开始使用」。
   ///
@@ -172,7 +171,8 @@ class DataDirectoryDialogModel {
       _failure = _compose(error.reason, error.howTo);
       return ConfirmOutcome.blocked;
     } on FileSystemException catch (error) {
-      _failure = '这个位置现在写不进去'
+      _failure =
+          '这个位置现在写不进去'
           '（${error.osError?.message ?? error.message}），请换一个文件夹';
       return ConfirmOutcome.blocked;
     }

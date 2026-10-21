@@ -54,20 +54,20 @@ void main() {
 
     test('没有明细 → lines 报「至少要有一行」', () {
       final PurchaseDraft draft = goodDraft(lines: const <PurchaseLineDraft>[]);
-      expect(
-        draft.validate()[PurchaseField.lines],
-        contains('至少要有一行商品'),
-      );
+      expect(draft.validate()[PurchaseField.lines], contains('至少要有一行商品'));
     });
 
     test('空行报行级错误（加了一行就得填或删）', () {
       const PurchaseLineDraft blank = PurchaseLineDraft();
       final Map<PurchaseLineField, String> errors = blank.validate();
-      expect(errors.keys, containsAll(<PurchaseLineField>[
-        PurchaseLineField.product,
-        PurchaseLineField.quantity,
-        PurchaseLineField.unitPrice,
-      ]));
+      expect(
+        errors.keys,
+        containsAll(<PurchaseLineField>[
+          PurchaseLineField.product,
+          PurchaseLineField.quantity,
+          PurchaseLineField.unitPrice,
+        ]),
+      );
       expect(blank.isEmpty, isTrue, reason: '服务层据此做防御性跳过');
     });
 
@@ -135,8 +135,7 @@ void main() {
         reason: '中老年用户扫视只看第一句 ⇒ 差额必须在最前面（docs/reply.md 2026-10-18）',
       );
       expect(message, contains('散采要当场结清'));
-      expect(message, contains('选一个供应商把欠款记到名下'),
-          reason: '说「怎么办」，不只说「哪里错了」');
+      expect(message, contains('选一个供应商把欠款记到名下'), reason: '说「怎么办」，不只说「哪里错了」');
     });
 
     test('有供应商 + 欠款 → 不报（赊购合法）', () {
@@ -181,16 +180,8 @@ void main() {
       final PurchaseDraft draft = goodDraft(
         partyId: 'party-1',
         lines: const <PurchaseLineDraft>[
-          PurchaseLineDraft(
-            productId: 'p1',
-            quantity: '10',
-            unitPrice: '3.50',
-          ),
-          PurchaseLineDraft(
-            productId: 'p2',
-            quantity: '2',
-            unitPrice: '100',
-          ),
+          PurchaseLineDraft(productId: 'p1', quantity: '10', unitPrice: '3.50'),
+          PurchaseLineDraft(productId: 'p2', quantity: '2', unitPrice: '100'),
         ],
         payments: const <PurchasePaymentDraft>[
           PurchasePaymentDraft(accountId: 'a1', amount: '200'),
@@ -295,7 +286,10 @@ void main() {
     });
 
     test('saveActionLabel：多付 ⇒ 说清记多少；否则「保存」', () {
-      expect(draftWith(<String>['50']).saveActionLabel(), '记 ¥35.00 并找零 ¥15.00');
+      expect(
+        draftWith(<String>['50']).saveActionLabel(),
+        '记 ¥35.00 并找零 ¥15.00',
+      );
       expect(draftWith(<String>['35']).saveActionLabel(), '保存');
     });
 
@@ -317,10 +311,7 @@ void main() {
 
     setUp(() {
       db = newMemoryDb();
-      service = PurchaseService(
-        engine: RuleEngine(db),
-        queries: QueryDao(db),
-      );
+      service = PurchaseService(engine: RuleEngine(db), queries: QueryDao(db));
       products = ProductDao(db);
       accounts = AccountDao(db);
     });
@@ -422,7 +413,8 @@ void main() {
       );
       // 单据真的落库了（主单 + 1 行明细 + 1 张自动 payment 单 = 2 行 documents）
       final int docCount =
-          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']! as int;
+          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']!
+              as int;
       expect(docCount, 2, reason: '采购主单 + 自动生成的付款单');
     });
 
@@ -486,7 +478,8 @@ void main() {
       );
       expect(invalid.summary, contains('正整数'));
       final int docCount =
-          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']! as int;
+          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']!
+              as int;
       expect(docCount, 0, reason: '事务回滚，不留半条单');
     });
 
@@ -509,8 +502,9 @@ void main() {
     });
 
     test('createSupplier：最小建档（名称 + 电话可选），空名抛', () {
-      final Party party =
-          service.createSupplier('王老板', phone: ' 13800000000 ').party;
+      final Party party = service
+          .createSupplier('王老板', phone: ' 13800000000 ')
+          .party;
       expect(party.name, '王老板');
       expect(party.phone, '13800000000', reason: '电话要 trim');
       expect(party.roles.map((PartyRole r) => r.wire), <String>['supplier']);

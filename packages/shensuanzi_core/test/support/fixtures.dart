@@ -193,7 +193,9 @@ void insertSettlement(
 
 /// 与 `SeqCounter` 同口径：`MAX(seq_no) + 1`（每表独立）
 int nextSeq(Database db, String table) =>
-    db.select('SELECT COALESCE(MAX(seq_no), 0) + 1 AS n FROM $table').first['n']!
+    db
+            .select('SELECT COALESCE(MAX(seq_no), 0) + 1 AS n FROM $table')
+            .first['n']!
         as int;
 
 /// 插一条 `party_ledger`（往来流水）—— 造「某往来方有余额」的场景。

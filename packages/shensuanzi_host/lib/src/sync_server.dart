@@ -69,7 +69,10 @@ class SyncServer {
   };
 
   /// `documentAction` 的 payload 允许出现的顶层字段（`sync_protocol.md` §三）
-  static const Set<String> actionPayloadKeys = <String>{'action', 'occurred_at'};
+  static const Set<String> actionPayloadKeys = <String>{
+    'action',
+    'occurred_at',
+  };
 
   /// v1 唯一落地的动作（R-3.1：动作只做**单向终态转变**）
   static const String markDeliveredAction = 'mark_delivered';
@@ -80,10 +83,7 @@ class SyncServer {
   ///
   /// [now] = 主机当前时间（毫秒）。**必须由调用方传入**，不在内部取 ——
   /// 这样单测可复现，也让「主机时钟为准」成为显式约定。
-  List<SyncResponse> push(
-    List<SyncOperation> operations, {
-    required int now,
-  }) {
+  List<SyncResponse> push(List<SyncOperation> operations, {required int now}) {
     final List<SyncResponse> responses = <SyncResponse>[
       for (final SyncOperation op in operations) handle(op, now: now),
     ];
@@ -197,9 +197,9 @@ class SyncServer {
         RejectCode.notWritableTable,
       );
     }
-    final Set<String> unknownKeys = op.payload.keys
-        .toSet()
-        .difference(actionPayloadKeys);
+    final Set<String> unknownKeys = op.payload.keys.toSet().difference(
+      actionPayloadKeys,
+    );
     if (unknownKeys.isNotEmpty) {
       return _malformedRequest(
         op,
@@ -287,9 +287,9 @@ class SyncServer {
       );
     }
 
-    final Set<String> unknownKeys = op.payload.keys
-        .toSet()
-        .difference(documentPayloadKeys);
+    final Set<String> unknownKeys = op.payload.keys.toSet().difference(
+      documentPayloadKeys,
+    );
     if (unknownKeys.isNotEmpty) {
       return _malformedRequest(
         op,
@@ -441,8 +441,10 @@ class SyncServer {
       return _malformedRequest(
         op,
         '期初字段类型/取值不符',
-        StateError('opening_quantity 必须是正整数，实际 $rawOpening'
-            '（${rawOpening.runtimeType}）'),
+        StateError(
+          'opening_quantity 必须是正整数，实际 $rawOpening'
+          '（${rawOpening.runtimeType}）',
+        ),
         RejectCode.malformedParameter,
       );
     } else {
@@ -478,8 +480,10 @@ class SyncServer {
           return _malformedRequest(
             op,
             '重复建档带期初',
-            StateError('createMasterData 目标已存在（${op.entityId}）'
-                '却带 opening_quantity —— 期初只在建档路径处理'),
+            StateError(
+              'createMasterData 目标已存在（${op.entityId}）'
+              '却带 opening_quantity —— 期初只在建档路径处理',
+            ),
             RejectCode.malformedParameter,
           );
         }
@@ -544,7 +548,6 @@ class SyncServer {
       );
     }
   }
-
 
   /// 主数据**落库**（建档路径的**唯一实现**）—— `createMasterData` 与
   /// `updateMasterData` 的 **upsert 分支**共用（§CV·3 裁定，2026-10-08）。
@@ -673,9 +676,9 @@ class SyncServer {
     final SyncResponse? guard = _requireMasterData(op);
     if (guard != null) return guard;
 
-    final Set<String> extraKeys = op.payload.keys
-        .toSet()
-        .difference(const <String>{'id'});
+    final Set<String> extraKeys = op.payload.keys.toSet().difference(
+      const <String>{'id'},
+    );
     if (extraKeys.isNotEmpty) {
       return _malformedRequest(
         op,
@@ -715,7 +718,10 @@ class SyncServer {
 
   /// 主数据操作的公共前置：表必须是主数据表，且 payload 列名全在白名单内。
   /// 返回非 null 表示已经可以短路返回。
-  SyncResponse? _requireMasterData(SyncOperation op, {Map<String, Object?>? payload}) {
+  SyncResponse? _requireMasterData(
+    SyncOperation op, {
+    Map<String, Object?>? payload,
+  }) {
     // #31：`_createMasterData` 会先抽掉 `opening_quantity` 再把**纯行 payload**
     // 传进来做白名单校验（缺省 = 原样，update / delete 不受影响）。
     final Map<String, Object?> checked = payload ?? op.payload;
@@ -838,12 +844,7 @@ class SyncServer {
     // documents 与「它这一页的明细」用**同一个页边界**：明细直接从
     // 本页 documents 的结果派生（见 [_linesOf]），不重跑一遍谓词，
     // 从结构上排除「两次查询页边界不一致」。
-    byStampCursor(
-      Schema.documents,
-      'created_at',
-      SyncCursorKeys.doc,
-      docSince,
-    );
+    byStampCursor(Schema.documents, 'created_at', SyncCursorKeys.doc, docSince);
     entities[Schema.documentLines] = _linesOf(<String>[
       for (final Map<String, Object?> doc in entities[Schema.documents]!)
         doc['id']! as String,
@@ -948,7 +949,6 @@ class SyncServer {
     return rows;
   }
 
-
   // ------------------------------------------------------------ 内部
 
   /// 规则结果 → 回执。
@@ -1039,9 +1039,10 @@ class SyncServer {
       ];
 
   /// ⚠️ [id] 是绑定参数，但 [table] 会拼进 SQL —— 调用点必须先过白名单。
-  bool _exists(String table, String id) => _raw
-      .select('SELECT 1 FROM $table WHERE id = ? LIMIT 1', <Object?>[id])
-      .isNotEmpty;
+  bool _exists(String table, String id) => _raw.select(
+    'SELECT 1 FROM $table WHERE id = ? LIMIT 1',
+    <Object?>[id],
+  ).isNotEmpty;
 
   /// ⚠️ 同 [_exists]：`table` 必须已过白名单。
   Row? _findRow(String table, String id) {

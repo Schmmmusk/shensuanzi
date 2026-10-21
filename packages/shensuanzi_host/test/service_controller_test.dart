@@ -249,7 +249,11 @@ void main() {
     test('trafficLabel 按分钟/小时降级', () async {
       await controller.start();
       final int port = controller.snapshot.port!;
-      await get(port, '/api/sync/pull', token: controller.pairingPayload!.token);
+      await get(
+        port,
+        '/api/sync/pull',
+        token: controller.pairingPayload!.token,
+      );
 
       final int at = controller.snapshot.lastTrafficAt!;
       expect(controller.snapshot.trafficLabel(at + 5 * 60000), '最近连接：5 分钟前');
@@ -291,11 +295,7 @@ void main() {
       final HostServiceSnapshot snapshot = await restarted.start();
 
       expect(snapshot.state, HostServiceState.running);
-      expect(
-        snapshot.qrAvailable,
-        isFalse,
-        reason: '明文不可逆：重启后拿不到它，就画不出二维码',
-      );
+      expect(snapshot.qrAvailable, isFalse, reason: '明文不可逆：重启后拿不到它，就画不出二维码');
       expect(snapshot.needsReset, isTrue, reason: 'UI 据此给「重新生成配对码」');
       expect(restarted.pairingPayload, isNull);
       expect(
@@ -370,9 +370,9 @@ void main() {
 
     test('resetToken 不自等待（内部走 _startRaw / _stopRaw）', () async {
       await controller.start();
-      final HostServiceSnapshot after = await controller
-          .resetToken()
-          .timeout(const Duration(seconds: 10));
+      final HostServiceSnapshot after = await controller.resetToken().timeout(
+        const Duration(seconds: 10),
+      );
       expect(after.state, HostServiceState.running);
       expect(after.qrAvailable, isTrue, reason: '重置后应拿到可扫的新码');
     });

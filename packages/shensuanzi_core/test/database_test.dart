@@ -21,12 +21,13 @@ void main() {
 
   tearDown(() => db.close());
 
-  int productCount([String? where]) => db.raw
-      .select(
-        'SELECT COUNT(*) AS c FROM products${where == null ? '' : ' WHERE $where'}',
-      )
-      .first['c']!
-      as int;
+  int productCount([String? where]) =>
+      db.raw
+              .select(
+                'SELECT COUNT(*) AS c FROM products${where == null ? '' : ' WHERE $where'}',
+              )
+              .first['c']!
+          as int;
 
   group('基础', () {
     test('file 数据库启用 WAL 并自动迁移', () {
@@ -38,7 +39,10 @@ void main() {
       addTearDown(fileDb.close);
 
       expect(fileDb.schemaVersion, Schema.version);
-      expect(fileDb.raw.select('PRAGMA journal_mode').first['journal_mode'], 'wal');
+      expect(
+        fileDb.raw.select('PRAGMA journal_mode').first['journal_mode'],
+        'wal',
+      );
       expect(File(path).existsSync(), isTrue);
     });
 
@@ -53,12 +57,10 @@ void main() {
 
       expect(second.schemaVersion, Schema.version);
       expect(
-        second.raw
-            .select(
-              "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name=?",
-              <Object?>[Schema.products],
-            )
-            .first['c'],
+        second.raw.select(
+          "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name=?",
+          <Object?>[Schema.products],
+        ).first['c'],
         1,
       );
     });
@@ -163,7 +165,10 @@ void main() {
       } on StateError {
         // 预期
       }
-      expect(() => db.transaction(() => insertProduct(db.raw, 'p-ok')), returnsNormally);
+      expect(
+        () => db.transaction(() => insertProduct(db.raw, 'p-ok')),
+        returnsNormally,
+      );
       expect(productCount(), 1);
     });
   });

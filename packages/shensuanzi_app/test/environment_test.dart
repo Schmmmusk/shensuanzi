@@ -51,8 +51,9 @@ import 'package:shensuanzi_app/src/windows_drives.dart'
 
 import 'support/fixtures.dart';
 
-List<String> _letters(Iterable<DriveInfo> drives) =>
-    <String>[for (final DriveInfo d in drives) d.letter];
+List<String> _letters(Iterable<DriveInfo> drives) => <String>[
+  for (final DriveInfo d in drives) d.letter,
+];
 
 void main() {
   // 盘符枚举是 **Windows 专属分支**（`detect()` 里的 `if (Platform.isWindows)`）。
@@ -150,17 +151,21 @@ void main() {
       );
     }, skip: onWindows ? false : windowsOnly);
 
-    test('② 枚举**抛异常** → drives 为空，但 detect() 正常返回', () {
-      final AppEnvironment env = AppEnvironment.detect(
-        driveEnumerator: () => throw StateError('GetLogicalDrives 失败（模拟）'),
-      );
+    test(
+      '② 枚举**抛异常** → drives 为空，但 detect() 正常返回',
+      () {
+        final AppEnvironment env = AppEnvironment.detect(
+          driveEnumerator: () => throw StateError('GetLogicalDrives 失败（模拟）'),
+        );
 
-      expect(env.drives, isEmpty);
-      expect(env.probeFailures, isEmpty);
-      expect(env.isWindows, isTrue);
-      expect(env.environment, isNotEmpty);
-      expect(env.candidateDataDrives, isEmpty);
-    }, skip: onWindows ? false : windowsOnly);
+        expect(env.drives, isEmpty);
+        expect(env.probeFailures, isEmpty);
+        expect(env.isWindows, isTrue);
+        expect(env.environment, isNotEmpty);
+        expect(env.candidateDataDrives, isEmpty);
+      },
+      skip: onWindows ? false : windowsOnly,
+    );
 
     test('②b 枚举返回空（没有盘）→ 同样降级，不崩', () {
       final AppEnvironment env = AppEnvironment.detect(

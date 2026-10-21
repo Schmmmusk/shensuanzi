@@ -50,11 +50,12 @@ void main() {
     });
 
     test('startup：版本 / 数据格式版本 / 系统版本三件事都进日志', () {
-      final AppLog log = logAt('日志1')..startup(
-        appVersion: AppVersion.value,
-        schemaVersion: '1',
-        osVersion: 'Windows 10 测试版',
-      );
+      final AppLog log = logAt('日志1')
+        ..startup(
+          appVersion: AppVersion.value,
+          schemaVersion: '1',
+          osVersion: 'Windows 10 测试版',
+        );
 
       expect(
         log.file.readAsStringSync(),

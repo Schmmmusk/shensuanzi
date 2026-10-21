@@ -109,7 +109,8 @@ void main() {
           'XT20261012-002', // 16:50
           'XT20261012-001', // 16:48
         ],
-        reason: '同一天里必须按录入时刻倒序；主单的 occurred_at 是 00:00，'
+        reason:
+            '同一天里必须按录入时刻倒序；主单的 occurred_at 是 00:00，'
             '不能因此被排到当天所有派生单的后面（#26①）',
       );
     });
@@ -140,10 +141,11 @@ void main() {
         createdAt: at(2026, 10, 12, 9, 0),
       );
 
-      expect(
-        docNosOf(documents.listDocuments()),
-        <String>['XS20261013-001', 'XS20261012-001', 'XS20261011-001'],
-      );
+      expect(docNosOf(documents.listDocuments()), <String>[
+        'XS20261013-001',
+        'XS20261012-001',
+        'XS20261011-001',
+      ]);
     });
 
     test('补录：日期早、今天才录的单，进它自己那一天（不抢今天的头）', () {
@@ -291,8 +293,10 @@ void main() {
         <String>['XT20261012-002', 'XS20261012-008'],
         reason: '2026-10-05 裁定：正常部分退货单是独立交易，默认显示',
       );
-      expect(documents.listDocuments(query: '李姐').single.document.docNo,
-          'XS20261012-009');
+      expect(
+        documents.listDocuments(query: '李姐').single.document.docNo,
+        'XS20261012-009',
+      );
       expect(documents.listDocuments(query: '不存在的名字'), isEmpty);
     });
 
@@ -301,10 +305,12 @@ void main() {
       // 只留销售类 ⇒ 命中的主单只能是「按子单号」这一路来的
       //（主单自己没有这个号，退货单又被类型筛掉了）
       expect(
-        docNosOf(documents.listDocuments(
-          query: 'XT20261012-002',
-          types: <DocType>{DocType.sale},
-        )),
+        docNosOf(
+          documents.listDocuments(
+            query: 'XT20261012-002',
+            types: <DocType>{DocType.sale},
+          ),
+        ),
         <String>['XS20261012-008'],
         reason: '用户手里只有退货单号，也要能找到那笔生意',
       );
@@ -313,17 +319,16 @@ void main() {
     test('按**商品名**搜 ⇒ 子单明细里的商品也能把主单揪出来', () {
       seedSearchFixture();
       // 苹果：两张销售单自己的明细里都有
-      expect(
-        docNosOf(documents.listDocuments(query: '苹果')),
-        <String>['XS20261012-009', 'XS20261012-008'],
-      );
+      expect(docNosOf(documents.listDocuments(query: '苹果')), <String>[
+        'XS20261012-009',
+        'XS20261012-008',
+      ]);
       // 雪梨：**主单自己的明细里没有**，只在退货单（子单）的明细里 ⇒
       // 只查 `l.document_id = d.id` 会漏掉（审查盲点 ②）
       expect(
-        docNosOf(documents.listDocuments(
-          query: '雪梨',
-          types: <DocType>{DocType.sale},
-        )),
+        docNosOf(
+          documents.listDocuments(query: '雪梨', types: <DocType>{DocType.sale}),
+        ),
         <String>['XS20261012-008'],
         reason: '审查盲点 ②：子单明细里的商品必须能命中主单',
       );
@@ -333,16 +338,22 @@ void main() {
       final int day = at(2026, 10, 12);
       insertParty(db.raw, 'y-pct', name: '50%折扣店');
       insertParty(db.raw, 'y-plain', name: '张三');
-      insertDocument(db.raw, 'd-pct',
-          docNo: 'XS20261012-001',
-          docType: 'sale',
-          partyId: 'y-pct',
-          occurredAt: day);
-      insertDocument(db.raw, 'd-plain',
-          docNo: 'XS20261012-002',
-          docType: 'sale',
-          partyId: 'y-plain',
-          occurredAt: day);
+      insertDocument(
+        db.raw,
+        'd-pct',
+        docNo: 'XS20261012-001',
+        docType: 'sale',
+        partyId: 'y-pct',
+        occurredAt: day,
+      );
+      insertDocument(
+        db.raw,
+        'd-plain',
+        docNo: 'XS20261012-002',
+        docType: 'sale',
+        partyId: 'y-plain',
+        occurredAt: day,
+      );
 
       expect(
         docNosOf(documents.listDocuments(query: '50%')),
@@ -359,15 +370,18 @@ void main() {
     test('搜索与类型 / 状态筛选取交集，导出同口径', () {
       seedSearchFixture();
       expect(
-        docNosOf(documents.listDocuments(query: '王老板', types: <DocType>{DocType.saleReturn},
-            includeDerived: true)),
+        docNosOf(
+          documents.listDocuments(
+            query: '王老板',
+            types: <DocType>{DocType.saleReturn},
+            includeDerived: true,
+          ),
+        ),
         <String>['XT20261012-002'],
         reason: '明确筛退货类目 + 搜索 ⇒ 只留退货单本身',
       );
 
-      final List<String> list = docNosOf(
-        documents.listDocuments(query: '王老板'),
-      );
+      final List<String> list = docNosOf(documents.listDocuments(query: '王老板'));
       final List<String> export = docNosOf(
         documents.listDocumentsForExport(query: '王老板'),
       );
@@ -447,10 +461,20 @@ void main() {
         totalAmount: 500,
         occurredAt: at(2026, 10, 12, 10, 30),
       );
-      insertSettlement(db.raw, 's-1',
-          receiptDoc: 'd-rcv-1', targetDoc: 'd-sale', amount: 100);
-      insertSettlement(db.raw, 's-2',
-          receiptDoc: 'd-rcv-2', targetDoc: 'd-sale', amount: 100);
+      insertSettlement(
+        db.raw,
+        's-1',
+        receiptDoc: 'd-rcv-1',
+        targetDoc: 'd-sale',
+        amount: 100,
+      );
+      insertSettlement(
+        db.raw,
+        's-2',
+        receiptDoc: 'd-rcv-2',
+        targetDoc: 'd-sale',
+        amount: 100,
+      );
     }
 
     test('只列根：一笔生意一行，退货 / 自动收款被折叠', () {
@@ -477,20 +501,25 @@ void main() {
       seedLifecycle();
       // 聚合模式下筛「收款」⇒ 只剩**手记**那张（自动收款是子单，被折进主单）
       expect(
-        docNosOf(documents.listDocuments(
-          rootsOnly: true,
-          types: <DocType>{DocType.receipt},
-        )),
+        docNosOf(
+          documents.listDocuments(
+            rootsOnly: true,
+            types: <DocType>{DocType.receipt},
+          ),
+        ),
         <String>['SK20261012-009'],
-        reason: '手记收款自己就是根；自动收款是子单 ⇒ '
+        reason:
+            '手记收款自己就是根；自动收款是子单 ⇒ '
             '所以 UI 一旦筛了子类目就必须切平铺，否则用户以为收款单没了',
       );
       // 平铺模式下三张收款都在
       expect(
-        docNosOf(documents.listDocuments(
-          types: <DocType>{DocType.receipt},
-          includeDerived: true,
-        )),
+        docNosOf(
+          documents.listDocuments(
+            types: <DocType>{DocType.receipt},
+            includeDerived: true,
+          ),
+        ),
         <String>['SK20261012-006', 'SK20261012-003', 'SK20261012-009'],
       );
     });
@@ -498,7 +527,9 @@ void main() {
     test('聚合后搜索仍能找到那笔生意（子单号 / 子单商品名）', () {
       seedLifecycle();
       expect(
-        docNosOf(documents.listDocuments(rootsOnly: true, query: 'XT20261012-002')),
+        docNosOf(
+          documents.listDocuments(rootsOnly: true, query: 'XT20261012-002'),
+        ),
         <String>['XS20261012-008'],
         reason: '退货单被折叠了，但按它的单号仍要能搜到主单',
       );
@@ -538,13 +569,12 @@ void main() {
         amount: 10000,
       );
 
-      final List<DocumentSummary> rows =
-          documents.listDocuments(rootsOnly: true);
-      expect(
-        docNosOf(rows),
-        <String>['XS20261012-001'],
-        reason: '核销了一张单的收款单 = 那笔生意的「已收」，不能再占一行',
+      final List<DocumentSummary> rows = documents.listDocuments(
+        rootsOnly: true,
       );
+      expect(docNosOf(rows), <String>[
+        'XS20261012-001',
+      ], reason: '核销了一张单的收款单 = 那笔生意的「已收」，不能再占一行');
       expect(rows.single.settlementCount, 1);
     });
 
@@ -560,16 +590,22 @@ void main() {
         occurredAt: at(2026, 10, 12, 8, 0),
       );
       // ② 一张收款同时结清两张单（多目标 ⇒ 归不到任何一笔生意）
-      insertDocument(db.raw, 'd-a',
-          docNo: 'XS20261012-002',
-          docType: 'sale',
-          totalAmount: 1000,
-          occurredAt: day);
-      insertDocument(db.raw, 'd-b',
-          docNo: 'XS20261012-003',
-          docType: 'sale',
-          totalAmount: 1000,
-          occurredAt: day);
+      insertDocument(
+        db.raw,
+        'd-a',
+        docNo: 'XS20261012-002',
+        docType: 'sale',
+        totalAmount: 1000,
+        occurredAt: day,
+      );
+      insertDocument(
+        db.raw,
+        'd-b',
+        docNo: 'XS20261012-003',
+        docType: 'sale',
+        totalAmount: 1000,
+        occurredAt: day,
+      );
       insertDocument(
         db.raw,
         'd-split',
@@ -578,19 +614,32 @@ void main() {
         totalAmount: 2000,
         occurredAt: at(2026, 10, 12, 17, 0),
       );
-      insertSettlement(db.raw, 's-a',
-          receiptDoc: 'd-split', targetDoc: 'd-a', amount: 1000);
-      insertSettlement(db.raw, 's-b',
-          receiptDoc: 'd-split', targetDoc: 'd-b', amount: 1000);
+      insertSettlement(
+        db.raw,
+        's-a',
+        receiptDoc: 'd-split',
+        targetDoc: 'd-a',
+        amount: 1000,
+      );
+      insertSettlement(
+        db.raw,
+        's-b',
+        receiptDoc: 'd-split',
+        targetDoc: 'd-b',
+        amount: 1000,
+      );
 
-      final List<String> nos = docNosOf(documents.listDocuments(rootsOnly: true));
+      final List<String> nos = docNosOf(
+        documents.listDocuments(rootsOnly: true),
+      );
       expect(nos, contains('SK20261012-001'), reason: '没核销目标的收款是独立交易');
       expect(nos, contains('SK20261012-004'), reason: '一收多单归不到哪一笔，必须留着');
       expect(nos, contains('XS20261012-002'));
       expect(nos, contains('XS20261012-003'));
     });
 
-    test('严禁 N+1：列表路径**不许**调逐行查询（200 行 = 200 次 SQL）', () {      // 造 60 张根单，每张 1 次退货 + 1 笔核销
+    test('严禁 N+1：列表路径**不许**调逐行查询（200 行 = 200 次 SQL）', () {
+      // 造 60 张根单，每张 1 次退货 + 1 笔核销
       for (int i = 0; i < 60; i++) {
         final String id = 'd-$i';
         insertDocument(

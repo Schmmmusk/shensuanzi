@@ -156,8 +156,10 @@ class _AccountsPageState extends State<AccountsPage> {
                           account: accounts[i],
                           isPending: pending.contains(accounts[i].id),
                           balanceCents: balances[accounts[i].id] ?? 0,
-                          onOpenFlow: () => _openAccountFlow(context, accounts[i]),
-                          onEdit: () => _editAccount(context, existing: accounts[i]),
+                          onOpenFlow: () =>
+                              _openAccountFlow(context, accounts[i]),
+                          onEdit: () =>
+                              _editAccount(context, existing: accounts[i]),
                           onToggleActive: () => _toggleActive(accounts[i]),
                         ),
                       ],
@@ -335,10 +337,7 @@ class _AccountRow extends StatelessWidget {
                 }
               },
               itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                const PopupMenuItem<String>(
-                  value: 'edit',
-                  child: Text('编辑'),
-                ),
+                const PopupMenuItem<String>(value: 'edit', child: Text('编辑')),
                 PopupMenuItem<String>(
                   value: 'toggle',
                   child: Text(account.isActive ? '停用' : '恢复启用'),
@@ -364,16 +363,19 @@ class _AccountFormDialog extends StatefulWidget {
 }
 
 class _AccountFormDialogState extends State<_AccountFormDialog> {
-  late final TextEditingController _name =
-      TextEditingController(text: widget.existing?.name ?? '');
+  late final TextEditingController _name = TextEditingController(
+    text: widget.existing?.name ?? '',
+  );
+
   /// 账户类型：**可变**（下拉要改它），回填挪到 `initState` ——
   /// 字段初始化器里不能读 `widget`，而 `late final` 又挡住了 `onChanged` 写入；
   /// 「initState 里读 widget」是标准解法，两个约束都满足。
   AccountType? _type;
 
   /// 编辑路径上的期初余额原文（**只读展示**，Z-3 方案 A）
-  late final String _initialBalanceReadOnly =
-      widget.existing == null ? '' : Money.format(widget.existing!.initialBalance);
+  late final String _initialBalanceReadOnly = widget.existing == null
+      ? ''
+      : Money.format(widget.existing!.initialBalance);
 
   Map<AccountField, String>? _errors;
   bool _saving = false;
@@ -489,8 +491,9 @@ class _AccountFormDialogState extends State<_AccountFormDialog> {
               TextField(
                 key: const Key('account-initial'),
                 controller: _initialBalanceController,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 decoration: InputDecoration(
                   labelText: '期初余额（元，可空）',
                   helperText: '建这个账户时手头已有多少钱',

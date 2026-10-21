@@ -120,7 +120,8 @@ class CostPolicy {
         '这次要退的数量超过了原单剩的（原单共 $originalQty 件，'
         '算上这次累计已 $cumulativeQty 件）。请把数量改小后再退。',
         code: RejectCode.returnExceedsOriginal,
-        detail: '累计退货量 $cumulativeQty 超过原单量 $originalQty'
+        detail:
+            '累计退货量 $cumulativeQty 超过原单量 $originalQty'
             '（原单 $refDocId，商品 $productId）',
       );
     }

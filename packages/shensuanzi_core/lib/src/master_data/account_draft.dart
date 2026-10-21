@@ -18,21 +18,15 @@ enum AccountField { name, type, initialBalance }
 
 /// 账户建档草稿。
 class AccountDraft {
-  const AccountDraft({
-    this.name = '',
-    this.type,
-    this.initialBalance = '',
-  });
+  const AccountDraft({this.name = '', this.type, this.initialBalance = ''});
 
   /// 从已有账户回填（编辑用）。
   ///
   /// ⚠️ 期初余额**不回填进可编辑字段**（Z-3 方案 A：编辑不可改）——
   /// 界面把它显示成只读文本；服务层 `update` 也以库里的原值为准，
   /// 本草稿的 [initialBalance] 在编辑路径上被忽略。
-  factory AccountDraft.of(Account account) => AccountDraft(
-    name: account.name,
-    type: account.type,
-  );
+  factory AccountDraft.of(Account account) =>
+      AccountDraft(name: account.name, type: account.type);
 
   final String name;
 
@@ -74,8 +68,7 @@ class AccountDraft {
     if (text.isNotEmpty) {
       final int? cents = Money.tryParseYuan(text);
       if (cents == null) {
-        errors[AccountField.initialBalance] =
-            '期初余额只能填数字，最多两位小数，比如 1000';
+        errors[AccountField.initialBalance] = '期初余额只能填数字，最多两位小数，比如 1000';
       } else if (cents < 0) {
         errors[AccountField.initialBalance] = '期初余额不能是负数；有欠款先写在备注里';
       }

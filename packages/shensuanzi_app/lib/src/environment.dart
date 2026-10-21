@@ -99,12 +99,14 @@ class DriveInfo {
   bool get isSystemDrive => letter == 'C';
 
   /// 剩余空间是否够。**未知（`null`）视为够** —— 不因为拿不到信息就拦人。
-  bool get hasRoom =>
-      freeBytes == null || freeBytes! >= minimumFreeBytes;
+  bool get hasRoom => freeBytes == null || freeBytes! >= minimumFreeBytes;
 
   /// 适合作默认数据盘：非系统盘 + 有空间 + **不是可移动盘 / 网络盘**
   bool get isGoodForData =>
-      !isSystemDrive && hasRoom && kind != DriveKind.removable && kind != DriveKind.network;
+      !isSystemDrive &&
+      hasRoom &&
+      kind != DriveKind.removable &&
+      kind != DriveKind.network;
 
   @override
   String toString() => 'DriveInfo($root, ${kind.name}, free=$freeBytes)';

@@ -64,7 +64,8 @@ class StockLedger extends ImmutableEntity {
 
   /// 实际落库的 `unit_cost`
   int get unitCostValue =>
-      unitCost ?? (quantity == 0 ? 0 : Money.divideRoundHalfUp(totalCost, quantity));
+      unitCost ??
+      (quantity == 0 ? 0 : Money.divideRoundHalfUp(totalCost, quantity));
 
   @override
   Map<String, Object?> toRow() => <String, Object?>{

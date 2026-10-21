@@ -52,8 +52,7 @@ Future<void> main() async {
 
     check(
       'formatLogLine：[ISO 时间] [级别] 消息',
-      formatLogLine(fixed, '信息', '你好') ==
-          '[2026-09-29T10:40:00.000] [信息] 你好',
+      formatLogLine(fixed, '信息', '你好') == '[2026-09-29T10:40:00.000] [信息] 你好',
       formatLogLine(fixed, '信息', '你好'),
     );
 
@@ -81,8 +80,7 @@ Future<void> main() async {
     final String crashText = crashLog.file.readAsStringSync();
     check(
       'crash：异常文本 + 完整堆栈',
-      crashText.contains('未捕获异常：Bad state: 炸了') &&
-          crashText.contains('#0'),
+      crashText.contains('未捕获异常：Bad state: 炸了') && crashText.contains('#0'),
     );
 
     // 追加不覆盖
@@ -92,9 +90,7 @@ Future<void> main() async {
     final List<String> lines = appendLog.file.readAsLinesSync();
     check(
       '追加不覆盖：两次写入两行',
-      lines.length == 2 &&
-          lines[0].contains('第一条') &&
-          lines[1].contains('第二条'),
+      lines.length == 2 && lines[0].contains('第一条') && lines[1].contains('第二条'),
     );
 
     // 写日志失败绝不抛（生产可用性的关键）

@@ -122,7 +122,9 @@ Widget _manualText(String text, TextStyle style) {
         for (int i = 0; i < parts.length; i++)
           TextSpan(
             text: parts[i],
-            style: i.isOdd ? const TextStyle(fontWeight: FontWeight.w700) : null,
+            style: i.isOdd
+                ? const TextStyle(fontWeight: FontWeight.w700)
+                : null,
           ),
       ],
     ),
@@ -139,7 +141,10 @@ class _Block extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final TextStyle body = TextStyle(height: 1.7, color: theme.textTheme.bodyLarge?.color);
+    final TextStyle body = TextStyle(
+      height: 1.7,
+      color: theme.textTheme.bodyLarge?.color,
+    );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -162,7 +167,9 @@ class _Block extends StatelessWidget {
                       margin: const EdgeInsets.only(top: 3),
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                        color: theme.colorScheme.primary.withValues(
+                          alpha: 0.12,
+                        ),
                         shape: BoxShape.circle,
                       ),
                       child: Text(
@@ -191,12 +198,12 @@ class _Block extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: warning
-                ? const Color(0xFFFDF6E3)
-                : const Color(0xFFF0F7F0),
+            color: warning ? const Color(0xFFFDF6E3) : const Color(0xFFF0F7F0),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: warning ? const Color(0xFFE8C268) : const Color(0xFFB7DFB7),
+              color: warning
+                  ? const Color(0xFFE8C268)
+                  : const Color(0xFFB7DFB7),
             ),
           ),
           child: _manualText('${warning ? '注意' : '小贴士'}：$text', body),

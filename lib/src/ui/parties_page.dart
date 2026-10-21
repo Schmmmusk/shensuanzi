@@ -216,7 +216,7 @@ class _PartiesPageState extends State<PartiesPage> {
                     !widget.masterDataPolicy.canCreateParties
                         ? mirrorEmptyMessage('往来方列表')
                         : '还没有往来方。开单时选客户/供应商会自动建，'
-                        '也可以点右上角「新建往来方」。',
+                              '也可以点右上角「新建往来方」。',
                     textAlign: TextAlign.center,
                     style: TextStyle(height: 1.8, color: theme.hintColor),
                   ),
@@ -234,7 +234,8 @@ class _PartiesPageState extends State<PartiesPage> {
                           isPending: pending.contains(sorted[i].id),
                           balanceCents: balances[sorted[i].id] ?? 0,
                           onOpen: () => _openFlow(context, sorted[i]),
-                          onEdit: () => _editParty(context, existing: sorted[i]),
+                          onEdit: () =>
+                              _editParty(context, existing: sorted[i]),
                           onToggleActive: () => _toggleActive(sorted[i]),
                         ),
                       ],
@@ -320,7 +321,9 @@ class _PartiesPageState extends State<PartiesPage> {
     if (!_canWriteParties) {
       await showMobileGuideDialog(
         context,
-        existing == null ? MobileGuideTopic.newParty : MobileGuideTopic.editParty,
+        existing == null
+            ? MobileGuideTopic.newParty
+            : MobileGuideTopic.editParty,
       );
       return;
     }
@@ -328,12 +331,11 @@ class _PartiesPageState extends State<PartiesPage> {
     // 「新建了 / 追加了身份 / 复活了停用档」；以前只回 bool，这些信息全丢了
     final PartyMutation? mutation = await showDialog<PartyMutation>(
       context: context,
-      builder: (BuildContext dialogContext) =>
-          _PartyFormDialog(
-            service: widget.service,
-            existing: existing,
-            sink: widget.partySink,
-          ),
+      builder: (BuildContext dialogContext) => _PartyFormDialog(
+        service: widget.service,
+        existing: existing,
+        sink: widget.partySink,
+      ),
     );
     if (mutation == null) return;
     // `context.mounted`（不是 `mounted`）：analyze 要求与 `context` 绑定的守卫
@@ -492,10 +494,7 @@ class _PartyRow extends StatelessWidget {
                 }
               },
               itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                const PopupMenuItem<String>(
-                  value: 'edit',
-                  child: Text('编辑资料'),
-                ),
+                const PopupMenuItem<String>(value: 'edit', child: Text('编辑资料')),
                 PopupMenuItem<String>(
                   value: 'toggle',
                   child: Text(party.isActive ? '停用' : '恢复启用'),
@@ -532,12 +531,15 @@ class _PartyFormDialog extends StatefulWidget {
 }
 
 class _PartyFormDialogState extends State<_PartyFormDialog> {
-  late final TextEditingController _name =
-      TextEditingController(text: widget.existing?.name ?? '');
-  late final TextEditingController _phone =
-      TextEditingController(text: widget.existing?.phone ?? '');
-  late final TextEditingController _address =
-      TextEditingController(text: widget.existing?.address ?? '');
+  late final TextEditingController _name = TextEditingController(
+    text: widget.existing?.name ?? '',
+  );
+  late final TextEditingController _phone = TextEditingController(
+    text: widget.existing?.phone ?? '',
+  );
+  late final TextEditingController _address = TextEditingController(
+    text: widget.existing?.address ?? '',
+  );
   // ⚠️ 初始化器里不能读 `widget`（implicit_this_reference_in_initializer）；
   // 后续要 add/remove，也不能 final —— 回填挪到 initState
   Set<PartyRole> _roles = <PartyRole>{};
@@ -569,8 +571,9 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
   void _onNameFocusChanged() {
     if (_nameFocus.hasFocus) return;
     final String name = _name.text.trim();
-    final Party? existing =
-        name.isEmpty ? null : widget.service.findByNameIncludingInactive(name);
+    final Party? existing = name.isEmpty
+        ? null
+        : widget.service.findByNameIncludingInactive(name);
     final String? hint = partySameNameHint(existing, adding: _roles.toList());
     if (hint != _sameNameHint) setState(() => _sameNameHint = hint);
   }
@@ -603,21 +606,23 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
       } else {
         final Party updated = (sink == null
             ? widget.service.updateProfile(
-          widget.existing!.id,
-          name: _name.text,
-          // §审查 OBS-05 后半：编辑**连角色一起保存**（`_roles` 由现有角色
-          // 起步，只被两个开关增删 ⇒ 不认识的旧角色不会被静默丢掉）
-          roles: _roles.toList(),
-          phone: _phone.text,
-          address: _address.text,
-        )
-            : sink.updateProfile(
                 widget.existing!.id,
                 name: _name.text,
+                // §审查 OBS-05 后半：编辑**连角色一起保存**（`_roles` 由现有角色
+                // 起步，只被两个开关增删 ⇒ 不认识的旧角色不会被静默丢掉）
                 roles: _roles.toList(),
                 phone: _phone.text,
                 address: _address.text,
-              ).party);
+              )
+            : sink
+                  .updateProfile(
+                    widget.existing!.id,
+                    name: _name.text,
+                    roles: _roles.toList(),
+                    phone: _phone.text,
+                    address: _address.text,
+                  )
+                  .party);
         // 编辑 = 用户明确改了一条档，没有「复用 / 复活」要解释
         result = PartyMutation(
           party: updated,

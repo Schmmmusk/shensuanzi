@@ -98,15 +98,19 @@ Document mkDoc({
   updatedAt: now(),
 );
 
-List<DocumentLine> oneLine(String docId, String productId, int qty, int price) =>
-    <DocumentLine>[
-      DocumentLine.create(
-        documentId: docId,
-        productId: productId,
-        quantity: qty,
-        unitPrice: price,
-      ),
-    ];
+List<DocumentLine> oneLine(
+  String docId,
+  String productId,
+  int qty,
+  int price,
+) => <DocumentLine>[
+  DocumentLine.create(
+    documentId: docId,
+    productId: productId,
+    quantity: qty,
+    unitPrice: price,
+  ),
+];
 
 bool applied(RuleOutcome o) => o.status == RuleStatus.applied;
 
@@ -150,9 +154,12 @@ void main() {
       now: now(),
     );
 
-    check('库存 = 10 − 3 = 7', query.stockByProduct()[p] == 7, '${query.stockByProduct()[p]}');
-    check('没进过货的商品不出现在结果里',
-        !query.stockByProduct().containsKey(untouched));
+    check(
+      '库存 = 10 − 3 = 7',
+      query.stockByProduct()[p] == 7,
+      '${query.stockByProduct()[p]}',
+    );
+    check('没进过货的商品不出现在结果里', !query.stockByProduct().containsKey(untouched));
     check('消费端用 ?? 0 兜底', (query.stockByProduct()[untouched] ?? 0) == 0);
     db.close();
   }
@@ -175,8 +182,11 @@ void main() {
       now: now(),
     );
 
-    check('超卖后库存 = -3（如实反映）', query.stockByProduct()[p] == -3,
-        '${query.stockByProduct()[p]}');
+    check(
+      '超卖后库存 = -3（如实反映）',
+      query.stockByProduct()[p] == -3,
+      '${query.stockByProduct()[p]}',
+    );
     db.close();
   }
 
@@ -215,12 +225,17 @@ void main() {
     );
     check('收款 applied', applied(outcome), '${outcome.reason}');
 
-    check('余额 = initial_balance + SUM(money) = 13000',
-        query.accountBalances()[cash] == 13000, '${query.accountBalances()[cash]}');
-    check('无流水账户也在结果里（LEFT JOIN）',
-        query.accountBalances().containsKey(idle));
-    check('无流水账户余额 = 期初 500', query.accountBalances()[idle] == 500,
-        '${query.accountBalances()[idle]}');
+    check(
+      '余额 = initial_balance + SUM(money) = 13000',
+      query.accountBalances()[cash] == 13000,
+      '${query.accountBalances()[cash]}',
+    );
+    check('无流水账户也在结果里（LEFT JOIN）', query.accountBalances().containsKey(idle));
+    check(
+      '无流水账户余额 = 期初 500',
+      query.accountBalances()[idle] == 500,
+      '${query.accountBalances()[idle]}',
+    );
     db.close();
   }
 
@@ -245,10 +260,16 @@ void main() {
     );
 
     final Map<String, int> balances = query.partyBalances();
-    check('供应商 = -1000（应付为负）', balances[supplier] == -1000,
-        '${balances[supplier]}');
-    check('客户 = +2000（应收为正）', balances[customer] == 2000,
-        '${balances[customer]}');
+    check(
+      '供应商 = -1000（应付为负）',
+      balances[supplier] == -1000,
+      '${balances[supplier]}',
+    );
+    check(
+      '客户 = +2000（应收为正）',
+      balances[customer] == 2000,
+      '${balances[customer]}',
+    );
     db.close();
   }
 
@@ -272,21 +293,37 @@ void main() {
       now: now(),
     );
     check('送货 applied', applied(shipped), '${shipped.reason}');
-    check('账面库存 15', query.stockByProduct()[p] == 15, '${query.stockByProduct()[p]}');
-    check('在途数量 5', query.inTransitByProduct()[p] == 5,
-        '${query.inTransitByProduct()[p]}');
-    check('在店可售 = 15 − 5 = 10', query.availableInStore()[p] == 10,
-        '${query.availableInStore()[p]}');
+    check(
+      '账面库存 15',
+      query.stockByProduct()[p] == 15,
+      '${query.stockByProduct()[p]}',
+    );
+    check(
+      '在途数量 5',
+      query.inTransitByProduct()[p] == 5,
+      '${query.inTransitByProduct()[p]}',
+    );
+    check(
+      '在店可售 = 15 − 5 = 10',
+      query.availableInStore()[p] == 10,
+      '${query.availableInStore()[p]}',
+    );
 
     final RuleOutcome signed = engine.markDelivered(
       documentId: delivery.id,
       now: now(),
     );
     check('签收 applied', applied(signed), '${signed.reason}');
-    check('签收后在途归零', (query.inTransitByProduct()[p] ?? 0) == 0,
-        '${query.inTransitByProduct()[p]}');
-    check('签收后在店可售 = 账面 15', query.availableInStore()[p] == 15,
-        '${query.availableInStore()[p]}');
+    check(
+      '签收后在途归零',
+      (query.inTransitByProduct()[p] ?? 0) == 0,
+      '${query.inTransitByProduct()[p]}',
+    );
+    check(
+      '签收后在店可售 = 账面 15',
+      query.availableInStore()[p] == 15,
+      '${query.availableInStore()[p]}',
+    );
     db.close();
   }
 
@@ -310,8 +347,11 @@ void main() {
     final String party = createParty();
     seedPurchase(p, party, 10, 100);
 
-    check('入库后成本余值 = 1000', query.costByProduct()[p] == 1000,
-        '${query.costByProduct()[p]}');
+    check(
+      '入库后成本余值 = 1000',
+      query.costByProduct()[p] == 1000,
+      '${query.costByProduct()[p]}',
+    );
 
     // ⚠️ totalAmount 必须等于明细和（12 × 100）：B5 不变量，不符会被拒
     final Document sale = mkDoc(
@@ -319,10 +359,17 @@ void main() {
       partyId: party,
       totalAmount: 1200,
     );
-    engine.dispatch(document: sale, lines: oneLine(sale.id, p, 12, 100), now: now());
+    engine.dispatch(
+      document: sale,
+      lines: oneLine(sale.id, p, 12, 100),
+      now: now(),
+    );
 
-    check('超卖 12 件 → 余值 -200（UI 必须红色，§AA AA-4）',
-        query.costByProduct()[p] == -200, '${query.costByProduct()[p]}');
+    check(
+      '超卖 12 件 → 余值 -200（UI 必须红色，§AA AA-4）',
+      query.costByProduct()[p] == -200,
+      '${query.costByProduct()[p]}',
+    );
     db.close();
   }
 
@@ -337,15 +384,20 @@ void main() {
       partyId: customer,
       totalAmount: 2000,
     );
-    engine.dispatch(document: sale, lines: oneLine(sale.id, p, 2, 1000), now: now());
+    engine.dispatch(
+      document: sale,
+      lines: oneLine(sale.id, p, 2, 1000),
+      now: now(),
+    );
 
     final List<PartyFlowEntry> flow = PartyLedgerDao(db).ofParty(customer);
     // ⚠️ dispatch 会把占位单号换成正式单号 —— 断言「非待同步前缀」才有意义
-    check('带回 doc_no（用户认单号不认 UUID）',
-        flow.length == 1 &&
-            !flow.single.docNo.startsWith(Document.pendingDocNoPrefix));
-    check('带回 doc_type（区分采购/收款）',
-        flow.single.docType == DocType.sale);
+    check(
+      '带回 doc_no（用户认单号不认 UUID）',
+      flow.length == 1 &&
+          !flow.single.docNo.startsWith(Document.pendingDocNoPrefix),
+    );
+    check('带回 doc_type（区分采购/收款）', flow.single.docType == DocType.sale);
     check('金额口径不变：正 = 对方欠我增加', flow.single.amount == 2000);
     check('seqNo 保留（裸流水时代调用兼容）', flow.single.seqNo > 0);
 
@@ -364,10 +416,12 @@ void main() {
   section('存在性判定（§AE 遗漏 1 / §AD 遗漏 1、2）');
   {
     freshDb();
-    check('空库：hasAnyDocument / hasAnyStockLedger 都是 false',
-        !query.hasAnyDocument() &&
-            !query.hasAnyStockLedger() &&
-            query.inboundProductIds().isEmpty);
+    check(
+      '空库：hasAnyDocument / hasAnyStockLedger 都是 false',
+      !query.hasAnyDocument() &&
+          !query.hasAnyStockLedger() &&
+          query.inboundProductIds().isEmpty,
+    );
 
     final String stocked = createProduct();
     final String neverBought = createProduct(code: 'P002');
@@ -388,8 +442,10 @@ void main() {
       now: now(),
     );
     final Set<String> inbound = query.inboundProductIds();
-    check('inboundProductIds：只认正数量（出库不算「进过货」）',
-        inbound.contains(stocked) && !inbound.contains(neverBought));
+    check(
+      'inboundProductIds：只认正数量（出库不算「进过货」）',
+      inbound.contains(stocked) && !inbound.contains(neverBought),
+    );
     db.close();
   }
 

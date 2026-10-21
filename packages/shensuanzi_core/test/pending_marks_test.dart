@@ -46,11 +46,9 @@ void main() {
     queue.enqueue(entry('p1'));
     queue.markSent('q-p1');
 
-    expect(
-      marks.ids,
-      <String>{'p1'},
-      reason: 'sent =「主机已收下、但 pull 还没见到」⇒ 还没确认',
-    );
+    expect(marks.ids, <String>{
+      'p1',
+    }, reason: 'sent =「主机已收下、但 pull 还没见到」⇒ 还没确认');
   });
 
   test('推送成功 + pull 真的见到 ⇒ 不再算（小字该消失）', () {
@@ -68,11 +66,7 @@ void main() {
     // 那会把「主机根本没收下、本地唯一一份」的数据丢掉（R-14 附带问题 3）。
     queue.clearConfirmed(<String>{'p1'});
 
-    expect(
-      marks.ids,
-      <String>{'p1'},
-      reason: '清只针对 sent；pending 是「还没发出去」',
-    );
+    expect(marks.ids, <String>{'p1'}, reason: '清只针对 sent；pending 是「还没发出去」');
   });
 
   test('死信（failed）**不算** —— 它要人工处理，混进来会让小字常亮', () {
@@ -94,10 +88,6 @@ void main() {
     queue.markSent('q-p2');
 
     expect(marks.ids, <String>{'p1', 'p2'});
-    expect(
-      marks.ids.contains('p3'),
-      isFalse,
-      reason: '没在队列里的行不该带「待同步」小字',
-    );
+    expect(marks.ids.contains('p3'), isFalse, reason: '没在队列里的行不该带「待同步」小字');
   });
 }

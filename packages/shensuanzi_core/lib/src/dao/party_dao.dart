@@ -28,9 +28,10 @@ class PartyDao {
     );
   }
 
-  bool exists(String id) => _raw
-      .select('SELECT 1 FROM ${Schema.parties} WHERE id = ? LIMIT 1', <Object?>[id])
-      .isNotEmpty;
+  bool exists(String id) => _raw.select(
+    'SELECT 1 FROM ${Schema.parties} WHERE id = ? LIMIT 1',
+    <Object?>[id],
+  ).isNotEmpty;
 
   /// [id] 查一条。
   ///
@@ -39,10 +40,9 @@ class PartyDao {
   /// 后者会计入 `db.readFailures`（UI 的「有 N 条记录暂时显示不全」）。
   Party? findById(String id) {
     final List<Party> found = decodeRows(
-      _raw.select(
-        'SELECT * FROM ${Schema.parties} WHERE id = ?',
-        <Object?>[id],
-      ),
+      _raw.select('SELECT * FROM ${Schema.parties} WHERE id = ?', <Object?>[
+        id,
+      ]),
       (Map<String, Object?> row) =>
           Party.fromRow(row, failures: db.readFailures),
       table: Schema.parties,

@@ -156,7 +156,8 @@ class MobileSyncService {
     for (final SyncQueueEntry entry in queue.unsent()) {
       queue.markHeld(
         entry.id,
-        reason: '这条单是在连接上一台主机时开的'
+        reason:
+            '这条单是在连接上一台主机时开的'
             '${previousHostId == null ? '' : '（主机 $previousHostId）'}'
             '，还没有同步给它。为避免记到别的店里，已暂停自动上传 —— '
             '确认要发给现在这台主机，就在「同步队列」里点重试。',
@@ -266,7 +267,10 @@ class MobileSyncService {
       final SyncPushReport pushedReport = await client.pushAll();
       final int now = _clock() ?? DateTime.now().millisecondsSinceEpoch;
       pairingStore.save(pairing.withLastSyncAt(now));
-      final int entities = pulled.entities.values.fold(0, (int a, int b) => a + b);
+      final int entities = pulled.entities.values.fold(
+        0,
+        (int a, int b) => a + b,
+      );
       // ⚠️ **没拉完就不许说「同步完成」**（2026-10-07，`docs/reply.md` §1）：
       // 循环拉到底已由 `SyncClient.pull` 负责；到这里仍 `hasMore` 说明
       // 撞上了页数上限（主机分页异常）—— 镜像只是部分权威，如实告知并让用户
@@ -325,10 +329,7 @@ class MobileSyncService {
   Future<SyncOutcome> autoPush() async {
     if (_autoPushing) {
       _autoPushQueued = true;
-      return const SyncOutcome(
-        SyncOutcomeKind.error,
-        '推送已在进行中 —— 完成后会自动补推一次',
-      );
+      return const SyncOutcome(SyncOutcomeKind.error, '推送已在进行中 —— 完成后会自动补推一次');
     }
     _autoPushing = true;
     try {
@@ -412,7 +413,8 @@ class MobileSyncService {
       token: payload.token,
     );
     final PairingInfo? previous = pairingStore.load();
-    lastHostSwitchHeldEntries = previous != null && previous.hostId != info.hostId
+    lastHostSwitchHeldEntries =
+        previous != null && previous.hostId != info.hostId
         ? resetForNewHost(previousHostId: previous.hostId)
         : 0;
     pairingStore.save(info);

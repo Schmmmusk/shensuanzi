@@ -42,9 +42,11 @@ class RuleOutcome {
   ///
   /// 两个码族见 [RejectCode]：业务拒绝给「用户能看懂、能照着改」的中文；
   /// 内部 bug 给通用中文（细节只在日志里）。
-  const RuleOutcome.rejected(String this.reason, {required RejectCode this.code})
-    : status = RuleStatus.rejected,
-      document = null;
+  const RuleOutcome.rejected(
+    String this.reason, {
+    required RejectCode this.code,
+  }) : status = RuleStatus.rejected,
+       document = null;
 
   final RuleStatus status;
 
@@ -74,10 +76,7 @@ class RuleOutcome {
     if (c != null &&
         (c == RejectCode.returnExceedsOriginal ||
             c == RejectCode.ruleValidationFailed)) {
-      return RuleRejected(
-        reason ?? '本次操作被拒绝，请检查填写内容',
-        code: c,
-      );
+      return RuleRejected(reason ?? '本次操作被拒绝，请检查填写内容', code: c);
     }
     return null;
   }
@@ -293,11 +292,7 @@ class RuleEngine {
       //（#22 裁定；与 M15 / §CS·五 同一类）。它还**把好信息一起毁了**：
       // `return_exceeds_original` 本是用户能改的业务拒绝，却埋在 `Bad state: …` 里
       //（已分流成 [RuleRejection]）。
-      onInternalError?.call(
-        '规则执行失败（${document.docType.wire}）',
-        error,
-        stack,
-      );
+      onInternalError?.call('规则执行失败（${document.docType.wire}）', error, stack);
       return RuleOutcome.rejected(
         ruleInternalErrorReason,
         code: RejectCode.ruleInternalError,
@@ -344,12 +339,7 @@ class RuleEngine {
     _insertPartyLedger(doc: doc, amount: -doc.totalAmount, now: now);
 
     // 立即付款 → 自动生成 payment 单（moneyOut = true）
-    _applyImmediateSettlement(
-      doc,
-      immediatePayments,
-      moneyOut: true,
-      now: now,
-    );
+    _applyImmediateSettlement(doc, immediatePayments, moneyOut: true, now: now);
 
     return RuleOutcome(RuleStatus.applied, document: doc);
   }
@@ -549,7 +539,12 @@ class RuleEngine {
     );
 
     // 立即退款（sale_return → payment 单）/ 立即收退款（purchase_return → receipt 单）
-    _applyImmediateSettlement(doc, immediatePayments, moneyOut: inbound, now: now);
+    _applyImmediateSettlement(
+      doc,
+      immediatePayments,
+      moneyOut: inbound,
+      now: now,
+    );
 
     // §BH·七（reply.md 2026-10-04 裁定）：**拒收收口** —— 原单是送货单且
     // 还没签收（in_transit）⇒ 同一事务内置为 `cancelled`。否则在途视图会
@@ -642,7 +637,8 @@ class RuleEngine {
       if (required != null && required != own) {
         throw RuleRejection.protocol(
           RejectCode.actionNotApplicable,
-          detail: '${own.wire} 单不能核销「${target.docType.label}」'
+          detail:
+              '${own.wire} 单不能核销「${target.docType.label}」'
               '（${target.docNo}）—— 这类单据只接受 ${required.wire} 单',
         );
       }
@@ -687,7 +683,8 @@ class RuleEngine {
           '${Money.format(already)} 元，本次要核销 '
           '${Money.format(entry.value)} 元）。请把金额改小。',
           code: RejectCode.ruleValidationFailed,
-          detail: '核销额超过被核销单未收金额：${target.docNo} 已收 $already'
+          detail:
+              '核销额超过被核销单未收金额：${target.docNo} 已收 $already'
               ' / 总额 ${target.totalAmount}，本次请求 ${entry.value}',
         );
       }
@@ -1131,10 +1128,9 @@ class RuleEngine {
   }
 
   /// 从盘点的 lines 取出 `productId → 实际数量`
-  Map<String, int> _actualFromLines(List<DocumentLine> lines) =>
-      <String, int>{
-        for (final DocumentLine line in lines) line.productId: line.quantity,
-      };
+  Map<String, int> _actualFromLines(List<DocumentLine> lines) => <String, int>{
+    for (final DocumentLine line in lines) line.productId: line.quantity,
+  };
 
   /// 不变量 B5：`SUM(document_lines.amount) = document.total_amount`
   /// （`stocktake` / `receipt` / `payment` 除外，见 `docs/data_model.md` §五）

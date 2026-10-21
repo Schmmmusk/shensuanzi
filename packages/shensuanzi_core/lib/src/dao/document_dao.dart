@@ -71,11 +71,7 @@ class DocumentDao {
       WHERE doc_type IN (?, ?) AND ref_doc_id IN ($placeholders)
       GROUP BY ref_doc_id
       ''',
-      <Object?>[
-        DocType.saleReturn.wire,
-        DocType.purchaseReturn.wire,
-        ...ids,
-      ],
+      <Object?>[DocType.saleReturn.wire, DocType.purchaseReturn.wire, ...ids],
     );
     return <String, ReturnAgg>{
       for (final Row row in rows)
@@ -130,11 +126,10 @@ class DocumentDao {
     );
   }
 
-  bool exists(String id) => _raw
-      .select('SELECT 1 FROM ${Schema.documents} WHERE id = ? LIMIT 1', <Object?>[
-        id,
-      ])
-      .isNotEmpty;
+  bool exists(String id) => _raw.select(
+    'SELECT 1 FROM ${Schema.documents} WHERE id = ? LIMIT 1',
+    <Object?>[id],
+  ).isNotEmpty;
 
   /// 单据列表查询（§AC：单据页，只读）。
   ///
@@ -235,7 +230,8 @@ class DocumentDao {
     );
     if (rows.isEmpty) return null;
     // #42 甲 · L1：坏行 ⇒ 跳过 + 计数（不再让单据详情页整页变灰）
-    final ReturnAgg returns = returnedAgainstMany(<String>[id])[id] ?? ReturnAgg.zero;
+    final ReturnAgg returns =
+        returnedAgainstMany(<String>[id])[id] ?? ReturnAgg.zero;
     final List<DocumentSummary> found = decodeRows(
       rows,
       (Map<String, Object?> row) => DocumentSummary(
@@ -474,10 +470,9 @@ class DocumentDao {
 
   Document? findById(String id) {
     final List<Document> found = decodeRows(
-      _raw.select(
-        'SELECT * FROM ${Schema.documents} WHERE id = ?',
-        <Object?>[id],
-      ),
+      _raw.select('SELECT * FROM ${Schema.documents} WHERE id = ?', <Object?>[
+        id,
+      ]),
       (Map<String, Object?> row) =>
           Document.fromRow(row, failures: db.readFailures),
       table: Schema.documents,
@@ -540,13 +535,11 @@ class DocumentDao {
   /// 已核销额（真相口径）——`SUM(settlements.amount)`，
   /// 用于校验 `paid_amount` 缓存（`docs/data_model.md` §五 不变量 4）。
   int settledAmountOf(String targetDocId) {
-    final Row row = _raw
-        .select(
-          'SELECT COALESCE(SUM(amount), 0) AS s FROM ${Schema.settlements} '
-          'WHERE target_doc_id = ?',
-          <Object?>[targetDocId],
-        )
-        .first;
+    final Row row = _raw.select(
+      'SELECT COALESCE(SUM(amount), 0) AS s FROM ${Schema.settlements} '
+      'WHERE target_doc_id = ?',
+      <Object?>[targetDocId],
+    ).first;
     return row['s']! as int;
   }
 }

@@ -202,13 +202,12 @@ class _ProductsPageState extends State<ProductsPage> {
                   itemCount: rows.length,
                   separatorBuilder: (BuildContext context, int index) =>
                       const Divider(height: 1),
-                  itemBuilder: (BuildContext context, int index) =>
-                      _ProductRow(
-                        product: rows[index],
-                        isPending: pending.contains(rows[index].id),
-                        onEdit: _edit,
-                        onToggleActive: _toggleActive,
-                      ),
+                  itemBuilder: (BuildContext context, int index) => _ProductRow(
+                    product: rows[index],
+                    isPending: pending.contains(rows[index].id),
+                    onEdit: _edit,
+                    onToggleActive: _toggleActive,
+                  ),
                 ),
         ),
       ],
@@ -301,10 +300,7 @@ class _ProductRow extends StatelessWidget {
           const SizedBox(width: 16),
           _priceColumn(theme, '进价', product.costPrice),
           const SizedBox(width: 24),
-          TextButton(
-            onPressed: () => onEdit(product),
-            child: const Text('编辑'),
-          ),
+          TextButton(onPressed: () => onEdit(product), child: const Text('编辑')),
           TextButton(
             onPressed: () => onToggleActive(product),
             child: Text(product.isActive ? '停用' : '恢复'),

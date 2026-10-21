@@ -57,11 +57,14 @@ void main() {
         contains('至少要有一行商品'),
       );
       const SaleLineDraft blank = SaleLineDraft();
-      expect(blank.validate().keys, containsAll(<SaleLineField>[
-        SaleLineField.product,
-        SaleLineField.quantity,
-        SaleLineField.unitPrice,
-      ]));
+      expect(
+        blank.validate().keys,
+        containsAll(<SaleLineField>[
+          SaleLineField.product,
+          SaleLineField.quantity,
+          SaleLineField.unitPrice,
+        ]),
+      );
       expect(blank.isEmpty, isTrue, reason: '服务层据此做防御性跳过');
     });
 
@@ -101,13 +104,8 @@ void main() {
     });
 
     test('散客且有欠款 → party 报「散客要当场结清」', () {
-      final SaleDraft draft = goodDraft(
-        partyName: '顾客',
-      );
-      expect(
-        draft.validate()[SaleField.party],
-        contains('散客要当场结清'),
-      );
+      final SaleDraft draft = goodDraft(partyName: '顾客');
+      expect(draft.validate()[SaleField.party], contains('散客要当场结清'));
     });
 
     test('#40④ 「顾客给了」没填进收款框 ⇒ 说清现在保存会整单赊账', () {
@@ -116,8 +114,11 @@ void main() {
       final String? notice = draft.cashGivenNotice(10000); // 顾客给了 ¥100
       expect(notice, isNotNull);
       expect(notice, contains('只用来算找零，不会记账'));
-      expect(notice, contains('现在保存会整单赊账 ¥50.00'),
-          reason: '必须说清「现在会发生什么」，不能只说「填错框了」');
+      expect(
+        notice,
+        contains('现在保存会整单赊账 ¥50.00'),
+        reason: '必须说清「现在会发生什么」，不能只说「填错框了」',
+      );
 
       // 收款框已经填够 ⇒ 不用再说
       final SaleDraft paid = goodDraft(
@@ -129,9 +130,11 @@ void main() {
       expect(paid.cashGivenNotice(10000), isNull);
     });
 
-    test('#40③ 提示的**第一句**必须是最致命的数：这一单还差多少钱', () {      // 10 × 5.00 = ¥50.00，一分没收
-      final String? message =
-          goodDraft(partyName: '顾客').validate()[SaleField.party];
+    test('#40③ 提示的**第一句**必须是最致命的数：这一单还差多少钱', () {
+      // 10 × 5.00 = ¥50.00，一分没收
+      final String? message = goodDraft(
+        partyName: '顾客',
+      ).validate()[SaleField.party];
       expect(
         message,
         startsWith('这一单还差 ¥50.00 没收到。'),
@@ -142,7 +145,10 @@ void main() {
     });
 
     test('有客户 + 欠款 → 不报（赊销合法）', () {
-      expect(goodDraft(partyId: 'party-1', partyName: '李姐').validate(), isEmpty);
+      expect(
+        goodDraft(partyId: 'party-1', partyName: '李姐').validate(),
+        isEmpty,
+      );
     });
 
     test('散客校验在行本身不合法时**不报**（一次一个重点）', () {
@@ -156,10 +162,7 @@ void main() {
     });
 
     test('日期：空 / 斜杠格式都报，标准格式过', () {
-      expect(
-        goodDraft(date: '').validate()[SaleField.date],
-        contains('请填日期'),
-      );
+      expect(goodDraft(date: '').validate()[SaleField.date], contains('请填日期'));
       expect(
         goodDraft(date: '2026/9/27').validate()[SaleField.date],
         contains('日期格式不对'),
@@ -179,16 +182,8 @@ void main() {
       final SaleDraft draft = goodDraft(
         partyId: 'party-1',
         lines: const <SaleLineDraft>[
-          SaleLineDraft(
-            productId: 'p1',
-            quantity: '10',
-            unitPrice: '5.00',
-          ),
-          SaleLineDraft(
-            productId: 'p2',
-            quantity: '2',
-            unitPrice: '100',
-          ),
+          SaleLineDraft(productId: 'p1', quantity: '10', unitPrice: '5.00'),
+          SaleLineDraft(productId: 'p2', quantity: '2', unitPrice: '100'),
         ],
         payments: const <SalePaymentDraft>[
           SalePaymentDraft(accountId: 'a1', amount: '200'),
@@ -239,10 +234,7 @@ void main() {
       expect(draft.changeCents, 99900 - draft.totalCents);
       // 告知三件套（给多少 / 记多少 / 找多少）由 core 的 `Overpay` 统一给 ——
       // 开单页与核销对话框**同源**，不各写一份
-      expect(
-        draft.overpayNotice,
-        '实收 ¥999.00，其中 ¥50.00 入账、找零 ¥949.00',
-      );
+      expect(draft.overpayNotice, '实收 ¥999.00，其中 ¥50.00 入账、找零 ¥949.00');
     });
   });
 
@@ -256,10 +248,7 @@ void main() {
 
     setUp(() {
       db = newMemoryDb();
-      service = SaleService(
-        engine: RuleEngine(db),
-        queries: QueryDao(db),
-      );
+      service = SaleService(engine: RuleEngine(db), queries: QueryDao(db));
       // 有采购才有正库存 —— 大部分销售用例先买后卖
       purchases = PurchaseService(
         engine: RuleEngine(db),
@@ -271,7 +260,11 @@ void main() {
 
     tearDown(() => db.close());
 
-    String createProduct({String code = 'P001', int costPrice = 350, int sellPrice = 500}) {
+    String createProduct({
+      String code = 'P001',
+      int costPrice = 350,
+      int sellPrice = 500,
+    }) {
       final int t = now();
       final Product product = Product(
         id: newId(),
@@ -386,7 +379,8 @@ void main() {
       expect(QueryDao(db).accountBalances()[accountId], 1500);
       // 单据：采购主单 + 付款单 + 销售主单 + 收款单 = 4 行
       final int docCount =
-          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']! as int;
+          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']!
+              as int;
       expect(docCount, 4, reason: '采购 + payment + 销售 + receipt');
     });
 
@@ -467,7 +461,8 @@ void main() {
       );
       expect(invalid.summary, contains('正整数'));
       final int docCount =
-          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']! as int;
+          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']!
+              as int;
       expect(docCount, 0, reason: '事务回滚，不留半条单');
     });
 
@@ -491,8 +486,11 @@ void main() {
     test('stockSnapshot：采购后快照含商品；卖出后刷新可见', () {
       final String productId = createProduct();
       final String accountId = createAccount();
-      expect(service.stockSnapshot().containsKey(productId), isFalse,
-          reason: '还没流水，快照里没有（消费端用 ?? 0）');
+      expect(
+        service.stockSnapshot().containsKey(productId),
+        isFalse,
+        reason: '还没流水，快照里没有（消费端用 ?? 0）',
+      );
 
       stockUp(productId, accountId);
       expect(service.stockSnapshot()[productId], 10);
@@ -548,11 +546,7 @@ void main() {
       final SaleDraft d = draftWith(<String>['100']);
       expect(d.totalCents, 9300);
       expect(d.paidCents, 10000);
-      expect(
-        d.validate(),
-        isEmpty,
-        reason: '旧行为是报「收款金额不能超过应收…」—— §AX·一 已废止',
-      );
+      expect(d.validate(), isEmpty, reason: '旧行为是报「收款金额不能超过应收…」—— §AX·一 已废止');
     });
 
     test('落库金额钳到应收：填 100 ⇒ 记 93，找零 7', () {
@@ -589,34 +583,31 @@ void main() {
         '保存',
         reason: '给了 50 < 93：内联行已说「不够」，按钮不变',
       );
-      expect(
-        d.saveActionLabel(givenCents: 9300),
-        '保存',
-        reason: '刚好结清、无找零',
-      );
+      expect(d.saveActionLabel(givenCents: 9300), '保存', reason: '刚好结清、无找零');
       expect(
         d.saveActionLabel(givenCents: 10000),
         '记 ¥93.00 并找零 ¥7.00',
         reason: '**按钮文字是用户动作的最终确认**',
       );
       // 未填「顾客给了」但收款框自己填超了 —— 按钮也要说清
-      expect(draftWith(<String>['100']).saveActionLabel(), '记 ¥93.00 并找零 ¥7.00');
+      expect(
+        draftWith(<String>['100']).saveActionLabel(),
+        '记 ¥93.00 并找零 ¥7.00',
+      );
     });
 
     test('overpayNotice：只有超收才出声，且说清三件事', () {
-      expect(draftWith(<String>['100']).overpayNotice,
-          '实收 ¥100.00，其中 ¥93.00 入账、找零 ¥7.00');
+      expect(
+        draftWith(<String>['100']).overpayNotice,
+        '实收 ¥100.00，其中 ¥93.00 入账、找零 ¥7.00',
+      );
       expect(draftWith(<String>['93']).overpayNotice, isNull);
       expect(draftWith(<String>['50']).overpayNotice, isNull);
     });
 
     test('散客 + 超收 ⇒ **允许**（按落库金额结清，不是按填的数）', () {
       final SaleDraft d = draftWith(<String>['100']); // partyId = null = 散客
-      expect(
-        d.validate(),
-        isEmpty,
-        reason: '记录 93 = 应收 ⇒ 当场结清；那 7 元是找零，不是欠款',
-      );
+      expect(d.validate(), isEmpty, reason: '记录 93 = 应收 ⇒ 当场结清；那 7 元是找零，不是欠款');
       // 对照：真的没付够时散客仍然被拦
       expect(
         draftWith(<String>['50']).validate()[SaleField.party],
@@ -707,8 +698,13 @@ void main() {
         partyName: '',
         date: '2026-09-27',
         lines: <SaleLineDraft>[
-          boxed(),                                                    // 75000
-          boxed(qty: '10', price: '5.00', entryUnit: '', discount: '0.50'), // 4950
+          boxed(), // 75000
+          boxed(
+            qty: '10',
+            price: '5.00',
+            entryUnit: '',
+            discount: '0.50',
+          ), // 4950
         ],
       );
       expect(draft.totalCents, 79950);

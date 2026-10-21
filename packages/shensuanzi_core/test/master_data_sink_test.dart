@@ -48,7 +48,10 @@ void main() {
     tearDown(() => db.close());
 
     test('建档 → saved，编码 P0001，落库', () {
-      final MasterDataSubmitResult result = sink.createProduct(goodDraft(), now: 1000);
+      final MasterDataSubmitResult result = sink.createProduct(
+        goodDraft(),
+        now: 1000,
+      );
       expect(result.isQueued, isFalse);
       expect(result.queuedNotice, isNull, reason: '主机路径不给「待同步」文案');
       expect(result.product!.code, 'P0001');
@@ -56,31 +59,44 @@ void main() {
     });
 
     test('校验失败 → failure（字段级原因），**库里不留半条记录**', () {
-      final MasterDataSubmitResult result =
-          sink.createProduct(goodDraft(name: ''), now: 1000);
+      final MasterDataSubmitResult result = sink.createProduct(
+        goodDraft(name: ''),
+        now: 1000,
+      );
       expect(result.isFailure, isTrue);
       expect(result.error!.errors, contains(ProductField.name));
-      expect(
-        db.raw.select('SELECT COUNT(*) AS n FROM products').first['n'],
-        0,
-      );
+      expect(db.raw.select('SELECT COUNT(*) AS n FROM products').first['n'], 0);
     });
 
     test('编辑 → code 不变、sync_version +1（与 ProductService 同口径）', () {
-      final Product created = sink.createProduct(goodDraft(), now: 1000).product!;
-      final MasterDataSubmitResult edited =
-          sink.updateProduct(created.id, goodDraft(name: '矿泉水（大瓶）'), now: 2000);
+      final Product created = sink
+          .createProduct(goodDraft(), now: 1000)
+          .product!;
+      final MasterDataSubmitResult edited = sink.updateProduct(
+        created.id,
+        goodDraft(name: '矿泉水（大瓶）'),
+        now: 2000,
+      );
       expect(edited.product!.code, created.code);
       expect(edited.product!.syncVersion, 1);
       expect(edited.product!.name, '矿泉水（大瓶）');
     });
 
     test('停用 → 软删（行还在，is_active = 0）', () {
-      final Product created = sink.createProduct(goodDraft(), now: 1000).product!;
-      final MasterDataSubmitResult off =
-          sink.setProductActive(created.id, false, now: 2000);
+      final Product created = sink
+          .createProduct(goodDraft(), now: 1000)
+          .product!;
+      final MasterDataSubmitResult off = sink.setProductActive(
+        created.id,
+        false,
+        now: 2000,
+      );
       expect(off.product!.isActive, isFalse);
-      expect(ProductDao(db).findById(created.id), isNotNull, reason: '从不 DELETE');
+      expect(
+        ProductDao(db).findById(created.id),
+        isNotNull,
+        reason: '从不 DELETE',
+      );
     });
   });
 
@@ -185,10 +201,10 @@ void main() {
 
       expect(mutation.action, PartyMutationAction.created);
       expect(mutation.party.name, '王老板', reason: 'trim 与桌面同源');
-      expect(
-        mutation.party.roles.toSet(),
-        <PartyRole>{PartyRole.supplier, PartyRole.customer},
-      );
+      expect(mutation.party.roles.toSet(), <PartyRole>{
+        PartyRole.supplier,
+        PartyRole.customer,
+      });
       final List<SyncQueueEntry> entries = pending();
       expect(entries, hasLength(1));
       // `SyncQueueEntry` 摊平了 `SyncOperation` 的字段（不是 `entry.operation.*`）
@@ -251,11 +267,7 @@ void main() {
       // （`entity` / `entityId` / `operation` / `baseVersion` / `payload`）
       expect(entries[1].operation, SyncOpType.updateMasterData);
       expect(entries[2].operation, SyncOpType.updateMasterData);
-      expect(
-        entries[2].baseVersion,
-        isNotNull,
-        reason: '主机乐观锁要它（§CH §6）',
-      );
+      expect(entries[2].baseVersion, isNotNull, reason: '主机乐观锁要它（§CH §6）');
       expect(
         entries[1].payload['name'],
         '李姐',
@@ -269,10 +281,12 @@ void main() {
         queue: queue,
         clock: () => 1700000000000,
       );
-      expect(sink.createFull(
-        name: '老赵',
-        roles: <PartyRole>[PartyRole.supplier],
-      ).action, PartyMutationAction.created);
+      expect(
+        sink
+            .createFull(name: '老赵', roles: <PartyRole>[PartyRole.supplier])
+            .action,
+        PartyMutationAction.created,
+      );
     });
   });
 
@@ -340,32 +354,37 @@ void main() {
       expect(second, 'P0002');
     });
 
-    test('编辑 payload：op = updateMasterData，**不带 code**，baseVersion = 镜像旧版本', () {
-      final Product created = sink.createProduct(goodDraft()).product!;
-      final int queueBefore = SyncQueueDao(mirror).all().length;
-      sink.updateProduct(created.id, goodDraft(name: '矿泉水（大瓶）'));
+    test(
+      '编辑 payload：op = updateMasterData，**不带 code**，baseVersion = 镜像旧版本',
+      () {
+        final Product created = sink.createProduct(goodDraft()).product!;
+        final int queueBefore = SyncQueueDao(mirror).all().length;
+        sink.updateProduct(created.id, goodDraft(name: '矿泉水（大瓶）'));
 
-      final SyncQueueEntry entry =
-          SyncQueueDao(mirror).all()[queueBefore]; // 新增的那一条
-      final SyncOperation op = entry.toOperation();
+        final SyncQueueEntry entry = SyncQueueDao(
+          mirror,
+        ).all()[queueBefore]; // 新增的那一条
+        final SyncOperation op = entry.toOperation();
 
-      expect(op.operation, SyncOpType.updateMasterData);
-      expect(op.baseVersion, created.syncVersion);
-      expect(
-        op.payload,
-        isNot(contains('code')),
-        reason: '§CS·五 契约：系统生成字段客户端不发（sync_protocol.md §8.1）',
-      );
-      expect(op.payload['name'], '矿泉水（大瓶）');
-      expect(op.payload['is_active'], 1, reason: 'wire 布尔用 1/0');
-      // 镜像行也被乐观更新了
-      expect(ProductDao(mirror).findById(created.id)!.name, '矿泉水（大瓶）');
-    });
+        expect(op.operation, SyncOpType.updateMasterData);
+        expect(op.baseVersion, created.syncVersion);
+        expect(
+          op.payload,
+          isNot(contains('code')),
+          reason: '§CS·五 契约：系统生成字段客户端不发（sync_protocol.md §8.1）',
+        );
+        expect(op.payload['name'], '矿泉水（大瓶）');
+        expect(op.payload['is_active'], 1, reason: 'wire 布尔用 1/0');
+        // 镜像行也被乐观更新了
+        expect(ProductDao(mirror).findById(created.id)!.name, '矿泉水（大瓶）');
+      },
+    );
 
     test('编辑时 code / created_at 不改（与 ProductService.update 同口径）', () {
       final Product created = sink.createProduct(goodDraft()).product!;
-      final Product edited =
-          sink.updateProduct(created.id, goodDraft(name: '改名')).product!;
+      final Product edited = sink
+          .updateProduct(created.id, goodDraft(name: '改名'))
+          .product!;
       expect(edited.code, created.code);
       expect(edited.createdAt, created.createdAt);
     });
@@ -390,14 +409,15 @@ void main() {
     test('校验失败 ⇒ **不入队、不乐观写**（库与队列都不留半条）', () {
       final int queueBefore = SyncQueueDao(mirror).all().length;
 
-      final MasterDataSubmitResult bad =
-          sink.createProduct(goodDraft(name: '', unit: ''));
+      final MasterDataSubmitResult bad = sink.createProduct(
+        goodDraft(name: '', unit: ''),
+      );
 
       expect(bad.isFailure, isTrue);
-      expect(bad.error!.errors.keys, containsAll(<ProductField>[
-        ProductField.name,
-        ProductField.unit,
-      ]));
+      expect(
+        bad.error!.errors.keys,
+        containsAll(<ProductField>[ProductField.name, ProductField.unit]),
+      );
       expect(SyncQueueDao(mirror).all().length, queueBefore);
       expect(
         mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n'],
@@ -416,7 +436,11 @@ void main() {
       final MasterDataSubmitResult result = sink.createProduct(goodDraft());
       final SyncOperation op = SyncQueueDao(mirror).all().single.toOperation();
       expect(op.entityId, result.product!.id);
-      expect(op.payload['id'], result.product!.id, reason: 'payload.id 必须等于 entity_id');
+      expect(
+        op.payload['id'],
+        result.product!.id,
+        reason: 'payload.id 必须等于 entity_id',
+      );
     });
 
     // ===== #31（2026-10-16 裁定甲·①）：建档带可选「当前库存」 =====
@@ -432,11 +456,7 @@ void main() {
       expect(result.isQueued, isTrue);
 
       final List<SyncQueueEntry> entries = SyncQueueDao(mirror).all();
-      expect(
-        entries.length,
-        1,
-        reason: '裁定甲·①：合成一条 op —— 不再有「建档 + 期初」两条条目',
-      );
+      expect(entries.length, 1, reason: '裁定甲·①：合成一条 op —— 不再有「建档 + 期初」两条条目');
       expect(entries.single.toOperation().payload['opening_quantity'], 36);
     });
 

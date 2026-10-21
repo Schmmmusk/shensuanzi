@@ -125,7 +125,10 @@ class StocktakeService {
     // 与主机版的差异只有「谁来应用规则」这一件。
     final DocumentSink? sink = _sink;
     if (sink != null) {
-      final DocumentSubmitResult submitted = sink.submitStocktake(draft, now: stamp);
+      final DocumentSubmitResult submitted = sink.submitStocktake(
+        draft,
+        now: stamp,
+      );
       if (!submitted.isQueued) {
         // 出口配错（例如塞了主机的 ServiceSink）—— 宁可抛，不静默走错路
         throw StateError('盘点出口没有入队；主机侧请用 StocktakeService() 主构造');
@@ -174,12 +177,14 @@ class StocktakeService {
     }
 
     // 真相在库：按 id 读回落库后的最终状态（不信任 outcome 里的缓存值）
-    final Document? stored = DocumentDao(_queries.db).findById(
-      outcome.document!.id,
-    );
+    final Document? stored = DocumentDao(
+      _queries.db,
+    ).findById(outcome.document!.id);
     if (stored == null) {
-      throw StateError('盘点单 ${outcome.document!.docNo} '
-          '已保存但读不回来，请检查数据库');
+      throw StateError(
+        '盘点单 ${outcome.document!.docNo} '
+        '已保存但读不回来，请检查数据库',
+      );
     }
 
     int changed = 0;

@@ -62,9 +62,7 @@ class AppLog {
   /// 生产环境因此自动是 `%APPDATA%\神算子\日志\`；
   /// 测试里 `configStore` 指沙箱时，日志也自动落在沙箱里。
   factory AppLog.besideConfig(AppConfigStore configStore) => AppLog(
-    directory: Directory(
-      p.join(configStore.file.parent.path, logFolderName),
-    ),
+    directory: Directory(p.join(configStore.file.parent.path, logFolderName)),
   );
 
   /// 日志目录（`null` 状态的 AppLog 不存在 —— 目录总是算得出来）

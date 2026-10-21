@@ -44,7 +44,8 @@ class PurchaseDraftInvalid implements DraftInvalidException {
   String get summary => <String>[
     ...fieldErrors.values,
     for (final Map<PurchaseLineField, String> e in lineErrors) ...e.values,
-    for (final Map<PurchasePaymentField, String> e in paymentErrors) ...e.values,
+    for (final Map<PurchasePaymentField, String> e in paymentErrors)
+      ...e.values,
   ].join('；');
 
   @override
@@ -58,11 +59,13 @@ class PurchaseDraftInvalid implements DraftInvalidException {
 PurchaseDraftInvalid? purchaseDraftFailure(PurchaseDraft draft) {
   final Map<PurchaseField, String> fieldErrors = draft.validate();
   final List<Map<PurchaseLineField, String>> lineErrors = draft.validateLines();
-  final List<Map<PurchasePaymentField, String>> paymentErrors =
-      draft.validatePayments();
+  final List<Map<PurchasePaymentField, String>> paymentErrors = draft
+      .validatePayments();
   if (fieldErrors.isNotEmpty ||
       lineErrors.any((Map<PurchaseLineField, String> e) => e.isNotEmpty) ||
-      paymentErrors.any((Map<PurchasePaymentField, String> e) => e.isNotEmpty)) {
+      paymentErrors.any(
+        (Map<PurchasePaymentField, String> e) => e.isNotEmpty,
+      )) {
     return PurchaseDraftInvalid(fieldErrors, lineErrors, paymentErrors);
   }
   return null;
@@ -114,14 +117,17 @@ class PurchaseService {
       PartyDao(_queries.db).findAll(role: PartyRole.supplier, active: true);
 
   /// 启用中的资金账户（立即付款区；默认账户 = 第一个）
-  List<Account> activeAccounts() => AccountDao(_queries.db).findAll(active: true);
+  List<Account> activeAccounts() =>
+      AccountDao(_queries.db).findAll(active: true);
 
   /// 最近采购过的商品（商品选择器**空查询时**显示的「最近使用」）。
   ///
   /// 实现在 `QueryDao.recentProducts`（采购/销售共用一处 SQL，§Z 五）；
   /// 这里只是采购语义的命名转发。没有采购历史时返回空列表，界面退化为纯搜索。
-  List<Product> recentlyPurchased({int limit = 20}) =>
-      _queries.recentProducts(docTypes: const <DocType>[DocType.purchase], limit: limit);
+  List<Product> recentlyPurchased({int limit = 20}) => _queries.recentProducts(
+    docTypes: const <DocType>[DocType.purchase],
+    limit: limit,
+  );
 
   // ------------------------------------------------------------ 提交
 

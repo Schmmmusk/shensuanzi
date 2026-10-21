@@ -103,17 +103,14 @@ class LocalIp {
   }
 
   /// 把 `dart:io` 的结果摊成 [NetCandidate]（测试可绕过这一步直接喂假数据）。
-  static List<NetCandidate> fromInterfaces(List<NetworkInterface> interfaces) =>
-      <NetCandidate>[
-        for (final NetworkInterface iface in interfaces)
-          NetCandidate(
-            iface.name,
-            <String>[
-              for (final InternetAddress address in iface.addresses)
-                address.address,
-            ],
-          ),
-      ];
+  static List<NetCandidate> fromInterfaces(
+    List<NetworkInterface> interfaces,
+  ) => <NetCandidate>[
+    for (final NetworkInterface iface in interfaces)
+      NetCandidate(iface.name, <String>[
+        for (final InternetAddress address in iface.addresses) address.address,
+      ]),
+  ];
 
   /// **纯函数**：从候选里挑一个。
   static String? choose(List<NetCandidate> candidates) {

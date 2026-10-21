@@ -302,7 +302,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleInternalError,
+        reason: outcome.reason,
+      );
       expect(documents.findById(doc.id), isNull, reason: '整单回滚');
       // 「无 party 但立即全额付款 → 允许（零售散客）」的正向用例见
       // test/immediate_payment_test.dart
@@ -326,7 +330,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleInternalError,
+        reason: outcome.reason,
+      );
       expect(documents.findById(doc.id), isNull, reason: '整单回滚');
       expect(stock.stockOf(productId), 0);
     });
@@ -355,7 +363,10 @@ void main() {
     test('seq_no 每表独立，多次入库按 1 递增', () {
       final String productId = createProduct();
       for (int i = 0; i < 3; i++) {
-        final Document doc = pendingDoc(type: DocType.purchase, totalAmount: 100);
+        final Document doc = pendingDoc(
+          type: DocType.purchase,
+          totalAmount: 100,
+        );
         engine.dispatch(
           document: doc,
           lines: <DocumentLine>[
@@ -379,7 +390,11 @@ void main() {
   // ============================================================ RULE-009
 
   group('RULE-009 盘点', () {
-    Future<void> seedPurchase(String productId, int quantity, int unitPrice) async {
+    Future<void> seedPurchase(
+      String productId,
+      int quantity,
+      int unitPrice,
+    ) async {
       final Document doc = pendingDoc(
         type: DocType.purchase,
         totalAmount: quantity * unitPrice,
@@ -402,10 +417,7 @@ void main() {
       final String productId = createProduct();
       seedPurchase(productId, 10, 100);
 
-      final Document doc = pendingDoc(
-        type: DocType.stocktake,
-        totalAmount: 0,
-      );
+      final Document doc = pendingDoc(type: DocType.stocktake, totalAmount: 0);
       final RuleOutcome outcome = engine.dispatch(
         document: doc,
         stocktakeActual: <String, int>{productId: 12},
@@ -469,7 +481,8 @@ void main() {
       expect(
         shortage.totalCost,
         -101,
-        reason: '302 × (-1) / 3 = -100.666… → round-half-up → -101；'
+        reason:
+            '302 × (-1) / 3 = -100.666… → round-half-up → -101；'
             '若用 ~/ 截断会得到 -100（成本系统性偏低）',
       );
     });
@@ -495,12 +508,12 @@ void main() {
 
       // ⚠️ 必须用「盘点前后是否变化」判断，不能用绝对行数 ——
       // 种子采购本身会写一条 party_ledger（方案 C 起采购默认带往来方）。
-      final int moneyBefore = db.raw
-          .select('SELECT COUNT(*) AS c FROM money_ledger')
-          .first['c']! as int;
-      final int partyBefore = db.raw
-          .select('SELECT COUNT(*) AS c FROM party_ledger')
-          .first['c']! as int;
+      final int moneyBefore =
+          db.raw.select('SELECT COUNT(*) AS c FROM money_ledger').first['c']!
+              as int;
+      final int partyBefore =
+          db.raw.select('SELECT COUNT(*) AS c FROM party_ledger').first['c']!
+              as int;
 
       final Document doc = pendingDoc(type: DocType.stocktake, totalAmount: 0);
       engine.dispatch(
@@ -523,7 +536,10 @@ void main() {
 
     test('total_amount 必须为 0，否则拒绝', () {
       final String productId = createProduct();
-      final Document doc = pendingDoc(type: DocType.stocktake, totalAmount: 500);
+      final Document doc = pendingDoc(
+        type: DocType.stocktake,
+        totalAmount: 500,
+      );
 
       final RuleOutcome outcome = engine.dispatch(
         document: doc,
@@ -532,7 +548,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleInternalError,
+        reason: outcome.reason,
+      );
       expect(documents.findById(doc.id), isNull);
     });
 
@@ -582,7 +602,11 @@ void main() {
       final Document doc = pendingDoc(type: DocType.transfer, totalAmount: 0);
       final RuleOutcome outcome = engine.dispatch(document: doc, now: now());
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.unsupportedDocType, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.unsupportedDocType,
+        reason: outcome.reason,
+      );
       expect(documents.findById(doc.id), isNull);
     });
 
@@ -629,12 +653,12 @@ void main() {
           now: now(),
         );
       }
-      final int sum = db.raw
-          .select(
-            'SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_ledger WHERE product_id = ?',
-            <Object?>[productId],
-          )
-          .first['s']! as int;
+      final int sum =
+          db.raw.select(
+                'SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_ledger WHERE product_id = ?',
+                <Object?>[productId],
+              ).first['s']!
+              as int;
       expect(stock.stockOf(productId), sum);
       expect(sum, 18);
     });

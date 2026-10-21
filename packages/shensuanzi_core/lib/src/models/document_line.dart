@@ -52,7 +52,8 @@ class DocumentLine extends ImmutableEntity {
       throw ArgumentError('unitPrice 与 amount 至少给一个（总得有算钱的依据）');
     }
     final int resolvedAmount = amount ?? quantity * unitPrice!;
-    final int resolvedUnitPrice = unitPrice ??
+    final int resolvedUnitPrice =
+        unitPrice ??
         (quantity > 0
             ? Money.divideRoundHalfUp(resolvedAmount, quantity)
             : resolvedAmount);

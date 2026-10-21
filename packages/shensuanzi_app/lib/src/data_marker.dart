@@ -28,7 +28,8 @@ class DataMarker {
   static File fileIn(String dataDirectory) =>
       File(p.join(dataDirectory, fileName));
 
-  static bool existsIn(String dataDirectory) => fileIn(dataDirectory).existsSync();
+  static bool existsIn(String dataDirectory) =>
+      fileIn(dataDirectory).existsSync();
 
   /// 读取标记。**不存在 / 打不开 / 内容不认 → `null`**（而不是抛）。
   ///

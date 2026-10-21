@@ -131,7 +131,9 @@ class ReadFailureLog {
   }
 
   void _notify() {
-    for (final void Function() listener in List<void Function()>.of(_listeners)) {
+    for (final void Function() listener in List<void Function()>.of(
+      _listeners,
+    )) {
       listener();
     }
   }

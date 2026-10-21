@@ -120,12 +120,10 @@ void main() {
 
   /// 某单据写入的库存成本（该单只有一条 line 时无歧义）
   int stockCostOf(String documentId) =>
-      db.raw
-              .select(
-                'SELECT total_cost FROM stock_ledger WHERE document_id = ?',
-                <Object?>[documentId],
-              )
-              .first['total_cost']!
+      db.raw.select(
+            'SELECT total_cost FROM stock_ledger WHERE document_id = ?',
+            <Object?>[documentId],
+          ).first['total_cost']!
           as int;
 
   /// 入库备货，返回原采购单
@@ -266,7 +264,11 @@ void main() {
       final RuleOutcome outcome = run(over, oneLine(over.id, p, 3, 100));
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.returnExceedsOriginal, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.returnExceedsOriginal,
+        reason: outcome.reason,
+      );
       expect(documents.findById(over.id), isNull, reason: '整单回滚');
       expect(stock.stockOf(p), 2, reason: '第二次退货未落地任何流水');
     });
@@ -320,7 +322,11 @@ void main() {
       );
       final RuleOutcome rejected = run(a3, oneLine(a3.id, a, 3, 100));
       expect(rejected.status, RuleStatus.rejected);
-      expect(rejected.code, RejectCode.returnExceedsOriginal, reason: rejected.reason);
+      expect(
+        rejected.code,
+        RejectCode.returnExceedsOriginal,
+        reason: rejected.reason,
+      );
 
       // B 全额退 5 → 不受 A 影响
       final Document b5 = doc(
@@ -349,7 +355,11 @@ void main() {
       final RuleOutcome outcome = run(ret, oneLine(ret.id, b, 1, 100));
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleInternalError,
+        reason: outcome.reason,
+      );
       expect(documents.findById(ret.id), isNull);
     });
   });
@@ -428,11 +438,7 @@ void main() {
         refDocId: sale.id,
       );
       expect(run(r2, oneLine(r2.id, p, 2, 200)).status, RuleStatus.applied);
-      expect(
-        stockCostOf(r2.id),
-        201,
-        reason: '累计分摊 302 − 已分摊 101，余数被吸收',
-      );
+      expect(stockCostOf(r2.id), 201, reason: '累计分摊 302 − 已分摊 101，余数被吸收');
       expect(stockCostOf(r1.id) + stockCostOf(r2.id), 302);
       expect(stock.costSnapshotOf(p).totalCost, 302);
     });
@@ -502,13 +508,11 @@ void main() {
       expect(settlements.settledAmountOf(ret.id), 1000);
 
       // 退款走自动生成的 payment 单（纪律 11：主单不直接写 money_ledger）
-      final Row refund = db.raw
-          .select(
-            'SELECT m.amount, d.doc_type FROM money_ledger m '
-            'JOIN documents d ON d.id = m.document_id WHERE d.ref_doc_id = ?',
-            <Object?>[ret.id],
-          )
-          .first;
+      final Row refund = db.raw.select(
+        'SELECT m.amount, d.doc_type FROM money_ledger m '
+        'JOIN documents d ON d.id = m.document_id WHERE d.ref_doc_id = ?',
+        <Object?>[ret.id],
+      ).first;
       expect(refund['doc_type'], 'payment');
       expect(refund['amount'], -1000, reason: '退给客户 → 资金流出');
       expect(money.balanceOf(account), -1000);
@@ -646,13 +650,11 @@ void main() {
       expect(saved.paidAmount, 300);
       expect(saved.status, DocStatus.settled);
 
-      final Row refund = db.raw
-          .select(
-            'SELECT m.amount, d.doc_type FROM money_ledger m '
-            'JOIN documents d ON d.id = m.document_id WHERE d.ref_doc_id = ?',
-            <Object?>[ret.id],
-          )
-          .first;
+      final Row refund = db.raw.select(
+        'SELECT m.amount, d.doc_type FROM money_ledger m '
+        'JOIN documents d ON d.id = m.document_id WHERE d.ref_doc_id = ?',
+        <Object?>[ret.id],
+      ).first;
       expect(refund['doc_type'], 'receipt');
       expect(refund['amount'], 300, reason: '供应商退我们钱 → 资金流入');
       expect(money.balanceOf(account), 300);
@@ -672,7 +674,11 @@ void main() {
       final RuleOutcome outcome = run(ret, oneLine(ret.id, p, 1, 100));
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleInternalError,
+        reason: outcome.reason,
+      );
       expect(documents.findById(ret.id), isNull);
     });
 
@@ -691,7 +697,11 @@ void main() {
       final RuleOutcome outcome = run(ret, oneLine(ret.id, p, 1, 100));
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleInternalError,
+        reason: outcome.reason,
+      );
       expect(documents.findById(ret.id), isNull);
     });
 
@@ -728,14 +738,13 @@ void main() {
       );
       run(r1, oneLine(r1.id, p, 3, 100));
 
-      final int sum = db.raw
-          .select(
-            'SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_ledger '
-            'WHERE product_id = ?',
-            <Object?>[p],
-          )
-          .first['s']!
-          as int;
+      final int sum =
+          db.raw.select(
+                'SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_ledger '
+                'WHERE product_id = ?',
+                <Object?>[p],
+              ).first['s']!
+              as int;
       expect(stock.stockOf(p), sum);
       expect(stock.stockOf(p), 7);
       expect(stock.costSnapshotOf(p).totalCost, 700, reason: '1000 − 300');

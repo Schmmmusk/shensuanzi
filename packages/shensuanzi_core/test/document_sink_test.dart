@@ -91,9 +91,8 @@ class Env {
     );
   }
 
-  int documentCount() => db.raw
-      .select('SELECT COUNT(*) AS n FROM documents')
-      .first['n']! as int;
+  int documentCount() =>
+      db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']! as int;
 
   int queueCount() => SyncQueueDao(db).count();
 }
@@ -101,8 +100,12 @@ class Env {
 void main() {
   group('ServiceSink（主机出口 —— 与直连服务逐字同行为）', () {
     test('submitSale 成功：isQueued=false、正式单号、展示字段与直连一致', () {
-      final Env direct = Env()..seed()..stockUp();
-      final Env viaSink = Env()..seed()..stockUp();
+      final Env direct = Env()
+        ..seed()
+        ..stockUp();
+      final Env viaSink = Env()
+        ..seed()
+        ..stockUp();
 
       final SaleDraft draft = SaleDraft(
         date: '2026-10-06',
@@ -221,13 +224,20 @@ void main() {
       final Map<String, Object?> payload = entry.payload;
       final Object? rawDocument = payload['document'];
       expect(rawDocument, isA<Map<String, Object?>>());
-      final Map<String, Object?> document = rawDocument! as Map<String, Object?>;
+      final Map<String, Object?> document =
+          rawDocument! as Map<String, Object?>;
       expect(document['id'], entry.entityId, reason: '幂等键必须一致（§二）');
       expect(document['doc_type'], 'sale');
       expect(document['status'], 'confirmed');
       expect(
         document.keys,
-        isNot(anyOf(contains('paid_amount'), contains('created_at'), contains('updated_at'))),
+        isNot(
+          anyOf(
+            contains('paid_amount'),
+            contains('created_at'),
+            contains('updated_at'),
+          ),
+        ),
         reason: '主机专属列不上 wire（hostOnlyColumns）',
       );
 

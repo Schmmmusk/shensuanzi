@@ -75,7 +75,8 @@ class HostHttpServer {
     int Function()? clock,
     void Function()? onAuthenticated,
     void Function(int appliedCount)? onDataApplied,
-    void Function(String label, Object error, StackTrace stack)? onInternalError,
+    void Function(String label, Object error, StackTrace stack)?
+    onInternalError,
   }) async {
     final int Function() now =
         clock ?? () => DateTime.now().millisecondsSinceEpoch;
@@ -111,9 +112,7 @@ class HostHttpServer {
         lastError = error;
       }
     }
-    throw StateError(
-      '端口 ${ports.start}~${ports.end} 全部不可用。最后一个错误：$lastError',
-    );
+    throw StateError('端口 ${ports.start}~${ports.end} 全部不可用。最后一个错误：$lastError');
   }
 
   Future<void> close({bool force = false}) => _server.close(force: force);
@@ -188,9 +187,7 @@ class _HostRoutes {
     final SyncPushRequest payload;
     try {
       payload = SyncPushRequest.fromJson(
-        Map<String, Object?>.from(
-          jsonDecode(body) as Map<Object?, Object?>,
-        ),
+        Map<String, Object?>.from(jsonDecode(body) as Map<Object?, Object?>),
       );
     } catch (error, stack) {
       // ⚠️ 响应体**只放固定文案**：`error.message` 是英文 Dart 消息、
@@ -248,14 +245,15 @@ class _HostRoutes {
     return inner(request);
   };
 
-  Middleware _catchErrors() => (Handler inner) => (Request request) async {
-    try {
-      return await inner(request);
-    } catch (error, stack) {
-      // ⚠️ 响应体**只放固定文案**：`'$error'` 可能带 SQL / 路径 / 堆栈（§CV·十五）
-      return _internalError('未捕获异常', error, stack);
-    }
-  };
+  Middleware _catchErrors() =>
+      (Handler inner) => (Request request) async {
+        try {
+          return await inner(request);
+        } catch (error, stack) {
+          // ⚠️ 响应体**只放固定文案**：`'$error'` 可能带 SQL / 路径 / 堆栈（§CV·十五）
+          return _internalError('未捕获异常', error, stack);
+        }
+      };
 
   static String? _bearerToken(String? header) {
     if (header == null) return null;

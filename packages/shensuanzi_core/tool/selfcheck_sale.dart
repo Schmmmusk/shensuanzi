@@ -75,7 +75,10 @@ void main() {
     check('没有明细 → lines 报「至少要有一行」；空行报行级错误', () {
       const SaleLineDraft blank = SaleLineDraft();
       final Map<SaleLineField, String> e = blank.validate();
-      return (goodDraft(lines: const <SaleLineDraft>[]).validate()[SaleField.lines] ?? '')
+      return (goodDraft(
+                    lines: const <SaleLineDraft>[],
+                  ).validate()[SaleField.lines] ??
+                  '')
               .contains('至少要有一行商品') &&
           e.containsKey(SaleLineField.product) &&
           e.containsKey(SaleLineField.quantity) &&
@@ -108,13 +111,15 @@ void main() {
       const SalePaymentDraft noAccount = SalePaymentDraft(amount: '10');
       return blank.validate().isEmpty &&
           (zero.validate()[SalePaymentField.amount] ?? '').contains('大于 0') &&
-          (noAccount.validate()[SalePaymentField.account] ?? '')
-              .contains('请选一个资金账户');
+          (noAccount.validate()[SalePaymentField.account] ?? '').contains(
+            '请选一个资金账户',
+          );
     }());
 
     check('散客且有欠款 → party 报「散客要当场结清」', () {
-      return (goodDraft().validate()[SaleField.party] ?? '')
-          .contains('散客要当场结清');
+      return (goodDraft().validate()[SaleField.party] ?? '').contains(
+        '散客要当场结清',
+      );
     }());
 
     // #40③：第一句必须是差额（与 test/ 成对）
@@ -138,8 +143,9 @@ void main() {
     }());
 
     check('日期：空 / 斜杠格式都报，标准格式过', () {
-      return (goodDraft(date: '').validate()[SaleField.date] ?? '')
-              .contains('请填日期') &&
+      return (goodDraft(date: '').validate()[SaleField.date] ?? '').contains(
+            '请填日期',
+          ) &&
           (goodDraft(date: '2026/9/27').validate()[SaleField.date] ?? '')
               .contains('日期格式不对') &&
           goodDraft(
@@ -244,7 +250,11 @@ void main() {
     }
 
     /// 先采购 10 件（3.50 进）建立正库存
-    void stockUp(PurchaseService purchases, String productId, String accountId) {
+    void stockUp(
+      PurchaseService purchases,
+      String productId,
+      String accountId,
+    ) {
       purchases.create(
         PurchaseDraft(
           date: '2026-09-27',
@@ -289,8 +299,14 @@ void main() {
     );
 
     check('散客全款 → 正式单号 + 库存归零 + 资金 +1500（收 5000 - 付 3500）', () {
-      final (Db db, SaleService service, PurchaseService purchases,
-          String productId, String accountId, String _) = newEnv();
+      final (
+        Db db,
+        SaleService service,
+        PurchaseService purchases,
+        String productId,
+        String accountId,
+        String _,
+      ) = newEnv();
       stockUp(purchases, productId, accountId);
 
       final SaleSaved saved = service.create(
@@ -298,8 +314,10 @@ void main() {
         now: now(),
       );
       final int docCount =
-          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']! as int;
-      final bool ok = !Document.isPendingDocNo(saved.docNo) &&
+          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']!
+              as int;
+      final bool ok =
+          !Document.isPendingDocNo(saved.docNo) &&
           saved.totalCents == 5000 &&
           saved.paidCents == 5000 &&
           saved.dueCents == 0 &&
@@ -312,49 +330,76 @@ void main() {
     }());
 
     check('负库存放行（RULE-002 允许；界面层才告警）', () {
-      final (Db db, SaleService service, PurchaseService _, String productId,
-          String accountId, String _) = newEnv();
+      final (
+        Db db,
+        SaleService service,
+        PurchaseService _,
+        String productId,
+        String accountId,
+        String _,
+      ) = newEnv();
       final SaleSaved saved = service.create(
         draftFor(productId, accountId, paymentAmount: '50'),
         now: now(),
       );
-      final bool ok = saved.totalCents == 5000 &&
+      final bool ok =
+          saved.totalCents == 5000 &&
           StockLedgerDao(db).stockOf(productId) == -10;
       db.close();
       return ok;
     }());
 
     check('赊销（有客户、无收款）→ 客户欠款记到名下（正数）', () {
-      final (Db _, SaleService service, PurchaseService purchases,
-          String productId, String accountId, String partyId) = newEnv();
+      final (
+        Db _,
+        SaleService service,
+        PurchaseService purchases,
+        String productId,
+        String accountId,
+        String partyId,
+      ) = newEnv();
       stockUp(purchases, productId, accountId);
       final SaleSaved saved = service.create(
         draftFor(productId, accountId, partyId: partyId),
         now: now(),
       );
-      final bool ok = saved.paidCents == 0 &&
+      final bool ok =
+          saved.paidCents == 0 &&
           saved.dueCents == 5000 &&
           saved.partyDueCents == 5000;
       return ok;
     }());
 
     check('部分收款 → 欠款 = 差额，累计欠款同步', () {
-      final (Db _, SaleService service, PurchaseService purchases,
-          String productId, String accountId, String partyId) = newEnv();
+      final (
+        Db _,
+        SaleService service,
+        PurchaseService purchases,
+        String productId,
+        String accountId,
+        String partyId,
+      ) = newEnv();
       stockUp(purchases, productId, accountId);
       final SaleSaved saved = service.create(
         draftFor(productId, accountId, partyId: partyId, paymentAmount: '20'),
         now: now(),
       );
-      final bool ok = saved.paidCents == 2000 &&
+      final bool ok =
+          saved.paidCents == 2000 &&
           saved.dueCents == 3000 &&
           saved.partyDueCents == 3000;
       return ok;
     }());
 
     check('校验不过 → 抛 SaleDraftInvalid，库里不留单', () {
-      final (Db db, SaleService service, PurchaseService _,
-          String productId, String accountId, String _) = newEnv();
+      final (
+        Db db,
+        SaleService service,
+        PurchaseService _,
+        String productId,
+        String accountId,
+        String _,
+      ) = newEnv();
       Object? thrown;
       try {
         service.create(
@@ -365,41 +410,52 @@ void main() {
         thrown = error;
       }
       final int docCount =
-          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']! as int;
-      final bool ok = thrown is SaleDraftInvalid &&
-          (thrown.lineErrors.single[SaleLineField.quantity] ?? '')
-              .contains('正整数') &&
+          db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']!
+              as int;
+      final bool ok =
+          thrown is SaleDraftInvalid &&
+          (thrown.lineErrors.single[SaleLineField.quantity] ?? '').contains(
+            '正整数',
+          ) &&
           docCount == 0;
       db.close();
       return ok;
     }());
 
     check('收款金额留空的行被跳过 → 等价于全赊', () {
-      final (Db _, SaleService service, PurchaseService _,
-          String productId, String accountId, String partyId) = newEnv();
+      final (
+        Db _,
+        SaleService service,
+        PurchaseService _,
+        String productId,
+        String accountId,
+        String partyId,
+      ) = newEnv();
       final SaleSaved saved = service.create(
         draftFor(productId, accountId, partyId: partyId, paymentAmount: ''),
         now: now(),
       );
-      final bool ok = saved.paidCents == 0 &&
+      final bool ok =
+          saved.paidCents == 0 &&
           saved.dueCents == 5000 &&
           saved.partyDueCents == 5000;
       return ok;
     }());
 
     check('stockSnapshot：采购后 10，卖出 3 件后 7', () {
-      final (Db _, SaleService service, PurchaseService purchases,
-          String productId, String accountId, String partyId) = newEnv();
+      final (
+        Db _,
+        SaleService service,
+        PurchaseService purchases,
+        String productId,
+        String accountId,
+        String partyId,
+      ) = newEnv();
       final bool before = !service.stockSnapshot().containsKey(productId);
       stockUp(purchases, productId, accountId);
       final bool afterBuy = service.stockSnapshot()[productId] == 10;
       service.create(
-        draftFor(
-          productId,
-          accountId,
-          partyId: partyId,
-          quantity: '3',
-        ),
+        draftFor(productId, accountId, partyId: partyId, quantity: '3'),
         now: now(),
       );
       final bool afterSell = service.stockSnapshot()[productId] == 7;
@@ -407,10 +463,17 @@ void main() {
     }());
 
     check('createCustomer：最小建档，空名抛', () {
-      final (Db _, SaleService service, PurchaseService _,
-          String _, String _, String _) = newEnv();
+      final (
+        Db _,
+        SaleService service,
+        PurchaseService _,
+        String _,
+        String _,
+        String _,
+      ) = newEnv();
       final Party party = service.createCustomer('张姐', phone: ' 139 ');
-      final bool ok = party.name == '张姐' &&
+      final bool ok =
+          party.name == '张姐' &&
           party.phone == '139' &&
           party.roles.map((PartyRole r) => r.wire).join(',') == 'customer';
       bool emptyThrows = false;

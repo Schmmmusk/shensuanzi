@@ -20,11 +20,7 @@ void main() {
       String name = '现金',
       AccountType? type = AccountType.cash,
       String initialBalance = '',
-    }) => AccountDraft(
-      name: name,
-      type: type,
-      initialBalance: initialBalance,
-    );
+    }) => AccountDraft(name: name, type: type, initialBalance: initialBalance);
 
     test('合法草稿（期初余额留空 = 0）→ 无错误，取值 0 分', () {
       final AccountDraft draft = goodDraft();
@@ -61,12 +57,15 @@ void main() {
       expect(ok.initialBalanceCents, 100050);
 
       expect(
-        goodDraft(initialBalance: 'abc').validate()[AccountField.initialBalance],
+        goodDraft(
+          initialBalance: 'abc',
+        ).validate()[AccountField.initialBalance],
         contains('只能填数字'),
       );
       expect(
-        goodDraft(initialBalance: '1.005')
-            .validate()[AccountField.initialBalance],
+        goodDraft(
+          initialBalance: '1.005',
+        ).validate()[AccountField.initialBalance],
         contains('两位小数'),
       );
       expect(
@@ -77,10 +76,10 @@ void main() {
 
     test('一次能报多个字段（界面据此标红多栏）', () {
       const AccountDraft draft = AccountDraft();
-      expect(draft.validate().keys, containsAll(<AccountField>[
-        AccountField.name,
-        AccountField.type,
-      ]));
+      expect(
+        draft.validate().keys,
+        containsAll(<AccountField>[AccountField.name, AccountField.type]),
+      );
     });
   });
 
@@ -125,17 +124,14 @@ void main() {
       }
       expect(thrown, isA<AccountDraftInvalid>());
       final int count =
-          db.raw.select('SELECT COUNT(*) AS n FROM accounts').first['n']! as int;
+          db.raw.select('SELECT COUNT(*) AS n FROM accounts').first['n']!
+              as int;
       expect(count, 0);
     });
 
     test('update：改名换类型，**期初余额以库里原值为准**（Z-3 方案 A）', () {
       final Account account = service.create(
-        AccountDraft(
-          name: '现金',
-          type: AccountType.cash,
-          initialBalance: '300',
-        ),
+        AccountDraft(name: '现金', type: AccountType.cash, initialBalance: '300'),
         now: now(),
       );
 
@@ -170,14 +166,21 @@ void main() {
       );
 
       expect(
-        () => service.update(account.id, const AccountDraft(name: ''), now: now()),
+        () => service.update(
+          account.id,
+          const AccountDraft(name: ''),
+          now: now(),
+        ),
         throwsA(isA<AccountDraftInvalid>()),
       );
       expect(AccountDao(db).findById(account.id)?.name, '现金');
 
       expect(
-        () => service.update('no-such-id',
-            AccountDraft(name: 'x', type: AccountType.cash), now: now()),
+        () => service.update(
+          'no-such-id',
+          AccountDraft(name: 'x', type: AccountType.cash),
+          now: now(),
+        ),
         throwsStateError,
       );
     });
@@ -235,14 +238,12 @@ void main() {
       service.setActive(retiredWithMoney.id, active: false, now: now());
       service.setActive(retiredEmpty.id, active: false, now: now());
 
-      final List<String> defaults =
-          service.listVisible().map((Account a) => a.name).toList();
+      final List<String> defaults = service
+          .listVisible()
+          .map((Account a) => a.name)
+          .toList();
       expect(defaults, contains('现金'));
-      expect(
-        defaults,
-        contains('旧卡'),
-        reason: '钱不会因为停用消失 —— 默认藏起来就是「幽灵账」',
-      );
+      expect(defaults, contains('旧卡'), reason: '钱不会因为停用消失 —— 默认藏起来就是「幽灵账」');
       expect(defaults, isNot(contains('作废卡')), reason: '余额 0 的停用档默认不占屏幕');
 
       final List<String> all = service

@@ -128,7 +128,7 @@ class DocumentSubmitResult {
   /// 且修掉了初稿「下次开单」的歧义（读者会误读成「这一单先不推」）。
   String? get queuedNotice => isQueued
       ? '已记入待同步（单号 $finalDocNo）。'
-          '保存后会自动尝试传给电脑。没传上的，切回来或点「立即同步」会继续。'
+            '保存后会自动尝试传给电脑。没传上的，切回来或点「立即同步」会继续。'
       : null;
 
   @override
@@ -172,6 +172,7 @@ class ServiceSink implements DocumentSink {
   final SaleService _sales;
   final PurchaseService _purchases;
   final DeliveryService _deliveries;
+
   /// 盘点 / 期初的提交出口（2026-10-20 放开手机「重新清点」；桌面期初页
   /// **不用它** —— 直连 `StocktakeService.create`，见 `opening_stock_page`）。
   final StocktakeService? _stocktakes;
@@ -299,7 +300,10 @@ class QueueSink implements DocumentSink {
 
     // 客户端本地的算术 —— 与主机构造同一钳制口径（`build.payments` 已封顶），
     // 不是「臆想的权威值」；权威值等 pull（叠加显示由 `stockViewOf` 负责）。
-    final int paid = build.payments.fold<int>(0, (int a, PaymentEntry p) => a + p.amount);
+    final int paid = build.payments.fold<int>(
+      0,
+      (int a, PaymentEntry p) => a + p.amount,
+    );
     return DocumentSubmitResult(
       finalDocNo: build.document.docNo,
       isQueued: true,
@@ -321,7 +325,10 @@ class QueueSink implements DocumentSink {
     final DocumentBuild build = buildPurchaseDocument(draft, now: stamp);
     _enqueue(build, immediatePayments: build.payments, now: stamp);
 
-    final int paid = build.payments.fold<int>(0, (int a, PaymentEntry p) => a + p.amount);
+    final int paid = build.payments.fold<int>(
+      0,
+      (int a, PaymentEntry p) => a + p.amount,
+    );
     return DocumentSubmitResult(
       finalDocNo: build.document.docNo,
       isQueued: true,
@@ -389,7 +396,11 @@ class QueueSink implements DocumentSink {
           ),
     ];
     _enqueue(
-      DocumentBuild(document: document, lines: lines, payments: const <PaymentEntry>[]),
+      DocumentBuild(
+        document: document,
+        lines: lines,
+        payments: const <PaymentEntry>[],
+      ),
       now: stamp,
     );
 
@@ -420,7 +431,6 @@ class QueueSink implements DocumentSink {
     _queue.enqueue(SyncQueueEntry.create(op, now: now));
   }
 }
-
 
 /// 把 `StocktakeDraftInvalid` 适配成 [DraftInvalidException]
 /// （`DocumentSubmitResult.failure` 的形参类型）—— 只转类型，不动文案。

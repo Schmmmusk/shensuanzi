@@ -63,7 +63,8 @@ export 'src/models/account.dart' show Account, AccountType;
 export 'src/models/base.dart'
     show ImmutableEntity, MutableEntity, RowReader, boolToInt;
 export 'src/models/document.dart' show DocStatus, DocType, Document;
-export 'src/models/document_line.dart' show DocumentLine, linesAmountMatchesTotal;
+export 'src/models/document_line.dart'
+    show DocumentLine, linesAmountMatchesTotal;
 export 'src/models/money_ledger.dart' show MoneyLedger;
 export 'src/models/party.dart' show Party, PartyRole;
 export 'src/models/party_ledger.dart' show PartyLedger;
@@ -179,7 +180,11 @@ export 'src/documents/stocktake_service.dart'
 // B3a：提交出口（`DocumentSink` 两实现 + 统一返回）与「草稿 → 实体」纯构造
 export 'src/documents/draft_invalid.dart' show DraftInvalidException;
 export 'src/documents/document_build.dart'
-    show DocumentBuild, buildDeliveryDocument, buildPurchaseDocument, buildSaleDocument;
+    show
+        DocumentBuild,
+        buildDeliveryDocument,
+        buildPurchaseDocument,
+        buildSaleDocument;
 export 'src/documents/document_sink.dart'
     show
         DocumentSink,

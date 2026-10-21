@@ -211,14 +211,11 @@ void main() {
     expect(find.textContaining('数据文件已就绪'), findsOneWidget);
   });
 
-  testWidgets('有提醒 → 橙卡 + 「立即备份」按钮（AE-3 两层机制的上层）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('有提醒 → 橙卡 + 「立即备份」按钮（AE-3 两层机制的上层）', (WidgetTester tester) async {
     await tester.pumpWidget(
       page(
         reminder: '数据已经 5 天没有备份了。',
-        onBackupNow: () async =>
-            const BackupOutcome.ok(r'D:\神算子备份\a.db'),
+        onBackupNow: () async => const BackupOutcome.ok(r'D:\神算子备份\a.db'),
       ),
     );
 
@@ -228,9 +225,7 @@ void main() {
     expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
   });
 
-  testWidgets('提醒在但备份不可用（库没就绪）→ 只说事，不给空按钮', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('提醒在但备份不可用（库没就绪）→ 只说事，不给空按钮', (WidgetTester tester) async {
     await tester.pumpWidget(page(reminder: '还没有备份过。'));
 
     expect(find.text('还没有备份过。'), findsOneWidget);
@@ -241,8 +236,7 @@ void main() {
     WidgetTester tester,
   ) async {
     var calls = 0;
-    const String path =
-        r'D:\神算子备份\shensuanzi-m-schema1-20260928-1530.db';
+    const String path = r'D:\神算子备份\shensuanzi-m-schema1-20260928-1530.db';
     await tester.pumpWidget(
       page(
         reminder: '还没有备份过。',
@@ -268,9 +262,8 @@ void main() {
     await tester.pumpWidget(
       page(
         reminder: '还没有备份过。',
-        onBackupNow: () async => const BackupOutcome.failure(
-          '备份文件夹用不了。请检查它是不是被删掉、被设成只读，或者磁盘满了',
-        ),
+        onBackupNow: () async =>
+            const BackupOutcome.failure('备份文件夹用不了。请检查它是不是被删掉、被设成只读，或者磁盘满了'),
       ),
     );
 
@@ -312,9 +305,7 @@ void main() {
 
   // M05（2026-10-08）：手机上概览页复用桌面页，但**导航形态不同** ——
   // 桌面是左侧常驻列表，手机是底部导航。同一句话在两套壳里说错地方就是错的。
-  testWidgets('M05：桌面壳 ⇒ 指路「左边」，手机壳 ⇒ 指路「底部」', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('M05：桌面壳 ⇒ 指路「左边」，手机壳 ⇒ 指路「底部」', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     expect(find.textContaining('左边的功能列表'), findsOneWidget);
     expect(find.textContaining('底部的按钮'), findsNothing);
@@ -331,9 +322,7 @@ void main() {
 
   // 2026-10-20（用户建议）：三张经营卡**从页首挪到「从这里开始」下方** ——
   // 概览页先回答「数据在哪 / 能不能用 / 从哪开始」，经营数字是第二眼的东西。
-  testWidgets('2026-10-20：经营三卡在「从这里开始」**下方**', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('2026-10-20：经营三卡在「从这里开始」**下方**', (WidgetTester tester) async {
     final QueryDao queries = await seedBiz(
       todayMs: DateTime.now().millisecondsSinceEpoch,
       withReceivable: true,
@@ -352,9 +341,7 @@ void main() {
     );
   });
 
-  testWidgets('#32：有单 ⇒ 今日经营两行 + 要留心应收 + 快捷入口跳转', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#32：有单 ⇒ 今日经营两行 + 要留心应收 + 快捷入口跳转', (WidgetTester tester) async {
     final int todayMs = DateTime.now().millisecondsSinceEpoch;
     final QueryDao queries = await seedBiz(
       todayMs: todayMs,
@@ -362,9 +349,7 @@ void main() {
     );
     final List<String> navigated = <String>[];
 
-    await tester.pumpWidget(
-      page(queries: queries, onNavigate: navigated.add),
-    );
+    await tester.pumpWidget(page(queries: queries, onNavigate: navigated.add));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('overview-card-today')), findsOneWidget);
@@ -384,9 +369,7 @@ void main() {
     expect(navigated, <String>['sale', 'purchase']);
   });
 
-  testWidgets('#32：空库（无单据）⇒ 经营块整块不显示（不干扰首次开张）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#32：空库（无单据）⇒ 经营块整块不显示（不干扰首次开张）', (WidgetTester tester) async {
     useLocalSqlite();
     final Directory emptyBox = Directory.systemTemp.createTempSync(
       'shensuanzi_overview_empty_',
@@ -438,9 +421,7 @@ void main() {
     expect(find.textContaining('未同步'), findsNothing);
   });
 
-  testWidgets('#32：负库存 ⇒ 红字提醒（超卖场景）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#32：负库存 ⇒ 红字提醒（超卖场景）', (WidgetTester tester) async {
     final int todayMs = DateTime.now().millisecondsSinceEpoch;
     final QueryDao queries = await seedBiz(todayMs: todayMs, oversell: true);
 
@@ -448,5 +429,4 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('负库存 1 种'), findsOneWidget);
   });
-
 }

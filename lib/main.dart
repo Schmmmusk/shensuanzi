@@ -56,72 +56,79 @@ Future<void> _mainMobile() async {
   );
   final AppLog log = AppLog.besideConfig(store);
 
-  runZonedGuarded<void>(() {
-    FlutterError.onError = (FlutterErrorDetails details) {
-      FlutterError.presentError(details);
-      log.crash(details.exception, details.stack ?? StackTrace.current);
-    };
+  runZonedGuarded<void>(
+    () {
+      FlutterError.onError = (FlutterErrorDetails details) {
+        FlutterError.presentError(details);
+        log.crash(details.exception, details.stack ?? StackTrace.current);
+      };
 
-    log.startup(
-      appVersion: AppVersion.value,
-      schemaVersion: '${Schema.version}',
-    );
+      log.startup(
+        appVersion: AppVersion.value,
+        schemaVersion: '${Schema.version}',
+      );
 
-    _installErrorBoundary(log);
+      _installErrorBoundary(log);
 
-    runApp(
-      ShensuanziApp(
-        configStore: store,
-        // §AH-6：私有目录根，app.dart 据此组织 data/backup/export（B1b）
-        dataRoot: support.path,
-      ),
-    );
-  }, (Object error, StackTrace stack) {
-    log.crash(error, stack);
-  });
+      runApp(
+        ShensuanziApp(
+          configStore: store,
+          // §AH-6：私有目录根，app.dart 据此组织 data/backup/export（B1b）
+          dataRoot: support.path,
+        ),
+      );
+    },
+    (Object error, StackTrace stack) {
+      log.crash(error, stack);
+    },
+  );
 }
+
 void _mainDesktop() {
   final AppEnvironment environment = AppEnvironment.detect();
   final AppLog log = AppLog.besideConfig(
     AppConfigStore.forEnvironment(environment),
   );
 
-  runZonedGuarded<void>(() {
-    // 必须先初始化：`FlutterError.onError` 与 `runApp` 都依赖绑定
-    WidgetsFlutterBinding.ensureInitialized();
+  runZonedGuarded<void>(
+    () {
+      // 必须先初始化：`FlutterError.onError` 与 `runApp` 都依赖绑定
+      WidgetsFlutterBinding.ensureInitialized();
 
-    FlutterError.onError = (FlutterErrorDetails details) {
-      // 保留 Flutter 原有的控制台输出（开发时看得到）
-      FlutterError.presentError(details);
-      log.crash(details.exception, details.stack ?? StackTrace.current);
-    };
+      FlutterError.onError = (FlutterErrorDetails details) {
+        // 保留 Flutter 原有的控制台输出（开发时看得到）
+        FlutterError.presentError(details);
+        log.crash(details.exception, details.stack ?? StackTrace.current);
+      };
 
-    // 启动行：时间 + 版本 + 数据格式版本 + 操作系统 —— 排障的四问一次答完
-    log.startup(
-      appVersion: AppVersion.value,
-      schemaVersion: '${Schema.version}',
-    );
-
-    // 环境探测降级：**不弹窗**（这是启动路径，弹窗只会让用户以为软件坏了），
-    // 只留一条日志。两种降级分开记（`docs/reply_review.md` §AT / §AT·六-3）：
-    //   ① 盘符枚举整体失败 ⇒ 本次按「没有非系统盘」处理
-    //   ② 某些盘符占着位、但类型问不出来 ⇒ 已跳过
-    // 没有它，「软件能开、但某块盘不见了」永远查不出原因。
-    if (environment.isWindows && environment.drives.isEmpty) {
-      log.write('环境探测降级：盘符枚举失败，本次按「没有非系统盘」处理');
-    }
-    if (environment.probeFailures.isNotEmpty) {
-      log.write(
-        '环境探测降级：${environment.probeFailures.join('、')} 盘的类型问不出来，已跳过这些盘',
+      // 启动行：时间 + 版本 + 数据格式版本 + 操作系统 —— 排障的四问一次答完
+      log.startup(
+        appVersion: AppVersion.value,
+        schemaVersion: '${Schema.version}',
       );
-    }
 
-    _installErrorBoundary(log);
+      // 环境探测降级：**不弹窗**（这是启动路径，弹窗只会让用户以为软件坏了），
+      // 只留一条日志。两种降级分开记（`docs/reply_review.md` §AT / §AT·六-3）：
+      //   ① 盘符枚举整体失败 ⇒ 本次按「没有非系统盘」处理
+      //   ② 某些盘符占着位、但类型问不出来 ⇒ 已跳过
+      // 没有它，「软件能开、但某块盘不见了」永远查不出原因。
+      if (environment.isWindows && environment.drives.isEmpty) {
+        log.write('环境探测降级：盘符枚举失败，本次按「没有非系统盘」处理');
+      }
+      if (environment.probeFailures.isNotEmpty) {
+        log.write(
+          '环境探测降级：${environment.probeFailures.join('、')} 盘的类型问不出来，已跳过这些盘',
+        );
+      }
 
-    runApp(const ShensuanziApp());
-  }, (Object error, StackTrace stack) {
-    log.crash(error, stack);
-  });
+      _installErrorBoundary(log);
+
+      runApp(const ShensuanziApp());
+    },
+    (Object error, StackTrace stack) {
+      log.crash(error, stack);
+    },
+  );
 }
 
 /// #42 甲 · **L3 界面错误边界**（2026-10-14 裁定 §二）。

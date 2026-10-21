@@ -22,14 +22,10 @@ void main() {
 
   /// 第 1 章标号所在的方框
   Size badgeSize(WidgetTester tester) => tester.getSize(
-    find
-        .ancestor(of: find.text('1'), matching: find.byType(Container))
-        .first,
+    find.ancestor(of: find.text('1'), matching: find.byType(Container)).first,
   );
 
-  testWidgets('超大档（2.0）：章节标号跟着字号长高，不再被方框裁掉', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('超大档（2.0）：章节标号跟着字号长高，不再被方框裁掉', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1200, 2000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -45,9 +41,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('常规档：标号仍是 30 高（小字号外观不变）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('常规档：标号仍是 30 高（小字号外观不变）', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1200, 2000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);

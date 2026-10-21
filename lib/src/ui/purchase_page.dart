@@ -80,11 +80,11 @@ class PurchasePage extends StatefulWidget {
   /// 那版默默漏装就是「手机上一切都能建」（静默丢数据），宁可编不过。
   final MasterDataPolicy masterDataPolicy;
 
-
   /// **往来方写入口的队列出口**（2026-10-20，§CV·七十七）。
   ///
   /// 手机 = `QueuePartySink`（写镜像 + 入队 + 立即推）；桌面 = `null`（服务直连主库）。
   final QueuePartySink? partySink;
+
   /// 主数据提交**出口**（桌面 `ServiceMasterSink` / 手机 `QueueMasterSink`）。
   /// ⚠️ 商品表单**必须**走它 —— 手机端的 `ProductService` 建在镜像上。
   final MasterDataSink masterDataSink;
@@ -124,9 +124,7 @@ class _RowCtl {
 
   /// 成对启用 ⇒ 行卡显示单位切换（§BD·三 第 3 条）
   bool get canSwitchPackage =>
-      packageUnit != null &&
-      packageUnit!.isNotEmpty &&
-      (packageSize ?? 0) > 0;
+      packageUnit != null && packageUnit!.isNotEmpty && (packageSize ?? 0) > 0;
 
   /// 数量框 label 上显示的单位
   String get entryUnitDisplay =>
@@ -321,9 +319,7 @@ class _PurchasePageState extends State<PurchasePage> {
 
   void _addPayment() {
     setState(() {
-      _pays.add(
-        _PayCtl(account: _accounts.isEmpty ? null : _accounts.first),
-      );
+      _pays.add(_PayCtl(account: _accounts.isEmpty ? null : _accounts.first));
       _invalid = null;
     });
   }
@@ -370,8 +366,10 @@ class _PurchasePageState extends State<PurchasePage> {
 
   /// 选供应商：底部弹层（搜索 + 新建）。返回后刷新供应商列表。
   Future<void> _pickParty() async {
-    final PartyMutation? picked =
-        await _showPartyPicker(context, widget.service);
+    final PartyMutation? picked = await _showPartyPicker(
+      context,
+      widget.service,
+    );
     if (picked == null) return;
     final Party party = picked.party;
     setState(() {
@@ -380,8 +378,10 @@ class _PurchasePageState extends State<PurchasePage> {
       _invalid = null;
     });
     // #40①：提交后**如实告知**发生了什么（以前采购页整个丢掉这个信息）
-    final String? notice =
-        partyMutationNotice(picked, role: PartyRole.supplier);
+    final String? notice = partyMutationNotice(
+      picked,
+      role: PartyRole.supplier,
+    );
     if (notice != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(notice), duration: const Duration(seconds: 4)),
@@ -422,7 +422,10 @@ class _PurchasePageState extends State<PurchasePage> {
       // 进宿主日志）。草稿保留，改完能直接再交。
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.reason), duration: const Duration(seconds: 8)),
+        SnackBar(
+          content: Text(error.reason),
+          duration: const Duration(seconds: 8),
+        ),
       );
     } catch (error, stack) {
       setState(() => _saving = false);
@@ -636,45 +639,45 @@ class _PurchasePageState extends State<PurchasePage> {
         if (confirmed && context.mounted) Navigator.of(context).pop();
       },
       child: CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
-        const SingleActivator(LogicalKeyboardKey.escape): _cancel,
-      },
-      child: FocusScope(
-        // #37甲（2026-10-14）：这里**必须**是 `FocusScope`，不能降回 `Focus` ——
-        // `CallbackShortcuts` 内部是 `Focus(canRequestFocus: false)`，按键只能靠
-        // **后代节点上溯**经过它；而点页内空白会触发 `EditableText.onTapOutside`
-        // （桌面专属）调 `unfocus()`，默认 `disposition: scope` 把焦点升到
-        // **最近的外层 scope**。若是普通 `Focus`，焦点升到路由的 `FocusScope`
-        // （在 `CallbackShortcuts` **之上**）⇒ 上溯不再经过它 ⇒ Ctrl+S / Esc 静默失效。
-        // 换成 `FocusScope` ⇒ 最近 scope 就是本页 ⇒ 焦点留在页内 ⇒ 恒生效。
-        autofocus: true,
-        // C3·真机反馈 ④：键盘（含输入法候选栏）高度变化时，把焦点字段滚回可视区
-        child: KeyboardReveal(
-          child: Scaffold(
-            body: SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    _headerRow(theme),
-                    const Divider(height: 24),
-                    _linesSection(theme),
-                    _totalBar(theme),
-                    const Divider(height: 24),
-                    _paymentSection(theme),
-                    const SizedBox(height: 16),
-                    _remarkField(),
-                    const SizedBox(height: 24),
-                    _actions(theme),
-                  ],
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
+          const SingleActivator(LogicalKeyboardKey.escape): _cancel,
+        },
+        child: FocusScope(
+          // #37甲（2026-10-14）：这里**必须**是 `FocusScope`，不能降回 `Focus` ——
+          // `CallbackShortcuts` 内部是 `Focus(canRequestFocus: false)`，按键只能靠
+          // **后代节点上溯**经过它；而点页内空白会触发 `EditableText.onTapOutside`
+          // （桌面专属）调 `unfocus()`，默认 `disposition: scope` 把焦点升到
+          // **最近的外层 scope**。若是普通 `Focus`，焦点升到路由的 `FocusScope`
+          // （在 `CallbackShortcuts` **之上**）⇒ 上溯不再经过它 ⇒ Ctrl+S / Esc 静默失效。
+          // 换成 `FocusScope` ⇒ 最近 scope 就是本页 ⇒ 焦点留在页内 ⇒ 恒生效。
+          autofocus: true,
+          // C3·真机反馈 ④：键盘（含输入法候选栏）高度变化时，把焦点字段滚回可视区
+          child: KeyboardReveal(
+            child: Scaffold(
+              body: SafeArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      _headerRow(theme),
+                      const Divider(height: 24),
+                      _linesSection(theme),
+                      _totalBar(theme),
+                      const Divider(height: 24),
+                      _paymentSection(theme),
+                      const SizedBox(height: 16),
+                      _remarkField(),
+                      const SizedBox(height: 24),
+                      _actions(theme),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -701,15 +704,15 @@ class _PurchasePageState extends State<PurchasePage> {
                 ),
                 child: Text(
                   _partyName ?? '散采（不记往来）',
-                  style: TextStyle(height: 1.6, color: theme.colorScheme.onSurface),
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.colorScheme.onSurface,
+                  ),
                 ),
               ),
             ),
             if (_partyName != null)
-              TextButton(
-                onPressed: _clearParty,
-                child: const Text('改为散采'),
-              ),
+              TextButton(onPressed: _clearParty, child: const Text('改为散采')),
           ],
         ),
       ),
@@ -731,7 +734,10 @@ class _PurchasePageState extends State<PurchasePage> {
                 ),
                 child: Text(
                   _fmtDate(_date),
-                  style: TextStyle(height: 1.6, color: theme.colorScheme.onSurface),
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.colorScheme.onSurface,
+                  ),
                 ),
               ),
             ),
@@ -746,9 +752,7 @@ class _PurchasePageState extends State<PurchasePage> {
     children: <Widget>[
       Row(
         children: <Widget>[
-          Expanded(
-            child: Text('商品明细', style: theme.textTheme.titleMedium),
-          ),
+          Expanded(child: Text('商品明细', style: theme.textTheme.titleMedium)),
         ],
       ),
       if (_invalid?.fieldErrors[PurchaseField.lines] != null) ...<Widget>[
@@ -935,7 +939,9 @@ class _PurchasePageState extends State<PurchasePage> {
         // §AY·四（与销售同构）：**按钮文字是用户动作的最终确认**。
         // 文案由 core 给（`PurchaseDraft.saveActionLabel`），这里只取值。
         label: Text(
-          _saving ? '保存中…' : '${_draft.saveActionLabel()}${widget.mobileShell ? '' : ' (Ctrl+S)'}',
+          _saving
+              ? '保存中…'
+              : '${_draft.saveActionLabel()}${widget.mobileShell ? '' : ' (Ctrl+S)'}',
         ),
       ),
     ],
@@ -1073,8 +1079,8 @@ class _LineCard extends StatelessWidget {
                 children: <Widget>[
                   ChoiceChip(
                     label: Text(row.baseUnit ?? ''),
-                    selected: row.entryUnit.isEmpty ||
-                        row.entryUnit == row.baseUnit,
+                    selected:
+                        row.entryUnit.isEmpty || row.entryUnit == row.baseUnit,
                     onSelected: (_) {
                       row.switchEntryUnit(''); // §BG 方案 A：预填价跟着换
                       onChanged();
@@ -1170,7 +1176,10 @@ class _PayCard extends StatelessWidget {
                 for (final Account account in accounts)
                   DropdownMenuItem<Account>(
                     value: account,
-                    child: Text(account.name, style: const TextStyle(height: 1.6)),
+                    child: Text(
+                      account.name,
+                      style: const TextStyle(height: 1.6),
+                    ),
                   ),
               ],
               onChanged: enabled ? onAccountChanged : null,
@@ -1263,8 +1272,9 @@ class _PartyPickerSheetState extends State<_PartyPickerSheet> {
   void _onNameFocusChanged() {
     if (_nameFocus.hasFocus) return;
     final String name = _query.text.trim();
-    final Party? existing =
-        name.isEmpty ? null : widget.service.findPartyByNameIncludingInactive(name);
+    final Party? existing = name.isEmpty
+        ? null
+        : widget.service.findPartyByNameIncludingInactive(name);
     final String? hint = partySameNameHint(
       existing,
       adding: const <PartyRole>[PartyRole.supplier],
@@ -1360,7 +1370,10 @@ class _PartyPickerSheetState extends State<_PartyPickerSheet> {
               itemCount: _items.length,
               itemBuilder: (BuildContext context, int index) => ListTile(
                 dense: true,
-                title: Text(_items[index].name, style: const TextStyle(height: 1.6)),
+                title: Text(
+                  _items[index].name,
+                  style: const TextStyle(height: 1.6),
+                ),
                 subtitle: _items[index].phone == null
                     ? null
                     : Text(_items[index].phone!),

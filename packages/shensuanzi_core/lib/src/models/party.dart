@@ -51,22 +51,20 @@ class Party extends MutableEntity {
   /// ⚠️ **`roles` 列是 #42 的原始触发点**（注入 `"  　\t  "` ⇒ 原来直接抛 ⇒
   /// 往来方页整页变灰）。现在的处置：**丢角色、保整行** —— 少一个标签不影响
   /// 这个人还在列表里、欠款还看得见（裁定 §三）。
-  factory Party.fromRow(
-    Map<String, Object?> row, {
-    ReadFailureLog? failures,
-  }) => Party(
-    id: row.requiredString('id'),
-    name: row.requiredString('name'),
-    phone: row.optionalString('phone'),
-    address: row.optionalString('address'),
-    roles: decodeRoles(row.requiredString('roles'), failures: failures),
-    creditLimit: row.requiredInt('credit_limit'),
-    isActive: row.requiredBool('is_active'),
-    remark: row.optionalString('remark'),
-    createdAt: row.requiredInt('created_at'),
-    updatedAt: row.requiredInt('updated_at'),
-    syncVersion: row.requiredInt('sync_version'),
-  );
+  factory Party.fromRow(Map<String, Object?> row, {ReadFailureLog? failures}) =>
+      Party(
+        id: row.requiredString('id'),
+        name: row.requiredString('name'),
+        phone: row.optionalString('phone'),
+        address: row.optionalString('address'),
+        roles: decodeRoles(row.requiredString('roles'), failures: failures),
+        creditLimit: row.requiredInt('credit_limit'),
+        isActive: row.requiredBool('is_active'),
+        remark: row.optionalString('remark'),
+        createdAt: row.requiredInt('created_at'),
+        updatedAt: row.requiredInt('updated_at'),
+        syncVersion: row.requiredInt('sync_version'),
+      );
 
   /// `roles` 以 JSON 数组文本入库，如 `["supplier","customer"]`
   static String encodeRoles(List<PartyRole> roles) =>

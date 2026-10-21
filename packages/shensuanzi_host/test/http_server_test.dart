@@ -102,13 +102,16 @@ void main() {
     }
   }
 
-  Map<String, Object?> masterOp(String entity, String id, Map<String, Object?> payload) =>
-      <String, Object?>{
-        'entity': entity,
-        'entity_id': id,
-        'operation': 'createMasterData',
-        'payload': <String, Object?>{'id': id, ...payload},
-      };
+  Map<String, Object?> masterOp(
+    String entity,
+    String id,
+    Map<String, Object?> payload,
+  ) => <String, Object?>{
+    'entity': entity,
+    'entity_id': id,
+    'operation': 'createMasterData',
+    'payload': <String, Object?>{'id': id, ...payload},
+  };
 
   /// `documents` 的 wire 行：只保留白名单列。
   ///
@@ -166,8 +169,7 @@ void main() {
   ///
   /// 只比 `status` 时，`rejected` 本身不告诉你为什么 —— 得回头加打印再跑一遍。
   String reasonsOf(Map<String, Object?> pushJson) => <String>[
-    for (final Object? item in pushJson['results']! as List)
-      receiptLine(item),
+    for (final Object? item in pushJson['results']! as List) receiptLine(item),
   ].join(' | ');
 
   /// 经 HTTP 建一个商品，返回 id
@@ -214,7 +216,10 @@ void main() {
 
   group('/api/health', () {
     test('不需要鉴权（扫码前就要能探到）', () async {
-      final (int status, Map<String, Object?> json) = await call('GET', '/api/health');
+      final (int status, Map<String, Object?> json) = await call(
+        'GET',
+        '/api/health',
+      );
 
       expect(status, 200);
       expect(json['ok'], isTrue);
@@ -380,8 +385,9 @@ void main() {
       );
       // 空库 ⇒ 每路都空 ⇒ 不可能还有下一页
       expect(json['has_more'], isFalse);
-      final Map<String, Object?> cursors =
-          Map<String, Object?>.from(json['next_cursors']! as Map);
+      final Map<String, Object?> cursors = Map<String, Object?>.from(
+        json['next_cursors']! as Map,
+      );
       expect(cursors.keys.toSet(), SyncCursorKeys.all.toSet());
       expect(cursors[SyncCursorKeys.stock], '0');
       expect(cursors[SyncCursorKeys.doc], '0|');
@@ -431,13 +437,10 @@ void main() {
       expect(json['products'], hasLength(1));
       expect(json['parties'], hasLength(1));
       expect(json['accounts'], isEmpty);
-      final Map<String, Object?> cursors =
-          Map<String, Object?>.from(json['next_cursors']! as Map);
-      expect(
-        cursors[SyncCursorKeys.stock],
-        '1',
-        reason: '游标推进到已拉取的最大 seq_no',
+      final Map<String, Object?> cursors = Map<String, Object?>.from(
+        json['next_cursors']! as Map,
       );
+      expect(cursors[SyncCursorKeys.stock], '1', reason: '游标推进到已拉取的最大 seq_no');
       expect(
         cursors[SyncCursorKeys.products]!.toString(),
         contains('|'),
@@ -508,13 +511,11 @@ void main() {
       );
       expect(deltaStatus, 200);
       expect(
-        (delta['products']! as List), hasLength(1),
+        (delta['products']! as List),
+        hasLength(1),
         reason: '改动必须能被另一台设备感知',
       );
-      expect(
-        ((delta['products']! as List).single! as Map)['cost_price'],
-        120,
-      );
+      expect(((delta['products']! as List).single! as Map)['cost_price'], 120);
       // 每个实体的游标**独立**：给了一个游标，其余实体照常返回（从头拉）
       expect(
         delta.keys.toSet().containsAll(SyncPullResult.entityNames),
@@ -597,10 +598,7 @@ void main() {
         '/api/sync/pull',
         bearer: token(),
       );
-      expect(
-        ((full['products']! as List).single! as Map)['cost_price'],
-        130,
-    );
+      expect(((full['products']! as List).single! as Map)['cost_price'], 130);
     });
 
     test('明细漏 id → rejected + reason_code，列名细节只进日志（HTTP 全链路）', () async {
@@ -616,7 +614,8 @@ void main() {
       // 故意去掉明细的 id —— 这是 2026-09-25 真实踩过的坑：
       // `document_lines.id` 由客户端生成、主机原样落库（sync_protocol.md §8.1）
       final Map<String, Object?> line =
-          ((op['payload']! as Map)['lines']! as List).first as Map<String, Object?>;
+          ((op['payload']! as Map)['lines']! as List).first
+              as Map<String, Object?>;
       line.remove('id');
 
       final (int status, Map<String, Object?> json) = await call(
@@ -645,7 +644,9 @@ void main() {
       // #42 补正（2026-10-16）：#42 把缺列异常改成 `RowDecodeException`，本条与
       // `selfcheck_host` 同批漏改（复跑抓出）⇒ 补齐；新子串只可能由被测路径给出。
       expect(
-        internalErrors.any((String e) => e.contains('RowDecodeException(id: 缺少这一列)')),
+        internalErrors.any(
+          (String e) => e.contains('RowDecodeException(id: 缺少这一列)'),
+        ),
         isTrue,
         reason: '细节必须点到具体列名，否则只能靠复跑定位',
       );

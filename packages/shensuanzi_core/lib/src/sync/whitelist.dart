@@ -65,7 +65,13 @@ class SyncWhitelist {
       'is_active',
       'remark',
     },
-    Schema.accounts: <String>{'id', 'name', 'type', 'initial_balance', 'is_active'},
+    Schema.accounts: <String>{
+      'id',
+      'name',
+      'type',
+      'initial_balance',
+      'is_active',
+    },
     Schema.documents: <String>{
       'id',
       'doc_no',

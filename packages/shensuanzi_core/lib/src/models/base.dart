@@ -97,9 +97,12 @@ extension RowReader on Map<String, Object?> {
 
   /// ⚠️ **只记列名与期望类型，不记值** —— 值可能是经营数据
   /// （客户名 / 金额），见 `read_failures.dart` 的日志纪律。
-  RowDecodeException _typeError(String column, String expected, Object? actual) =>
-      RowDecodeException(
-        column: column,
-        reason: '这一列应为 $expected，实际是 ${actual.runtimeType}',
-      );
+  RowDecodeException _typeError(
+    String column,
+    String expected,
+    Object? actual,
+  ) => RowDecodeException(
+    column: column,
+    reason: '这一列应为 $expected，实际是 ${actual.runtimeType}',
+  );
 }

@@ -51,10 +51,13 @@ export 'src/mobile_sync_service.dart'
         syncLinkStateOf;
 export 'src/mirror_view.dart' show MirrorView;
 export 'src/mobile_guidance.dart'
-    show MobileGuideTopic, mirrorEmptyMessage, mobileGuideMessage, mobileGuideTitle;
+    show
+        MobileGuideTopic,
+        mirrorEmptyMessage,
+        mobileGuideMessage,
+        mobileGuideTitle;
 export 'src/pairing_store.dart' show PairingInfo, PairingStore;
-export 'src/data_marker.dart'
-    show DataMarker, DirectoryContents, contentsOf;
+export 'src/data_marker.dart' show DataMarker, DirectoryContents, contentsOf;
 export 'src/dialog_model.dart'
     show ConfirmOutcome, DataDirectoryDialogModel, DialogNoticeKind;
 export 'src/startup.dart' show StartupDecision, StartupScenario;
@@ -63,9 +66,13 @@ export 'src/startup.dart' show StartupDecision, StartupScenario;
 // 它们**刻意不导出**（不扩大包的公开面），但仍是 public 的，
 // 好让包内测试能直接测那层映射（`test/environment_test.dart` 用 `src/` 导入）。
 export 'src/environment.dart'
-    show AppEnvironment, DriveEnumeration, DriveEnumerator, DriveInfo, DriveKind;
-export 'src/navigation.dart'
-    show AppNavigation, NavDestination, NavSection;
+    show
+        AppEnvironment,
+        DriveEnumeration,
+        DriveEnumerator,
+        DriveInfo,
+        DriveKind;
+export 'src/navigation.dart' show AppNavigation, NavDestination, NavSection;
 export 'src/backup.dart'
     show
         BackupFileName,
@@ -83,15 +90,16 @@ export 'src/backup.dart'
 export 'src/typography.dart' show AppTypography;
 export 'src/version.dart' show AppVersion;
 export 'src/shell_kind.dart' show ShellKind, overviewNavHint, shellKindFor;
-export 'src/manual_content.dart' show
-    ManualBlock,
-    ManualNote,
-    ManualParagraph,
-    ManualQa,
-    ManualSection,
-    ManualSteps,
-    assertManualIsUserFacing,
-    buildManualSections;
+export 'src/manual_content.dart'
+    show
+        ManualBlock,
+        ManualNote,
+        ManualParagraph,
+        ManualQa,
+        ManualSection,
+        ManualSteps,
+        assertManualIsUserFacing,
+        buildManualSections;
 export 'src/log.dart' show AppLog, formatLogLine, logFileName, logFolderName;
 
 // ---- §AF 数据导出 ----
@@ -130,8 +138,7 @@ export 'src/format.dart'
         partyMutationNotice,
         partySameNameHint;
 export 'src/fs.dart' show ensureWritableDirectory;
-export 'src/entry_layout.dart'
-    show entryFieldsMinWidth, entryFieldsShouldStack;
+export 'src/entry_layout.dart' show entryFieldsMinWidth, entryFieldsShouldStack;
 export 'src/scan_error.dart'
     show ScanFailureKind, scanFailureKindOf, scanFailureMessage;
 export 'src/master_data_policy.dart' show MasterDataPolicy;

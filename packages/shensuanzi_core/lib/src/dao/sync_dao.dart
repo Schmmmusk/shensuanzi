@@ -134,10 +134,9 @@ class SyncQueueDao {
 
   SyncQueueEntry? findById(String id) {
     final List<SyncQueueEntry> found = decodeRows(
-      _raw.select(
-        'SELECT * FROM ${Schema.syncQueue} WHERE id = ?',
-        <Object?>[id],
-      ),
+      _raw.select('SELECT * FROM ${Schema.syncQueue} WHERE id = ?', <Object?>[
+        id,
+      ]),
       SyncQueueEntry.fromRow,
       table: Schema.syncQueue,
       failures: db.readFailures,
@@ -209,8 +208,10 @@ class SyncQueueDao {
     ],
   );
 
-  void delete(String id) =>
-      _raw.execute('DELETE FROM ${Schema.syncQueue} WHERE id = ?', <Object?>[id]);
+  void delete(String id) => _raw.execute(
+    'DELETE FROM ${Schema.syncQueue} WHERE id = ?',
+    <Object?>[id],
+  );
 
   /// **拉取确认**后清除已推送条目（R-14 附带问题 3）。
   ///
@@ -280,7 +281,10 @@ class SyncQueueDao {
 ///
 /// 明细列表用现成的 [SyncQueueDao.withStatus]（`pending` / `failed` 各一查）。
 class SyncQueueTriage {
-  const SyncQueueTriage({required this.pendingCount, required this.failedCount});
+  const SyncQueueTriage({
+    required this.pendingCount,
+    required this.failedCount,
+  });
 
   /// `pending` 条数 = 「待同步 N 条」的 N。
   final int pendingCount;
@@ -292,7 +296,8 @@ class SyncQueueTriage {
   bool get isSynced => pendingCount == 0 && failedCount == 0;
 
   @override
-  String toString() => 'SyncQueueTriage(pending: $pendingCount, failed: $failedCount)';
+  String toString() =>
+      'SyncQueueTriage(pending: $pendingCount, failed: $failedCount)';
 }
 
 /// 时钟偏移（`docs/data_model.md` §4.2，单行表）。

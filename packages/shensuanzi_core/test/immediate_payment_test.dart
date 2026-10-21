@@ -140,12 +140,10 @@ void main() {
 
       // 自动生成的 receipt 单
       expect(countOf('documents'), 2, reason: 'sale + 自动 receipt');
-      final Row auto = db.raw
-          .select(
-            'SELECT * FROM documents WHERE ref_doc_id = ? AND doc_type = ?',
-            <Object?>[sale.id, 'receipt'],
-          )
-          .first;
+      final Row auto = db.raw.select(
+        'SELECT * FROM documents WHERE ref_doc_id = ? AND doc_type = ?',
+        <Object?>[sale.id, 'receipt'],
+      ).first;
       expect(auto['doc_no'].toString().startsWith('SK'), isTrue);
       expect(auto['total_amount'], 5000);
       expect(auto['status'], 'settled');
@@ -154,9 +152,15 @@ void main() {
       expect(auto['account_id'], accountId);
 
       // 资金流水挂在收付款单下（纪律 11）
-      final List<MoneyLedger> moneyRows = money.ofDocument(auto['id']! as String);
+      final List<MoneyLedger> moneyRows = money.ofDocument(
+        auto['id']! as String,
+      );
       expect(moneyRows.single.amount, 5000);
-      expect(money.ofDocument(sale.id), isEmpty, reason: '主单不得直接写 money_ledger');
+      expect(
+        money.ofDocument(sale.id),
+        isEmpty,
+        reason: '主单不得直接写 money_ledger',
+      );
 
       // 核销关系
       expect(settlements.settledAmountOf(sale.id), 5000);
@@ -260,11 +264,10 @@ void main() {
       );
 
       expect(
-        db.raw
-            .select('SELECT COUNT(*) AS c FROM documents WHERE doc_type = ?', <Object?>[
-              'receipt',
-            ])
-            .first['c'],
+        db.raw.select(
+          'SELECT COUNT(*) AS c FROM documents WHERE doc_type = ?',
+          <Object?>['receipt'],
+        ).first['c'],
         2,
       );
       expect(documents.findById(sale.id)!.status, DocStatus.settled);
@@ -324,7 +327,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleInternalError,
+        reason: outcome.reason,
+      );
       expect(countOf('documents'), 0);
     });
 
@@ -391,11 +398,10 @@ void main() {
       expect(partyLedger.balanceOf(partyId), 0, reason: '欠款清零');
       expect(stock.stockOf(productId), 10);
       expect(
-        db.raw
-            .select('SELECT COUNT(*) AS c FROM documents WHERE doc_type = ?', <Object?>[
-              'payment',
-            ])
-            .first['c'],
+        db.raw.select(
+          'SELECT COUNT(*) AS c FROM documents WHERE doc_type = ?',
+          <Object?>['payment'],
+        ).first['c'],
         1,
       );
     });
@@ -534,7 +540,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleValidationFailed, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleValidationFailed,
+        reason: outcome.reason,
+      );
       expect(documents.findById(sale.id)!.paidAmount, 0);
     });
 
@@ -566,25 +576,29 @@ void main() {
       final String accountId = createAccount();
 
       expect(
-        engine.dispatch(
-          document: doc(
-            type: DocType.receipt,
-            partyId: partyId,
-            totalAmount: 100,
-          ),
-          now: now(),
-        ).code,
+        engine
+            .dispatch(
+              document: doc(
+                type: DocType.receipt,
+                partyId: partyId,
+                totalAmount: 100,
+              ),
+              now: now(),
+            )
+            .code,
         RejectCode.ruleInternalError,
       );
       expect(
-        engine.dispatch(
-          document: doc(
-            type: DocType.receipt,
-            accountId: accountId,
-            totalAmount: 100,
-          ),
-          now: now(),
-        ).code,
+        engine
+            .dispatch(
+              document: doc(
+                type: DocType.receipt,
+                accountId: accountId,
+                totalAmount: 100,
+              ),
+              now: now(),
+            )
+            .code,
         RejectCode.ruleInternalError,
       );
     });
@@ -633,12 +647,14 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleValidationFailed, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleValidationFailed,
+        reason: outcome.reason,
+      );
       expect(documents.findById(sale.id)!.paidAmount, 0);
       expect(
-        db.raw
-            .select('SELECT COUNT(*) AS c FROM settlements')
-            .first['c'],
+        db.raw.select('SELECT COUNT(*) AS c FROM settlements').first['c'],
         0,
       );
     });
@@ -680,7 +696,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.actionNotApplicable, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.actionNotApplicable,
+        reason: outcome.reason,
+      );
       expect(documents.findById(sale.id)!.paidAmount, 0);
       expect(money.balanceOf(accountId), 0, reason: '资金不得动');
     });
@@ -722,7 +742,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.actionNotApplicable, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.actionNotApplicable,
+        reason: outcome.reason,
+      );
       expect(documents.findById(purchase.id)!.paidAmount, 0);
     });
 
@@ -764,7 +788,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleInternalError,
+        reason: outcome.reason,
+      );
       expect(documents.findById(sale.id)!.paidAmount, 0);
     });
 
@@ -779,7 +807,9 @@ void main() {
           accountId: accountId,
           totalAmount: 1000,
         ),
-        allocations: <Allocation>[const Allocation(targetDocId: null, amount: 1000)],
+        allocations: <Allocation>[
+          const Allocation(targetDocId: null, amount: 1000),
+        ],
         now: now(),
       );
 
@@ -794,21 +824,19 @@ void main() {
       final String partyId = createParty();
       final String accountId = createAccount();
       final RuleOutcome outcome = engine.dispatch(
-        document: doc(
-          type: DocType.sale,
-          partyId: partyId,
-          totalAmount: 100,
-        ),
+        document: doc(type: DocType.sale, partyId: partyId, totalAmount: 100),
         immediatePayments: <PaymentEntry>[
           PaymentEntry(accountId: accountId, amount: 100),
         ],
-        allocations: <Allocation>[
-          Allocation(targetDocId: null, amount: 100),
-        ],
+        allocations: <Allocation>[Allocation(targetDocId: null, amount: 100)],
         now: now(),
       );
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.payloadMutuallyExclusive, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.payloadMutuallyExclusive,
+        reason: outcome.reason,
+      );
     });
   });
 }

@@ -95,5 +95,8 @@ Uint8List csvBytes(List<String> header, List<List<String>> rows) {
       ..write(csvLine(row))
       ..write('\r\n');
   }
-  return Uint8List.fromList(<int>[...csvBom, ...utf8.encode(buffer.toString())]);
+  return Uint8List.fromList(<int>[
+    ...csvBom,
+    ...utf8.encode(buffer.toString()),
+  ]);
 }

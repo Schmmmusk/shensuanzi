@@ -34,7 +34,8 @@ void expectNoGroupedAmounts(ExportTable table) {
     expect(
       cell,
       isNot(matches(_groupedAmount)),
-      reason: '${table.label} 里的「$cell」像千分位金额 —— '
+      reason:
+          '${table.label} 里的「$cell」像千分位金额 —— '
           '导出只能用 Money.format，Money.formatGrouped 是界面用的',
     );
   }
@@ -192,10 +193,7 @@ void main() {
 
       final ExportSuccess success = outcome as ExportSuccess;
       expect(success.rowCount, 3);
-      expect(
-        p.basename(success.path),
-        '神算子-商品-20260928.csv',
-      );
+      expect(p.basename(success.path), '神算子-商品-20260928.csv');
       expect(File(success.path).existsSync(), isTrue);
 
       final Uint8List bytes = File(success.path).readAsBytesSync();
@@ -203,10 +201,7 @@ void main() {
       // ⚠️ 必须用 `utf8.decode`，不能用 `String.fromCharCodes` ——
       // 后者按 Latin-1 逐字节取值，中文会解成 `ç¼ç ` 这种乱码，
       // 断言必然失败（且失败信息里看不出是**解码**错了）。
-      expect(
-        utf8.decode(bytes.sublist(3)),
-        contains('编码,商品名称'),
-      );
+      expect(utf8.decode(bytes.sublist(3)), contains('编码,商品名称'));
     });
 
     test('0 行 → ExportEmpty，**连目录都不建**（遗漏 4）', () async {
@@ -268,14 +263,8 @@ void main() {
       final ExportOutcome ok = await service.write(table(rows: 2));
       expect(exportOutcomeMessage(ok), contains('已导出 2 条到'));
       expect(exportOutcomeMessage(ok), contains(exportDir));
-      expect(
-        exportOutcomeMessage(const ExportEmpty()),
-        contains('没有数据'),
-      );
-      expect(
-        exportOutcomeMessage(const ExportFailed('磁盘满了')),
-        '导出失败：磁盘满了',
-      );
+      expect(exportOutcomeMessage(const ExportEmpty()), contains('没有数据'));
+      expect(exportOutcomeMessage(const ExportFailed('磁盘满了')), '导出失败：磁盘满了');
     });
   });
 
@@ -285,7 +274,13 @@ void main() {
     test('商品：含编码与状态；条码为空写空串；金额是元', () {
       final ExportTable export = productExportTable(<Product>[
         product(),
-        product(id: 'p2', code: 'P0002', name: '停用货', barcode: null, isActive: false),
+        product(
+          id: 'p2',
+          code: 'P0002',
+          name: '停用货',
+          barcode: null,
+          isActive: false,
+        ),
       ]);
 
       // 金额不带千分位（2026-09-28 裁定）—— 见文件头 expectNoGroupedAmounts
@@ -348,7 +343,11 @@ void main() {
       final ExportTable export = partyExportTable(
         parties: <Party>[
           party(),
-          party(id: 'y2', name: '供应商甲', roles: const <PartyRole>[PartyRole.supplier]),
+          party(
+            id: 'y2',
+            name: '供应商甲',
+            roles: const <PartyRole>[PartyRole.supplier],
+          ),
           party(id: 'y3', name: '两清'),
         ],
         balances: <String, int>{'y1': 12345, 'y2': -6789, 'y3': 0},
@@ -356,7 +355,15 @@ void main() {
 
       // 金额不带千分位（2026-09-28 裁定）—— 见文件头 expectNoGroupedAmounts
       expectNoGroupedAmounts(export);
-      expect(export.header, <String>['往来方', '角色', '电话', '地址', '应收', '应付', '状态']);
+      expect(export.header, <String>[
+        '往来方',
+        '角色',
+        '电话',
+        '地址',
+        '应收',
+        '应付',
+        '状态',
+      ]);
       expect(export.rows[0].sublist(4), <String>['123.45', '0.00', '启用']);
       expect(export.rows[1].sublist(4), <String>['0.00', '67.89', '启用']);
       expect(export.rows[1][1], '供应商');
@@ -416,7 +423,8 @@ void main() {
       expect(
         export.rows.first.last,
         '2026-09-28',
-        reason: '单据「日期」列只到日 —— occurred_at 是业务日期（天粒度），'
+        reason:
+            '单据「日期」列只到日 —— occurred_at 是业务日期（天粒度），'
             '带时分会整列印「00:00」（§BG 方案甲顺带检查）；'
             '往来流水的日期是真实时刻，仍带时分（§AF 遗漏 6 的适用面在那边）',
       );
@@ -474,7 +482,11 @@ void main() {
       // 金额不带千分位（2026-09-28 裁定）—— 见文件头 expectNoGroupedAmounts
       expectNoGroupedAmounts(export);
       expect(export.header, <String>['单号', '单据类型', '金额', '日期']);
-      expect(export.rows[0].sublist(1), <String>['店内销售', '200.00', formatDateTime(t)]);
+      expect(export.rows[0].sublist(1), <String>[
+        '店内销售',
+        '200.00',
+        formatDateTime(t),
+      ]);
       expect(
         export.rows[1][2],
         '-200.00',

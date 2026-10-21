@@ -174,7 +174,9 @@ ${body.toString().trimRight()}
 Future<void> main() async {
   // 脚本按自身路径定位仓库根：packages/shensuanzi_app/tool/ → 上三级
   final String repoRoot = Directory(
-    p.normalize(p.join(p.dirname(p.fromUri(Platform.script)), '..', '..', '..')),
+    p.normalize(
+      p.join(p.dirname(p.fromUri(Platform.script)), '..', '..', '..'),
+    ),
   ).path;
   final String outPath = p.join(repoRoot, 'packaging', '用户手册.html');
 
@@ -185,7 +187,9 @@ Future<void> main() async {
   File(outPath).writeAsStringSync(html, flush: true);
 
   final int bytes = File(outPath).lengthSync();
-  final int sectionCount = buildManualSections(versionLine: AppVersion.display).length;
+  final int sectionCount = buildManualSections(
+    versionLine: AppVersion.display,
+  ).length;
   stdout.writeln('已生成 $outPath');
   stdout.writeln('  章节 $sectionCount 个，$bytes 字节，版本戳 ${AppVersion.display}');
 }

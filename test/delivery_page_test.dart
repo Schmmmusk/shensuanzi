@@ -35,7 +35,8 @@ void expectPickerClosed() {
   expect(
     find.byKey(const Key('picker-search')),
     findsNothing,
-    reason: '选择弹层没关上 —— 多半是「点结果行」点到了搜索框（`find.text` 连 '
+    reason:
+        '选择弹层没关上 —— 多半是「点结果行」点到了搜索框（`find.text` 连 '
         '`EditableText` 一起匹配）。见 pickCustomer 的注释。',
   );
 }
@@ -50,6 +51,7 @@ void main() {
   late PartyService parties;
   // B3b：页面提交改吃 Sink —— 桌面语义 = ServiceSink（与直连逐字同行为）
   late DocumentSink sink;
+
   /// 默认商品「红富士苹果」的 id（#44 的入队夹具要用）
   late String productId;
 
@@ -98,20 +100,21 @@ void main() {
   });
 
   /// [stockDelta] 缺省 `null`（桌面）⇒ 既有用例**零变化**；#44 的「未同步」组显式传入。
-  Widget page({StockDelta? stockDelta, bool mobileShell = false}) => MaterialApp(
-    home: Scaffold(
-      body: DeliveryPage(
-        service: service,
-        productService: products,
-        partyService: parties,
-        sink: sink,
-        stockDelta: stockDelta,
-        masterDataPolicy: const MasterDataPolicy.desktop(),
-        masterDataSink: ServiceMasterSink(products),
-        mobileShell: mobileShell,
-      ),
-    ),
-  );
+  Widget page({StockDelta? stockDelta, bool mobileShell = false}) =>
+      MaterialApp(
+        home: Scaffold(
+          body: DeliveryPage(
+            service: service,
+            productService: products,
+            partyService: parties,
+            sink: sink,
+            stockDelta: stockDelta,
+            masterDataPolicy: const MasterDataPolicy.desktop(),
+            masterDataSink: ServiceMasterSink(products),
+            mobileShell: mobileShell,
+          ),
+        ),
+      );
 
   /// 选第一行的商品。
   ///
@@ -184,13 +187,13 @@ void main() {
 
   int stockSum() =>
       db.raw
-              .select('SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_ledger')
+              .select(
+                'SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_ledger',
+              )
               .first['s']!
           as int;
 
-  testWidgets('客户必选：填了货、没选客户 ⇒ 拦下并说清后果，库里没有单据', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('客户必选：填了货、没选客户 ⇒ 拦下并说清后果，库里没有单据', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await fillRow(tester);
     await tapSave(tester);
@@ -204,9 +207,7 @@ void main() {
     expect(stockSum(), 0, reason: '**也没扣库存** —— 单据没成立');
   });
 
-  testWidgets('成功保存：库存 −10、单据是「待签收」、不需要资金账户', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('成功保存：库存 −10、单据是「待签收」、不需要资金账户', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await pickCustomer(tester);
     await fillRow(tester);
@@ -215,11 +216,7 @@ void main() {
     expect(find.textContaining('已保存'), findsOneWidget);
 
     expect(documentCount(), 1);
-    expect(
-      stockSum(),
-      -10,
-      reason: '送货**创建即扣库存**（货已经出门）',
-    );
+    expect(stockSum(), -10, reason: '送货**创建即扣库存**（货已经出门）');
 
     final Map<String, Object?> row = db.raw
         .select('SELECT status, paid_amount FROM documents')
@@ -227,7 +224,8 @@ void main() {
     expect(
       row['status'],
       DocStatus.inTransit.wire,
-      reason: 'RULE-003 强制送货单落在「待签收」'
+      reason:
+          'RULE-003 强制送货单落在「待签收」'
           '（⚠️ 是 `.wire` = `in_transit`，不是 `.name` = `inTransit`）',
     );
     expect(row['paid_amount'], 0, reason: '送货单不碰钱 —— 全额挂客户');
@@ -251,7 +249,9 @@ void main() {
     // 送货不产生任何资金流水（这是与销售/采购最本质的区别）
     final int cash =
         db.raw
-                .select('SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger')
+                .select(
+                  'SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger',
+                )
                 .first['s']!
             as int;
     expect(cash, 0, reason: '送货单**零资金流水** —— 收款是另一件事（详情页核销）');
@@ -259,7 +259,9 @@ void main() {
 
   // ---- §BG 方案 A：切单位 ⇒ 未被手改的预填价跟着换算（三页同构，各钉各的 Key）----
 
-  testWidgets('§BG 方案A：切到「箱」⇒ 预填价 ×12、单价标注单位、显示换算说明', (WidgetTester tester) async {
+  testWidgets('§BG 方案A：切到「箱」⇒ 预填价 ×12、单价标注单位、显示换算说明', (
+    WidgetTester tester,
+  ) async {
     final Product milk = Product(
       id: newId(),
       code: 'P0002',
@@ -285,9 +287,8 @@ void main() {
     await tester.pumpAndSettle();
     expectPickerClosed();
 
-    TextField priceField() => tester.widget<TextField>(
-      find.byKey(const Key('delivery-price')),
-    );
+    TextField priceField() =>
+        tester.widget<TextField>(find.byKey(const Key('delivery-price')));
     // 预填 = 瓶价 2.50，label 标注最小单位
     expect(priceField().controller!.text, '2.50');
     expect(find.text('单价（元/瓶）*'), findsOneWidget);
@@ -371,24 +372,24 @@ void main() {
   // ⚠️ 第 ② 步在修复前**必红** —— 这就是本用例的反向灵敏度。
   testWidgets('#25 换商品 ⇒ 单价重填（含重选）；手改不阻挡覆盖；取消不覆盖', (WidgetTester tester) async {
     // 第二个商品：售价必须与红富士（5.00）不同，否则断言分辨不出来
-    ProductDao(db).insert(Product(
-      id: newId(),
-      code: 'P0009',
-      name: '黄金梨',
-      sellPrice: 1250,
-      createdAt: 9,
-      updatedAt: 9,
-    ));
+    ProductDao(db).insert(
+      Product(
+        id: newId(),
+        code: 'P0009',
+        name: '黄金梨',
+        sellPrice: 1250,
+        createdAt: 9,
+        updatedAt: 9,
+      ),
+    );
 
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
-    TextField priceField() => tester.widget<TextField>(
-      find.byKey(const Key('delivery-price')),
-    );
-    TextField qtyField() => tester.widget<TextField>(
-      find.byKey(const Key('delivery-qty')),
-    );
+    TextField priceField() =>
+        tester.widget<TextField>(find.byKey(const Key('delivery-price')));
+    TextField qtyField() =>
+        tester.widget<TextField>(find.byKey(const Key('delivery-qty')));
 
     /// 打开选择器并选中 [name]。
     /// [opener] = 行内当前可点的文案：还没选过是「点此选商品」，选过是**上一个商品名**。
@@ -431,11 +432,7 @@ void main() {
     await tester.enterText(find.byKey(const Key('delivery-qty')), '7');
     await tester.pumpAndSettle();
     await pick('黄金梨', '红富士', '红富士苹果');
-    expect(
-      qtyField().controller!.text,
-      '7',
-      reason: '换商品只重置价与单位；数量是用户的输入',
-    );
+    expect(qtyField().controller!.text, '7', reason: '换商品只重置价与单位；数量是用户的输入');
 
     // ⑥ 打开选择器后**取消** ⇒ 不覆盖（`picked == null` 的对称边界）
     final String before = priceField().controller!.text;
@@ -602,10 +599,15 @@ void main() {
   testWidgets('#44 送货页：数量框还空着 + 本地快照为负 + 有未同步销售 ⇒ 不报负库存', (
     WidgetTester tester,
   ) async {
-    enqueueDelivery('q-44d', productId); // 未同步送货 1 件 ⇒ estimated = 0 + (-1) = -1
+    enqueueDelivery(
+      'q-44d',
+      productId,
+    ); // 未同步送货 1 件 ⇒ estimated = 0 + (-1) = -1
 
     await tester.pumpWidget(
-      page(stockDelta: StockDelta(db: db, queue: SyncQueueDao(db))),
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+      ),
     );
     await tester.pumpAndSettle();
     await pickFirstProduct(tester); // ⚠️ 只选商品，**不填数量**
@@ -625,9 +627,7 @@ void main() {
   // #52（2026-10-15 外测 M13）：`_totalBar` 原是 `Row[Text, Spacer, Text]` ——
   // 金额格**没有弹性**，360 宽 + 2.0 字号下「¥ 19,999,980.00」被裁到不可读
   // （外测截图实测）。改成 Expanded + 右对齐（sale / purchase 同款）。
-  testWidgets('#52：窄屏 + 2 倍字号 + 大金额 ⇒ 合计不溢出、金额完整', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#52：窄屏 + 2 倍字号 + 大金额 ⇒ 合计不溢出、金额完整', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(360, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -638,7 +638,10 @@ void main() {
     await tester.pumpWidget(page());
     await fillRow(tester, qty: '10');
     // 单价改大金额：10 × 1,999,998.00 = 19,999,980.00（外测截图同款量级）
-    await tester.enterText(find.byKey(const Key('delivery-price')), '1999998.00');
+    await tester.enterText(
+      find.byKey(const Key('delivery-price')),
+      '1999998.00',
+    );
     await tester.pumpAndSettle();
 
     // 溢出 = `RenderFlex overflow` 异常 ⇒ takeException 抓住。
@@ -647,7 +650,8 @@ void main() {
     expect(
       find.textContaining('19,999,980'),
       findsWidgets,
-      reason: '#52：合计金额完整可读（外测报告 V05 的场景；'
+      reason:
+          '#52：合计金额完整可读（外测报告 V05 的场景；'
           '页内合计展示不止一处，两处都要在）',
     );
   });

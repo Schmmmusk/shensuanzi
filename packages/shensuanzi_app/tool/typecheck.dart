@@ -13,7 +13,8 @@ import '../test/app_config_test.dart' as app_config_test;
 import '../test/backup_test.dart' as backup_test;
 import '../test/bootstrap_test.dart' as bootstrap_test;
 import '../test/csv_test.dart' as csv_test;
-import '../test/data_directory_service_test.dart' as data_directory_service_test;
+import '../test/data_directory_service_test.dart'
+    as data_directory_service_test;
 import '../test/data_directory_test.dart' as data_directory_test;
 import '../test/data_migrator_test.dart' as data_migrator_test;
 import '../test/mobile_sync_service_test.dart' as mobile_sync_service_test;

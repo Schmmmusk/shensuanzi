@@ -83,8 +83,11 @@ void main() {
     test('C:\\Windows → 拒绝（含任意子路径）', () {
       expect(inspect(r'C:\Windows').verdict, DirectoryVerdict.reject);
       expect(inspect(r'C:\Windows\System32').verdict, DirectoryVerdict.reject);
-      expect(inspect(r'c:\windows\system32').verdict, DirectoryVerdict.reject,
-          reason: 'Windows 路径大小写不敏感');
+      expect(
+        inspect(r'c:\windows\system32').verdict,
+        DirectoryVerdict.reject,
+        reason: 'Windows 路径大小写不敏感',
+      );
     });
 
     test('C:\\Program Files（含 x86）→ 拒绝', () {
@@ -108,7 +111,9 @@ void main() {
     DirectoryAdvice inspect(String path) => policy.inspect(path);
 
     test('%LOCALAPPDATA% 下 → 警告（清理软件会扫这里）', () {
-      final DirectoryAdvice advice = inspect(r'C:\Users\tester\AppData\Local\神算子');
+      final DirectoryAdvice advice = inspect(
+        r'C:\Users\tester\AppData\Local\神算子',
+      );
       expect(advice.verdict, DirectoryVerdict.warn);
       expect(advice.isUsable, isTrue, reason: '警告不拦人');
       expect(advice.reason, contains('%LOCALAPPDATA%'));
@@ -174,7 +179,12 @@ void main() {
     test('盘类型未知（拿不到信息）→ 不因此拦人', () {
       // 纯 Dart 探测只能得到 unknown；unknown 既不是 removable 也不是 network
       final DataDirectoryPolicy p = DataDirectoryPolicy(
-        machine(drives: <DriveInfo>[cDrive, const DriveInfo(root: r'D:\')]),
+        machine(
+          drives: <DriveInfo>[
+            cDrive,
+            const DriveInfo(root: r'D:\'),
+          ],
+        ),
       );
       expect(p.inspect(r'D:\神算子数据').verdict, DirectoryVerdict.ok);
     });
@@ -242,10 +252,7 @@ void main() {
     });
 
     test('深层目录也一样', () {
-      expect(
-        policy.backupDirectoryFor(r'D:\a\b\神算子数据'),
-        r'D:\a\b\神算子备份',
-      );
+      expect(policy.backupDirectoryFor(r'D:\a\b\神算子数据'), r'D:\a\b\神算子备份');
     });
 
     test('数据目录自己就叫「神算子备份」→ 备份让位，不和自己重合', () {
@@ -256,20 +263,26 @@ void main() {
 
     test('容量提示：拿不到剩余空间就不编一个值', () {
       expect(policy.spaceHint(r'D:\神算子数据'), 'D 盘剩余 128.0 GB');
-      expect(DataDirectoryPolicy(machine(drives: <DriveInfo>[]))
-          .spaceHint(r'D:\神算子数据'), isNull);
+      expect(
+        DataDirectoryPolicy(
+          machine(drives: <DriveInfo>[]),
+        ).spaceHint(r'D:\神算子数据'),
+        isNull,
+      );
     });
 
     test('容量提示：有卷标就带上（§BK·二：用户认得出是哪块盘）', () {
       final DataDirectoryPolicy withLabel = DataDirectoryPolicy(
-        machine(drives: <DriveInfo>[
-          const DriveInfo(
-            root: r'E:\',
-            kind: DriveKind.fixed,
-            freeBytes: 128 * gb,
-            volumeLabel: '仓库',
-          ),
-        ]),
+        machine(
+          drives: <DriveInfo>[
+            const DriveInfo(
+              root: r'E:\',
+              kind: DriveKind.fixed,
+              freeBytes: 128 * gb,
+              volumeLabel: '仓库',
+            ),
+          ],
+        ),
       );
       expect(withLabel.spaceHint(r'E:\神算子数据'), 'E 盘「仓库」剩余 128.0 GB');
     });

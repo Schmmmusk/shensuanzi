@@ -41,29 +41,25 @@ void main() {
 
   Widget panel() => MaterialApp(
     home: Scaffold(
-      body: SingleChildScrollView(child: HostServicePanel(controller: controller)),
+      body: SingleChildScrollView(
+        child: HostServicePanel(controller: controller),
+      ),
     ),
   );
 
-  testWidgets('默认是关的，且说清「打开意味着什么」（§AH 遗漏 5）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('默认是关的，且说清「打开意味着什么」（§AH 遗漏 5）', (WidgetTester tester) async {
     await tester.pumpWidget(panel());
 
     expect(find.text('已关闭'), findsOneWidget);
     expect(
-      tester
-          .widget<Switch>(find.byKey(const Key('host-service-switch')))
-          .value,
+      tester.widget<Switch>(find.byKey(const Key('host-service-switch'))).value,
       isFalse,
       reason: '监听端口必须是显式用户动作，不是开机默认行为',
     );
     expect(find.text(HostServiceSnapshot.switchHint), findsOneWidget);
   });
 
-  testWidgets('没开的时候不出现二维码 / 重试按钮（不给假入口）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('没开的时候不出现二维码 / 重试按钮（不给假入口）', (WidgetTester tester) async {
     await tester.pumpWidget(panel());
 
     expect(find.byKey(const Key('host-service-show-qr')), findsNothing);

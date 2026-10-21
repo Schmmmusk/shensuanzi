@@ -29,9 +29,7 @@ void main() {
 
   // 2026-10-20 用户实测：原文写「每一步在**左侧**导航都有常驻入口」——
   // 手机壳是**底部**导航（`NavigationBar`），桌面才是左侧列 ⇒ 措辞必须中性。
-  testWidgets('2026-10-20：指路措辞不带「左 / 右」（两端共用一页）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('2026-10-20：指路措辞不带「左 / 右」（两端共用一页）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
 
     expect(find.textContaining('导航栏里都有常驻入口'), findsOneWidget);
@@ -71,9 +69,7 @@ void main() {
     );
   });
 
-  testWidgets('FAQ 覆盖数据位置与换电脑（个体户最关心的两类问题）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('FAQ 覆盖数据位置与换电脑（个体户最关心的两类问题）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
 
     expect(find.textContaining('数据存在哪里'), findsOneWidget);
@@ -84,10 +80,7 @@ void main() {
 
   testWidgets('恢复 FAQ 是六步、写在用户能照做的程度（§AE-6）', (WidgetTester tester) async {
     await tester.pumpWidget(
-      page(
-        dataDirectory: r'D:\神算子数据',
-        backupDirectory: r'D:\神算子备份',
-      ),
+      page(dataDirectory: r'D:\神算子数据', backupDirectory: r'D:\神算子备份'),
     );
 
     expect(find.textContaining('1. 先关掉神算子'), findsOneWidget);
@@ -143,7 +136,10 @@ void main() {
 
     expect(find.text('用户手册'), findsOneWidget);
     expect(find.text('欢迎使用神算子'), findsOneWidget);
-    expect(find.textContaining('你正在使用的版本'), findsOneWidget,
-        reason: '版本戳来自 AppVersion.display，必须真的渲染出来');
+    expect(
+      find.textContaining('你正在使用的版本'),
+      findsOneWidget,
+      reason: '版本戳来自 AppVersion.display，必须真的渲染出来',
+    );
   });
 }

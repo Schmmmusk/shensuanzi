@@ -116,11 +116,7 @@ void main() {
       deactivate('parties', 'y-0000');
 
       expect(PartyService(PartyDao(db)).list().length, 2, reason: '页面默认只看启用');
-      expect(
-        PartyDao(db).findAllForExport().length,
-        3,
-        reason: '否则会计对不上这笔应收',
-      );
+      expect(PartyDao(db).findAllForExport().length, 3, reason: '否则会计对不上这笔应收');
       expect(PartyService(PartyDao(db)).listForExport().length, 3);
     });
   });
@@ -146,15 +142,15 @@ void main() {
 
       expect(DocumentDao(db).listDocumentsForExport().length, 4);
       expect(
-        DocumentDao(db).listDocumentsForExport(
-          types: <DocType>{DocType.sale},
-        ).length,
+        DocumentDao(
+          db,
+        ).listDocumentsForExport(types: <DocType>{DocType.sale}).length,
         1,
       );
       expect(
-        DocumentDao(db).listDocumentsForExport(
-          types: <DocType>{DocType.purchase},
-        ).length,
+        DocumentDao(
+          db,
+        ).listDocumentsForExport(types: <DocType>{DocType.purchase}).length,
         3,
       );
     });
@@ -170,7 +166,9 @@ void main() {
         <Object?>[partyId, 'd-party'],
       );
 
-      final List<DocumentSummary> all = DocumentDao(db).listDocumentsForExport();
+      final List<DocumentSummary> all = DocumentDao(
+        db,
+      ).listDocumentsForExport();
       expect(all, hasLength(2));
       expect(
         all
@@ -179,7 +177,9 @@ void main() {
         '往来方-$partyId',
       );
       expect(
-        all.firstWhere((DocumentSummary s) => s.document.id == 'd-old').partyName,
+        all
+            .firstWhere((DocumentSummary s) => s.document.id == 'd-old')
+            .partyName,
         isNull,
         reason: '散客 / 散采无对方 —— UI 与导出都要显示文字（AF-9）',
       );

@@ -105,7 +105,10 @@ class StartupDecision {
 
   /// [firstRunWithData] 的默认位置（**已有数据**的那个目录）。
   const StartupDecision.firstRunWithData(String defaultPath)
-    : this(scenario: StartupScenario.firstRunWithData, defaultPath: defaultPath);
+    : this(
+        scenario: StartupScenario.firstRunWithData,
+        defaultPath: defaultPath,
+      );
 
   /// [recoverLocation]：能读出「上次用的是哪个路径」就带上（用于文案）；
   /// 配置损坏得读不出路径时为 `null`。

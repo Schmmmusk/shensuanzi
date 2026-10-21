@@ -52,32 +52,41 @@ void main() {
     }());
 
     check('名称必填：空 / 全空格 / 超长都拦', () {
-      return (goodDraft(name: '').validate()[AccountField.name] ?? '')
-              .contains('请填账户名称') &&
-          (goodDraft(name: '   ').validate()[AccountField.name] ?? '')
-              .contains('请填账户名称') &&
+      return (goodDraft(name: '').validate()[AccountField.name] ?? '').contains(
+            '请填账户名称',
+          ) &&
+          (goodDraft(name: '   ').validate()[AccountField.name] ?? '').contains(
+            '请填账户名称',
+          ) &&
           (goodDraft(name: '长' * 61).validate()[AccountField.name] ?? '')
               .contains('60 字以内');
     }());
 
     check(
       '类型必选',
-      (goodDraft(type: null).validate()[AccountField.type] ?? '')
-          .contains('请选一个账户类型'),
+      (goodDraft(type: null).validate()[AccountField.type] ?? '').contains(
+        '请选一个账户类型',
+      ),
     );
 
     check('期初余额：合法收 / 非法拦 / 负数拦', () {
       final AccountDraft ok = goodDraft(initialBalance: ' 1000.50 ');
       return ok.validate().isEmpty &&
           ok.initialBalanceCents == 100050 &&
-          (goodDraft(initialBalance: 'abc')
-                  .validate()[AccountField.initialBalance] ?? '')
+          (goodDraft(
+                    initialBalance: 'abc',
+                  ).validate()[AccountField.initialBalance] ??
+                  '')
               .contains('只能填数字') &&
-          (goodDraft(initialBalance: '1.005')
-                  .validate()[AccountField.initialBalance] ?? '')
+          (goodDraft(
+                    initialBalance: '1.005',
+                  ).validate()[AccountField.initialBalance] ??
+                  '')
               .contains('两位小数') &&
-          (goodDraft(initialBalance: '-5')
-                  .validate()[AccountField.initialBalance] ?? '')
+          (goodDraft(
+                    initialBalance: '-5',
+                  ).validate()[AccountField.initialBalance] ??
+                  '')
               .contains('不能是负数');
     }());
 
@@ -107,7 +116,8 @@ void main() {
         ),
         now: now(),
       );
-      final bool ok = a.name == '微信收款' &&
+      final bool ok =
+          a.name == '微信收款' &&
           a.type == AccountType.wechat &&
           a.initialBalance == 50000 &&
           AccountDao(db).findById(a.id)?.initialBalance == 50000;
@@ -124,7 +134,8 @@ void main() {
         thrown = error;
       }
       final int count =
-          db.raw.select('SELECT COUNT(*) AS n FROM accounts').first['n']! as int;
+          db.raw.select('SELECT COUNT(*) AS n FROM accounts').first['n']!
+              as int;
       final bool ok = thrown is AccountDraftInvalid && count == 0;
       db.close();
       return ok;
@@ -138,7 +149,11 @@ void main() {
       );
       final Account updated = service.update(
         a.id,
-        AccountDraft(name: '门店现金', type: AccountType.bank, initialBalance: '99999'),
+        AccountDraft(
+          name: '门店现金',
+          type: AccountType.bank,
+          initialBalance: '99999',
+        ),
         now: now(),
       );
       return updated.name == '门店现金' &&

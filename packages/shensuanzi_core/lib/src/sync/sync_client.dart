@@ -44,7 +44,7 @@ class SyncClient {
     this.docUpdateWindow = const Duration(days: 7),
     this.maxPullPages = 200,
     this.pushBatchCap = 5,
-  })     : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
+  }) : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
        cursors = SyncCursorDao(db),
        queue = SyncQueueDao(db),
        clockOffset = ClockOffsetDao(db) {
@@ -452,8 +452,8 @@ class SyncClient {
     int? docUpdatedSince;
     if (docUpdateWindow != null && firstPage) {
       final int defaultBound = now - docUpdateWindow!.inMilliseconds;
-      docUpdatedSince = docUpdatedSinceFloor == null ||
-              docUpdatedSinceFloor >= defaultBound
+      docUpdatedSince =
+          docUpdatedSinceFloor == null || docUpdatedSinceFloor >= defaultBound
           ? defaultBound
           : docUpdatedSinceFloor;
     }
@@ -461,14 +461,16 @@ class SyncClient {
     final TransportResponse response = await transport.send(
       TransportRequest(
         method: 'GET',
-        uri: baseUri.resolve(pullPath).replace(
-          queryParameters: <String, String>{
-            ...since,
-            'limit': '${limit ?? pageLimit}',
-            if (docUpdatedSince != null)
-              'doc_updated_since': '$docUpdatedSince',
-          },
-        ),
+        uri: baseUri
+            .resolve(pullPath)
+            .replace(
+              queryParameters: <String, String>{
+                ...since,
+                'limit': '${limit ?? pageLimit}',
+                if (docUpdatedSince != null)
+                  'doc_updated_since': '$docUpdatedSince',
+              },
+            ),
         headers: _headers(),
       ),
     );

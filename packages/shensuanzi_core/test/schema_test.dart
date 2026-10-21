@@ -81,7 +81,11 @@ void main() {
           .select('PRAGMA table_info($table)')
           .map((Row r) => r['name'])
           .toSet();
-      expect(columns, isNot(contains('is_active')), reason: '$table 不应有 is_active');
+      expect(
+        columns,
+        isNot(contains('is_active')),
+        reason: '$table 不应有 is_active',
+      );
       expect(
         columns,
         isNot(contains('sync_version')),
@@ -183,7 +187,10 @@ void main() {
     test('seq_no 同表内唯一', () {
       seedMinimal(db);
       insertStock(db.raw, 's-1', seqNo: 1);
-      expect(() => insertStock(db.raw, 's-dup', seqNo: 1), throwsA(isA<SqliteException>()));
+      expect(
+        () => insertStock(db.raw, 's-dup', seqNo: 1),
+        throwsA(isA<SqliteException>()),
+      );
     });
 
     test('clock_offset 只允许一行（CHECK id = 1）', () {
@@ -247,7 +254,9 @@ void main() {
       );
       expect(
         statements[3],
-        contains('ALTER TABLE document_lines ADD COLUMN entry_quantity INTEGER'),
+        contains(
+          'ALTER TABLE document_lines ADD COLUMN entry_quantity INTEGER',
+        ),
       );
       expect(
         statements[4],
@@ -299,11 +308,7 @@ void main() {
 
       // 句柄已释放的**可观测证据**：目录删得掉
       deleteQuietly(box);
-      expect(
-        box.existsSync(),
-        isFalse,
-        reason: '迁移失败必须 dispose 连接，否则文件句柄泄漏',
-      );
+      expect(box.existsSync(), isFalse, reason: '迁移失败必须 dispose 连接，否则文件句柄泄漏');
     });
 
     test('已是最新的库重复打开 → 不重复改表（幂等）', () {
@@ -570,7 +575,8 @@ void main() {
       expect(
         retry.schemaVersion,
         3,
-        reason: '重试**能成功**本身就证明 v1→v2 **没有重跑** —— '
+        reason:
+            '重试**能成功**本身就证明 v1→v2 **没有重跑** —— '
             'package_note 已在（上一步提交的），若重跑 v1→v2 会报 duplicate column。'
             '这正是「断点续跑」的可观测证据（§BE：失败不停在起点、也不自动回滚）',
       );

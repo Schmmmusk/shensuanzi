@@ -77,7 +77,8 @@ LocalFileFailureKind classifyLocalFileFailure(Object error, {bool? windows}) {
       return LocalFileFailureKind.busy;
     case 11:
       return isWindows
-          ? LocalFileFailureKind.unknown // Windows: ERROR_BAD_FORMAT
+          ? LocalFileFailureKind
+                .unknown // Windows: ERROR_BAD_FORMAT
           : LocalFileFailureKind.busy; // POSIX: EAGAIN
     // 磁盘满。
     case 112:
@@ -88,7 +89,8 @@ LocalFileFailureKind classifyLocalFileFailure(Object error, {bool? windows}) {
       return LocalFileFailureKind.readOnly;
     case 13:
       return isWindows
-          ? LocalFileFailureKind.unknown // Windows: ERROR_INVALID_DATA
+          ? LocalFileFailureKind
+                .unknown // Windows: ERROR_INVALID_DATA
           : LocalFileFailureKind.readOnly; // POSIX: EACCES
     case 30:
       return LocalFileFailureKind.readOnly; // POSIX: EROFS

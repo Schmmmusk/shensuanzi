@@ -53,8 +53,7 @@ class TransportResponse {
   final String body;
 
   @override
-  String toString() =>
-      'TransportResponse($statusCode, ${body.length} 字节)';
+  String toString() => 'TransportResponse($statusCode, ${body.length} 字节)';
 }
 
 /// 发送请求。实现方**不抛出**网络异常以外的错误 ——

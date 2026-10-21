@@ -263,10 +263,7 @@ class SettlementService {
   }) {
     final int? cents = Money.tryParseYuan(rawAmount.trim());
     if (cents == null) return null;
-    return Overpay(
-      givenCents: cents,
-      dueCents: unsettledCents,
-    ).actionLabel;
+    return Overpay(givenCents: cents, dueCents: unsettledCents).actionLabel;
   }
 
   /// 提交前的结论句：「…… 后这张单就结清了」/「…… 后还欠 ¥Y」。

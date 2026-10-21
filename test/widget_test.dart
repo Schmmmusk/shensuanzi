@@ -46,20 +46,20 @@ void main() {
     ReadFailureLog? readFailures,
     UiScale uiScale = UiScale.standard,
   }) => MaterialApp(
-        home: AppShell(
-          uiScale: uiScale,
-          dataDirectory: r'D:\神算子数据',
-          backupDirectory: r'D:\神算子备份',
-          schemaVersion: 1,
-          databaseReady: databaseReady,
-          configStore: store,
-          onConfigChanged: (AppConfig config) {},
-          // 门控按能力走（§CV·七 ① 乙）；sink 缺省 = 各页照旧 `_PendingPage`
-          masterDataPolicy: const MasterDataPolicy.desktop(),
-          // #42 甲 · L4：读路径坏数据的计数（缺省 null = 不显示提示条）
-          readFailures: readFailures,
-        ),
-      );
+    home: AppShell(
+      uiScale: uiScale,
+      dataDirectory: r'D:\神算子数据',
+      backupDirectory: r'D:\神算子备份',
+      schemaVersion: 1,
+      databaseReady: databaseReady,
+      configStore: store,
+      onConfigChanged: (AppConfig config) {},
+      // 门控按能力走（§CV·七 ① 乙）；sink 缺省 = 各页照旧 `_PendingPage`
+      masterDataPolicy: const MasterDataPolicy.desktop(),
+      // #42 甲 · L4：读路径坏数据的计数（缺省 null = 不显示提示条）
+      readFailures: readFailures,
+    ),
+  );
 
   Future<void> tapNav(WidgetTester tester, String id) async {
     await tester.tap(find.byKey(ValueKey<String>('nav-$id')));
@@ -164,11 +164,7 @@ void main() {
 
     await tapNav(tester, 'sale');
     expect(find.text('销售开单：正在开发'), findsOneWidget);
-    expect(
-      find.text('销售开单'),
-      findsOneWidget,
-      reason: '沉浸模式不显示面包屑，于是只剩导航里那一个',
-    );
+    expect(find.text('销售开单'), findsOneWidget, reason: '沉浸模式不显示面包屑，于是只剩导航里那一个');
   });
 
   testWidgets('数据库没就绪 → 给出「怎么办」，而不是只说哪里错', (WidgetTester tester) async {
@@ -257,6 +253,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('暂时显示不全'), findsOneWidget);
-    expect(tester.takeException(), isNull, reason: '200% 字号下不许溢出（正文换行 + 按钮 Wrap）');
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '200% 字号下不许溢出（正文换行 + 按钮 Wrap）',
+    );
   });
 }

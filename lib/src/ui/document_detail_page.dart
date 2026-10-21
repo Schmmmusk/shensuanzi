@@ -67,7 +67,6 @@ class DocumentDetailPage extends StatefulWidget {
   /// 界面只给 `storageFailureNote` 的分类文案，异常全文进宿主日志）。
   final void Function(Object error, StackTrace stack)? onStorageFailure;
 
-
   @override
   State<DocumentDetailPage> createState() => _DocumentDetailPageState();
 }
@@ -203,7 +202,10 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     // 剪贴板写入**不等待**（与单据列表同款：平台通道的 Future 在测试里永不完成）
     unawaited(Clipboard.setData(ClipboardData(text: docNo)));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已复制单号 $docNo'), duration: const Duration(seconds: 2)),
+      SnackBar(
+        content: Text('已复制单号 $docNo'),
+        duration: const Duration(seconds: 2),
+      ),
     );
   }
 
@@ -326,7 +328,9 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
   Widget _amountCard(ThemeData theme, DocumentSummary summary) {
     final Document doc = summary.document;
     // §审查 BUG-04：真实未收 = 金额 − 已核销 − 该单累计退货冲减
-    final int unsettled = widget.settlements.unsettledCentsOf(widget.documentId);
+    final int unsettled = widget.settlements.unsettledCentsOf(
+      widget.documentId,
+    );
     // #38 甲（2026-10-14，用户裁定）：**全退之后不再显示「还要收多少 / 欠多少」**
     // —— 那句数字本身会误导（原样显示是 `¥-120.00`），说一句「已全部退清」就够。
     final bool fullyReturned = SettlementService.isFullyReturned(
@@ -412,7 +416,9 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
   Widget _actionRow(ThemeData theme, DocumentSummary summary) {
     final Document doc = summary.document;
     final bool? inbound = SettlementService.isInbound(doc.docType);
-    final int unsettled = widget.settlements.unsettledCentsOf(widget.documentId);
+    final int unsettled = widget.settlements.unsettledCentsOf(
+      widget.documentId,
+    );
     final bool isDelivery = doc.docType == DocType.delivery;
 
     // #39（2026-10-14）：**全退之后不该再有「退货」入口** —— 否则可以再点一次、
@@ -578,7 +584,10 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
       );
     }
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
   }
 
   /// 打开退货页；回来后刷新详情（状态可能变过 —— 拒收会 cancel 原送货单）。
@@ -692,14 +701,14 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                           style: const TextStyle(height: 1.6),
                         ),
                       ),
-                  Text(
-                    '× ${_lines[i].quantity}',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
+                      Text(
+                        '× ${_lines[i].quantity}',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
                       Text(
                         '¥${Money.formatGrouped(_lines[i].amount)}',
                         style: const TextStyle(
@@ -751,17 +760,14 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     final String diffText = diff == 0
         ? '无变化'
         : diff > 0
-              ? '盘盈 +${Money.formatGrouped(diff)}'
-              : '盘亏 ${Money.formatGrouped(diff.abs())}';
+        ? '盘盈 +${Money.formatGrouped(diff)}'
+        : '盘亏 ${Money.formatGrouped(diff.abs())}';
     return Padding(
       padding: const EdgeInsets.only(top: 2),
       child: Text(
         '账面 ${Money.formatGrouped(book)} → 实盘 ${Money.formatGrouped(actual)}'
         '（$diffText）',
-        style: TextStyle(
-          height: 1.6,
-          color: theme.textTheme.bodySmall?.color,
-        ),
+        style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
       ),
     );
   }
@@ -959,10 +965,8 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     );
   }
 
-  Widget _sectionTitle(ThemeData theme, String text) => Text(
-    text,
-    style: theme.textTheme.titleMedium,
-  );
+  Widget _sectionTitle(ThemeData theme, String text) =>
+      Text(text, style: theme.textTheme.titleMedium);
 
   Widget _kv(ThemeData theme, String key, String value, {bool big = false}) =>
       Padding(

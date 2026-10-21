@@ -58,7 +58,10 @@ class RuleRejection implements Exception {
 ///
 /// [SettlementInvalid] 是它的特化（核销路径的既有类型，字段同形）。
 class RuleRejected implements Exception {
-  const RuleRejected(this.reason, {this.code = RejectCode.ruleValidationFailed});
+  const RuleRejected(
+    this.reason, {
+    this.code = RejectCode.ruleValidationFailed,
+  });
 
   /// 给用户看的中文，**写「怎么办」**（`ui_principles §五`）—— 来自
   /// `RuleRejection.reason`，经 `RuleOutcome.rejected` 原样带出。

@@ -39,10 +39,7 @@ List<String> devTermHits(
   String text, {
   List<String> extra = const <String>[],
 }) => <String>[
-  for (final String term in <String>[
-    ...forbiddenDevTermsInUserText,
-    ...extra,
-  ])
+  for (final String term in <String>[...forbiddenDevTermsInUserText, ...extra])
     if (text.contains(term)) term,
 ];
 
@@ -106,15 +103,19 @@ Document pending({
   updatedAt: now(),
 );
 
-List<DocumentLine> oneLine(String docId, String productId, int qty, int price) =>
-    <DocumentLine>[
-      DocumentLine.create(
-        documentId: docId,
-        productId: productId,
-        quantity: qty,
-        unitPrice: price,
-      ),
-    ];
+List<DocumentLine> oneLine(
+  String docId,
+  String productId,
+  int qty,
+  int price,
+) => <DocumentLine>[
+  DocumentLine.create(
+    documentId: docId,
+    productId: productId,
+    quantity: qty,
+    unitPrice: price,
+  ),
+];
 
 SyncOperation opCreateDocument(
   Document d, {
@@ -152,11 +153,12 @@ SyncOperation opMaster(
 String syncProduct({String code = 'P001', int costPrice = 0}) {
   final String id = newId();
   final SyncResponse r = server.handle(
-    opMaster('products', id, SyncOpType.createMasterData, payload: {
-      'code': code,
-      'name': '商品-$code',
-      'cost_price': costPrice,
-    }),
+    opMaster(
+      'products',
+      id,
+      SyncOpType.createMasterData,
+      payload: {'code': code, 'name': '商品-$code', 'cost_price': costPrice},
+    ),
     now: now(),
   );
   if (r.status != SyncStatus.applied) {
@@ -169,9 +171,12 @@ String syncProduct({String code = 'P001', int costPrice = 0}) {
 String syncParty() {
   final String id = newId();
   final SyncResponse r = server.handle(
-    opMaster('parties', id, SyncOpType.createMasterData, payload: {
-      'name': '往来方',
-    }),
+    opMaster(
+      'parties',
+      id,
+      SyncOpType.createMasterData,
+      payload: {'name': '往来方'},
+    ),
     now: now(),
   );
   if (r.status != SyncStatus.applied) {
@@ -184,10 +189,12 @@ String syncParty() {
 String syncAccount() {
   final String id = newId();
   final SyncResponse r = server.handle(
-    opMaster('accounts', id, SyncOpType.createMasterData, payload: {
-      'name': '现金',
-      'type': 'cash',
-    }),
+    opMaster(
+      'accounts',
+      id,
+      SyncOpType.createMasterData,
+      payload: {'name': '现金', 'type': 'cash'},
+    ),
     now: now(),
   );
   if (r.status != SyncStatus.applied) {
@@ -235,16 +242,27 @@ void main() {
 
     final SyncResponse first = server.handle(op, now: now());
     check('applied', first.status == SyncStatus.applied, '${first.reason}');
-    check('主机分配了正式单号',
-        !DocumentDao(db).findById(purchase.id)!.docNo.startsWith(Document.pendingDocNoPrefix));
-    check('RuleEngine 写了库存流水', countOf('stock_ledger') == 1, '${countOf('stock_ledger')}');
+    check(
+      '主机分配了正式单号',
+      !DocumentDao(
+        db,
+      ).findById(purchase.id)!.docNo.startsWith(Document.pendingDocNoPrefix),
+    );
+    check(
+      'RuleEngine 写了库存流水',
+      countOf('stock_ledger') == 1,
+      '${countOf('stock_ledger')}',
+    );
     check('RuleEngine 写了往来流水', countOf('party_ledger') == 1);
     check('库存 = 10', StockLedgerDao(db).stockOf(p) == 10);
     check('回执 entity_id 与推送一致', first.entityId == purchase.id);
 
     final SyncResponse second = server.handle(op, now: now());
-    check('幂等：第二次 already_exists',
-        second.status == SyncStatus.alreadyExists, '${second.status}');
+    check(
+      '幂等：第二次 already_exists',
+      second.status == SyncStatus.alreadyExists,
+      '${second.status}',
+    );
     check('幂等：没有重复流水', countOf('stock_ledger') == 1);
     check('幂等：库存未翻倍', StockLedgerDao(db).stockOf(p) == 10);
     db.close();
@@ -261,8 +279,11 @@ void main() {
       now: now(),
     );
     check('无 party_id 的赊账销售 → rejected', r.status == SyncStatus.rejected);
-    check('无 party_id 的赊账销售 ⇒ 内部 bug（码 rule_internal_error）',
-        r.reasonCode == RejectCode.ruleInternalError, '${r.reasonCode}｜${r.reason}');
+    check(
+      '无 party_id 的赊账销售 ⇒ 内部 bug（码 rule_internal_error）',
+      r.reasonCode == RejectCode.ruleInternalError,
+      '${r.reasonCode}｜${r.reason}',
+    );
     check('整单回滚：单据未落库', DocumentDao(db).findById(sale.id) == null);
     check('整单回滚：没有流水', countOf('stock_ledger') == 0);
     db.close();
@@ -291,15 +312,23 @@ void main() {
       now: now(),
     );
     check('applied', r.status == SyncStatus.applied, '${r.reason}');
-    check('主机自动生成 receipt 单',
-        db.raw
-                .select("SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'receipt'")
-                .first['c'] ==
-            1);
-    check('主单 paid_amount = 500',
-        DocumentDao(db).findById(sale.id)!.paidAmount == 500);
-    check('主单 status = settled',
-        DocumentDao(db).findById(sale.id)!.status == DocStatus.settled);
+    check(
+      '主机自动生成 receipt 单',
+      db.raw
+              .select(
+                "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'receipt'",
+              )
+              .first['c'] ==
+          1,
+    );
+    check(
+      '主单 paid_amount = 500',
+      DocumentDao(db).findById(sale.id)!.paidAmount == 500,
+    );
+    check(
+      '主单 status = settled',
+      DocumentDao(db).findById(sale.id)!.status == DocStatus.settled,
+    );
 
     final SyncResponse both = server.handle(
       opCreateDocument(
@@ -314,11 +343,15 @@ void main() {
       ),
       now: now(),
     );
-    check('immediate_payments 与 allocations 互斥 → rejected',
-        both.status == SyncStatus.rejected);
-    check('互斥 ⇒ payload_mutually_exclusive',
-        both.reasonCode == RejectCode.payloadMutuallyExclusive,
-        '${both.reasonCode}｜${both.reason}');
+    check(
+      'immediate_payments 与 allocations 互斥 → rejected',
+      both.status == SyncStatus.rejected,
+    );
+    check(
+      '互斥 ⇒ payload_mutually_exclusive',
+      both.reasonCode == RejectCode.payloadMutuallyExclusive,
+      '${both.reasonCode}｜${both.reason}',
+    );
     db.close();
   }
 
@@ -336,11 +369,15 @@ void main() {
       ),
       now: now(),
     );
-    check('entity_id ≠ document.id → rejected',
-        idMismatch.status == SyncStatus.rejected);
-    check('id 不符 ⇒ id_mismatch',
-        idMismatch.reasonCode == RejectCode.idMismatch,
-        '${idMismatch.reasonCode}｜${idMismatch.reason}');
+    check(
+      'entity_id ≠ document.id → rejected',
+      idMismatch.status == SyncStatus.rejected,
+    );
+    check(
+      'id 不符 ⇒ id_mismatch',
+      idMismatch.reasonCode == RejectCode.idMismatch,
+      '${idMismatch.reasonCode}｜${idMismatch.reason}',
+    );
 
     final SyncResponse noDocument = server.handle(
       const SyncOperation(
@@ -351,9 +388,11 @@ void main() {
       ),
       now: now(),
     );
-    check('缺 payload.document ⇒ missing_field',
-        noDocument.reasonCode == RejectCode.missingField,
-        '${noDocument.reasonCode}｜${noDocument.reason}');
+    check(
+      '缺 payload.document ⇒ missing_field',
+      noDocument.reasonCode == RejectCode.missingField,
+      '${noDocument.reasonCode}｜${noDocument.reason}',
+    );
 
     final SyncResponse unknownField = server.handle(
       const SyncOperation(
@@ -364,9 +403,11 @@ void main() {
       ),
       now: now(),
     );
-    check('未知顶层字段 ⇒ unknown_field',
-        unknownField.reasonCode == RejectCode.unknownField,
-        '${unknownField.reasonCode}｜${unknownField.reason}');
+    check(
+      '未知顶层字段 ⇒ unknown_field',
+      unknownField.reasonCode == RejectCode.unknownField,
+      '${unknownField.reasonCode}｜${unknownField.reason}',
+    );
 
     final SyncResponse hostOnly = server.handle(
       opCreateDocument(
@@ -376,12 +417,16 @@ void main() {
       ),
       now: now(),
     );
-    check('document 含主机专属列 ⇒ unwritable_column',
-        hostOnly.reasonCode == RejectCode.unwritableColumn,
-        '${hostOnly.reasonCode}｜${hostOnly.reason}');
-    check('列名 created_at 只进日志（不再进 reason）',
-        internalErrors.any((String e) => e.contains('created_at')),
-        internalErrors.join(' | '));
+    check(
+      'document 含主机专属列 ⇒ unwritable_column',
+      hostOnly.reasonCode == RejectCode.unwritableColumn,
+      '${hostOnly.reasonCode}｜${hostOnly.reason}',
+    );
+    check(
+      '列名 created_at 只进日志（不再进 reason）',
+      internalErrors.any((String e) => e.contains('created_at')),
+      internalErrors.join(' | '),
+    );
 
     final SyncResponse missingColumn = server.handle(
       opCreateDocument(
@@ -396,9 +441,13 @@ void main() {
     // 提示里 ⇒ 只断 `contains('doc_type')` 会在 `$error` 丢失时照样绿（空心断言）。
     // #42 补正（2026-10-16）：#42 把缺列异常改成 `RowDecodeException`，本镜像与
     // `sync_server_test` 同批漏改 ⇒ 补齐（新子串只可能由被测路径给出）。
-    check('列名 doc_type 只进日志（不再进 reason）',
-        internalErrors.any((String e) => e.contains('RowDecodeException(doc_type: 缺少这一列)')),
-        internalErrors.join(' | '));
+    check(
+      '列名 doc_type 只进日志（不再进 reason）',
+      internalErrors.any(
+        (String e) => e.contains('RowDecodeException(doc_type: 缺少这一列)'),
+      ),
+      internalErrors.join(' | '),
+    );
 
     final SyncResponse wrongEntity = server.handle(
       const SyncOperation(
@@ -408,9 +457,11 @@ void main() {
       ),
       now: now(),
     );
-    check('entity 不是 documents → **通用回执**（细节只进日志）',
-        wrongEntity.reason == malformedSyncRequestReason,
-        '${wrongEntity.reason}');
+    check(
+      'entity 不是 documents → **通用回执**（细节只进日志）',
+      wrongEntity.reason == malformedSyncRequestReason,
+      '${wrongEntity.reason}',
+    );
     db.close();
   }
 
@@ -427,70 +478,96 @@ void main() {
     final Product saved = ProductDao(db).findById(id)!;
 
     check('applied 且字段落库', saved.code == 'P0001');
-    check('主机写 sync_version = 0', saved.syncVersion == 0, '${saved.syncVersion}');
+    check(
+      '主机写 sync_version = 0',
+      saved.syncVersion == 0,
+      '${saved.syncVersion}',
+    );
     check('主机写 created_at', saved.createdAt >= before);
 
-    final SyncOperation op = opMaster('products', newId(), SyncOpType.createMasterData,
-        payload: <String, Object?>{'code': 'PM2', 'name': '商品'});
-    check('第一次 applied', server.handle(op, now: now()).status == SyncStatus.applied);
-    check('第二次 already_exists',
-        server.handle(op, now: now()).status == SyncStatus.alreadyExists);
+    final SyncOperation op = opMaster(
+      'products',
+      newId(),
+      SyncOpType.createMasterData,
+      payload: <String, Object?>{'code': 'PM2', 'name': '商品'},
+    );
+    check(
+      '第一次 applied',
+      server.handle(op, now: now()).status == SyncStatus.applied,
+    );
+    check(
+      '第二次 already_exists',
+      server.handle(op, now: now()).status == SyncStatus.alreadyExists,
+    );
     check('没有重复行', countOf('products') == 2, '${countOf('products')}');
 
     // §CV·七② 的另一半（主机侧此前**零覆盖** ⇒ 就是上面那条红藏身之处）：
     // **非规范码** ⇒ 主机改派自增，但**不是** rejected。
     final String reassigned = syncProduct(code: 'PM1');
     final String reassignedCode = ProductDao(db).findById(reassigned)!.code;
-    check('非规范编码 ⇒ 视同未提供（改派自增，不拒绝）',
-        reassignedCode != 'PM1' &&
-            ProductCodeGenerator.pattern.hasMatch(reassignedCode),
-        reassignedCode);
+    check(
+      '非规范编码 ⇒ 视同未提供（改派自增，不拒绝）',
+      reassignedCode != 'PM1' &&
+          ProductCodeGenerator.pattern.hasMatch(reassignedCode),
+      reassignedCode,
+    );
 
     final SyncResponse hostOnly = server.handle(
-      opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-        'code': 'PM3',
-        'name': '商品',
-        'sync_version': 5,
-      }),
+      opMaster(
+        'products',
+        newId(),
+        SyncOpType.createMasterData,
+        payload: {'code': 'PM3', 'name': '商品', 'sync_version': 5},
+      ),
       now: now(),
     );
     check('含 sync_version → rejected', hostOnly.status == SyncStatus.rejected);
-    check('列名 sync_version 只进日志（不再进 reason）',
-        internalErrors.any((String e) => e.contains('sync_version')),
-        internalErrors.join(' | '));
+    check(
+      '列名 sync_version 只进日志（不再进 reason）',
+      internalErrors.any((String e) => e.contains('sync_version')),
+      internalErrors.join(' | '),
+    );
 
     final SyncResponse unknown = server.handle(
-      opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-        'code': 'PM4',
-        'name': '商品',
-        'nope': 1,
-      }),
+      opMaster(
+        'products',
+        newId(),
+        SyncOpType.createMasterData,
+        payload: {'code': 'PM4', 'name': '商品', 'nope': 1},
+      ),
       now: now(),
     );
-    check('未知列 nope 只进日志（不再进 reason）',
-        unknown.status == SyncStatus.rejected &&
-            internalErrors.any((String e) => e.contains('nope')),
-        '${unknown.reasonCode}｜${internalErrors.join(' | ')}');
+    check(
+      '未知列 nope 只进日志（不再进 reason）',
+      unknown.status == SyncStatus.rejected &&
+          internalErrors.any((String e) => e.contains('nope')),
+      '${unknown.reasonCode}｜${internalErrors.join(' | ')}',
+    );
 
     final SyncResponse boolValue = server.handle(
-      opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-        'code': 'PM5',
-        'name': '商品',
-        'is_active': true,
-      }),
+      opMaster(
+        'products',
+        newId(),
+        SyncOpType.createMasterData,
+        payload: {'code': 'PM5', 'name': '商品', 'is_active': true},
+      ),
       now: now(),
     );
-    check('bool 值 ⇒ malformed_parameter',
-        boolValue.reasonCode == RejectCode.malformedParameter,
-        '${boolValue.reasonCode}｜${boolValue.reason}');
+    check(
+      'bool 值 ⇒ malformed_parameter',
+      boolValue.reasonCode == RejectCode.malformedParameter,
+      '${boolValue.reasonCode}｜${boolValue.reason}',
+    );
 
     final SyncResponse toDocuments = server.handle(
       opMaster('documents', newId(), SyncOpType.createMasterData),
       now: now(),
     );
-    check('target 是 documents ⇒ not_writable_table',
-        toDocuments.reasonCode == RejectCode.notWritableTable,
-        '${toDocuments.reasonCode}｜${toDocuments.reason}');
+    check(
+      'target 是 documents ⇒ not_writable_table',
+      toDocuments.reasonCode == RejectCode.notWritableTable,
+      '${toDocuments.reasonCode}｜${toDocuments.reason}',
+    );
     db.close();
   }
 
@@ -504,82 +581,124 @@ void main() {
     freshDb();
     final String id = newId();
     final SyncResponse ok = server.handle(
-      opMaster('products', id, SyncOpType.createMasterData, payload: {
-        'code': 'P0001',
-        'name': '带期初的商品',
-        'cost_price': 0,
-        'opening_quantity': 36,
-      }),
+      opMaster(
+        'products',
+        id,
+        SyncOpType.createMasterData,
+        payload: {
+          'code': 'P0001',
+          'name': '带期初的商品',
+          'cost_price': 0,
+          'opening_quantity': 36,
+        },
+      ),
       now: now(),
     );
     check('#31 applied', ok.status == SyncStatus.applied, '${ok.reason}');
     check('#31 商品已建档', ProductDao(db).findById(id) != null);
-    check('#31 期初 = stocktake 单（RULE-009 总额 0）',
-        (db.raw.select(
-              "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
-            ).first['c']! as int) ==
-            1 &&
-            (db.raw.select(
-                  "SELECT total_amount FROM documents WHERE doc_type = 'stocktake'",
-                ).first['total_amount']! as int) ==
-                0);
-    check('#31 库存流水 = 期初量',
-        (db.raw.select(
-              'SELECT COALESCE(SUM(quantity),0) AS s FROM stock_ledger',
-            ).first['s']! as int) ==
-            36);
+    check(
+      '#31 期初 = stocktake 单（RULE-009 总额 0）',
+      (db.raw
+                      .select(
+                        "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
+                      )
+                      .first['c']!
+                  as int) ==
+              1 &&
+          (db.raw
+                      .select(
+                        "SELECT total_amount FROM documents WHERE doc_type = 'stocktake'",
+                      )
+                      .first['total_amount']!
+                  as int) ==
+              0,
+    );
+    check(
+      '#31 库存流水 = 期初量',
+      (db.raw
+                  .select(
+                    'SELECT COALESCE(SUM(quantity),0) AS s FROM stock_ledger',
+                  )
+                  .first['s']!
+              as int) ==
+          36,
+    );
 
     // 纯建档：payload 不带该键 ⇒ 零感知
     final SyncResponse plain = server.handle(
-      opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-        'code': 'P0002',
-        'name': '没期初的商品',
-        'cost_price': 0,
-      }),
+      opMaster(
+        'products',
+        newId(),
+        SyncOpType.createMasterData,
+        payload: {'code': 'P0002', 'name': '没期初的商品', 'cost_price': 0},
+      ),
       now: now(),
     );
-    check('#31 纯建档 applied 且无第二张 stocktake',
-        plain.status == SyncStatus.applied &&
-            (db.raw.select(
-                  "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
-                ).first['c']! as int) ==
-                1);
+    check(
+      '#31 纯建档 applied 且无第二张 stocktake',
+      plain.status == SyncStatus.applied &&
+          (db.raw
+                      .select(
+                        "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
+                      )
+                      .first['c']!
+                  as int) ==
+              1,
+    );
 
     // 客户端 bug 三类 ⇒ malformed（不进重试）
     final SyncResponse wrongTable = server.handle(
-      opMaster('parties', newId(), SyncOpType.createMasterData, payload: {
-        'name': '某客户',
-        'opening_quantity': 5,
-      }),
+      opMaster(
+        'parties',
+        newId(),
+        SyncOpType.createMasterData,
+        payload: {'name': '某客户', 'opening_quantity': 5},
+      ),
       now: now(),
     );
-    check('#31 opening 出现在其它表 ⇒ malformed_parameter',
-        wrongTable.reasonCode == RejectCode.malformedParameter,
-        '${wrongTable.reasonCode}｜${wrongTable.reason}');
+    check(
+      '#31 opening 出现在其它表 ⇒ malformed_parameter',
+      wrongTable.reasonCode == RejectCode.malformedParameter,
+      '${wrongTable.reasonCode}｜${wrongTable.reason}',
+    );
     final SyncResponse badType = server.handle(
-      opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-        'code': 'P0003',
-        'name': '商品',
-        'cost_price': 0,
-        'opening_quantity': '36',
-      }),
+      opMaster(
+        'products',
+        newId(),
+        SyncOpType.createMasterData,
+        payload: {
+          'code': 'P0003',
+          'name': '商品',
+          'cost_price': 0,
+          'opening_quantity': '36',
+        },
+      ),
       now: now(),
     );
-    check('#31 opening 类型不符 ⇒ malformed_parameter',
-        badType.reasonCode == RejectCode.malformedParameter,
-        '${badType.reasonCode}｜${badType.reason}');
+    check(
+      '#31 opening 类型不符 ⇒ malformed_parameter',
+      badType.reasonCode == RejectCode.malformedParameter,
+      '${badType.reasonCode}｜${badType.reason}',
+    );
     final SyncResponse dup = server.handle(
-      opMaster('products', id, SyncOpType.createMasterData, payload: {
-        'code': 'P0001',
-        'name': '带期初的商品',
-        'cost_price': 0,
-        'opening_quantity': 10,
-      }),
+      opMaster(
+        'products',
+        id,
+        SyncOpType.createMasterData,
+        payload: {
+          'code': 'P0001',
+          'name': '带期初的商品',
+          'cost_price': 0,
+          'opening_quantity': 10,
+        },
+      ),
       now: now(),
     );
-    check('#31 已存在 + opening ⇒ malformed_parameter（不静默丢期初）',
-        dup.reasonCode == RejectCode.malformedParameter,
-        '${dup.reasonCode}｜${dup.reason}');
+    check(
+      '#31 已存在 + opening ⇒ malformed_parameter（不静默丢期初）',
+      dup.reasonCode == RejectCode.malformedParameter,
+      '${dup.reasonCode}｜${dup.reason}',
+    );
     db.close();
   }
 
@@ -591,57 +710,70 @@ void main() {
   {
     freshDb();
     final String firstId = syncProduct(code: 'P7001');
-    check('客户端编码可用 ⇒ 原样采用',
-        ProductDao(db).findById(firstId)!.code == 'P7001');
+    check('客户端编码可用 ⇒ 原样采用', ProductDao(db).findById(firstId)!.code == 'P7001');
 
     final String secondId = newId();
     final SyncResponse second = server.handle(
-      opMaster('products', secondId, SyncOpType.createMasterData, payload: {
-        'code': 'P7001',
-        'name': '商品乙',
-      }),
-      now: now(),
-    );
-    check('同 code 异 id ⇒ applied（改派**不是**错误）',
-        second.status == SyncStatus.applied, '${second.reason}');
-    check('改派后编码 ≠ 请求的编码（顺延 P7002）',
-        ProductDao(db).findById(secondId)!.code == 'P7002',
-        ProductDao(db).findById(secondId)!.code);
-    check('原占用者的编码一个字都不动',
-        ProductDao(db).findById(firstId)!.code == 'P7001');
-    check('两条都落库（改派不是拒绝）', countOf('products') == 2,
-        '${countOf('products')}');
-
-    final String thirdId = newId();
-    final SyncResponse third = server.handle(
-      opMaster('products', thirdId, SyncOpType.createMasterData, payload: {
-        'code': 'P7001',
-        'name': '商品丙',
-      }),
+      opMaster(
+        'products',
+        secondId,
+        SyncOpType.createMasterData,
+        payload: {'code': 'P7001', 'name': '商品乙'},
+      ),
       now: now(),
     );
     check(
-        '两台设备先后推同一 code ⇒ 先后改派，不撞 UNIQUE',
-        third.status == SyncStatus.applied &&
-            ProductDao(db).findById(thirdId)!.code == 'P7003',
-        '${third.reason} / ${ProductDao(db).findById(thirdId)!.code}');
+      '同 code 异 id ⇒ applied（改派**不是**错误）',
+      second.status == SyncStatus.applied,
+      '${second.reason}',
+    );
+    check(
+      '改派后编码 ≠ 请求的编码（顺延 P7002）',
+      ProductDao(db).findById(secondId)!.code == 'P7002',
+      ProductDao(db).findById(secondId)!.code,
+    );
+    check('原占用者的编码一个字都不动', ProductDao(db).findById(firstId)!.code == 'P7001');
+    check('两条都落库（改派不是拒绝）', countOf('products') == 2, '${countOf('products')}');
 
-    final SyncResponse badCode = server.handle(
-      opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-        'code': 5,
-        'name': '商品',
-      }),
+    final String thirdId = newId();
+    final SyncResponse third = server.handle(
+      opMaster(
+        'products',
+        thirdId,
+        SyncOpType.createMasterData,
+        payload: {'code': 'P7001', 'name': '商品丙'},
+      ),
       now: now(),
     );
-    check('code 不是字符串 ⇒ **通用回执**（细节只进日志）',
-        badCode.status == SyncStatus.rejected &&
-            badCode.reason == malformedSyncRequestReason,
-        '${badCode.reason}');
+    check(
+      '两台设备先后推同一 code ⇒ 先后改派，不撞 UNIQUE',
+      third.status == SyncStatus.applied &&
+          ProductDao(db).findById(thirdId)!.code == 'P7003',
+      '${third.reason} / ${ProductDao(db).findById(thirdId)!.code}',
+    );
+
+    final SyncResponse badCode = server.handle(
+      opMaster(
+        'products',
+        newId(),
+        SyncOpType.createMasterData,
+        payload: {'code': 5, 'name': '商品'},
+      ),
+      now: now(),
+    );
+    check(
+      'code 不是字符串 ⇒ **通用回执**（细节只进日志）',
+      badCode.status == SyncStatus.rejected &&
+          badCode.reason == malformedSyncRequestReason,
+      '${badCode.reason}',
+    );
     // 通用回执**文案本身**也要守规矩（用户可见文本）—— §CV·十五
-    check('通用回执：不含开发术语且说了「重试」',
-        devTermHits(malformedSyncRequestReason).isEmpty &&
-            malformedSyncRequestReason.contains('重试'),
-        malformedSyncRequestReason);
+    check(
+      '通用回执：不含开发术语且说了「重试」',
+      devTermHits(malformedSyncRequestReason).isEmpty &&
+          malformedSyncRequestReason.contains('重试'),
+      malformedSyncRequestReason,
+    );
     db.close();
   }
 
@@ -651,36 +783,56 @@ void main() {
     final String id = syncProduct(code: 'PU1');
 
     final SyncResponse ok = server.handle(
-      opMaster('products', id, SyncOpType.updateMasterData, baseVersion: 0, payload: {
-        'sell_price': 1234,
-      }),
+      opMaster(
+        'products',
+        id,
+        SyncOpType.updateMasterData,
+        baseVersion: 0,
+        payload: {'sell_price': 1234},
+      ),
       now: now(),
     );
-    check('base_version 匹配 → applied', ok.status == SyncStatus.applied, '${ok.reason}');
+    check(
+      'base_version 匹配 → applied',
+      ok.status == SyncStatus.applied,
+      '${ok.reason}',
+    );
     check('字段已更新', ProductDao(db).findById(id)!.sellPrice == 1234);
     check('sync_version 0 → 1', ProductDao(db).findById(id)!.syncVersion == 1);
 
     final SyncResponse stale = server.handle(
-      opMaster('products', id, SyncOpType.updateMasterData, baseVersion: 0, payload: {
-        'sell_price': 999,
-      }),
+      opMaster(
+        'products',
+        id,
+        SyncOpType.updateMasterData,
+        baseVersion: 0,
+        payload: {'sell_price': 999},
+      ),
       now: now(),
     );
     check('base_version 落后 → conflict', stale.status == SyncStatus.conflict);
     check('回传 server_state', stale.serverState != null);
-    check('server_state.sync_version = 1', stale.serverState!['sync_version'] == 1,
-        '${stale.serverState!['sync_version']}');
+    check(
+      'server_state.sync_version = 1',
+      stale.serverState!['sync_version'] == 1,
+      '${stale.serverState!['sync_version']}',
+    );
     check('主机赢：值没被覆盖', ProductDao(db).findById(id)!.sellPrice == 1234);
 
     final SyncResponse noVersion = server.handle(
-      opMaster('products', id, SyncOpType.updateMasterData, payload: {
-        'sell_price': 1,
-      }),
+      opMaster(
+        'products',
+        id,
+        SyncOpType.updateMasterData,
+        payload: {'sell_price': 1},
+      ),
       now: now(),
     );
-    check('缺 base_version ⇒ missing_field',
-        noVersion.reasonCode == RejectCode.missingField,
-        '${noVersion.reasonCode}｜${noVersion.reason}');
+    check(
+      '缺 base_version ⇒ missing_field',
+      noVersion.reasonCode == RejectCode.missingField,
+      '${noVersion.reasonCode}｜${noVersion.reason}',
+    );
 
     // §CV·3（方案丙，2026-10-08）：不存在 ⇒ **upsert 建档**（不再 rejected）。
     //
@@ -692,66 +844,97 @@ void main() {
     freshDb();
     final String upsertId = newId();
     final SyncResponse upsert = server.handle(
-      opMaster('products', upsertId, SyncOpType.updateMasterData, baseVersion: 0, payload: {
-        'name': '离线建的商品',
-        'sell_price': 350,
-      }),
+      opMaster(
+        'products',
+        upsertId,
+        SyncOpType.updateMasterData,
+        baseVersion: 0,
+        payload: {'name': '离线建的商品', 'sell_price': 350},
+      ),
       now: now(),
     );
-    check('目标不存在 ⇒ upsert：applied',
-        upsert.status == SyncStatus.applied, '${upsert.reason}');
-    check('upsert 用 payload 的 id 建档',
-        ProductDao(db).findById(upsertId)!.name == '离线建的商品');
-    check('upsert 建档版本从 0 起（与 create 同）',
-        ProductDao(db).findById(upsertId)!.syncVersion == 0);
-    check('编码由主机生成（update payload 不带 code）',
-        ProductDao(db).findById(upsertId)!.code.isNotEmpty,
-        ProductDao(db).findById(upsertId)!.code);
+    check(
+      '目标不存在 ⇒ upsert：applied',
+      upsert.status == SyncStatus.applied,
+      '${upsert.reason}',
+    );
+    check(
+      'upsert 用 payload 的 id 建档',
+      ProductDao(db).findById(upsertId)!.name == '离线建的商品',
+    );
+    check(
+      'upsert 建档版本从 0 起（与 create 同）',
+      ProductDao(db).findById(upsertId)!.syncVersion == 0,
+    );
+    check(
+      '编码由主机生成（update payload 不带 code）',
+      ProductDao(db).findById(upsertId)!.code.isNotEmpty,
+      ProductDao(db).findById(upsertId)!.code,
+    );
 
     // 乱序收敛：update 先到 ⇒ 建档；create 后到 ⇒ already_exists
     final SyncResponse lateCreate = server.handle(
-      opMaster('products', upsertId, SyncOpType.createMasterData, payload: {
-        'name': '离线建的商品',
-        'code': 'P7788',
-        'sell_price': 350,
-      }),
+      opMaster(
+        'products',
+        upsertId,
+        SyncOpType.createMasterData,
+        payload: {'name': '离线建的商品', 'code': 'P7788', 'sell_price': 350},
+      ),
       now: now(),
     );
-    check('乱序收敛：create 后到 ⇒ already_exists',
-        lateCreate.status == SyncStatus.alreadyExists, '${lateCreate.status}');
+    check(
+      '乱序收敛：create 后到 ⇒ already_exists',
+      lateCreate.status == SyncStatus.alreadyExists,
+      '${lateCreate.status}',
+    );
 
     // upsert 遇缺必填 ⇒ 约束分类回中文，不含 SQL / 表名
     final SyncResponse missingName = server.handle(
-      opMaster('products', newId(), SyncOpType.updateMasterData, baseVersion: 0, payload: {
-        'sell_price': 1, // 缺 name（NOT NULL）
-      }),
+      opMaster(
+        'products',
+        newId(),
+        SyncOpType.updateMasterData,
+        baseVersion: 0,
+        payload: {
+          'sell_price': 1, // 缺 name（NOT NULL）
+        },
+      ),
       now: now(),
     );
     final String missingReason = missingName.reason ?? '';
     check('upsert 缺必填 ⇒ rejected', missingName.status == SyncStatus.rejected);
     // 通用术语走**共用表**（core 的 `forbiddenDevTermsInUserText`）；表名是模块特有 ⇒ `extra`
-    check('回执不含 SQL / 表名 / 异常类名',
-        devTermHits(missingReason, extra: <String>['products']).isEmpty,
-        missingReason);
+    check(
+      '回执不含 SQL / 表名 / 异常类名',
+      devTermHits(missingReason, extra: <String>['products']).isEmpty,
+      missingReason,
+    );
 
     // §CS·五 ①：系统生成的字段一律以主机为准（payload 里的 code 丢弃）
     final String keep = syncProduct(code: 'P810');
     final String other = syncProduct(code: 'P811');
     final SyncResponse staleCode = server.handle(
-      opMaster('products', other, SyncOpType.updateMasterData,
-          baseVersion: 0,
-          payload: <String, Object?>{'code': 'P810', 'sell_price': 999}),
+      opMaster(
+        'products',
+        other,
+        SyncOpType.updateMasterData,
+        baseVersion: 0,
+        payload: <String, Object?>{'code': 'P810', 'sell_price': 999},
+      ),
       now: now(),
     );
-    check('带**过期 code** 的 update ⇒ applied（不是 rejected）',
-        staleCode.status == SyncStatus.applied, '${staleCode.reason}');
-    check('code 以主机为准（仍是 P811）',
-        ProductDao(db).findById(other)!.code == 'P811',
-        ProductDao(db).findById(other)!.code);
-    check('其它字段照常更新',
-        ProductDao(db).findById(other)!.sellPrice == 999);
-    check('别人的编码不受影响',
-        ProductDao(db).findById(keep)!.code == 'P810');
+    check(
+      '带**过期 code** 的 update ⇒ applied（不是 rejected）',
+      staleCode.status == SyncStatus.applied,
+      '${staleCode.reason}',
+    );
+    check(
+      'code 以主机为准（仍是 P811）',
+      ProductDao(db).findById(other)!.code == 'P811',
+      ProductDao(db).findById(other)!.code,
+    );
+    check('其它字段照常更新', ProductDao(db).findById(other)!.sellPrice == 999);
+    check('别人的编码不受影响', ProductDao(db).findById(keep)!.code == 'P810');
     db.close();
   }
 
@@ -773,25 +956,34 @@ void main() {
 
     // products.name 是 NOT NULL ⇒ 缺 name 触发 SQLITE_CONSTRAINT_NOTNULL
     final SyncResponse constraint = logging.handle(
-      opMaster('products', newId(), SyncOpType.createMasterData,
-          payload: <String, Object?>{'code': 'P820'}),
+      opMaster(
+        'products',
+        newId(),
+        SyncOpType.createMasterData,
+        payload: <String, Object?>{'code': 'P820'},
+      ),
       now: now(),
     );
-    check('约束冲突 ⇒ 中文原因（说清是「不完整或不合法」）',
-        constraint.status == SyncStatus.rejected &&
-            (constraint.reason?.contains('不完整或不合法') ?? false),
-        '${constraint.reason}');
     check(
-        '回给客户端的话**不含表名 / 类型名 / SQL**',
-        devTermHits(
-          constraint.reason ?? '',
-          extra: <String>['products', 'Sqlite', 'NOT NULL'],
-        ).isEmpty,
-        '${constraint.reason}');
-    check('原始异常走 onInternalError（含 constraint 细节）',
-        logged.length == 1 &&
-            logged.single.toString().toLowerCase().contains('constraint'),
-        '${logged.isEmpty ? '（无）' : logged.first}');
+      '约束冲突 ⇒ 中文原因（说清是「不完整或不合法」）',
+      constraint.status == SyncStatus.rejected &&
+          (constraint.reason?.contains('不完整或不合法') ?? false),
+      '${constraint.reason}',
+    );
+    check(
+      '回给客户端的话**不含表名 / 类型名 / SQL**',
+      devTermHits(
+        constraint.reason ?? '',
+        extra: <String>['products', 'Sqlite', 'NOT NULL'],
+      ).isEmpty,
+      '${constraint.reason}',
+    );
+    check(
+      '原始异常走 onInternalError（含 constraint 细节）',
+      logged.length == 1 &&
+          logged.single.toString().toLowerCase().contains('constraint'),
+      '${logged.isEmpty ? '（无）' : logged.first}',
+    );
     check('日志标签带操作名', labels.length == 1, '$labels');
     db.close();
   }
@@ -800,7 +992,11 @@ void main() {
   {
     freshDb();
     final String id = syncProduct(code: 'PD1');
-    final SyncOperation op = opMaster('products', id, SyncOpType.deleteMasterData);
+    final SyncOperation op = opMaster(
+      'products',
+      id,
+      SyncOpType.deleteMasterData,
+    );
 
     final SyncResponse first = server.handle(op, now: now());
     check('applied', first.status == SyncStatus.applied, '${first.reason}');
@@ -808,27 +1004,41 @@ void main() {
     check('从不 DELETE：行还在', countOf('products') == 1);
 
     final SyncResponse second = server.handle(op, now: now());
-    check('已删 → already_exists（幂等）',
-        second.status == SyncStatus.alreadyExists, '${second.status}');
-    check('幂等时不再 +sync_version', ProductDao(db).findById(id)!.syncVersion == 1,
-        '${ProductDao(db).findById(id)!.syncVersion}');
+    check(
+      '已删 → already_exists（幂等）',
+      second.status == SyncStatus.alreadyExists,
+      '${second.status}',
+    );
+    check(
+      '幂等时不再 +sync_version',
+      ProductDao(db).findById(id)!.syncVersion == 1,
+      '${ProductDao(db).findById(id)!.syncVersion}',
+    );
 
     final SyncResponse extra = server.handle(
-      opMaster('products', id, SyncOpType.deleteMasterData, payload: {
-        'name': '改名',
-      }),
+      opMaster(
+        'products',
+        id,
+        SyncOpType.deleteMasterData,
+        payload: {'name': '改名'},
+      ),
       now: now(),
     );
-    check('payload 含 id 以外字段 ⇒ unwritable_column',
-        extra.reasonCode == RejectCode.unwritableColumn,
-        '${extra.reasonCode}｜${extra.reason}');
+    check(
+      'payload 含 id 以外字段 ⇒ unwritable_column',
+      extra.reasonCode == RejectCode.unwritableColumn,
+      '${extra.reasonCode}｜${extra.reason}',
+    );
 
     final SyncResponse missing = server.handle(
       opMaster('products', newId(), SyncOpType.deleteMasterData),
       now: now(),
     );
-    check('目标不存在 ⇒ **幂等 already_exists**（不再 rejected，#21 裁定）',
-        missing.status == SyncStatus.alreadyExists, '${missing.status}');
+    check(
+      '目标不存在 ⇒ **幂等 already_exists**（不再 rejected，#21 裁定）',
+      missing.status == SyncStatus.alreadyExists,
+      '${missing.status}',
+    );
     db.close();
   }
 
@@ -847,8 +1057,11 @@ void main() {
       opCreateDocument(delivery, lines: oneLine(delivery.id, p, 2, 500)),
       now: now(),
     );
-    check('送货单建单 applied', created.status == SyncStatus.applied,
-        '${created.reason}');
+    check(
+      '送货单建单 applied',
+      created.status == SyncStatus.applied,
+      '${created.reason}',
+    );
 
     SyncOperation action(String id) => SyncOperation(
       entity: Schema.documents,
@@ -858,9 +1071,15 @@ void main() {
     );
 
     final SyncResponse ok = server.handle(action(delivery.id), now: now());
-    check('in_transit → applied', ok.status == SyncStatus.applied, '${ok.reason}');
-    check('单据落到 delivered',
-        DocumentDao(db).findById(delivery.id)!.status == DocStatus.delivered);
+    check(
+      'in_transit → applied',
+      ok.status == SyncStatus.applied,
+      '${ok.reason}',
+    );
+    check(
+      '单据落到 delivered',
+      DocumentDao(db).findById(delivery.id)!.status == DocStatus.delivered,
+    );
 
     final SyncResponse again = server.handle(action(delivery.id), now: now());
     check('重复签收 → already_exists', again.status == SyncStatus.alreadyExists);
@@ -871,11 +1090,16 @@ void main() {
       status: DocStatus.cancelled,
       updatedAt: now(),
     );
-    final SyncResponse conflict = server.handle(action(delivery.id), now: now());
+    final SyncResponse conflict = server.handle(
+      action(delivery.id),
+      now: now(),
+    );
     check('cancelled → conflict', conflict.status == SyncStatus.conflict);
-    check('server_state 带主机状态',
-        conflict.serverState?['status'] == DocStatus.cancelled.wire,
-        '${conflict.serverState}');
+    check(
+      'server_state 带主机状态',
+      conflict.serverState?['status'] == DocStatus.cancelled.wire,
+      '${conflict.serverState}',
+    );
 
     // 未知动作 / 未知字段 → rejected
     final SyncResponse unknown = server.handle(
@@ -887,10 +1111,12 @@ void main() {
       ),
       now: now(),
     );
-    check('未知动作 ⇒ unknown_action',
-        unknown.status == SyncStatus.rejected &&
-            unknown.reasonCode == RejectCode.unknownAction,
-        '${unknown.reasonCode}｜${unknown.reason}');
+    check(
+      '未知动作 ⇒ unknown_action',
+      unknown.status == SyncStatus.rejected &&
+          unknown.reasonCode == RejectCode.unknownAction,
+      '${unknown.reasonCode}｜${unknown.reason}',
+    );
 
     // purchase 收签收 → rejected（规则不允许：docType 不适用）
     freshDb();
@@ -905,11 +1131,16 @@ void main() {
       opCreateDocument(purchase, lines: oneLine(purchase.id, p2, 10, 100)),
       now: now(),
     );
-    final SyncResponse wrongType = server.handle(action(purchase.id), now: now());
-    check('purchase 收签收 ⇒ action_not_applicable',
-        wrongType.status == SyncStatus.rejected &&
-            wrongType.reasonCode == RejectCode.actionNotApplicable,
-        '${wrongType.reasonCode}｜${wrongType.reason}');
+    final SyncResponse wrongType = server.handle(
+      action(purchase.id),
+      now: now(),
+    );
+    check(
+      'purchase 收签收 ⇒ action_not_applicable',
+      wrongType.status == SyncStatus.rejected &&
+          wrongType.reasonCode == RejectCode.actionNotApplicable,
+      '${wrongType.reasonCode}｜${wrongType.reason}',
+    );
 
     db.close();
   }
@@ -935,7 +1166,10 @@ void main() {
       );
       check('table $entity → rejected', r.status == SyncStatus.rejected);
     }
-    check('白名单外没有任何行被写入', countOf('products') == 0 && countOf('documents') == 0);
+    check(
+      '白名单外没有任何行被写入',
+      countOf('products') == 0 && countOf('documents') == 0,
+    );
     db.close();
   }
 
@@ -965,8 +1199,11 @@ void main() {
       ),
       now: now(),
     );
-    check('白名单外 ⇒ 通用回执',
-        whitelist.reason == malformedSyncRequestReason, '${whitelist.reason}');
+    check(
+      '白名单外 ⇒ 通用回执',
+      whitelist.reason == malformedSyncRequestReason,
+      '${whitelist.reason}',
+    );
 
     // ② createDocument 的 entity 不对
     final SyncResponse wrongEntity = logging.handle(
@@ -977,25 +1214,39 @@ void main() {
       ),
       now: now(),
     );
-    check('entity 不符 ⇒ 通用回执',
-        wrongEntity.reason == malformedSyncRequestReason, '${wrongEntity.reason}');
+    check(
+      'entity 不符 ⇒ 通用回执',
+      wrongEntity.reason == malformedSyncRequestReason,
+      '${wrongEntity.reason}',
+    );
 
     // ③ products.code 不是字符串
     final SyncResponse badCode = logging.handle(
-      opMaster('products', newId(), SyncOpType.createMasterData,
-          payload: <String, Object?>{'code': 5, 'name': '商品'}),
+      opMaster(
+        'products',
+        newId(),
+        SyncOpType.createMasterData,
+        payload: <String, Object?>{'code': 5, 'name': '商品'},
+      ),
       now: now(),
     );
-    check('code 类型不符 ⇒ 通用回执',
-        badCode.reason == malformedSyncRequestReason, '${badCode.reason}');
+    check(
+      'code 类型不符 ⇒ 通用回执',
+      badCode.reason == malformedSyncRequestReason,
+      '${badCode.reason}',
+    );
 
     // ④ **细节全部进了日志**（排障要看的就是它）
     check('三次违反各记一条日志', labels.length == 3, '$labels');
-    check('日志保留 entity 名', logged.any((Object e) => '$e'.contains('ghost_table')));
-    check('日志保留「必须是 documents」',
-        logged.any((Object e) => '$e'.contains('必须是 documents')));
-    check('日志保留 code 类型细节',
-        logged.any((Object e) => '$e'.contains('code')));
+    check(
+      '日志保留 entity 名',
+      logged.any((Object e) => '$e'.contains('ghost_table')),
+    );
+    check(
+      '日志保留「必须是 documents」',
+      logged.any((Object e) => '$e'.contains('必须是 documents')),
+    );
+    check('日志保留 code 类型细节', logged.any((Object e) => '$e'.contains('code')));
     db.close();
   }
 
@@ -1013,8 +1264,12 @@ void main() {
     final String p2 = syncProduct(code: 'PB1');
 
     final List<SyncResponse> results = server.push(<SyncOperation>[
-      opMaster('products', good, SyncOpType.createMasterData,
-          payload: <String, Object?>{'code': 'PB2', 'name': '商品'}),
+      opMaster(
+        'products',
+        good,
+        SyncOpType.createMasterData,
+        payload: <String, Object?>{'code': 'PB2', 'name': '商品'},
+      ),
       const SyncOperation(
         entity: 'nope',
         entityId: 'bad',
@@ -1026,11 +1281,16 @@ void main() {
     check('三条都有回执', results.length == 3);
     check('第一条 applied', results[0].status == SyncStatus.applied);
     check('第二条 rejected', results[1].status == SyncStatus.rejected);
-    check('第三条不受前一条影响 applied',
-        results[2].status == SyncStatus.applied, '${results[2].reason}');
+    check(
+      '第三条不受前一条影响 applied',
+      results[2].status == SyncStatus.applied,
+      '${results[2].reason}',
+    );
     check('事务独立：好单已落库', countOf('documents') == 1);
-    check('回执按 entity_id 配对',
-        <String>{for (final SyncResponse r in results) r.entityId}.length == 3);
+    check(
+      '回执按 entity_id 配对',
+      <String>{for (final SyncResponse r in results) r.entityId}.length == 3,
+    );
     db.close();
   }
 
@@ -1041,29 +1301,57 @@ void main() {
     final SyncPullResult empty = server.pull();
     check('空库 stock_ledger 为空', empty.entities['stock_ledger']!.isEmpty);
     // 实体清单只从 SyncPullResult.entityNames 取（单一定义，加实体时一处改）
-    check('恰好 9 个实体', empty.entities.keys.length == 9,
-        '${empty.entities.keys.toList()}');
-    check('实体名与 entityNames 一致',
-        empty.entities.keys.toSet().difference(SyncPullResult.entityNames.toSet()).isEmpty &&
-            SyncPullResult.entityNames.toSet().difference(empty.entities.keys.toSet()).isEmpty,
-        '${empty.entities.keys.toList()}');
+    check(
+      '恰好 9 个实体',
+      empty.entities.keys.length == 9,
+      '${empty.entities.keys.toList()}',
+    );
+    check(
+      '实体名与 entityNames 一致',
+      empty.entities.keys
+              .toSet()
+              .difference(SyncPullResult.entityNames.toSet())
+              .isEmpty &&
+          SyncPullResult.entityNames
+              .toSet()
+              .difference(empty.entities.keys.toSet())
+              .isEmpty,
+      '${empty.entities.keys.toList()}',
+    );
     for (final String entity in SyncPullResult.entityNames) {
       check('空库 $entity 为空', empty.entities[entity]!.isEmpty);
     }
-    check('恰好 8 个游标', empty.nextCursors.length == 8,
-        '${empty.nextCursors.length}');
-    check('游标键与 SyncCursorKeys.all 一致',
-        empty.nextCursors.keys.toSet().difference(SyncCursorKeys.all.toSet()).isEmpty &&
-            SyncCursorKeys.all.toSet().difference(empty.nextCursors.keys.toSet()).isEmpty);
-    check('空库 next_cursors.stock_since = 0',
-        empty.nextCursors[SyncCursorKeys.stock] == '0',
-        '${empty.nextCursors[SyncCursorKeys.stock]}');
-    check('空库 next_cursors.doc_since = "0|"',
-        empty.nextCursors[SyncCursorKeys.doc] == '0|',
-        '${empty.nextCursors[SyncCursorKeys.doc]}');
-    check('空库 next_cursors.products_since = "0|"',
-        empty.nextCursors[SyncCursorKeys.products] == '0|',
-        '${empty.nextCursors[SyncCursorKeys.products]}');
+    check(
+      '恰好 8 个游标',
+      empty.nextCursors.length == 8,
+      '${empty.nextCursors.length}',
+    );
+    check(
+      '游标键与 SyncCursorKeys.all 一致',
+      empty.nextCursors.keys
+              .toSet()
+              .difference(SyncCursorKeys.all.toSet())
+              .isEmpty &&
+          SyncCursorKeys.all
+              .toSet()
+              .difference(empty.nextCursors.keys.toSet())
+              .isEmpty,
+    );
+    check(
+      '空库 next_cursors.stock_since = 0',
+      empty.nextCursors[SyncCursorKeys.stock] == '0',
+      '${empty.nextCursors[SyncCursorKeys.stock]}',
+    );
+    check(
+      '空库 next_cursors.doc_since = "0|"',
+      empty.nextCursors[SyncCursorKeys.doc] == '0|',
+      '${empty.nextCursors[SyncCursorKeys.doc]}',
+    );
+    check(
+      '空库 next_cursors.products_since = "0|"',
+      empty.nextCursors[SyncCursorKeys.products] == '0|',
+      '${empty.nextCursors[SyncCursorKeys.products]}',
+    );
 
     final String p = syncProduct(code: 'PR1');
     final String party = syncParty();
@@ -1072,11 +1360,17 @@ void main() {
     final SyncPullResult first = server.pull();
     final Map<String, Object?> row = first.entities['stock_ledger']!.single;
     check('拉到 stock_ledger 一行', first.countOf('stock_ledger') == 1);
-    check('wire 列名 = 数据库列名', row.containsKey('total_cost') && row.containsKey('seq_no'));
+    check(
+      'wire 列名 = 数据库列名',
+      row.containsKey('total_cost') && row.containsKey('seq_no'),
+    );
     check('quantity = 4', row['quantity'] == 4, '${row['quantity']}');
     check('total_cost = 400', row['total_cost'] == 400, '${row['total_cost']}');
-    check('流水游标推进到 1', first.nextCursors[SyncCursorKeys.stock] == '1',
-        '${first.nextCursors[SyncCursorKeys.stock]}');
+    check(
+      '流水游标推进到 1',
+      first.nextCursors[SyncCursorKeys.stock] == '1',
+      '${first.nextCursors[SyncCursorKeys.stock]}',
+    );
 
     final SyncPullResult second = server.pull(
       stockSince: first.nextCursors[SyncCursorKeys.stock]!,
@@ -1140,10 +1434,14 @@ void main() {
   section('pull · 游标格式');
   {
     freshDb();
-    check('doc_since 非法 → 抛 FormatException',
-        throws(() => server.pull(docSince: 'not-a-cursor')));
-    check('stock_since 非整数 → 抛 FormatException',
-        throws(() => server.pull(stockSince: 'x')));
+    check(
+      'doc_since 非法 → 抛 FormatException',
+      throws(() => server.pull(docSince: 'not-a-cursor')),
+    );
+    check(
+      'stock_since 非整数 → 抛 FormatException',
+      throws(() => server.pull(stockSince: 'x')),
+    );
     db.close();
   }
 
@@ -1156,16 +1454,26 @@ void main() {
 
     final SyncPullResult result = server.pull();
     check('本页 1 张主单', result.countOf('documents') == 1);
-    check('明细一并返回（1 条）', result.countOf('document_lines') == 1,
-        '${result.countOf('document_lines')}');
-    check('明细的 document_id 指向本页主单',
-        result.entities['document_lines']!.single['document_id'] ==
-            result.entities['documents']!.single['id']);
-    check('next_cursors 里没有 line_since',
-        !result.nextCursors.containsKey('line_since'),
-        '${result.nextCursors.keys.toList()}');
-    check('next_cursors 有 8 个键', result.nextCursors.length == 8,
-        '${result.nextCursors.length}');
+    check(
+      '明细一并返回（1 条）',
+      result.countOf('document_lines') == 1,
+      '${result.countOf('document_lines')}',
+    );
+    check(
+      '明细的 document_id 指向本页主单',
+      result.entities['document_lines']!.single['document_id'] ==
+          result.entities['documents']!.single['id'],
+    );
+    check(
+      'next_cursors 里没有 line_since',
+      !result.nextCursors.containsKey('line_since'),
+      '${result.nextCursors.keys.toList()}',
+    );
+    check(
+      'next_cursors 有 8 个键',
+      result.nextCursors.length == 8,
+      '${result.nextCursors.length}',
+    );
 
     final SyncPullResult next = server.pull(
       docSince: result.nextCursors[SyncCursorKeys.doc]!,
@@ -1185,35 +1493,44 @@ void main() {
       totalAmount: 300,
     );
     final SyncResponse response = server.handle(
-      opCreateDocument(purchase, lines: <DocumentLine>[
-        DocumentLine.create(
-          documentId: purchase.id,
-          productId: p,
-          quantity: 1,
-          unitPrice: 100,
-        ),
-        DocumentLine.create(
-          documentId: purchase.id,
-          productId: p,
-          quantity: 1,
-          unitPrice: 100,
-        ),
-        DocumentLine.create(
-          documentId: purchase.id,
-          productId: p,
-          quantity: 1,
-          unitPrice: 100,
-        ),
-      ]),
+      opCreateDocument(
+        purchase,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: purchase.id,
+            productId: p,
+            quantity: 1,
+            unitPrice: 100,
+          ),
+          DocumentLine.create(
+            documentId: purchase.id,
+            productId: p,
+            quantity: 1,
+            unitPrice: 100,
+          ),
+          DocumentLine.create(
+            documentId: purchase.id,
+            productId: p,
+            quantity: 1,
+            unitPrice: 100,
+          ),
+        ],
+      ),
       now: now(),
     );
-    check('3 条明细的采购单 applied',
-        response.status == SyncStatus.applied, '${response.reason}');
+    check(
+      '3 条明细的采购单 applied',
+      response.status == SyncStatus.applied,
+      '${response.reason}',
+    );
 
     final SyncPullResult result = server.pull(limit: 1);
     check('limit=1 只取 1 张主单', result.countOf('documents') == 1);
-    check('但该主单的 3 条明细都在', result.countOf('document_lines') == 3,
-        '${result.countOf('document_lines')}');
+    check(
+      '但该主单的 3 条明细都在',
+      result.countOf('document_lines') == 3,
+      '${result.countOf('document_lines')}',
+    );
     db.close();
   }
 
@@ -1232,15 +1549,22 @@ void main() {
     }
 
     final SyncPullResult result = server.pull(limit: 1);
-    check('limit=1 取到 1 张主单', result.countOf('documents') == 1,
-        '${result.countOf('documents')}');
-    check('明细也只属于这 1 张主单（不是 3 条）',
-        result.countOf('document_lines') == 1,
-        '${result.countOf('document_lines')}');
-    check('明细的 document_id = 本页唯一主单',
-        result.countOf('document_lines') == 1 &&
-            result.entities['document_lines']!.single['document_id'] ==
-                result.entities['documents']!.single['id']);
+    check(
+      'limit=1 取到 1 张主单',
+      result.countOf('documents') == 1,
+      '${result.countOf('documents')}',
+    );
+    check(
+      '明细也只属于这 1 张主单（不是 3 条）',
+      result.countOf('document_lines') == 1,
+      '${result.countOf('document_lines')}',
+    );
+    check(
+      '明细的 document_id = 本页唯一主单',
+      result.countOf('document_lines') == 1 &&
+          result.entities['document_lines']!.single['document_id'] ==
+              result.entities['documents']!.single['id'],
+    );
     db.close();
   }
 
@@ -1253,64 +1577,97 @@ void main() {
     final SyncPullResult firstB = server.pull();
     final Map<String, Object?> row = firstB.entities['products']!.single;
     check('主数据随 pull 返回', firstB.countOf('products') == 1);
-    check('返回全部列（含 sync_version）', row['sync_version'] == 0,
-        '${row['sync_version']}');
+    check(
+      '返回全部列（含 sync_version）',
+      row['sync_version'] == 0,
+      '${row['sync_version']}',
+    );
     check('返回全部列（含 updated_at）', row.containsKey('updated_at'));
 
     final String productsCursor = firstB.nextCursors[SyncCursorKeys.products]!;
     check('主数据游标是复合形式（含 |）', productsCursor.contains('|'), productsCursor);
     final SyncCursor parsed = SyncCursor.parse(productsCursor);
-    check('复合游标的时间戳 = 末行 updated_at', parsed.stamp == row['updated_at'],
-        '${parsed.stamp} vs ${row['updated_at']}');
+    check(
+      '复合游标的时间戳 = 末行 updated_at',
+      parsed.stamp == row['updated_at'],
+      '${parsed.stamp} vs ${row['updated_at']}',
+    );
     check('复合游标的 id = 末行 id', parsed.id == row['id']);
-    check('主数据游标的时间戳列是 updated_at（不是 created_at）',
-        row['updated_at'] != null && parsed.stamp == row['updated_at']);
+    check(
+      '主数据游标的时间戳列是 updated_at（不是 created_at）',
+      row['updated_at'] != null && parsed.stamp == row['updated_at'],
+    );
 
     // ---- A 改价 → B 带游标拉
     final SyncResponse update = server.handle(
-      opMaster('products', p, SyncOpType.updateMasterData, baseVersion: 0,
-          payload: <String, Object?>{'cost_price': 120}),
+      opMaster(
+        'products',
+        p,
+        SyncOpType.updateMasterData,
+        baseVersion: 0,
+        payload: <String, Object?>{'cost_price': 120},
+      ),
       now: now(),
     );
-    check('A 改价 applied', update.status == SyncStatus.applied, '${update.reason}');
+    check(
+      'A 改价 applied',
+      update.status == SyncStatus.applied,
+      '${update.reason}',
+    );
 
     final SyncPullResult secondB = server.pull(productsSince: productsCursor);
-    check('B 增量拉到 1 行', secondB.countOf('products') == 1,
-        '${secondB.countOf('products')}');
-    check('B 拿到新价 120',
-        secondB.entities['products']!.single['cost_price'] == 120,
-        '${secondB.entities['products']!.single['cost_price']}');
-    check('sync_version +1',
-        secondB.entities['products']!.single['sync_version'] == 1);
+    check(
+      'B 增量拉到 1 行',
+      secondB.countOf('products') == 1,
+      '${secondB.countOf('products')}',
+    );
+    check(
+      'B 拿到新价 120',
+      secondB.entities['products']!.single['cost_price'] == 120,
+      '${secondB.entities['products']!.single['cost_price']}',
+    );
+    check(
+      'sync_version +1',
+      secondB.entities['products']!.single['sync_version'] == 1,
+    );
 
     // ---- 无改动 → 增量页为空
     final SyncPullResult third = server.pull(
       productsSince: secondB.nextCursors[SyncCursorKeys.products]!,
     );
     check('未改动 → 增量页为空', third.countOf('products') == 0);
-    check('未改动 → 游标保持',
-        third.nextCursors[SyncCursorKeys.products] ==
-            secondB.nextCursors[SyncCursorKeys.products]);
+    check(
+      '未改动 → 游标保持',
+      third.nextCursors[SyncCursorKeys.products] ==
+          secondB.nextCursors[SyncCursorKeys.products],
+    );
 
     // ---- 软删可见
     final SyncResponse deleted = server.handle(
       opMaster('products', p, SyncOpType.deleteMasterData),
       now: now(),
     );
-    check('软删 applied', deleted.status == SyncStatus.applied, '${deleted.reason}');
+    check(
+      '软删 applied',
+      deleted.status == SyncStatus.applied,
+      '${deleted.reason}',
+    );
     final SyncPullResult afterDelete = server.pull(
       productsSince: third.nextCursors[SyncCursorKeys.products]!,
     );
-    check('软删行照常返回（否则客户端永远不知道）',
-        afterDelete.countOf('products') == 1);
-    check('is_active = 0',
-        afterDelete.entities['products']!.single['is_active'] == 0);
+    check('软删行照常返回（否则客户端永远不知道）', afterDelete.countOf('products') == 1);
+    check(
+      'is_active = 0',
+      afterDelete.entities['products']!.single['is_active'] == 0,
+    );
 
     // ---- 新客户端全量首拉也能看到软删行
     final SyncPullResult freshClient = server.pull();
     check('全量首拉可见软删行', freshClient.countOf('products') == 1);
-    check('全量首拉的 is_active = 0',
-        freshClient.entities['products']!.single['is_active'] == 0);
+    check(
+      '全量首拉的 is_active = 0',
+      freshClient.entities['products']!.single['is_active'] == 0,
+    );
     db.close();
   }
 
@@ -1321,8 +1678,12 @@ void main() {
     final int stamp = now();
     for (int i = 0; i < 3; i++) {
       final SyncResponse r = server.handle(
-        opMaster('products', newId(), SyncOpType.createMasterData,
-            payload: <String, Object?>{'code': 'PM9$i', 'name': '商品$i'}),
+        opMaster(
+          'products',
+          newId(),
+          SyncOpType.createMasterData,
+          payload: <String, Object?>{'code': 'PM9$i', 'name': '商品$i'},
+        ),
         now: stamp,
       );
       if (r.status != SyncStatus.applied) {
@@ -1349,8 +1710,10 @@ void main() {
     check('limit=1 时主数据游标也推进', advanced);
     check('同一 updated_at 的 3 行全部取到且不重复', seen.length == 3, '${seen.length}');
 
-    check('products_since 非法 → 抛 FormatException',
-        throws(() => server.pull(productsSince: 'oops')));
+    check(
+      'products_since 非法 → 抛 FormatException',
+      throws(() => server.pull(productsSince: 'oops')),
+    );
     db.close();
   }
 
@@ -1376,24 +1739,38 @@ void main() {
     );
     check('SyncOperation 往返：entity', decoded.entity == original.entity);
     check('SyncOperation 往返：entityId', decoded.entityId == original.entityId);
-    check('SyncOperation 往返：operation', decoded.operation == SyncOpType.createDocument);
-    check('SyncOperation 往返：payload',
-        jsonEncode(decoded.payload) == jsonEncode(original.payload));
+    check(
+      'SyncOperation 往返：operation',
+      decoded.operation == SyncOpType.createDocument,
+    );
+    check(
+      'SyncOperation 往返：payload',
+      jsonEncode(decoded.payload) == jsonEncode(original.payload),
+    );
 
     const SyncResponse rejected = SyncResponse(
       entityId: 'd-1',
       status: SyncStatus.rejected,
       reason: 'boom',
     );
-    check('SyncResponse.toJson 含 status',
-        rejected.toJson()['status'] == 'rejected');
-    check('SyncResponse.toJson 含 reason', rejected.toJson()['reason'] == 'boom');
-    check('SyncResponse 无 server_state 时不输出该键',
-        !rejected.toJson().containsKey('server_state'));
+    check(
+      'SyncResponse.toJson 含 status',
+      rejected.toJson()['status'] == 'rejected',
+    );
+    check(
+      'SyncResponse.toJson 含 reason',
+      rejected.toJson()['reason'] == 'boom',
+    );
+    check(
+      'SyncResponse 无 server_state 时不输出该键',
+      !rejected.toJson().containsKey('server_state'),
+    );
 
     final Map<String, Object?> pullJson = server.pull().toJson();
-    check('SyncPullResult.toJson 平铺实体 + next_cursors',
-        pullJson.containsKey('documents') && pullJson.containsKey('next_cursors'));
+    check(
+      'SyncPullResult.toJson 平铺实体 + next_cursors',
+      pullJson.containsKey('documents') && pullJson.containsKey('next_cursors'),
+    );
   }
 
   stdout.writeln('\n${'=' * 46}');

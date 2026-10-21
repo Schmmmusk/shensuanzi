@@ -67,8 +67,11 @@ void main() {
     ).plan();
 
     expect(plan.fileCount, 6); // 数据 4 + 备份 2
-    final int dataBytes = ('DB' * 100).length + ('WAL' * 10).length +
-        '{"v":3}'.length + '{"token":"x"}'.length;
+    final int dataBytes =
+        ('DB' * 100).length +
+        ('WAL' * 10).length +
+        '{"v":3}'.length +
+        '{"token":"x"}'.length;
     final int backupBytes = ('BAK' * 50).length + ('BAK' * 30).length;
     expect(plan.byteCount, dataBytes + backupBytes);
     expect(
@@ -123,10 +126,7 @@ void main() {
     expect(note, contains('仍然完好'), reason: '防止用户以为旧数据没用了');
     expect(note, contains('请勿删除'), reason: '裁定 ④：确认新位置正常前，旧目录是唯一完好的备份');
     // 备份目录里也有一份
-    expect(
-      File(p.join(oldBackup, '已迁移-请先阅读.txt')).existsSync(),
-      isTrue,
-    );
+    expect(File(p.join(oldBackup, '已迁移-请先阅读.txt')).existsSync(), isTrue);
   });
 
   test('进度回调：文件数从 0 数到总数（裁定 ③：遮罩上要有进度）', () {
@@ -134,8 +134,10 @@ void main() {
     final String newBackup = p.join(newParent, '神算子备份');
     final List<int> counts = <int>[];
 
-    migrator(newData: newData, newBackup: newBackup)
-        .execute(onProgress: (MigrationProgress progress) => counts.add(progress.filesCopied));
+    migrator(newData: newData, newBackup: newBackup).execute(
+      onProgress: (MigrationProgress progress) =>
+          counts.add(progress.filesCopied),
+    );
 
     expect(counts, isNotEmpty);
     expect(counts.first, 1, reason: '从第一个文件就开始报');
@@ -199,7 +201,10 @@ void main() {
 
     // 计划同口径：备份同位时不计入（进度总数才对得上）。
     // ⚠️ 必须在 execute **之前**算 —— 成功后旧目录会多出说明文件（4 → 5）
-    expect(migrator(newData: newData, newBackup: oldBackup).plan().fileCount, 4);
+    expect(
+      migrator(newData: newData, newBackup: oldBackup).plan().fileCount,
+      4,
+    );
 
     final DataMigrationResult result = migrator(
       newData: newData,
@@ -245,11 +250,7 @@ void main() {
     final String newBackup = p.join(newParent, '神算子备份');
     final DataMigrator m = migrator(newData: newData, newBackup: newBackup);
 
-    expect(
-      m.plan().fileCount,
-      6,
-      reason: '数据 4 + 备份 2 —— 锁文件不算（算了进度总数就对不上）',
-    );
+    expect(m.plan().fileCount, 6, reason: '数据 4 + 备份 2 —— 锁文件不算（算了进度总数就对不上）');
 
     expect(m.execute().ok, isTrue);
     expect(

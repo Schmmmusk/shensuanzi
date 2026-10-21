@@ -53,8 +53,8 @@ class SaleDraftInvalid implements DraftInvalidException {
 SaleDraftInvalid? saleDraftFailure(SaleDraft draft) {
   final Map<SaleField, String> fieldErrors = draft.validate();
   final List<Map<SaleLineField, String>> lineErrors = draft.validateLines();
-  final List<Map<SalePaymentField, String>> paymentErrors =
-      draft.validatePayments();
+  final List<Map<SalePaymentField, String>> paymentErrors = draft
+      .validatePayments();
   if (fieldErrors.isNotEmpty ||
       lineErrors.any((Map<SaleLineField, String> e) => e.isNotEmpty) ||
       paymentErrors.any((Map<SalePaymentField, String> e) => e.isNotEmpty)) {
@@ -109,17 +109,22 @@ class SaleService {
       PartyDao(_queries.db).findAll(role: PartyRole.customer, active: true);
 
   /// 启用中的资金账户（立即收款区；默认账户 = 第一个）
-  List<Account> activeAccounts() => AccountDao(_queries.db).findAll(active: true);
+  List<Account> activeAccounts() =>
+      AccountDao(_queries.db).findAll(active: true);
 
   /// 最近卖过的商品（商品选择器**空查询时**显示的「最近使用」）。
   /// 实现在 `QueryDao.recentProducts`（采购/销售共用一处 SQL，§Z 五）。
-  List<Product> recentlySold({int limit = 20}) =>
-      _queries.recentProducts(docTypes: const <DocType>[DocType.sale], limit: limit);
+  List<Product> recentlySold({int limit = 20}) => _queries.recentProducts(
+    docTypes: const <DocType>[DocType.sale],
+    limit: limit,
+  );
 
   /// 最近**往来过**的客户（客户选择器空查询时显示的「最近往来」，§Z 遗漏 3）。
   /// 客户群稳定 —— 一开店就能点到常客，不用每次敲搜索词。
-  List<Party> recentCustomers({int limit = 20}) =>
-      _queries.recentParties(docTypes: const <DocType>[DocType.sale], limit: limit);
+  List<Party> recentCustomers({int limit = 20}) => _queries.recentParties(
+    docTypes: const <DocType>[DocType.sale],
+    limit: limit,
+  );
 
   /// **打开本页时**的库存快照（每商品账面库存）。
   ///
@@ -186,6 +191,11 @@ class SaleService {
   /// **追加 customer role 或直接返回**，不造第二条同名 party。
   Party createCustomer(String name, {String? phone, int? now}) =>
       PartyService(PartyDao(_queries.db))
-          .ensureParty(name: name, role: PartyRole.customer, phone: phone, now: now)
+          .ensureParty(
+            name: name,
+            role: PartyRole.customer,
+            phone: phone,
+            now: now,
+          )
           .party;
 }

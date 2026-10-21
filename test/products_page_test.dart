@@ -29,25 +29,29 @@ void main() {
     service = ProductService(db);
 
     final int t = 1700000000000;
-    ProductDao(db).insert(Product(
-      id: 'p1',
-      code: 'P0001',
-      name: '可乐',
-      unit: '瓶',
-      sellPrice: 300,
-      costPrice: 200,
-      safetyStock: 5,
-      createdAt: t,
-      updatedAt: t,
-    ));
-    ProductDao(db).insert(Product(
-      id: 'p2',
-      code: 'P0002',
-      name: '停用货',
-      isActive: false,
-      createdAt: t,
-      updatedAt: t,
-    ));
+    ProductDao(db).insert(
+      Product(
+        id: 'p1',
+        code: 'P0001',
+        name: '可乐',
+        unit: '瓶',
+        sellPrice: 300,
+        costPrice: 200,
+        safetyStock: 5,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    ProductDao(db).insert(
+      Product(
+        id: 'p2',
+        code: 'P0002',
+        name: '停用货',
+        isActive: false,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
   });
 
   tearDown(() {
@@ -85,9 +89,7 @@ void main() {
     return PendingMarks(queue);
   }
 
-  testWidgets('导出全部商品：含停用、不受搜索框影响（AF-2 / AF-12）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('导出全部商品：含停用、不受搜索框影响（AF-2 / AF-12）', (WidgetTester tester) async {
     final FakeExport fake = FakeExport();
     await tester.pumpWidget(page(exports: fake));
     await tester.pumpAndSettle();
@@ -116,11 +118,7 @@ void main() {
       '安全库存',
       '状态',
     ]);
-    expect(
-      table.rows.length,
-      2,
-      reason: '搜索框不参与导出 —— 「导出全部商品」就是全部',
-    );
+    expect(table.rows.length, 2, reason: '搜索框不参与导出 —— 「导出全部商品」就是全部');
     expect(
       table.rows.map((List<String> row) => row[7]).toList(),
       <String>['启用', '停用'],
@@ -129,9 +127,7 @@ void main() {
     expect(table.rows.first.sublist(1, 4), <String>['可乐', '', '瓶']);
   });
 
-  testWidgets('没接导出服务 → 不显示按钮（与其他可选服务同款判定）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('没接导出服务 → 不显示按钮（与其他可选服务同款判定）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 

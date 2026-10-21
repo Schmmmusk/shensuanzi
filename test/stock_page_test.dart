@@ -62,20 +62,24 @@ void main() {
     AccountDao(db).insert(account);
     accountId = account.id;
 
-    PartyDao(db).insert(Party(
-      id: newId(),
-      name: '王老板',
-      roles: const <PartyRole>[PartyRole.supplier],
-      createdAt: t,
-      updatedAt: t,
-    ));
-    PartyDao(db).insert(Party(
-      id: newId(),
-      name: '李姐',
-      roles: const <PartyRole>[PartyRole.customer],
-      createdAt: t,
-      updatedAt: t,
-    ));
+    PartyDao(db).insert(
+      Party(
+        id: newId(),
+        name: '王老板',
+        roles: const <PartyRole>[PartyRole.supplier],
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    PartyDao(db).insert(
+      Party(
+        id: newId(),
+        name: '李姐',
+        roles: const <PartyRole>[PartyRole.customer],
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
   });
 
   tearDown(() {
@@ -101,7 +105,10 @@ void main() {
           ),
         ],
         payments: <PurchasePaymentDraft>[
-          PurchasePaymentDraft(accountId: accountId, amount: Money.format(qty * 350)),
+          PurchasePaymentDraft(
+            accountId: accountId,
+            amount: Money.format(qty * 350),
+          ),
         ],
       ),
       now: 1700000000000,
@@ -111,8 +118,9 @@ void main() {
   /// 卖给「李姐」（散客也要结清，统一走客户）
   /// 卖出 [qty] 件（4.00 出），立即收款
   void sell(int qty) {
-    final String customerId =
-        PartyDao(db).findAll(role: PartyRole.customer).first.id;
+    final String customerId = PartyDao(
+      db,
+    ).findAll(role: PartyRole.customer).first.id;
     sales.create(
       SaleDraft(
         partyId: customerId,
@@ -126,7 +134,10 @@ void main() {
           ),
         ],
         payments: <SalePaymentDraft>[
-          SalePaymentDraft(accountId: accountId, amount: Money.format(qty * 400)),
+          SalePaymentDraft(
+            accountId: accountId,
+            amount: Money.format(qty * 400),
+          ),
         ],
       ),
       now: 1700000000000,
@@ -142,26 +153,25 @@ void main() {
     DocumentSink? documentSink,
     bool canCreateProducts = false,
     bool mobileShell = false,
-  }) =>
-      MaterialApp(
-        home: Scaffold(
-          body: StockPage(
-            engine: RuleEngine(db),
-            products: products,
-            queries: queries,
-            exports: exports,
-            stockDelta: stockDelta,
-            // #27 批 2：商品流水 + 新建商品补充入口（手机壳 = 镜像实例化，
-            // 测试里主库/镜像同库模拟「同源接线」）
-            stockFlow: stockFlow,
-            settlements: settlements,
-            masterDataSink: masterDataSink,
-            documentSink: documentSink,
-            canCreateProducts: canCreateProducts,
-            mobileShell: mobileShell,
-          ),
-        ),
-      );
+  }) => MaterialApp(
+    home: Scaffold(
+      body: StockPage(
+        engine: RuleEngine(db),
+        products: products,
+        queries: queries,
+        exports: exports,
+        stockDelta: stockDelta,
+        // #27 批 2：商品流水 + 新建商品补充入口（手机壳 = 镜像实例化，
+        // 测试里主库/镜像同库模拟「同源接线」）
+        stockFlow: stockFlow,
+        settlements: settlements,
+        masterDataSink: masterDataSink,
+        documentSink: documentSink,
+        canCreateProducts: canCreateProducts,
+        mobileShell: mobileShell,
+      ),
+    ),
+  );
 
   /// 一条「卖出 [quantity] 件」的入队条目（payload = createDocument wire 形状）
   void enqueueSale(String id, String productId, int quantity) {
@@ -195,9 +205,7 @@ void main() {
     );
   }
 
-  testWidgets('M14：**只有本地未同步影响**的商品，默认列表里也要看得到', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('M14：**只有本地未同步影响**的商品，默认列表里也要看得到', (WidgetTester tester) async {
     // 手机端场景：刚在手机上卖了 1 件，权威账面仍是 0（还没推给电脑）
     final Product onlyLocal = Product(
       id: 'p-only-local',
@@ -212,7 +220,9 @@ void main() {
     enqueueSale('q-m14', onlyLocal.id, 1);
 
     await tester.pumpWidget(
-      page(stockDelta: StockDelta(db: db, queue: SyncQueueDao(db))),
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -225,7 +235,9 @@ void main() {
     );
   });
 
-  testWidgets('空库给「怎么办」：两段式空态（§AD-6）+ 首次入口文案（遗漏 2）', (WidgetTester tester) async {
+  testWidgets('空库给「怎么办」：两段式空态（§AD-6）+ 首次入口文案（遗漏 2）', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -243,19 +255,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('重新清点'), findsOneWidget);
-    expect(find.text('录入现有货物'), findsNothing,
-        reason: '用户录过之后看到同一文案会以为没录上');
+    expect(find.text('录入现有货物'), findsNothing, reason: '用户录过之后看到同一文案会以为没录上');
   });
 
-  testWidgets('期初录入过 → 成本列「待校准」而不是 ¥0.00（§AD 遗漏 1）', (WidgetTester tester) async {
+  testWidgets('期初录入过 → 成本列「待校准」而不是 ¥0.00（§AD 遗漏 1）', (
+    WidgetTester tester,
+  ) async {
     StocktakeService(engine: RuleEngine(db), queries: queries).create(
-      StocktakeDraft(lines: <StocktakeLineDraft>[
-        StocktakeLineDraft(
-          productId: productId,
-          productName: '红富士苹果',
-          quantity: '8',
-        ),
-      ]),
+      StocktakeDraft(
+        lines: <StocktakeLineDraft>[
+          StocktakeLineDraft(
+            productId: productId,
+            productName: '红富士苹果',
+            quantity: '8',
+          ),
+        ],
+      ),
       now: 1700000000000,
     );
     await tester.pumpWidget(page());
@@ -286,9 +301,7 @@ void main() {
     expect(find.text('¥ 35.00'), findsOneWidget);
   });
 
-  testWidgets('三档颜色：卖到低于安全库存 → 橙提示；超卖 → 红提示', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('三档颜色：卖到低于安全库存 → 橙提示；超卖 → 红提示', (WidgetTester tester) async {
     buy(10); // 安全库存 5
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -311,13 +324,15 @@ void main() {
   testWidgets('零流水商品默认隐藏，「显示全部」后出现（遗漏 5）', (WidgetTester tester) async {
     // 再建一个没流水的商品
     final int t = 1700000000000;
-    ProductDao(db).insert(Product(
-      id: newId(),
-      code: 'P0002',
-      name: '没进过货的商品',
-      createdAt: t,
-      updatedAt: t,
-    ));
+    ProductDao(db).insert(
+      Product(
+        id: newId(),
+        code: 'P0002',
+        name: '没进过货的商品',
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
 
     buy(3);
     await tester.pumpWidget(page());
@@ -342,14 +357,16 @@ void main() {
     // ⚠️ 走真实路径（建档 → 采购入库 → 停用），不手插流水 ——
     // 手插会绕开外键与不变量，测出来的东西不算数
     final int t = 1700000000000;
-    ProductDao(db).insert(Product(
-      id: 'p-stopped',
-      code: 'P0002',
-      name: '停用但有货',
-      unit: '箱',
-      createdAt: t,
-      updatedAt: t,
-    ));
+    ProductDao(db).insert(
+      Product(
+        id: 'p-stopped',
+        code: 'P0002',
+        name: '停用但有货',
+        unit: '箱',
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
     purchases.create(
       PurchaseDraft(
         date: '2026-09-28',
@@ -434,18 +451,15 @@ void main() {
     expect(find.byKey(const Key('export-stock-flow')), findsOneWidget);
 
     // 流水行 tap ⇒ 跳单据详情
-    final String docId = StockLedgerDao(db)
-        .ofProductReadable(productId)
-        .first
-        .documentId;
+    final String docId = StockLedgerDao(
+      db,
+    ).ofProductReadable(productId).first.documentId;
     await tester.tap(find.byKey(Key('stock-flow-row-$docId')));
     await tester.pumpAndSettle();
     expect(find.byType(DocumentDetailPage), findsOneWidget);
   });
 
-  testWidgets('#27：手机壳流水页 —— 镜像可读（非空）、无成本列、行不可点', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#27：手机壳流水页 —— 镜像可读（非空）、无成本列、行不可点', (WidgetTester tester) async {
     buy(6);
     await tester.pumpWidget(
       page(
@@ -467,10 +481,9 @@ void main() {
     expect(find.textContaining('成本只在电脑上显示'), findsOneWidget);
     expect(find.textContaining('每件'), findsNothing, reason: '手机不显示成本');
     // 行不可点：点了仍在流水页（无详情页可跳）
-    final String docId = StockLedgerDao(db)
-        .ofProductReadable(productId)
-        .first
-        .documentId;
+    final String docId = StockLedgerDao(
+      db,
+    ).ofProductReadable(productId).first.documentId;
     await tester.tap(find.byKey(Key('stock-flow-row-$docId')));
     await tester.pumpAndSettle();
     expect(find.byType(StockFlowPage), findsOneWidget);
@@ -480,9 +493,7 @@ void main() {
   // 2026-10-20（§CV·七十八，用户要求）：手机上「重新清点 / 录入现有货物」
   // 以前是引导（裁定说客户端算不出盘点 delta）—— 现在**清点单走单据队列**，
   // 差额由主机算 ⇒ 直接开页面，不再引导。
-  testWidgets('#78：手机「重新清点」⇒ 进期初页（不再弹「这一步在电脑上做」）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#78：手机「重新清点」⇒ 进期初页（不再弹「这一步在电脑上做」）', (WidgetTester tester) async {
     buy(6); // 有流水 ⇒ 按钮文案是「重新清点」
     final QueueSink sink = QueueSink(
       queue: SyncQueueDao(db),
@@ -511,9 +522,7 @@ void main() {
     expect(find.byType(OpeningStockPage), findsOneWidget);
   });
 
-  testWidgets('#27：新建商品补充入口 —— 手机壳在场、桌面缺省不在', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#27：新建商品补充入口 —— 手机壳在场、桌面缺省不在', (WidgetTester tester) async {
     await tester.pumpWidget(
       page(
         mobileShell: true,
@@ -577,9 +586,7 @@ void main() {
     );
   });
 
-  testWidgets('#31：期初同步确认后（条目转 sent 且被确认清除）提示消失', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#31：期初同步确认后（条目转 sent 且被确认清除）提示消失', (WidgetTester tester) async {
     final Db mirror = Db.openInMemory(foreignKeys: false);
     addTearDown(mirror.close);
     final ProductService mirrorProducts = ProductService(mirror);

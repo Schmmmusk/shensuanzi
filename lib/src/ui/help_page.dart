@@ -35,7 +35,8 @@ class HelpPage extends StatelessWidget {
   /// 备份目录（恢复步骤第 2 步要打开它）
   final String? backupDirectory;
 
-  static const String _issuesUrl = 'https://github.com/Schmmmusk/shensuanzi/issues';
+  static const String _issuesUrl =
+      'https://github.com/Schmmmusk/shensuanzi/issues';
   static const String _supportEmail = 'cedarandjoy@163.com';
 
   /// 备份文件夹怎么说（有真实路径就给路径 —— 用户能照着做）
@@ -44,9 +45,8 @@ class HelpPage extends StatelessWidget {
       : '这个文件夹：$backupDirectory';
 
   /// 数据文件夹怎么说
-  String get _dataFolder => dataDirectory == null
-      ? '「设置」页里「数据位置」显示的那个文件夹'
-      : '这个文件夹：$dataDirectory';
+  String get _dataFolder =>
+      dataDirectory == null ? '「设置」页里「数据位置」显示的那个文件夹' : '这个文件夹：$dataDirectory';
 
   @override
   Widget build(BuildContext context) {
@@ -109,14 +109,30 @@ class HelpPage extends StatelessWidget {
               _Section(
                 title: '四步上手',
                 children: <Widget>[
-                  _Step('1️⃣', '录入现有货物', '开店时店里已经有的货，'
-                      '到「库存」页点「录入现有货物」一次记入。只有第一次需要做。'),
-                  _Step('2️⃣', '建商品', '到「商品」页给每样商品建档'
-                      '（名称、售价；进价可选）。新进的货也要先建档。'),
-                  _Step('3️⃣', '采购入库 / 销售开单', '进货点「采购入库」，'
-                      '卖货点「销售开单」。当场收付款可以直接在单子里记。'),
-                  _Step('4️⃣', '看库存和往来', '「库存」页看还剩多少货，'
-                      '「往来方」页看谁欠你、你欠谁。'),
+                  _Step(
+                    '1️⃣',
+                    '录入现有货物',
+                    '开店时店里已经有的货，'
+                        '到「库存」页点「录入现有货物」一次记入。只有第一次需要做。',
+                  ),
+                  _Step(
+                    '2️⃣',
+                    '建商品',
+                    '到「商品」页给每样商品建档'
+                        '（名称、售价；进价可选）。新进的货也要先建档。',
+                  ),
+                  _Step(
+                    '3️⃣',
+                    '采购入库 / 销售开单',
+                    '进货点「采购入库」，'
+                        '卖货点「销售开单」。当场收付款可以直接在单子里记。',
+                  ),
+                  _Step(
+                    '4️⃣',
+                    '看库存和往来',
+                    '「库存」页看还剩多少货，'
+                        '「往来方」页看谁欠你、你欠谁。',
+                  ),
                 ],
               ),
 
@@ -349,7 +365,10 @@ class _Faq extends StatelessWidget {
           ),
           Text(
             'A：$answer',
-            style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+            style: TextStyle(
+              height: 1.6,
+              color: theme.textTheme.bodySmall?.color,
+            ),
           ),
         ],
       ),

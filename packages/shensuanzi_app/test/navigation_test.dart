@@ -29,10 +29,12 @@ void main() {
     });
 
     test('分组顺序 = 声明顺序：首页 → 高频动作 → 数据查询 → 系统', () {
-      expect(
-        NavSection.values.map((NavSection s) => s.name),
-        <String>['home', 'quick', 'data', 'system'],
-      );
+      expect(NavSection.values.map((NavSection s) => s.name), <String>[
+        'home',
+        'quick',
+        'data',
+        'system',
+      ]);
 
       // 取出每项在列表中的下标，验证 section 是**分段连续**的
       final List<NavSection> order = <NavSection>[
@@ -153,8 +155,10 @@ void main() {
 
     test('缩放再大也不低于「仅图标」宽度（兜底，不是默认）', () {
       expect(AppNavigation.widthFor(scale: 0.2), AppNavigation.iconOnlyWidth);
-      expect(AppNavigation.widthFor(compact: true, scale: 0.1),
-          AppNavigation.iconOnlyWidth);
+      expect(
+        AppNavigation.widthFor(compact: true, scale: 0.1),
+        AppNavigation.iconOnlyWidth,
+      );
     });
 
     test('点击区高度 ≥ 44（中老年用户的最小可点区域）', () {

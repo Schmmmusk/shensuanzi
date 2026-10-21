@@ -36,7 +36,6 @@ class ReturnPage extends StatefulWidget {
   /// 界面只给 `storageFailureNote` 的分类文案，异常全文进宿主日志）。
   final void Function(Object error, StackTrace stack)? onStorageFailure;
 
-
   @override
   State<ReturnPage> createState() => _ReturnPageState();
 }
@@ -60,8 +59,10 @@ class _ReturnPageState extends State<ReturnPage> {
   List<Account> _accounts = const <Account>[];
 
   /// 每行的控制器与「金额被手改过」标记（§BG 方案 A 同款套路）
-  final Map<String, TextEditingController> _qty = <String, TextEditingController>{};
-  final Map<String, TextEditingController> _amount = <String, TextEditingController>{};
+  final Map<String, TextEditingController> _qty =
+      <String, TextEditingController>{};
+  final Map<String, TextEditingController> _amount =
+      <String, TextEditingController>{};
   final Set<String> _amountTouched = <String>{};
 
   Map<String, ReturnQuota> _quotas = const <String, ReturnQuota>{};
@@ -83,7 +84,9 @@ class _ReturnPageState extends State<ReturnPage> {
     _productIds = _quotas.keys.toList(growable: false);
     for (final String pid in _productIds) {
       final ReturnQuota quota = _quotas[pid]!;
-      _qty[pid] = TextEditingController(text: widget.fullReturn ? '${quota.remainingQuantity}' : '');
+      _qty[pid] = TextEditingController(
+        text: widget.fullReturn ? '${quota.remainingQuantity}' : '',
+      );
       final int? defaultAmount = widget.fullReturn
           ? quota.remainingAmountCents
           : null;
@@ -203,15 +206,15 @@ class _ReturnPageState extends State<ReturnPage> {
     if (_saving) return;
     final ReturnDraft? draft = _draftOrNull();
     if (draft == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先填至少一行的退货数量')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先填至少一行的退货数量')));
       return;
     }
     if (draft.totalCents <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('退货金额合计要大于 0')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('退货金额合计要大于 0')));
       return;
     }
 
@@ -245,7 +248,10 @@ class _ReturnPageState extends State<ReturnPage> {
       if (!mounted) return;
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.reason), duration: const Duration(seconds: 8)),
+        SnackBar(
+          content: Text(error.reason),
+          duration: const Duration(seconds: 8),
+        ),
       );
     } catch (error, stack) {
       // #43：原始异常进日志，界面只给分类文案（M15 两通道，与三张开单页同款）
@@ -267,7 +273,7 @@ class _ReturnPageState extends State<ReturnPage> {
     final String refundText = draft.refunds.isEmpty
         ? '不立即退钱，冲减欠款'
         : '立即退款 ¥${Money.formatGrouped(draft.refundedCents)}'
-            '（${draft.refunds.first.accountName}）';
+              '（${draft.refunds.first.accountName}）';
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext dialogContext) => AlertDialog(
@@ -443,8 +449,9 @@ class _ReturnPageState extends State<ReturnPage> {
                   child: TextField(
                     key: Key('return-amount-$pid'),
                     controller: _amount[pid],
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     onChanged: (String text) => _onAmountChanged(pid, text),
                     decoration: InputDecoration(
                       labelText: '退货金额（元）',
@@ -471,7 +478,8 @@ class _ReturnPageState extends State<ReturnPage> {
               ),
             ],
             // 超额提示：内联橙色不拦人（裁定 R2 细节 2），保存时校验兜底
-            if (overQty && errors?[ReturnLineField.quantity] == null) ...<Widget>[
+            if (overQty &&
+                errors?[ReturnLineField.quantity] == null) ...<Widget>[
               const SizedBox(height: 4),
               Text(
                 '超过可退数量：最多可退 ${quota.remainingQuantity}$baseSuffix',
@@ -520,7 +528,10 @@ class _ReturnPageState extends State<ReturnPage> {
                       for (final Account account in accounts)
                         DropdownMenuItem<Account>(
                           value: account,
-                          child: Text(account.name, style: const TextStyle(height: 1.6)),
+                          child: Text(
+                            account.name,
+                            style: const TextStyle(height: 1.6),
+                          ),
                         ),
                     ],
                     onChanged: (Account? account) =>
@@ -534,8 +545,9 @@ class _ReturnPageState extends State<ReturnPage> {
                 child: TextField(
                   key: const Key('return-refund-amount'),
                   controller: _refundAmount,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   onChanged: (String text) => setState(
                     () => _refundAmountTouched = text.trim().isNotEmpty,
                   ),

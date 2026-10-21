@@ -37,7 +37,10 @@ void main() {
     sink = ServiceSink(
       sales: service,
       purchases: purchases,
-      deliveries: DeliveryService(engine: RuleEngine(db), queries: QueryDao(db)),
+      deliveries: DeliveryService(
+        engine: RuleEngine(db),
+        queries: QueryDao(db),
+      ),
     );
     products = ProductService(db);
     partyService = PartyService(PartyDao(db));
@@ -65,13 +68,15 @@ void main() {
     AccountDao(db).insert(account);
     accountId = account.id;
 
-    PartyDao(db).insert(Party(
-      id: newId(),
-      name: '李姐',
-      roles: const <PartyRole>[PartyRole.customer],
-      createdAt: t,
-      updatedAt: t,
-    ));
+    PartyDao(db).insert(
+      Party(
+        id: newId(),
+        name: '李姐',
+        roles: const <PartyRole>[PartyRole.customer],
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
   });
 
   tearDown(() {
@@ -105,9 +110,14 @@ void main() {
 
   /// #51 夹具：把 [SalePage] **推成第二屏路由**（手机上的真实形态）——
   /// 底下垫一页占位，才能断言「确认放弃后整屏被退出」。
-  Future<void> pushSalePage(WidgetTester tester, {required bool mobileShell}) async {
+  Future<void> pushSalePage(
+    WidgetTester tester, {
+    required bool mobileShell,
+  }) async {
     await tester.pumpWidget(
-      MaterialApp(home: const Scaffold(body: Center(child: Text(' beneath ')))),
+      MaterialApp(
+        home: const Scaffold(body: Center(child: Text(' beneath '))),
+      ),
     );
     final NavigatorState nav = tester.state(find.byType(Navigator));
     nav.push(
@@ -175,13 +185,13 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('M08：开单页的库存提示**含本地未同步影响**（不只是权威值）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('M08：开单页的库存提示**含本地未同步影响**（不只是权威值）', (WidgetTester tester) async {
     enqueueSale('q-m08', productId);
 
     await tester.pumpWidget(
-      page(stockDelta: StockDelta(db: db, queue: SyncQueueDao(db))),
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+      ),
     );
     await tester.pumpAndSettle();
     await pickFirstProduct(tester);
@@ -336,7 +346,9 @@ void main() {
     expect(StockLedgerDao(db).stockOf(productId), -10);
   });
 
-  testWidgets('选客户 + 部分收款 → SnackBar 带累计欠款；售出单价可改', (WidgetTester tester) async {
+  testWidgets('选客户 + 部分收款 → SnackBar 带累计欠款；售出单价可改', (
+    WidgetTester tester,
+  ) async {
     stockUp();
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -361,7 +373,9 @@ void main() {
     expect(find.textContaining('李姐 累计欠款 ¥30.00'), findsOneWidget);
   });
 
-  testWidgets('客户选择器：空查询显示「最近往来」；新建同名 → 追加 role 不建第二条', (WidgetTester tester) async {
+  testWidgets('客户选择器：空查询显示「最近往来」；新建同名 → 追加 role 不建第二条', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -380,8 +394,10 @@ void main() {
     // 弹层关闭，页头显示客户名
     expect(find.text('老王'), findsWidgets);
     final int count =
-        db.raw.select("SELECT COUNT(*) AS n FROM parties WHERE name = '老王'")
-            .first['n']! as int;
+        db.raw
+                .select("SELECT COUNT(*) AS n FROM parties WHERE name = '老王'")
+                .first['n']!
+            as int;
     expect(count, 1);
     // 他同时也是供应商（若之前作为供应商存在）时 roles 会追加 —— 这里验证 customer role 在
     final Party? party = partyService.findByName('老王');
@@ -403,9 +419,7 @@ void main() {
     expect(find.text('放弃这次开单？'), findsNothing);
   });
 
-  testWidgets('#51：手机（推入路由）确认放弃 ⇒ 整屏退出，不只清草稿', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#51：手机（推入路由）确认放弃 ⇒ 整屏退出，不只清草稿', (WidgetTester tester) async {
     await pushSalePage(tester, mobileShell: true);
     await fillRow(tester); // 有内容 ⇒ canPop = false ⇒ 返回被拦
 
@@ -435,13 +449,17 @@ void main() {
     expect(
       find.text('放弃这次开单？'),
       findsNothing,
-      reason: '2026-10-15 裁定：Alt+← / 鼠标侧键不启用 —— '
+      reason:
+          '2026-10-15 裁定：Alt+← / 鼠标侧键不启用 —— '
           '中老年用户不认识它，误触到「放弃确认」有丢草稿风险',
     );
     expect(find.text(' beneath '), findsNothing, reason: '不退出');
     // 草稿原样保留：数量框还是填过的 10（没有被清空重置成空行）
     expect(
-      tester.widget<TextField>(find.byKey(const Key('sale-qty'))).controller!.text,
+      tester
+          .widget<TextField>(find.byKey(const Key('sale-qty')))
+          .controller!
+          .text,
       '10',
       reason: '草稿原样保留',
     );
@@ -465,9 +483,7 @@ void main() {
     expect(find.text('找零 ¥50.00'), findsOneWidget);
   });
 
-  testWidgets('「顾客给了」小于应收 → 显示「不够」（内联橙），仍允许提交', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('「顾客给了」小于应收 → 显示「不够」（内联橙），仍允许提交', (WidgetTester tester) async {
     stockUp();
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -485,9 +501,7 @@ void main() {
   });
 
   // #40④（2026-10-18 裁定甲）：「顾客给了」**不记账**，但用户会当它是收款框
-  testWidgets('#40④ 填了「顾客给了」却没填收款框 ⇒ 提交前说清会整单赊账', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#40④ 填了「顾客给了」却没填收款框 ⇒ 提交前说清会整单赊账', (WidgetTester tester) async {
     stockUp();
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -534,10 +548,14 @@ void main() {
     expect(find.textContaining('已保存'), findsOneWidget);
     // 落库永远是应收：现金箱净流入 50 元。⚠️ 只 sum 收入方向 ——
     // stockUp 的采购付款（-3500）也在 money_ledger 里，全表 SUM 会混入
-    final int cashIn = db.raw
-        .select('SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
-            'WHERE amount > 0')
-        .first['s']! as int;
+    final int cashIn =
+        db.raw
+                .select(
+                  'SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
+                  'WHERE amount > 0',
+                )
+                .first['s']!
+            as int;
     expect(cashIn, 5000, reason: '落库 50 元，不是顾客给的 100 元（§AJ·AI-4）');
     // 保存后「顾客给了」即清（不持久化）
     expect(find.text('100'), findsNothing);
@@ -573,16 +591,18 @@ void main() {
       findsOneWidget,
       reason: '第二处告知：保存后再说一次记了多少',
     );
-    final int cashIn = db.raw
-        .select('SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
-            'WHERE amount > 0')
-        .first['s']! as int;
+    final int cashIn =
+        db.raw
+                .select(
+                  'SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
+                  'WHERE amount > 0',
+                )
+                .first['s']!
+            as int;
     expect(cashIn, 5000, reason: '⚡ 关键：找零的 50 元没进账');
   });
 
-  testWidgets('快捷键 [收 100]：收款框填应收全额，「顾客给了」填整额', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('快捷键 [收 100]：收款框填应收全额，「顾客给了」填整额', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -602,9 +622,7 @@ void main() {
     expect(find.text('找零 ¥50.00'), findsOneWidget);
   });
 
-  testWidgets('非现金账户不显示找零辅助行（找零是现金的物理属性）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('非现金账户不显示找零辅助行（找零是现金的物理属性）', (WidgetTester tester) async {
     // ⚠️ v3 加了「整单让价」框，账户 Dropdown 的按钮位置更低 ——
     // 800×600 视口里弹出菜单放不下（框架断言 menuLimits）。
     // 该用例临时加高视口；addTearDown 恢复，不影响别的用例。
@@ -613,13 +631,15 @@ void main() {
     addTearDown(tester.view.reset);
 
     final int t = 1700000000000;
-    AccountDao(db).insert(Account(
-      id: newId(),
-      name: '微信收款',
-      type: AccountType.wechat,
-      createdAt: t,
-      updatedAt: t,
-    ));
+    AccountDao(db).insert(
+      Account(
+        id: newId(),
+        name: '微信收款',
+        type: AccountType.wechat,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
 
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -645,7 +665,9 @@ void main() {
 
   // ---- §BG 方案 A：切单位 ⇒ 未被手改的预填价跟着换算（三页同构，各钉各的 Key）----
 
-  testWidgets('§BG 方案A：切到「箱」⇒ 预填价 ×12、单价标注单位、显示换算说明', (WidgetTester tester) async {
+  testWidgets('§BG 方案A：切到「箱」⇒ 预填价 ×12、单价标注单位、显示换算说明', (
+    WidgetTester tester,
+  ) async {
     final Product milk = Product(
       id: newId(),
       code: 'P0002',
@@ -670,9 +692,8 @@ void main() {
     await tester.tap(find.widgetWithText(ListTile, '蒙牛纯牛奶'));
     await tester.pumpAndSettle();
 
-    TextField priceField() => tester.widget<TextField>(
-      find.byKey(const Key('sale-price')),
-    );
+    TextField priceField() =>
+        tester.widget<TextField>(find.byKey(const Key('sale-price')));
     // 预填 = 瓶价 2.50，label 标注最小单位
     expect(priceField().controller!.text, '2.50');
     expect(find.text('单价（元/瓶）*'), findsOneWidget);
@@ -696,9 +717,7 @@ void main() {
 
   // ============================================ M12：改数量后让价重算（2026-10-08）
 
-  testWidgets('M12：改数量后整单让价**重新分摊**（预览与提交一致）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('M12：改数量后整单让价**重新分摊**（预览与提交一致）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
     await pickFirstProduct(tester);
@@ -729,9 +748,7 @@ void main() {
   // M10（2026-10-08）：明细行原先是**固定横向比例** —— 窄屏 + 超大字号时
   // 单价框放不下「单价（元/箱）」这个 label，被系统截成省略号。
   // 现在宽屏并排（桌面零变化）、窄屏 + 大字号改成上下堆叠。
-  testWidgets('M10：窄屏 + 2 倍字号 ⇒ 数量/单价**上下堆叠**', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('M10：窄屏 + 2 倍字号 ⇒ 数量/单价**上下堆叠**', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(360, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -755,9 +772,7 @@ void main() {
     );
   });
 
-  testWidgets('M10：宽屏 + 标准字号 ⇒ 仍**并排**（桌面零变化）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('M10：宽屏 + 标准字号 ⇒ 仍**并排**（桌面零变化）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -777,9 +792,7 @@ void main() {
   // 值对象本身由 `master_data_policy_test` / `selfcheck_app` 钉；这里钉的是
   // 「三个能力各走对路」—— 三处 `if` 位置错一个，值对象测试全绿也发现不了。
   group('手机端 MasterDataPolicy.mobile()（§CV·七）', () {
-    testWidgets('＋新建商品 ⇒ 出**建档表单**（商品本机可建）', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('＋新建商品 ⇒ 出**建档表单**（商品本机可建）', (WidgetTester tester) async {
       await tester.pumpWidget(page(policy: const MasterDataPolicy.mobile()));
       await tester.pumpAndSettle();
 
@@ -822,25 +835,25 @@ void main() {
   // ⚠️ 第 ② 步在修复前**必红** —— 这就是本用例的反向灵敏度。
   testWidgets('#25 换商品 ⇒ 单价重填（含重选）；手改不阻挡覆盖；取消不覆盖', (WidgetTester tester) async {
     // 第二个商品：售价必须与红富士（5.00）不同，否则断言分辨不出来
-    ProductDao(db).insert(Product(
-      id: newId(),
-      code: 'P0009',
-      name: '黄金梨',
-      costPrice: 700,
-      sellPrice: 1250,
-      createdAt: 9,
-      updatedAt: 9,
-    ));
+    ProductDao(db).insert(
+      Product(
+        id: newId(),
+        code: 'P0009',
+        name: '黄金梨',
+        costPrice: 700,
+        sellPrice: 1250,
+        createdAt: 9,
+        updatedAt: 9,
+      ),
+    );
 
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
-    TextField priceField() => tester.widget<TextField>(
-      find.byKey(const Key('sale-price')),
-    );
-    TextField qtyField() => tester.widget<TextField>(
-      find.byKey(const Key('sale-qty')),
-    );
+    TextField priceField() =>
+        tester.widget<TextField>(find.byKey(const Key('sale-price')));
+    TextField qtyField() =>
+        tester.widget<TextField>(find.byKey(const Key('sale-qty')));
 
     /// 打开选择器并选中 [name]。
     /// [opener] = 行内当前可点的文案：还没选过是「点此选商品」，选过是**上一个商品名**。
@@ -882,11 +895,7 @@ void main() {
     await tester.enterText(find.byKey(const Key('sale-qty')), '7');
     await tester.pumpAndSettle();
     await pick('黄金梨', '红富士', '红富士苹果');
-    expect(
-      qtyField().controller!.text,
-      '7',
-      reason: '换商品只重置价与单位；数量是用户的输入',
-    );
+    expect(qtyField().controller!.text, '7', reason: '换商品只重置价与单位；数量是用户的输入');
 
     // ⑥ 打开选择器后**取消** ⇒ 不覆盖（`picked == null` 的对称边界）
     final String before = priceField().controller!.text;
@@ -988,7 +997,9 @@ void main() {
     enqueueSale('q-44', productId); // 未同步卖 1 ⇒ estimated = 0 + (-1) = -1
 
     await tester.pumpWidget(
-      page(stockDelta: StockDelta(db: db, queue: SyncQueueDao(db))),
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+      ),
     );
     await tester.pumpAndSettle();
     await pickFirstProduct(tester); // ⚠️ 只选商品，**不填数量**
@@ -1036,7 +1047,8 @@ void main() {
     expect(
       find.textContaining('已保存'),
       findsOneWidget,
-      reason: '#37：页级是 `Focus` 时 `unfocus()` 会把焦点升到**路由的** scope ⇒ '
+      reason:
+          '#37：页级是 `Focus` 时 `unfocus()` 会把焦点升到**路由的** scope ⇒ '
           'Ctrl+S 静默失效；改成 `FocusScope` 后焦点留在页内 ⇒ 恒生效',
     );
   });

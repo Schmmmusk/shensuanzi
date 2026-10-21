@@ -64,24 +64,26 @@ Map<String, Object?> pullBody({
   'has_more': hasMore,
 };
 
-Map<String, Object?> docRow(String id,
-        {int createdAt = 1700000000000, String docNo = 'CG20260926-001'}) =>
-    <String, Object?>{
-      'id': id,
-      'doc_no': docNo,
-      'doc_type': 'purchase',
-      'status': 'confirmed',
-      'party_id': null,
-      'account_id': null,
-      'total_amount': 1000,
-      'paid_amount': 0,
-      'ref_doc_id': null,
-      'occurred_at': createdAt,
-      'time_estimated': 0,
-      'created_at': createdAt,
-      'updated_at': createdAt,
-      'remark': null,
-    };
+Map<String, Object?> docRow(
+  String id, {
+  int createdAt = 1700000000000,
+  String docNo = 'CG20260926-001',
+}) => <String, Object?>{
+  'id': id,
+  'doc_no': docNo,
+  'doc_type': 'purchase',
+  'status': 'confirmed',
+  'party_id': null,
+  'account_id': null,
+  'total_amount': 1000,
+  'paid_amount': 0,
+  'ref_doc_id': null,
+  'occurred_at': createdAt,
+  'time_estimated': 0,
+  'created_at': createdAt,
+  'updated_at': createdAt,
+  'remark': null,
+};
 
 Map<String, Object?> lineRow(String id, String documentId, String product) =>
     <String, Object?>{
@@ -201,13 +203,17 @@ void main() {
 
     test('游标是**不透明**的：换成主机不认识的编码也照样存与回传', () {
       const String opaque = 'eyJzZXEiOjEyMywiayI6ImFiYyJ9';
-      client.cursors.upsertAll(<String, String>{SyncCursorKeys.stock: opaque}, now: now());
+      client.cursors.upsertAll(<String, String>{
+        SyncCursorKeys.stock: opaque,
+      }, now: now());
 
       expect(client.cursors.getAll()[SyncCursorKeys.stock], opaque);
     });
 
     test('clear 清空', () {
-      client.cursors.upsertAll(<String, String>{SyncCursorKeys.stock: '1'}, now: now());
+      client.cursors.upsertAll(<String, String>{
+        SyncCursorKeys.stock: '1',
+      }, now: now());
       client.cursors.clear();
       expect(client.cursors.getAll(), isEmpty);
     });
@@ -244,8 +250,9 @@ void main() {
     });
 
     test('markSent 后不再是「到期」条目（但仍在表里）', () {
-      final SyncQueueEntry entry =
-          client.queue.enqueue(SyncQueueEntry.create(purchaseOp('d1'), now: now()));
+      final SyncQueueEntry entry = client.queue.enqueue(
+        SyncQueueEntry.create(purchaseOp('d1'), now: now()),
+      );
 
       client.queue.markSent(entry.id);
 
@@ -254,8 +261,9 @@ void main() {
     });
 
     test('markFailed：dead=false → 仍 pending 但退避；dead=true → 死信', () {
-      final SyncQueueEntry entry =
-          client.queue.enqueue(SyncQueueEntry.create(purchaseOp('d1'), now: now()));
+      final SyncQueueEntry entry = client.queue.enqueue(
+        SyncQueueEntry.create(purchaseOp('d1'), now: now()),
+      );
 
       client.queue.markFailed(
         entry.id,
@@ -283,12 +291,15 @@ void main() {
     });
 
     test('clearConfirmed：只清 sent 且 id 命中的条目', () {
-      final SyncQueueEntry a =
-          client.queue.enqueue(SyncQueueEntry.create(purchaseOp('d-a'), now: now()));
-      final SyncQueueEntry b =
-          client.queue.enqueue(SyncQueueEntry.create(purchaseOp('d-b'), now: now()));
-      final SyncQueueEntry c =
-          client.queue.enqueue(SyncQueueEntry.create(purchaseOp('d-c'), now: now()));
+      final SyncQueueEntry a = client.queue.enqueue(
+        SyncQueueEntry.create(purchaseOp('d-a'), now: now()),
+      );
+      final SyncQueueEntry b = client.queue.enqueue(
+        SyncQueueEntry.create(purchaseOp('d-b'), now: now()),
+      );
+      final SyncQueueEntry c = client.queue.enqueue(
+        SyncQueueEntry.create(purchaseOp('d-c'), now: now()),
+      );
       client.queue.markSent(a.id);
       client.queue.markSent(b.id);
       client.queue.markSent(c.id);
@@ -303,8 +314,9 @@ void main() {
     });
 
     test('clearConfirmed：pending 的条目即使 id 命中也不清（它还没推送成功）', () {
-      final SyncQueueEntry entry =
-          client.queue.enqueue(SyncQueueEntry.create(purchaseOp('d-x'), now: now()));
+      final SyncQueueEntry entry = client.queue.enqueue(
+        SyncQueueEntry.create(purchaseOp('d-x'), now: now()),
+      );
 
       expect(client.queue.clearConfirmed(<String>{'d-x'}), 0);
       expect(client.queue.findById(entry.id), isNotNull);
@@ -491,7 +503,9 @@ void main() {
       for (int i = 0; i < 2; i++) {
         transport.replyJson(
           pullBody(
-            documents: <Map<String, Object?>>[docRow('d$i', docNo: 'CG-cap-$i')],
+            documents: <Map<String, Object?>>[
+              docRow('d$i', docNo: 'CG-cap-$i'),
+            ],
             hasMore: true,
           ),
         );
@@ -534,11 +548,7 @@ void main() {
 
       await client.pull();
 
-      expect(
-        queue.all(),
-        isEmpty,
-        reason: '拉到底且确实见到了该单据 ⇒ 才允许清掉 sent 条目',
-      );
+      expect(queue.all(), isEmpty, reason: '拉到底且确实见到了该单据 ⇒ 才允许清掉 sent 条目');
     });
 
     test('重复拉同一页 → 幂等（不产生重复行）', () async {
@@ -577,7 +587,9 @@ void main() {
       await client.pull();
 
       final Map<String, Object?> row = Map<String, Object?>.from(
-        db.raw.select('SELECT * FROM documents WHERE id = ?', <Object?>['d1']).first,
+        db.raw.select('SELECT * FROM documents WHERE id = ?', <Object?>[
+          'd1',
+        ]).first,
       );
       expect(row['doc_no'], 'CG20260926-001', reason: '主机分配的正式单号回填');
       expect(row['total_amount'], 1000);
@@ -588,11 +600,11 @@ void main() {
     });
 
     test('未知实体键被忽略（主机新增实体不会让旧客户端崩，也不落库）', () async {
-      final Map<String, Object?> body = pullBody(
-        documents: <Map<String, Object?>>[docRow('d1')],
-      )..['warehouses'] = <Object?>[
-        <String, Object?>{'id': 'w1', 'name': '仓库'},
-      ];
+      final Map<String, Object?> body =
+          pullBody(documents: <Map<String, Object?>>[docRow('d1')])
+            ..['warehouses'] = <Object?>[
+              <String, Object?>{'id': 'w1', 'name': '仓库'},
+            ];
       transport.replyJson(body);
 
       final SyncPullReport report = await client.pull();
@@ -601,7 +613,9 @@ void main() {
       expect(report.entities.containsKey('warehouses'), isFalse);
       expect(
         db.raw
-            .select("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'warehouses'")
+            .select(
+              "SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'warehouses'",
+            )
             .first['n'],
         0,
       );
@@ -674,7 +688,11 @@ void main() {
         throwsA(
           isA<SyncHttpException>()
               .having((SyncHttpException e) => e.statusCode, 'statusCode', 401)
-              .having((SyncHttpException e) => e.isUnauthorized, 'isUnauthorized', isTrue),
+              .having(
+                (SyncHttpException e) => e.isUnauthorized,
+                'isUnauthorized',
+                isTrue,
+              ),
         ),
       );
     });
@@ -694,11 +712,15 @@ void main() {
     });
 
     test('doc_no 撞车 → 明确的 StateError（不是裸的 SqliteException），并整批回滚', () async {
-      transport.replyJson(pullBody(documents: <Map<String, Object?>>[docRow('d1')]));
+      transport.replyJson(
+        pullBody(documents: <Map<String, Object?>>[docRow('d1')]),
+      );
       await client.pull();
 
       // 主机侧 doc_no 唯一，所以「另一张单用了同一个 doc_no」只可能是本地镜像损坏
-      transport.replyJson(pullBody(documents: <Map<String, Object?>>[docRow('d2')]));
+      transport.replyJson(
+        pullBody(documents: <Map<String, Object?>>[docRow('d2')]),
+      );
 
       await expectLater(
         client.pull(),
@@ -744,15 +766,19 @@ void main() {
 
       // 两页：d1 在第 1 页、d2 在末页。旧实现每页新建集合、只在末页清理
       // ⇒ d1 的条目永远清不掉（卡 sent ⇒ 「未同步影响」虚高，主机 1 显示 2）。
-      transport.replyJson(pullBody(
-        documents: <Map<String, Object?>>[docRow('d1', docNo: 'CG-49-1')],
-        hasMore: true,
-        cursors: <String, String>{'documents': 'c1'},
-      ));
-      transport.replyJson(pullBody(
-        documents: <Map<String, Object?>>[docRow('d2', docNo: 'CG-49-2')],
-        cursors: <String, String>{'documents': 'c2'},
-      ));
+      transport.replyJson(
+        pullBody(
+          documents: <Map<String, Object?>>[docRow('d1', docNo: 'CG-49-1')],
+          hasMore: true,
+          cursors: <String, String>{'documents': 'c1'},
+        ),
+      );
+      transport.replyJson(
+        pullBody(
+          documents: <Map<String, Object?>>[docRow('d2', docNo: 'CG-49-2')],
+          cursors: <String, String>{'documents': 'c2'},
+        ),
+      );
 
       final SyncPullReport report = await paged.pull();
 
@@ -828,14 +854,17 @@ void main() {
     Map<String, Object?> pushBody(List<Map<String, Object?>> results) =>
         <String, Object?>{'results': results};
 
-    Map<String, Object?> receipt(String entityId, String status, {String? reason}) =>
-        <String, Object?>{
-          'entity_id': entityId,
-          'status': status,
-          // `?reason` = 空值感知元素：`reason` 为 null 时整个键都不出现
-          // （等价于 `if (reason != null) 'reason': reason`，见 lint use_null_aware_elements）
-          'reason': ?reason,
-        };
+    Map<String, Object?> receipt(
+      String entityId,
+      String status, {
+      String? reason,
+    }) => <String, Object?>{
+      'entity_id': entityId,
+      'status': status,
+      // `?reason` = 空值感知元素：`reason` 为 null 时整个键都不出现
+      // （等价于 `if (reason != null) 'reason': reason`，见 lint use_null_aware_elements）
+      'reason': ?reason,
+    };
 
     test('队列为空 → 不发请求', () async {
       final SyncPushReport report = await client.push();
@@ -846,7 +875,9 @@ void main() {
 
     test('applied → 条目转 sent（**不删除**，等 pull 确认）', () async {
       final SyncQueueEntry entry = enqueueDoc('d1');
-      transport.replyJson(pushBody(<Map<String, Object?>>[receipt('d1', 'applied')]));
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[receipt('d1', 'applied')]),
+      );
 
       final SyncPushReport report = await client.push();
 
@@ -859,7 +890,9 @@ void main() {
 
     test('请求体形状：operations 数组 + payload 原样', () async {
       enqueueDoc('d1');
-      transport.replyJson(pushBody(<Map<String, Object?>>[receipt('d1', 'applied')]));
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[receipt('d1', 'applied')]),
+      );
 
       await client.push();
 
@@ -868,7 +901,9 @@ void main() {
           jsonDecode(transport.last.body!) as Map<String, Object?>;
       final List<Object?> ops = body['operations']! as List<Object?>;
       expect(ops, hasLength(1));
-      final Map<String, Object?> op = Map<String, Object?>.from(ops.single! as Map);
+      final Map<String, Object?> op = Map<String, Object?>.from(
+        ops.single! as Map,
+      );
       expect(op['entity'], Schema.documents);
       expect(op['entity_id'], 'd1');
       expect(op['operation'], 'createDocument');
@@ -894,8 +929,7 @@ void main() {
       expect(client.queue.findById(a.id)!.lastError, '规则拒绝');
     });
 
-    test('rejected → 重试计数 +1、退避 1s、记原因',
-        () async {
+    test('rejected → 重试计数 +1、退避 1s、记原因', () async {
       // 固定时钟：退避是「从本次尝试时刻起算」，而 `push` 自己会读一次时钟 ——
       // 用会推进的时钟做算术，差值里会混进「调用次数」而不是退避长度。
       const int fixed = 1700000000000;
@@ -938,7 +972,9 @@ void main() {
 
       for (int i = 0; i < 4; i++) {
         transport.replyJson(
-          pushBody(<Map<String, Object?>>[receipt('d1', 'rejected', reason: 'x')]),
+          pushBody(<Map<String, Object?>>[
+            receipt('d1', 'rejected', reason: 'x'),
+          ]),
         );
         await c.push();
         final SyncQueueEntry current = c.queue.findById(entry.id)!;
@@ -961,7 +997,9 @@ void main() {
 
       for (int i = 0; i <= SyncClient.maxRetries; i++) {
         transport.replyJson(
-          pushBody(<Map<String, Object?>>[receipt('d1', 'rejected', reason: 'x')]),
+          pushBody(<Map<String, Object?>>[
+            receipt('d1', 'rejected', reason: 'x'),
+          ]),
         );
         await client.push();
         final SyncQueueEntry current = client.queue.findById(entry.id)!;
@@ -1002,20 +1040,24 @@ void main() {
           now: now(),
         ),
       );
-      transport.replyJson(pushBody(<Map<String, Object?>>[
-        <String, Object?>{
-          'entity_id': productId,
-          'status': 'conflict',
-          'server_state': productRow(productId),
-        },
-      ]));
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[
+          <String, Object?>{
+            'entity_id': productId,
+            'status': 'conflict',
+            'server_state': productRow(productId),
+          },
+        ]),
+      );
 
       final SyncPushReport report = await client.push();
 
       expect(report.conflicts, 1);
       expect(client.queue.findById(entry.id), isNull, reason: '冲突已解决 → 条目删除');
       final Map<String, Object?> row = Map<String, Object?>.from(
-        db.raw.select('SELECT * FROM products WHERE id = ?', <Object?>[productId]).first,
+        db.raw.select('SELECT * FROM products WHERE id = ?', <Object?>[
+          productId,
+        ]).first,
       );
       expect(row['name'], '商品', reason: '本地被主机状态覆盖（主机赢）');
     });
@@ -1023,7 +1065,9 @@ void main() {
     test('某条没有回执 → 该条排重试，其它条不受影响', () async {
       final SyncQueueEntry a = enqueueDoc('d-a');
       final SyncQueueEntry b = enqueueDoc('d-b');
-      transport.replyJson(pushBody(<Map<String, Object?>>[receipt('d-a', 'applied')]));
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[receipt('d-a', 'applied')]),
+      );
 
       final SyncPushReport report = await client.push();
 
@@ -1031,10 +1075,7 @@ void main() {
       expect(report.retried, 1);
       expect(client.queue.findById(a.id)!.status, SyncQueueStatus.sent);
       expect(client.queue.findById(b.id)!.status, SyncQueueStatus.pending);
-      expect(
-        client.queue.findById(b.id)!.lastError,
-        '主机未返回该条目的回执',
-      );
+      expect(client.queue.findById(b.id)!.lastError, '主机未返回该条目的回执');
     });
 
     test('传输层异常 → 整批退避、状态仍 pending、**不抛异常**', () async {
@@ -1064,7 +1105,9 @@ void main() {
     test('已 sent 的条目不会被再次推送', () async {
       final SyncQueueEntry entry = enqueueDoc('d1');
       client.queue.markSent(entry.id);
-      transport.replyJson(pushBody(<Map<String, Object?>>[receipt('d1', 'applied')]));
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[receipt('d1', 'applied')]),
+      );
 
       final SyncPushReport report = await client.push();
 
@@ -1101,22 +1144,28 @@ void main() {
       enqueueDoc('d2');
       enqueueDoc('d3');
 
-      transport.replyJson(pushBody(<Map<String, Object?>>[
-        receipt('d1', 'applied'),
-        receipt('d2', 'applied'),
-      ]));
-      transport.replyJson(pullBody(
-        documents: <Map<String, Object?>>[
-          docRow('d1', docNo: 'CG-48-1'),
-          docRow('d2', docNo: 'CG-48-2'),
-        ],
-      ));
-      transport.replyJson(pushBody(
-        <Map<String, Object?>>[receipt('d3', 'applied')],
-      ));
-      transport.replyJson(pullBody(
-        documents: <Map<String, Object?>>[docRow('d3', docNo: 'CG-48-3')],
-      ));
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[
+          receipt('d1', 'applied'),
+          receipt('d2', 'applied'),
+        ]),
+      );
+      transport.replyJson(
+        pullBody(
+          documents: <Map<String, Object?>>[
+            docRow('d1', docNo: 'CG-48-1'),
+            docRow('d2', docNo: 'CG-48-2'),
+          ],
+        ),
+      );
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[receipt('d3', 'applied')]),
+      );
+      transport.replyJson(
+        pullBody(
+          documents: <Map<String, Object?>>[docRow('d3', docNo: 'CG-48-3')],
+        ),
+      );
 
       final SyncPushReport report = await small.pushAll();
 
@@ -1154,10 +1203,12 @@ void main() {
       enqueueDoc('d2');
       enqueueDoc('d3');
 
-      transport.replyJson(pushBody(<Map<String, Object?>>[
-        receipt('d1', 'applied'),
-        receipt('d2', 'applied'),
-      ]));
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[
+          receipt('d1', 'applied'),
+          receipt('d2', 'applied'),
+        ]),
+      );
       transport.replyJson(pullBody());
 
       final SyncPushReport report = await small.pushAll(maxBatches: 1);
@@ -1200,8 +1251,13 @@ void main() {
         );
 
     test('符号：进货 / 销售退货为正，销售 / 送货 / 采购退货为负', () {
-      expect(SyncClient.deltaOf(queueDoc('a', 'purchase', <int>[10])), <String, int>{'p0': 10});
-      expect(SyncClient.deltaOf(queueDoc('b', 'sale', <int>[3])), <String, int>{'p0': -3});
+      expect(
+        SyncClient.deltaOf(queueDoc('a', 'purchase', <int>[10])),
+        <String, int>{'p0': 10},
+      );
+      expect(SyncClient.deltaOf(queueDoc('b', 'sale', <int>[3])), <String, int>{
+        'p0': -3,
+      });
       expect(
         SyncClient.deltaOf(queueDoc('c', 'sale_return', <int>[2])),
         <String, int>{'p0': 2},
@@ -1210,7 +1266,10 @@ void main() {
         SyncClient.deltaOf(queueDoc('d', 'purchase_return', <int>[4])),
         <String, int>{'p0': -4},
       );
-      expect(SyncClient.deltaOf(queueDoc('e', 'delivery', <int>[5])), <String, int>{'p0': -5});
+      expect(
+        SyncClient.deltaOf(queueDoc('e', 'delivery', <int>[5])),
+        <String, int>{'p0': -5},
+      );
     });
 
     test('盘点与资金单据贡献 0（客户端算不出盘点影响，也不该估算资金）', () {
@@ -1246,8 +1305,13 @@ void main() {
       final SyncQueueEntry b = queueDoc('b', 'sale', <int>[3]); // -3
       final SyncQueueEntry c = queueDoc('c', 'sale', <int>[2]); // -2
       client.queue.markSent(b.id);
-      client.queue.markFailed(c.id,
-          error: 'x', retryCount: 11, nextRetryAt: 0, dead: true);
+      client.queue.markFailed(
+        c.id,
+        error: 'x',
+        retryCount: 11,
+        nextRetryAt: 0,
+        dead: true,
+      );
       // a 仍 pending
 
       expect(client.unsyncedDelta(), <String, int>{'p0': 5});
@@ -1289,7 +1353,9 @@ void main() {
       expect(view.unsynced, -3);
       expect(view.display, 7, reason: '用户卖掉的 3 件立刻可见');
       expect(view.hasUnsynced, isTrue);
-      expect(view.contributors.map((SyncQueueEntry e) => e.entityId), <String>['a']);
+      expect(view.contributors.map((SyncQueueEntry e) => e.entityId), <String>[
+        'a',
+      ]);
       expect(sale.entityId, 'a');
     });
   });
@@ -1338,7 +1404,11 @@ void main() {
       final Set<String> columns = SyncWhitelist.columns[Schema.documentLines]!;
       expect(
         columns,
-        containsAll(<String>['discount_amount', 'entry_quantity', 'entry_unit']),
+        containsAll(<String>[
+          'discount_amount',
+          'entry_quantity',
+          'entry_unit',
+        ]),
       );
     });
 
@@ -1357,16 +1427,25 @@ void main() {
   group('rebuildMirror：重建而非迁移（§BL·一，schema_migration.md §六）', () {
     test('drop 九表 + 重建 + 游标清零；sync_queue 保留', () async {
       // 先放一些镜像数据 + 游标 + 一条队列（客户端自己的离线单）
-      transport.replyJson(pullBody(
-        products: <Map<String, Object?>>[
-          <String, Object?>{
-            'id': 'p1', 'code': 'P0001', 'name': '牛奶', 'unit': '瓶',
-            'cost_price': 250, 'sell_price': 350, 'safety_stock': 0,
-            'is_active': 1, 'created_at': 1, 'updated_at': 1,
-          },
-        ],
-        cursors: <String, String>{'documents': '2026-01-01 00:00:00'},
-      ));
+      transport.replyJson(
+        pullBody(
+          products: <Map<String, Object?>>[
+            <String, Object?>{
+              'id': 'p1',
+              'code': 'P0001',
+              'name': '牛奶',
+              'unit': '瓶',
+              'cost_price': 250,
+              'sell_price': 350,
+              'safety_stock': 0,
+              'is_active': 1,
+              'created_at': 1,
+              'updated_at': 1,
+            },
+          ],
+          cursors: <String, String>{'documents': '2026-01-01 00:00:00'},
+        ),
+      );
       await client.pull();
       db.raw.execute(
         "INSERT INTO sync_queue (id, entity, entity_id, operation, payload, "
@@ -1394,40 +1473,64 @@ void main() {
     });
 
     test('重建后能再 pull（游标清零 = 从头全量拉）', () async {
-      transport.replyJson(pullBody(
-        documents: <Map<String, Object?>>[
-          <String, Object?>{
-            'id': 'd1', 'doc_no': 'XS20260101-001', 'doc_type': 'sale',
-            'party_id': null, 'total_amount': 100,
-            'paid_amount': 100, 'status': 'settled', 'occurred_at': 1,
-            'created_at': 1, 'updated_at': 1,
-          },
-        ],
-        cursors: <String, String>{'documents': '2026-06-01 00:00:00'},
-      ));
+      transport.replyJson(
+        pullBody(
+          documents: <Map<String, Object?>>[
+            <String, Object?>{
+              'id': 'd1',
+              'doc_no': 'XS20260101-001',
+              'doc_type': 'sale',
+              'party_id': null,
+              'total_amount': 100,
+              'paid_amount': 100,
+              'status': 'settled',
+              'occurred_at': 1,
+              'created_at': 1,
+              'updated_at': 1,
+            },
+          ],
+          cursors: <String, String>{'documents': '2026-06-01 00:00:00'},
+        ),
+      );
       await client.pull();
-      final String cursorBefore = db.raw
-          .select("SELECT cursor FROM sync_cursor WHERE entity = 'documents'")
-          .first['cursor']! as String;
+      final String cursorBefore =
+          db.raw
+                  .select(
+                    "SELECT cursor FROM sync_cursor WHERE entity = 'documents'",
+                  )
+                  .first['cursor']!
+              as String;
       expect(cursorBefore, '2026-06-01 00:00:00');
 
       client.rebuildMirror();
-      transport.replyJson(pullBody(
-        documents: <Map<String, Object?>>[
-          <String, Object?>{
-            'id': 'd1', 'doc_no': 'XS20260101-001', 'doc_type': 'sale',
-            'party_id': null, 'total_amount': 100,
-            'paid_amount': 100, 'status': 'settled', 'occurred_at': 1,
-            'created_at': 1, 'updated_at': 1,
-          },
-        ],
-        cursors: <String, String>{'documents': '2026-01-01 00:00:00'},
-      ));
+      transport.replyJson(
+        pullBody(
+          documents: <Map<String, Object?>>[
+            <String, Object?>{
+              'id': 'd1',
+              'doc_no': 'XS20260101-001',
+              'doc_type': 'sale',
+              'party_id': null,
+              'total_amount': 100,
+              'paid_amount': 100,
+              'status': 'settled',
+              'occurred_at': 1,
+              'created_at': 1,
+              'updated_at': 1,
+            },
+          ],
+          cursors: <String, String>{'documents': '2026-01-01 00:00:00'},
+        ),
+      );
       await client.pull();
       // 游标回到主机给的初始值 ⇒ 这次 pull 确实是「从头拉」
-      final String cursorAfter = db.raw
-          .select("SELECT cursor FROM sync_cursor WHERE entity = 'documents'")
-          .first['cursor']! as String;
+      final String cursorAfter =
+          db.raw
+                  .select(
+                    "SELECT cursor FROM sync_cursor WHERE entity = 'documents'",
+                  )
+                  .first['cursor']!
+              as String;
       expect(cursorAfter, '2026-01-01 00:00:00');
       expect(db.raw.select('SELECT COUNT(*) c FROM documents').first['c'], 1);
     });

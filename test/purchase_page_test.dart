@@ -36,7 +36,10 @@ void main() {
     sink = ServiceSink(
       sales: SaleService(engine: RuleEngine(db), queries: QueryDao(db)),
       purchases: service,
-      deliveries: DeliveryService(engine: RuleEngine(db), queries: QueryDao(db)),
+      deliveries: DeliveryService(
+        engine: RuleEngine(db),
+        queries: QueryDao(db),
+      ),
     );
 
     final Product product = Product(
@@ -186,10 +189,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await fillRow(tester);
-    await tester.enterText(
-      find.byKey(const Key('purchase-pay-amount')),
-      '10',
-    );
+    await tester.enterText(find.byKey(const Key('purchase-pay-amount')), '10');
     await tapBottomButton(tester, '保存 (Ctrl+S)');
     await tester.pumpAndSettle();
 
@@ -215,7 +215,9 @@ void main() {
     expect(find.text('放弃这次开单？'), findsNothing);
   });
 
-  testWidgets('供应商选择器：打字过滤不崩（定长列表 removeWhere 回归）', (WidgetTester tester) async {
+  testWidgets('供应商选择器：打字过滤不崩（定长列表 removeWhere 回归）', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -274,24 +276,34 @@ void main() {
     );
     // 库存进来了、成本按应付算（找回不影响成本口径）
     expect(StockLedgerDao(db).stockOf(productId), 10);
-    final int cost = db.raw
-        .select('SELECT total_cost FROM stock_ledger WHERE product_id = ?',
-            <Object?>[productId])
-        .first
-        .values
-        .first! as int;
+    final int cost =
+        db.raw
+                .select(
+                  'SELECT total_cost FROM stock_ledger WHERE product_id = ?',
+                  <Object?>[productId],
+                )
+                .first
+                .values
+                .first!
+            as int;
     expect(cost, 3500, reason: '入库成本 = 应付 35.00，不是付出的 50.00');
     // 资金流水只出 3500
-    final int cashOut = db.raw
-        .select('SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
-            'WHERE amount < 0')
-        .first['s']! as int;
+    final int cashOut =
+        db.raw
+                .select(
+                  'SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
+                  'WHERE amount < 0',
+                )
+                .first['s']!
+            as int;
     expect(cashOut, -3500, reason: '出账 35.00（找回的 15.00 没进出）');
   });
 
   // ---- §BG 方案 A：切单位 ⇒ 未被手改的预填价跟着换算（三页同构，各钉各的 Key）----
 
-  testWidgets('§BG 方案A：切到「箱」⇒ 预填价 ×12、单价标注单位、显示换算说明', (WidgetTester tester) async {
+  testWidgets('§BG 方案A：切到「箱」⇒ 预填价 ×12、单价标注单位、显示换算说明', (
+    WidgetTester tester,
+  ) async {
     final Product milk = Product(
       id: newId(),
       code: 'P0002',
@@ -316,9 +328,8 @@ void main() {
     await tester.tap(find.widgetWithText(ListTile, '蒙牛纯牛奶'));
     await tester.pumpAndSettle();
 
-    TextField priceField() => tester.widget<TextField>(
-      find.byKey(const Key('purchase-price')),
-    );
+    TextField priceField() =>
+        tester.widget<TextField>(find.byKey(const Key('purchase-price')));
     // 预填 = 瓶价 2.50，label 标注最小单位
     expect(priceField().controller!.text, '2.50');
     expect(find.text('单价（元/瓶）'), findsOneWidget);
@@ -348,24 +359,24 @@ void main() {
   // ⚠️ 第 ② 步在修复前**必红** —— 这就是本用例的反向灵敏度。
   testWidgets('#25 换商品 ⇒ 单价重填（含重选）；手改不阻挡覆盖；取消不覆盖', (WidgetTester tester) async {
     // 第二个商品：价必须与红富士（进价 3.50）不同，否则断言分辨不出来
-    ProductDao(db).insert(Product(
-      id: newId(),
-      code: 'P0009',
-      name: '黄金梨',
-      costPrice: 1250,
-      createdAt: 9,
-      updatedAt: 9,
-    ));
+    ProductDao(db).insert(
+      Product(
+        id: newId(),
+        code: 'P0009',
+        name: '黄金梨',
+        costPrice: 1250,
+        createdAt: 9,
+        updatedAt: 9,
+      ),
+    );
 
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
-    TextField priceField() => tester.widget<TextField>(
-      find.byKey(const Key('purchase-price')),
-    );
-    TextField qtyField() => tester.widget<TextField>(
-      find.byKey(const Key('purchase-qty')),
-    );
+    TextField priceField() =>
+        tester.widget<TextField>(find.byKey(const Key('purchase-price')));
+    TextField qtyField() =>
+        tester.widget<TextField>(find.byKey(const Key('purchase-qty')));
 
     /// 打开选择器并选中 [name]。
     /// [opener] = 行内当前可点的文案：还没选过是「点此选商品」，选过是**上一个商品名**。
@@ -407,11 +418,7 @@ void main() {
     await tester.enterText(find.byKey(const Key('purchase-qty')), '7');
     await tester.pumpAndSettle();
     await pick('黄金梨', '红富士', '红富士苹果');
-    expect(
-      qtyField().controller!.text,
-      '7',
-      reason: '换商品只重置价与单位；数量是用户的输入',
-    );
+    expect(qtyField().controller!.text, '7', reason: '换商品只重置价与单位；数量是用户的输入');
 
     // ⑥ 打开选择器后**取消** ⇒ 不覆盖（`picked == null` 的对称边界）
     final String before = priceField().controller!.text;

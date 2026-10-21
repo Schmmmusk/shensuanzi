@@ -89,15 +89,19 @@ void main() {
     updatedAt: now(),
   );
 
-  List<DocumentLine> oneLine(String docId, String productId, int qty, int price) =>
-      <DocumentLine>[
-        DocumentLine.create(
-          documentId: docId,
-          productId: productId,
-          quantity: qty,
-          unitPrice: price,
-        ),
-      ];
+  List<DocumentLine> oneLine(
+    String docId,
+    String productId,
+    int qty,
+    int price,
+  ) => <DocumentLine>[
+    DocumentLine.create(
+      documentId: docId,
+      productId: productId,
+      quantity: qty,
+      unitPrice: price,
+    ),
+  ];
 
   RuleOutcome run(Document d, List<DocumentLine> ls) =>
       engine.dispatch(document: d, lines: ls, now: now());
@@ -108,7 +112,10 @@ void main() {
       partyId: partyId,
       totalAmount: qty * unitPrice,
     );
-    final RuleOutcome outcome = run(purchase, oneLine(purchase.id, productId, qty, unitPrice));
+    final RuleOutcome outcome = run(
+      purchase,
+      oneLine(purchase.id, productId, qty, unitPrice),
+    );
     expect(outcome.status, RuleStatus.applied, reason: outcome.reason);
   }
 
@@ -262,8 +269,11 @@ void main() {
       expect(flow, hasLength(1));
       final PartyFlowEntry entry = flow.single;
       // ⚠️ dispatch 会把占位单号换成正式单号 —— 断言「非待同步前缀」
-      expect(entry.docNo.startsWith(Document.pendingDocNoPrefix), isFalse,
-          reason: '用户认的是正式单号不是 UUID');
+      expect(
+        entry.docNo.startsWith(Document.pendingDocNoPrefix),
+        isFalse,
+        reason: '用户认的是正式单号不是 UUID',
+      );
       expect(entry.docType, DocType.sale, reason: '要能区分采购/收款');
       expect(entry.amount, 2000, reason: '正 = 对方欠我增加（口径不变）');
       expect(entry.documentId, sale.id);
@@ -354,9 +364,9 @@ void main() {
         now: now(),
       );
 
-      final List<MoneyFlowEntry> flow = MoneyLedgerDao(db).ofAccountReadable(
-        cash,
-      );
+      final List<MoneyFlowEntry> flow = MoneyLedgerDao(
+        db,
+      ).ofAccountReadable(cash);
       expect(flow, hasLength(2));
       expect(flow[0].seqNo, lessThan(flow[1].seqNo));
 
@@ -364,8 +374,11 @@ void main() {
         (MoneyFlowEntry e) => e.docType == DocType.receipt,
       );
       expect(receiptEntry.amount, 3000, reason: '进账 = 正（balanceOf 口径）');
-      expect(receiptEntry.docNo.startsWith(Document.pendingDocNoPrefix),
-          isFalse, reason: '用户认的是正式单号不是 UUID');
+      expect(
+        receiptEntry.docNo.startsWith(Document.pendingDocNoPrefix),
+        isFalse,
+        reason: '用户认的是正式单号不是 UUID',
+      );
       expect(receiptEntry.documentId, receipt.id, reason: '详情跳转要用它');
 
       final MoneyFlowEntry paymentEntry = flow.firstWhere(
@@ -417,20 +430,12 @@ void main() {
       // 另一商品没有本商品流水
       expect(StockLedgerDao(db).ofProductReadable(other).length, 1);
       expect(
-        StockLedgerDao(db)
-            .ofProductReadable(other)
-            .first
-            .documentId
-            .contains('d-'),
+        StockLedgerDao(
+          db,
+        ).ofProductReadable(other).first.documentId.contains('d-'),
         anyOf(isTrue, isFalse),
       );
-      expect(
-        StockLedgerDao(db)
-            .ofProductReadable(other)
-            .first
-            .quantity,
-        7,
-      );
+      expect(StockLedgerDao(db).ofProductReadable(other).first.quantity, 7);
     });
 
     test('认不出的 doc_type ⇒ 跳行 + 计数（#42 同款，不整页塌）', () {
@@ -453,9 +458,9 @@ void main() {
         ),
       );
 
-      final List<MoneyFlowEntry> flow = MoneyLedgerDao(db).ofAccountReadable(
-        cash,
-      );
+      final List<MoneyFlowEntry> flow = MoneyLedgerDao(
+        db,
+      ).ofAccountReadable(cash);
       expect(flow, isEmpty, reason: '坏行跳过');
       expect(
         db.readFailures.count,
@@ -570,7 +575,11 @@ void main() {
       final String party = createParty();
       seedPurchase(p, party, 10, 100);
 
-      final Document sale = doc(type: DocType.sale, partyId: party, totalAmount: 300);
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 300,
+      );
       run(sale, oneLine(sale.id, p, 3, 100));
 
       final Document delivery = doc(
@@ -595,16 +604,24 @@ void main() {
       seedPurchase(p, party, 10, 100);
 
       // 赊账销售（无收款）—— 也算销售额
-      final Document credit = doc(type: DocType.sale, partyId: party, totalAmount: 800);
+      final Document credit = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 800,
+      );
       run(credit, oneLine(credit.id, p, 8, 100));
 
       // 已取消的销售（金额也要过 B5 校验才能落库，取消才有意义）
-      final Document cancelled = doc(type: DocType.sale, partyId: party, totalAmount: 100);
-      run(cancelled, oneLine(cancelled.id, p, 1, 100));
-      db.raw.execute(
-        'UPDATE documents SET status = ? WHERE id = ?',
-        <Object?>[DocStatus.cancelled.wire, cancelled.id],
+      final Document cancelled = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 100,
       );
+      run(cancelled, oneLine(cancelled.id, p, 1, 100));
+      db.raw.execute('UPDATE documents SET status = ? WHERE id = ?', <Object?>[
+        DocStatus.cancelled.wire,
+        cancelled.id,
+      ]);
 
       final OverviewSummary s = query.todaySummary(
         DateTime.fromMillisecondsSinceEpoch(1700000000000),
@@ -618,7 +635,11 @@ void main() {
       final String party = createParty();
       seedPurchase(p, party, 10, 100);
 
-      final Document late = doc(type: DocType.sale, partyId: party, totalAmount: 700);
+      final Document late = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 700,
+      );
       run(late, oneLine(late.id, p, 3, 100));
       // 补录：把业务日期改到昨天（clock 基点 1700000000000 ⇒ 零点取它，往前 1 天）
       db.raw.execute(
@@ -637,7 +658,11 @@ void main() {
       final String p = createProduct();
       final String party = createParty();
       seedPurchase(p, party, 10, 100);
-      final Document sale = doc(type: DocType.sale, partyId: party, totalAmount: 300);
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 300,
+      );
       run(sale, oneLine(sale.id, p, 3, 100));
 
       final OverviewSummary s = query.todaySummary(
@@ -684,15 +709,22 @@ void main() {
         '客户乙',
         yi,
       ]);
-      final Document s1 = doc(type: DocType.sale, partyId: jia, totalAmount: 1200);
+      final Document s1 = doc(
+        type: DocType.sale,
+        partyId: jia,
+        totalAmount: 1200,
+      );
       run(s1, oneLine(s1.id, p, 12, 100));
-      final Document s2 = doc(type: DocType.sale, partyId: yi, totalAmount: 500);
+      final Document s2 = doc(
+        type: DocType.sale,
+        partyId: yi,
+        totalAmount: 500,
+      );
       run(s2, oneLine(s2.id, p, 5, 100));
       // 停用甲（欠得最多的停用客户 —— OBS-05：照样显示）
-      db.raw.execute(
-        'UPDATE parties SET is_active = 0 WHERE id = ?',
-        <Object?>[jia],
-      );
+      db.raw.execute('UPDATE parties SET is_active = 0 WHERE id = ?', <Object?>[
+        jia,
+      ]);
 
       final ReceivablesSummary r = query.receivablesSummary();
       expect(r.totalCents, 1700);
@@ -725,5 +757,4 @@ void main() {
       expect(marks.unconfirmedCount(), 0, reason: '确认清除后归零');
     });
   });
-
 }

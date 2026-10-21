@@ -120,11 +120,7 @@ class _PairingScanPageState extends State<PairingScanPage> {
   ///
   /// ⚠️ 界面**只给中文**；插件的原始英文异常送进日志（有日志时）。
   Widget _scanError(BuildContext context, MobileScannerException error) {
-    widget.log?.crash(
-      error,
-      StackTrace.current,
-      label: '扫码相机打不开',
-    );
+    widget.log?.crash(error, StackTrace.current, label: '扫码相机打不开');
     final ThemeData theme = Theme.of(context);
     final String message = scanFailureMessage(
       scanFailureKindOf(error.errorCode.name),
@@ -180,71 +176,80 @@ class _PairingScanPageState extends State<PairingScanPage> {
               ),
             )
           : _scanning
-              ? Column(
-                  children: <Widget>[
-                    if (_error != null)
-                      Container(
-                        width: double.infinity,
-                        color: theme.colorScheme.errorContainer,
-                        padding: const EdgeInsets.all(12),
-                        child: Text(
-                          _error!,
-                          style: TextStyle(height: 1.6, color: theme.colorScheme.error),
-                        ),
-                      ),
-                    Expanded(
-                      child: MobileScanner(
-                        onDetect: (BarcodeCapture capture) => _onDetect(capture),
-                        // M03（2026-10-08）：插件自带的错误页是**英文**的
-                        // （「Camera permission denied.」）。换成本地的中文解释 +
-                        // 「怎么办」—— 归类与措辞在纯 Dart 的 `scan_error.dart`
-                        // （`dart test` 钉得住），这里只摆放。
-                        errorBuilder: _scanError,
+          ? Column(
+              children: <Widget>[
+                if (_error != null)
+                  Container(
+                    width: double.infinity,
+                    color: theme.colorScheme.errorContainer,
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.colorScheme.error,
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                        '对着电脑「设置 → 多设备同步」里的二维码。',
-                        style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+                  ),
+                Expanded(
+                  child: MobileScanner(
+                    onDetect: (BarcodeCapture capture) => _onDetect(capture),
+                    // M03（2026-10-08）：插件自带的错误页是**英文**的
+                    // （「Camera permission denied.」）。换成本地的中文解释 +
+                    // 「怎么办」—— 归类与措辞在纯 Dart 的 `scan_error.dart`
+                    // （`dart test` 钉得住），这里只摆放。
+                    errorBuilder: _scanError,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    '对着电脑「设置 → 多设备同步」里的二维码。',
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Text(
+                    '神算子需要相机权限来扫描电脑上的配对二维码。'
+                    '扫码只在本机处理，不会上传。',
+                    style: TextStyle(height: 1.6),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '先在电脑上打开「设置 → 多设备同步」，把二维码显示出来。',
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                  if (_error != null) ...<Widget>[
+                    const SizedBox(height: 12),
+                    Text(
+                      _error!,
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.colorScheme.error,
                       ),
                     ),
                   ],
-                )
-              : Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      const Text(
-                        '神算子需要相机权限来扫描电脑上的配对二维码。'
-                        '扫码只在本机处理，不会上传。',
-                        style: TextStyle(height: 1.6),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        '先在电脑上打开「设置 → 多设备同步」，把二维码显示出来。',
-                        style: TextStyle(
-                          height: 1.6,
-                          color: theme.textTheme.bodySmall?.color,
-                        ),
-                      ),
-                      if (_error != null) ...<Widget>[
-                        const SizedBox(height: 12),
-                        Text(
-                          _error!,
-                          style: TextStyle(height: 1.6, color: theme.colorScheme.error),
-                        ),
-                      ],
-                      const SizedBox(height: 24),
-                      FilledButton.icon(
-                        onPressed: () => setState(() => _scanning = true),
-                        icon: const Icon(Icons.qr_code_scanner),
-                        label: const Text('开始扫码'),
-                      ),
-                    ],
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    onPressed: () => setState(() => _scanning = true),
+                    icon: const Icon(Icons.qr_code_scanner),
+                    label: const Text('开始扫码'),
                   ),
-                ),
+                ],
+              ),
+            ),
     );
   }
 }

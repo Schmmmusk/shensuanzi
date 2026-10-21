@@ -165,7 +165,8 @@ class ReturnService {
   List<Product> _productsFor(List<DocumentLine> lines) {
     final ProductDao products = ProductDao(_queries.db);
     return <Product>[
-      for (final String id in lines.map((DocumentLine l) => l.productId).toSet())
+      for (final String id
+          in lines.map((DocumentLine l) => l.productId).toSet())
         if (products.findById(id) != null) products.findById(id)!,
     ];
   }
@@ -197,7 +198,8 @@ class ReturnService {
   }
 
   /// 启用中的资金账户（「立即退款」下拉用；与其他服务同款一行转发）
-  List<Account> activeAccounts() => AccountDao(_queries.db).findAll(active: true);
+  List<Account> activeAccounts() =>
+      AccountDao(_queries.db).findAll(active: true);
 
   /// 原单类型 ⇒ 退货类型（与 `RuleEngine.returnOriginalTypes` 互为反查）。
   ///
@@ -216,8 +218,8 @@ class ReturnService {
   ReturnSaved create(ReturnDraft draft, {int? now}) {
     final Map<ReturnField, String> fieldErrors = draft.validate();
     final List<Map<ReturnLineField, String>> lineErrors = draft.validateLines();
-    final List<Map<ReturnRefundField, String>> refundErrors =
-        draft.validateRefunds();
+    final List<Map<ReturnRefundField, String>> refundErrors = draft
+        .validateRefunds();
     if (fieldErrors.isNotEmpty ||
         lineErrors.any((Map<ReturnLineField, String> e) => e.isNotEmpty) ||
         refundErrors.any((Map<ReturnRefundField, String> e) => e.isNotEmpty)) {
@@ -277,7 +279,10 @@ class ReturnService {
     final List<PaymentEntry> payments = <PaymentEntry>[
       for (int i = 0; i < draft.refunds.length; i++)
         if (!draft.refunds[i].isBlank && recorded[i] > 0)
-          PaymentEntry(accountId: draft.refunds[i].accountId!, amount: recorded[i]),
+          PaymentEntry(
+            accountId: draft.refunds[i].accountId!,
+            amount: recorded[i],
+          ),
     ];
 
     final RuleOutcome outcome = _engine.dispatch(

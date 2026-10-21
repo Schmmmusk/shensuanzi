@@ -134,9 +134,16 @@ void main() {
   test('扫码配对（pairFromCode）→ 同步成功 → 镜像里有数据、lastSync 落盘', () async {
     host.pullBody['products'] = <Object?>[
       <String, Object?>{
-        'id': 'p1', 'code': 'P0001', 'name': '蒙牛纯牛奶', 'unit': '瓶',
-        'cost_price': 250, 'sell_price': 350, 'safety_stock': 0,
-        'is_active': 1, 'created_at': 1, 'updated_at': 1,
+        'id': 'p1',
+        'code': 'P0001',
+        'name': '蒙牛纯牛奶',
+        'unit': '瓶',
+        'cost_price': 250,
+        'sell_price': 350,
+        'safety_stock': 0,
+        'is_active': 1,
+        'created_at': 1,
+        'updated_at': 1,
       },
     ];
     host.pullBody['next_cursors'] = <String, String>{
@@ -218,9 +225,16 @@ void main() {
     host.healthBody['schema_version'] = Schema.version + 1;
     host.pullBody['products'] = <Object?>[
       <String, Object?>{
-        'id': 'p2', 'code': 'P0002', 'name': '可乐', 'unit': '瓶',
-        'cost_price': 200, 'sell_price': 300, 'safety_stock': 0,
-        'is_active': 1, 'created_at': 1, 'updated_at': 1,
+        'id': 'p2',
+        'code': 'P0002',
+        'name': '可乐',
+        'unit': '瓶',
+        'cost_price': 200,
+        'sell_price': 300,
+        'safety_stock': 0,
+        'is_active': 1,
+        'created_at': 1,
+        'updated_at': 1,
       },
     ];
 
@@ -228,10 +242,7 @@ void main() {
     expect(outcome.kind, SyncOutcomeKind.ok);
     expect(outcome.rebuilt, isTrue, reason: outcome.message);
     // 重建后从头拉：新数据在、旧游标被主机初始游标覆盖
-    expect(
-      mirror.raw.select('SELECT name FROM products').first['name'],
-      '可乐',
-    );
+    expect(mirror.raw.select('SELECT name FROM products').first['name'], '可乐');
   });
 
   // ================================================ 自动推送（B3a·裁定 ③）
@@ -347,14 +358,24 @@ void main() {
     );
     host.pullBody['products'] = <Object?>[
       <String, Object?>{
-        'id': 'p-old', 'code': 'P0009', 'name': '旧主机的货', 'unit': '瓶',
-        'cost_price': 100, 'sell_price': 200, 'safety_stock': 0,
-        'is_active': 1, 'created_at': 1, 'updated_at': 1,
+        'id': 'p-old',
+        'code': 'P0009',
+        'name': '旧主机的货',
+        'unit': '瓶',
+        'cost_price': 100,
+        'sell_price': 200,
+        'safety_stock': 0,
+        'is_active': 1,
+        'created_at': 1,
+        'updated_at': 1,
       },
     ];
     await service.syncNow();
     final Db mirror = service.openMirror();
-    expect(mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n'], 1);
+    expect(
+      mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n'],
+      1,
+    );
 
     // 离线开了一单（还没推给 h-1）
     enqueueOne('q-offline');
@@ -391,9 +412,16 @@ void main() {
     );
     host.pullBody['products'] = <Object?>[
       <String, Object?>{
-        'id': 'p-keep', 'code': 'P0010', 'name': '留着', 'unit': '瓶',
-        'cost_price': 100, 'sell_price': 200, 'safety_stock': 0,
-        'is_active': 1, 'created_at': 1, 'updated_at': 1,
+        'id': 'p-keep',
+        'code': 'P0010',
+        'name': '留着',
+        'unit': '瓶',
+        'cost_price': 100,
+        'sell_price': 200,
+        'safety_stock': 0,
+        'is_active': 1,
+        'created_at': 1,
+        'updated_at': 1,
       },
     ];
     await service.syncNow();

@@ -60,7 +60,11 @@ void seedParties(int count) {
   }
 }
 
-void insertDocument(String id, {required String docNo, String type = 'purchase'}) {
+void insertDocument(
+  String id, {
+  required String docNo,
+  String type = 'purchase',
+}) {
   final int t = now();
   db.raw.execute(
     'INSERT INTO documents '
@@ -112,8 +116,10 @@ void main() {
 
     freshDb();
     seedProducts(3);
-    check('query 过滤在导出路径上同样生效',
-        ProductDao(db).findAllForExport(query: 'P0001').length == 1);
+    check(
+      'query 过滤在导出路径上同样生效',
+      ProductDao(db).findAllForExport(query: 'P0001').length == 1,
+    );
     db.close();
   }
 
@@ -158,9 +164,9 @@ void main() {
     check(
       'types 过滤在导出路径上同样生效',
       DocumentDao(db).listDocumentsForExport().length == 4 &&
-          DocumentDao(db)
-                  .listDocumentsForExport(types: <DocType>{DocType.sale})
-                  .length ==
+          DocumentDao(
+                db,
+              ).listDocumentsForExport(types: <DocType>{DocType.sale}).length ==
               1 &&
           DocumentDao(db)
                   .listDocumentsForExport(types: <DocType>{DocType.purchase})
@@ -173,10 +179,10 @@ void main() {
     final int boundary = now(); // 边界取在「老单之后、新单之前」
     seedParties(1);
     insertDocument('d-party', docNo: 'CG20260926-001');
-    db.raw.execute(
-      'UPDATE documents SET party_id = ? WHERE id = ?',
-      <Object?>['y-0000', 'd-party'],
-    );
+    db.raw.execute('UPDATE documents SET party_id = ? WHERE id = ?', <Object?>[
+      'y-0000',
+      'd-party',
+    ]);
     final List<DocumentSummary> all = DocumentDao(db).listDocumentsForExport();
     check(
       'sinceMillis 过滤 + 带回对方名（散客为 null）',
@@ -189,7 +195,10 @@ void main() {
                   .firstWhere((DocumentSummary s) => s.document.id == 'd-old')
                   .partyName ==
               null &&
-          DocumentDao(db).listDocumentsForExport(sinceMillis: boundary).length == 1,
+          DocumentDao(
+                db,
+              ).listDocumentsForExport(sinceMillis: boundary).length ==
+              1,
     );
     db.close();
   }

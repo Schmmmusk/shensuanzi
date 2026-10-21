@@ -36,21 +36,44 @@ void main() {
     settlements = SettlementService(db: db, engine: RuleEngine(db));
 
     final int t = 1700000000000;
-    ProductDao(db).insert(Product(
-      id: 'p1', code: 'P0001', name: '商品',
-      costPrice: 300, sellPrice: 500, createdAt: t, updatedAt: t,
-    ));
-    AccountDao(db).insert(Account(
-      id: 'a1', name: '现金', type: AccountType.cash, createdAt: t, updatedAt: t,
-    ));
-    PartyDao(db).insert(Party(
-      id: 'pt1', name: '王老板',
-      roles: const <PartyRole>[PartyRole.supplier], createdAt: t, updatedAt: t,
-    ));
-    PartyDao(db).insert(Party(
-      id: 'pt2', name: '李姐',
-      roles: const <PartyRole>[PartyRole.customer], createdAt: t, updatedAt: t,
-    ));
+    ProductDao(db).insert(
+      Product(
+        id: 'p1',
+        code: 'P0001',
+        name: '商品',
+        costPrice: 300,
+        sellPrice: 500,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    AccountDao(db).insert(
+      Account(
+        id: 'a1',
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    PartyDao(db).insert(
+      Party(
+        id: 'pt1',
+        name: '王老板',
+        roles: const <PartyRole>[PartyRole.supplier],
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    PartyDao(db).insert(
+      Party(
+        id: 'pt2',
+        name: '李姐',
+        roles: const <PartyRole>[PartyRole.customer],
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
   });
 
   tearDown(() {
@@ -76,10 +99,7 @@ void main() {
           ),
         ],
         payments: <PurchasePaymentDraft>[
-          PurchasePaymentDraft(
-            accountId: 'a1',
-            amount: '${qty * 300 ~/ 100}',
-          ),
+          PurchasePaymentDraft(accountId: 'a1', amount: '${qty * 300 ~/ 100}'),
         ],
       ),
       now: 1700000000000,
@@ -100,10 +120,7 @@ void main() {
           ),
         ],
         payments: <SalePaymentDraft>[
-          SalePaymentDraft(
-            accountId: 'a1',
-            amount: '${qty * 500 ~/ 100}',
-          ),
+          SalePaymentDraft(accountId: 'a1', amount: '${qty * 500 ~/ 100}'),
         ],
       ),
       now: 1700000000000,
@@ -112,7 +129,11 @@ void main() {
 
   /// 赊账销售（不收款）—— `sell` 是**当场结清**，测「未结清」要用这个。
   /// 散客不许赊账，所以必须给 partyId。
-  void sellOnCredit({required String date, required int qty, required String partyId}) {
+  void sellOnCredit({
+    required String date,
+    required int qty,
+    required String partyId,
+  }) {
     sales.create(
       SaleDraft(
         partyId: partyId,
@@ -131,18 +152,19 @@ void main() {
     );
   }
 
-  Widget page({ExportSink? exports, bool withSettlement = false}) => MaterialApp(
-    home: Scaffold(
-      body: DocumentsPage(
-        dao: dao,
-        exports: exports,
-        // 默认**不接**核销服务：现有用例都是「只读列表」场景（行不可点）；
-        // 需要测「点行进详情」时显式传 true（与其他可选服务同款判定）
-        settlements: withSettlement ? settlements : null,
-        products: withSettlement ? ProductService(db) : null,
-      ),
-    ),
-  );
+  Widget page({ExportSink? exports, bool withSettlement = false}) =>
+      MaterialApp(
+        home: Scaffold(
+          body: DocumentsPage(
+            dao: dao,
+            exports: exports,
+            // 默认**不接**核销服务：现有用例都是「只读列表」场景（行不可点）；
+            // 需要测「点行进详情」时显式传 true（与其他可选服务同款判定）
+            settlements: withSettlement ? settlements : null,
+            products: withSettlement ? ProductService(db) : null,
+          ),
+        ),
+      );
 
   testWidgets('空范围给空态提示', (WidgetTester tester) async {
     await tester.pumpWidget(page());
@@ -164,10 +186,8 @@ void main() {
     // 所以断言「至少出现」而不是「恰好一行」。
     // ⚠️ 行内**对方名现在是独立的一行文字**（#26② 把单号从第一行挪走了），
     // 仍是 `documentPartyLabel` 的口径：散客 / 散采显示文字，不是空白。
-    expect(find.textContaining('王老板'), findsWidgets,
-        reason: '采购单与自动付款单都挂王老板');
-    expect(find.textContaining('散客'), findsWidgets,
-        reason: 'SC-6：无对方显示文字不是空白');
+    expect(find.textContaining('王老板'), findsWidgets, reason: '采购单与自动付款单都挂王老板');
+    expect(find.textContaining('散客'), findsWidgets, reason: 'SC-6：无对方显示文字不是空白');
     expect(find.textContaining('XS'), findsWidgets, reason: '销售单号出现');
 
     // 日期倒序：09-28 的散客销售在 09-27 的采购前面 —— 用坐标验证
@@ -205,9 +225,7 @@ void main() {
     expect(find.textContaining('CG'), findsWidgets);
   });
 
-  testWidgets('类型 chips 补上「送货」「销售退货」（原来只有 4 类）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('类型 chips 补上「送货」「销售退货」（原来只有 4 类）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -243,16 +261,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('doc-status-unsettled')));
     await tester.pumpAndSettle();
-    expect(
-      find.textContaining('XS'),
-      findsOneWidget,
-      reason: '只留还没结清的那张',
-    );
-    expect(
-      find.textContaining('未收'),
-      findsOneWidget,
-      reason: '行上要标出还欠多少',
-    );
+    expect(find.textContaining('XS'), findsOneWidget, reason: '只留还没结清的那张');
+    expect(find.textContaining('未收'), findsOneWidget, reason: '行上要标出还欠多少');
 
     // 三个状态 chip 都在（送货待签收 / 已作废也要有入口）
     for (final String name in <String>[
@@ -264,9 +274,7 @@ void main() {
     }
   });
 
-  testWidgets('点行打开单据详情（1a 起；复制单号挪到详情页）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('点行打开单据详情（1a 起；复制单号挪到详情页）', (WidgetTester tester) async {
     buy(date: '2026-09-28', qty: 10, partyId: 'pt1');
     await tester.pumpWidget(page(withSettlement: true));
     await tester.pumpAndSettle();
@@ -283,9 +291,7 @@ void main() {
     );
   });
 
-  testWidgets('没接核销服务 → 行不可点（与其他可选服务同款判定）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('没接核销服务 → 行不可点（与其他可选服务同款判定）', (WidgetTester tester) async {
     buy(date: '2026-09-28', qty: 10, partyId: 'pt1');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -328,8 +334,11 @@ void main() {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('只显示最近 200 条'), findsNothing,
-        reason: '默认最近 30 天不提示');
+    expect(
+      find.textContaining('只显示最近 200 条'),
+      findsNothing,
+      reason: '默认最近 30 天不提示',
+    );
 
     await tester.tap(find.text('全部'));
     await tester.pumpAndSettle();
@@ -362,15 +371,7 @@ void main() {
     expect(fake.calls, 1, reason: '点一次只导一次');
     final ExportTable table = fake.last;
     expect(table.label, '单据');
-    expect(table.header, <String>[
-      '单号',
-      '单据类型',
-      '对方',
-      '金额',
-      '已收付',
-      '状态',
-      '日期',
-    ]);
+    expect(table.header, <String>['单号', '单据类型', '对方', '金额', '已收付', '状态', '日期']);
     expect(table.rows, isNotEmpty);
     expect(
       table.rows.every((List<String> row) => row.length == 7),
@@ -389,11 +390,11 @@ void main() {
     );
     expect(
       table.rows.every(
-        (List<String> row) =>
-            RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(row[6]),
+        (List<String> row) => RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(row[6]),
       ),
       isTrue,
-      reason: '单据日期只到日（§BG 方案甲：occurred_at 是业务日期，'
+      reason:
+          '单据日期只到日（§BG 方案甲：occurred_at 是业务日期，'
           '带时分会整列印 00:00；往来流水导出才是带时分的适用面）',
     );
     // AF-5：导出走独立查询，**不是**列表用的 limit 200。
@@ -478,9 +479,7 @@ void main() {
     );
   });
 
-  testWidgets('#26② 长对方名：单行省略，不撑破行、不挤掉金额（截图实证）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#26② 长对方名：单行省略，不撑破行、不挤掉金额（截图实证）', (WidgetTester tester) async {
     // 用户截图里那一长串 `1` —— 原实现把它折成 3 行、把金额挤到屏幕边缘
     final String longName = '1' * 120;
     final int t = 1700000000000;
@@ -512,9 +511,7 @@ void main() {
     expect(tester.takeException(), isNull, reason: '不允许出现 overflow');
   });
 
-  testWidgets('#26① 时间：主单只印日期（不印假的 00:00），收款单印到分', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#26① 时间：主单只印日期（不印假的 00:00），收款单印到分', (WidgetTester tester) async {
     sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2');
     final String saleId = dao.listDocuments().single.document.id;
     // 手记收款：`occurred_at` = 真实时刻（`settlement_service` 的 `stamp`）
@@ -569,9 +566,7 @@ void main() {
     );
   });
 
-  testWidgets('#26 搜索：无结果时说的是「没找到」而不是「这个范围没有单」', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#26 搜索：无结果时说的是「没找到」而不是「这个范围没有单」', (WidgetTester tester) async {
     sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -583,9 +578,7 @@ void main() {
     expect(find.textContaining('这个范围里没有单据'), findsNothing);
   });
 
-  testWidgets('#26 搜索：首次输入自动切「全部」并说明；清空后不切回', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#26 搜索：首次输入自动切「全部」并说明；清空后不切回', (WidgetTester tester) async {
     sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -615,9 +608,7 @@ void main() {
     expect(rangeChip('all').selected, isTrue, reason: '清空不自动切回');
   });
 
-  testWidgets('#26 搜索：导出带同一个搜索词（AF-5：行数与列表一致）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#26 搜索：导出带同一个搜索词（AF-5：行数与列表一致）', (WidgetTester tester) async {
     sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2'); // 李姐
     buy(date: '2026-09-27', qty: 10, partyId: 'pt1'); // 王老板
     final FakeExport fake = FakeExport();
@@ -631,11 +622,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(fake.calls, 1);
-    expect(
-      fake.last.rows.length,
-      1,
-      reason: '导出必须带同一个搜索词 —— 否则「导出当前筛选」当场变谎话',
-    );
+    expect(fake.last.rows.length, 1, reason: '导出必须带同一个搜索词 —— 否则「导出当前筛选」当场变谎话');
     expect(fake.last.rows.single[2], '李姐', reason: '导出的确实是被筛中的那张');
   });
 
@@ -682,8 +669,7 @@ void main() {
       ('th-1', 'XT20261012-001'),
       ('th-2', 'XT20261012-002'),
     ]) {
-      final Document ret =
-          mk(id, no, DocType.saleReturn, 12000, ref: sale.id);
+      final Document ret = mk(id, no, DocType.saleReturn, 12000, ref: sale.id);
       engine.dispatch(
         document: ret,
         lines: <DocumentLine>[
@@ -700,17 +686,18 @@ void main() {
     return (saleId: sale.id, ret1: 'th-1', ret2: 'th-2');
   }
 
-  testWidgets('#26 批 3：退货折进主单行，摘要「已退 N 次 ¥X」必须加粗', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#26 批 3：退货折进主单行，摘要「已退 N 次 ¥X」必须加粗', (WidgetTester tester) async {
     saleWithTwoReturns();
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
     // 一笔生意一行：主单在，两张退货单**不在**
     expect(find.textContaining('XS20261012-008'), findsOneWidget);
-    expect(find.textContaining('XT20261012-001'), findsNothing,
-        reason: '甲案：退货单折进主单行');
+    expect(
+      find.textContaining('XT20261012-001'),
+      findsNothing,
+      reason: '甲案：退货单折进主单行',
+    );
     expect(find.textContaining('XT20261012-002'), findsNothing);
 
     final Finder trail = find.textContaining('已退 2 次');
@@ -727,9 +714,7 @@ void main() {
     );
   });
 
-  testWidgets('#26 批 3：没有关联的单不显示摘要行（反向灵敏度）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#26 批 3：没有关联的单不显示摘要行（反向灵敏度）', (WidgetTester tester) async {
     sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -776,25 +761,28 @@ void main() {
     expect(find.text('单据详情'), findsOneWidget);
 
     // ① 上移：在「明细」区块**上方**（以前压在页面底部）
-    final double yReturns =
-        tester.getTopLeft(find.byKey(const Key('detail-returns'))).dy;
+    final double yReturns = tester
+        .getTopLeft(find.byKey(const Key('detail-returns')))
+        .dy;
     final double yLines = tester.getTopLeft(find.text('明细')).dy;
-    expect(
-      yReturns < yLines,
-      isTrue,
-      reason: '甲案的「救生圈」：列表折叠了退货单，详情页必须一进来就看到',
-    );
+    expect(yReturns < yLines, isTrue, reason: '甲案的「救生圈」：列表折叠了退货单，详情页必须一进来就看到');
 
     // ② 往返：点退货行 ⇒ 退货单详情 ⇒ 返回 ⇒ 回到原单
     await tester.tap(find.byKey(Key('return-row-${f.ret1}')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('XT20261012-001'), findsWidgets,
-        reason: '进到了那张退货单的详情');
+    expect(
+      find.textContaining('XT20261012-001'),
+      findsWidgets,
+      reason: '进到了那张退货单的详情',
+    );
 
     await tester.pageBack();
     await tester.pumpAndSettle();
-    expect(find.textContaining('XS20261012-008'), findsWidgets,
-        reason: '返回能回到原单，不是走丢');
+    expect(
+      find.textContaining('XS20261012-008'),
+      findsWidgets,
+      reason: '返回能回到原单，不是走丢',
+    );
   });
 
   testWidgets('#26 批 3：赊账销售 + 详情页收款 ⇒ 列表只剩一行（用户复跑的场景）', (
@@ -812,7 +800,9 @@ void main() {
     );
     final DocumentSummary rcv = dao
         .listDocuments(includeDerived: true)
-        .firstWhere((DocumentSummary e) => e.document.docType == DocType.receipt);
+        .firstWhere(
+          (DocumentSummary e) => e.document.docType == DocType.receipt,
+        );
 
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -825,9 +815,7 @@ void main() {
     expect(find.textContaining('已收 1 笔'), findsOneWidget);
   });
 
-  testWidgets('#26 批 3：详情页「核销去向」上移，且能点开那张收款单再返回', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#26 批 3：详情页「核销去向」上移，且能点开那张收款单再返回', (WidgetTester tester) async {
     sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2');
     final String saleId = dao.listDocuments().single.document.id;
     settlements.settle(
@@ -838,7 +826,9 @@ void main() {
     );
     final DocumentSummary rcv = dao
         .listDocuments(includeDerived: true)
-        .firstWhere((DocumentSummary e) => e.document.docType == DocType.receipt);
+        .firstWhere(
+          (DocumentSummary e) => e.document.docType == DocType.receipt,
+        );
 
     await tester.pumpWidget(page(withSettlement: true));
     await tester.pumpAndSettle();
@@ -846,17 +836,18 @@ void main() {
     await tester.pumpAndSettle();
 
     // ① 上移：在「明细」上方
-    final double yLinks =
-        tester.getTopLeft(find.text('这单被哪些收付款核销过')).dy;
+    final double yLinks = tester.getTopLeft(find.text('这单被哪些收付款核销过')).dy;
     final double yLines = tester.getTopLeft(find.text('明细')).dy;
-    expect(yLinks < yLines, isTrue,
-        reason: '收款单被折起来了，这里是它的唯一入口，不能压到底部');
+    expect(yLinks < yLines, isTrue, reason: '收款单被折起来了，这里是它的唯一入口，不能压到底部');
 
     // ② 可点：进那张收款单的详情，再返回
     await tester.tap(find.byKey(Key('settle-row-${rcv.document.id}')));
     await tester.pumpAndSettle();
-    expect(find.textContaining(rcv.document.docNo), findsWidgets,
-        reason: '进到了那张收款单');
+    expect(
+      find.textContaining(rcv.document.docNo),
+      findsWidgets,
+      reason: '进到了那张收款单',
+    );
 
     await tester.pageBack();
     await tester.pumpAndSettle();

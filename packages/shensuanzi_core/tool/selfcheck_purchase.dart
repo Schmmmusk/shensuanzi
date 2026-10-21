@@ -67,9 +67,14 @@ void main() {
       return d.isValid;
     }());
 
-    check('没有明细 → lines 报「至少要有一行」',
-        (goodDraft(lines: const <PurchaseLineDraft>[]).validate()[PurchaseField.lines] ?? '')
-            .contains('至少要有一行商品'));
+    check(
+      '没有明细 → lines 报「至少要有一行」',
+      (goodDraft(
+                lines: const <PurchaseLineDraft>[],
+              ).validate()[PurchaseField.lines] ??
+              '')
+          .contains('至少要有一行商品'),
+    );
 
     check('空行报行级错误（加了一行就得填或删）', () {
       const PurchaseLineDraft blank = PurchaseLineDraft();
@@ -115,14 +120,18 @@ void main() {
       const PurchasePaymentDraft noAccount = PurchasePaymentDraft(amount: '10');
       return blank.validate().isEmpty &&
           blank.amountCents == null &&
-          (zero.validate()[PurchasePaymentField.amount] ?? '').contains('大于 0') &&
-          (noAccount.validate()[PurchasePaymentField.account] ?? '')
-              .contains('请选一个资金账户');
+          (zero.validate()[PurchasePaymentField.amount] ?? '').contains(
+            '大于 0',
+          ) &&
+          (noAccount.validate()[PurchasePaymentField.account] ?? '').contains(
+            '请选一个资金账户',
+          );
     }());
 
     check('散采且有欠款 → party 报「散采要当场结清」', () {
-      return (goodDraft().validate()[PurchaseField.party] ?? '')
-          .contains('散采要当场结清');
+      return (goodDraft().validate()[PurchaseField.party] ?? '').contains(
+        '散采要当场结清',
+      );
     }());
 
     // #40③：第一句必须是差额（与 test/ 成对）
@@ -163,11 +172,7 @@ void main() {
       final PurchaseDraft d = goodDraft(
         partyId: 'party-1',
         lines: const <PurchaseLineDraft>[
-          PurchaseLineDraft(
-            productId: 'p1',
-            quantity: '10',
-            unitPrice: '3.50',
-          ),
+          PurchaseLineDraft(productId: 'p1', quantity: '10', unitPrice: '3.50'),
           PurchaseLineDraft(productId: 'p2', quantity: '2', unitPrice: '100'),
         ],
         payments: const <PurchasePaymentDraft>[
@@ -177,8 +182,7 @@ void main() {
       return d.totalCents == 23500 &&
           d.paidCents == 20000 &&
           d.dueCents == 3500 &&
-          d.occurredAt ==
-              DateTime.parse('2026-09-27').millisecondsSinceEpoch;
+          d.occurredAt == DateTime.parse('2026-09-27').millisecondsSinceEpoch;
     }());
 
     check('fromProduct：单价预填进价（350 分 = 3.50 元），数量待填', () {
@@ -220,7 +224,8 @@ void main() {
       String productId,
       String accountId,
       String partyId,
-    }) setup() {
+    })
+    setup() {
       final Db db = Db.openInMemory();
       final Product product = Product(
         id: newId(),
@@ -357,11 +362,7 @@ void main() {
         Object? thrown;
         try {
           service.create(
-            draftFor(
-              productId: productId,
-              accountId: accountId,
-              quantity: '0',
-            ),
+            draftFor(productId: productId, accountId: accountId, quantity: '0'),
             now: now(),
           );
         } catch (error) {
@@ -400,7 +401,8 @@ void main() {
       final (:db, :service, productId: _, accountId: _, partyId: _) = setup();
       try {
         final Party party = service.createSupplier('李老板', phone: ' 139 ').party;
-        final bool ok = party.name == '李老板' &&
+        final bool ok =
+            party.name == '李老板' &&
             party.phone == '139' &&
             party.roles.map((PartyRole r) => r.wire).join(',') == 'supplier';
         bool emptyThrows = false;

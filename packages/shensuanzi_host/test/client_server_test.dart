@@ -175,7 +175,8 @@ void main() {
   });
 
   int mirroredDocuments(Db mirror) =>
-      mirror.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']! as int;
+      mirror.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']!
+          as int;
 
   Set<String> mirroredDocumentIds(Db mirror) => mirror.raw
       .select('SELECT id FROM documents')
@@ -241,7 +242,10 @@ void main() {
       6,
       reason: 'B 的 5 张 + A 自己的 1 张；B 的 5 张若被跳过就是静默丢数据',
     );
-    expect(mirroredDocumentIds(mirrorA), containsAll(<String>[...bDocIds, aDocId]));
+    expect(
+      mirroredDocumentIds(mirrorA),
+      containsAll(<String>[...bDocIds, aDocId]),
+    );
     expect(mirroredDocuments(mirrorA), 6);
 
     // 库存 = 5 × 1 + 7 = 12
@@ -277,11 +281,7 @@ void main() {
     // A（时钟快 1h）拉取
     final SyncPullReport pull = await skewed.pull();
 
-    expect(
-      pull.entities[Schema.documents],
-      1,
-      reason: '游标来自主机，与本地时钟无关',
-    );
+    expect(pull.entities[Schema.documents], 1, reason: '游标来自主机，与本地时钟无关');
     expect(mirroredDocumentIds(mirrorA), contains(bDocId));
   });
 
@@ -307,12 +307,15 @@ void main() {
     await clientB.pull();
 
     final Map<String, Object?> row = Map<String, Object?>.from(
-      mirrorB.raw
-          .select('SELECT * FROM documents WHERE id = ?', <Object?>[docId])
-          .first,
+      mirrorB.raw.select('SELECT * FROM documents WHERE id = ?', <Object?>[
+        docId,
+      ]).first,
     );
-    expect(row['doc_no'], isNot(startsWith(Document.pendingDocNoPrefix)),
-        reason: '拉回来的是主机分配的正式单号');
+    expect(
+      row['doc_no'],
+      isNot(startsWith(Document.pendingDocNoPrefix)),
+      reason: '拉回来的是主机分配的正式单号',
+    );
     expect(mirroredDocuments(mirrorB), 1);
     expect(QueryDao(mirrorB).stockByProduct()[productId], 3);
   });
@@ -409,9 +412,9 @@ void main() {
     expect(clientB.queue.all(), isEmpty, reason: '冲突已解决 → 条目删除');
 
     final Map<String, Object?> local = Map<String, Object?>.from(
-      mirrorB.raw
-          .select('SELECT name FROM products WHERE id = ?', <Object?>[productId])
-          .first,
+      mirrorB.raw.select('SELECT name FROM products WHERE id = ?', <Object?>[
+        productId,
+      ]).first,
     );
     expect(local['name'], '甲改的名字', reason: '主机赢 —— 本地被 server_state 覆盖');
   });
@@ -437,9 +440,9 @@ void main() {
 
     // 主机侧：两个商品都在，编码不重复（主机改派了 B 那条）
     final Map<String, Object?> hostRow = Map<String, Object?>.from(
-      hostDb.raw
-          .select('SELECT code FROM products WHERE id = ?', <Object?>[bProductId])
-          .first,
+      hostDb.raw.select('SELECT code FROM products WHERE id = ?', <Object?>[
+        bProductId,
+      ]).first,
     );
     expect(hostRow['code'], isNot('P001'), reason: 'P001 已被商品甲占用 ⇒ 改派');
     expect(
@@ -458,65 +461,67 @@ void main() {
     // B pull ⇒ 镜像同 id 收敛到主机的真码，且**只有一行**（乐观行不残留）
     await clientB.pull();
     final List<Map<String, Object?>> mirrorRows = mirrorB.raw
-        .select(
-          'SELECT id, code FROM products WHERE id = ?',
-          <Object?>[bProductId],
-        )
+        .select('SELECT id, code FROM products WHERE id = ?', <Object?>[
+          bProductId,
+        ])
         .map((r) => <String, Object?>{'id': r['id'], 'code': r['code']})
         .toList();
     expect(mirrorRows, hasLength(1), reason: '乐观行与 pull 行同 id ⇒ UPSERT 覆盖，不新增');
-    expect(
-      mirrorRows.single['code'],
-      hostRow['code'],
-      reason: '镜像收敛到主机改派后的编码',
-    );
+    expect(mirrorRows.single['code'], hostRow['code'], reason: '镜像收敛到主机改派后的编码');
   });
 
   // ============================================================ v1 边界
 
-  test('documentAction：purchase 收 mark_delivered → rejected（规则不允许），进重试', () async {
-    final String docId = newId();
-    clientA.queue.enqueue(
-      SyncQueueEntry.create(
-        purchaseOp(
-          docId: docId,
-          productId: productId,
-          partyId: partyId,
-          occurredAt: hostNow,
+  test(
+    'documentAction：purchase 收 mark_delivered → rejected（规则不允许），进重试',
+    () async {
+      final String docId = newId();
+      clientA.queue.enqueue(
+        SyncQueueEntry.create(
+          purchaseOp(
+            docId: docId,
+            productId: productId,
+            partyId: partyId,
+            occurredAt: hostNow,
+          ),
+          now: now(),
         ),
-        now: now(),
-      ),
-    );
-    await clientA.push();
-    await clientA.pull();
+      );
+      await clientA.push();
+      await clientA.pull();
 
-    final SyncQueueEntry action = clientA.queue.enqueue(
-      SyncQueueEntry.create(
-        SyncOperation(
-          entity: Schema.documents,
-          entityId: docId,
-          operation: SyncOpType.documentAction,
-          // R-3（2026-09-29 裁定）后的 payload 契约：只有 action 与 occurred_at
-          payload: <String, Object?>{
-            'action': 'mark_delivered',
-            'occurred_at': hostNow,
-          },
+      final SyncQueueEntry action = clientA.queue.enqueue(
+        SyncQueueEntry.create(
+          SyncOperation(
+            entity: Schema.documents,
+            entityId: docId,
+            operation: SyncOpType.documentAction,
+            // R-3（2026-09-29 裁定）后的 payload 契约：只有 action 与 occurred_at
+            payload: <String, Object?>{
+              'action': 'mark_delivered',
+              'occurred_at': hostNow,
+            },
+          ),
+          now: now(),
         ),
-        now: now(),
-      ),
-    );
+      );
 
-    final SyncPushReport report = await clientA.push();
+      final SyncPushReport report = await clientA.push();
 
-    expect(report.rejected, 1, reason: 'purchase 不适用「签收」—— 规则不允许');
-    final SyncQueueEntry after = clientA.queue.findById(action.id)!;
-    expect(after.status, SyncQueueStatus.pending, reason: 'rejected 排重试（§六 处置不变）');
-    // #22 裁定（2026-10-09）：协议违反（非送货单不能签收）的回执只给通用中文
-    // ⇒ 队列里存的也是它；细节（`purchase 不适用签收`）只在**主机日志**里。
-    // 镜像 `tool/selfcheck_client_server.dart` 的同名断言。
-    expect(after.lastError, malformedSyncRequestReason);
-    expect(after.retryCount, 1);
-  });
+      expect(report.rejected, 1, reason: 'purchase 不适用「签收」—— 规则不允许');
+      final SyncQueueEntry after = clientA.queue.findById(action.id)!;
+      expect(
+        after.status,
+        SyncQueueStatus.pending,
+        reason: 'rejected 排重试（§六 处置不变）',
+      );
+      // #22 裁定（2026-10-09）：协议违反（非送货单不能签收）的回执只给通用中文
+      // ⇒ 队列里存的也是它；细节（`purchase 不适用签收`）只在**主机日志**里。
+      // 镜像 `tool/selfcheck_client_server.dart` 的同名断言。
+      expect(after.lastError, malformedSyncRequestReason);
+      expect(after.retryCount, 1);
+    },
+  );
 
   test('令牌错误 → SyncHttpException(401)，不写队列', () async {
     final SyncClient wrong = SyncClient(

@@ -61,15 +61,15 @@ class SaleLineDraft {
 
   /// 从商品带入：**单价预填售价**（可改，改后不回写商品档），数量留空待填。
   factory SaleLineDraft.fromProduct(Product product, {String quantity = ''}) =>
-    SaleLineDraft(
-      productId: product.id,
-      productName: product.name,
-      quantity: quantity,
-      unitPrice: Money.format(product.sellPrice),
-      baseUnit: product.unit,
-      packageUnit: product.packageUnit,
-      packageSize: product.packageSize,
-    );
+      SaleLineDraft(
+        productId: product.id,
+        productName: product.name,
+        quantity: quantity,
+        unitPrice: Money.format(product.sellPrice),
+        baseUnit: product.unit,
+        packageUnit: product.packageUnit,
+        packageSize: product.packageSize,
+      );
 
   final String productId;
   final String productName;
@@ -145,8 +145,7 @@ class SaleLineDraft {
     } else {
       final int? cents = Money.tryParseYuan(priceText);
       if (cents == null) {
-        errors[SaleLineField.unitPrice] =
-            '单价只能填数字，最多两位小数，比如 3.50';
+        errors[SaleLineField.unitPrice] = '单价只能填数字，最多两位小数，比如 3.50';
       } else if (cents < 0) {
         errors[SaleLineField.unitPrice] = '单价不能是负数';
       }
@@ -160,7 +159,9 @@ class SaleLineDraft {
       final String? pkg = packageUnit;
       final bool isPackage = pkg != null && pkg.isNotEmpty && unit == pkg;
       if (!isBase && !isPackage) {
-        errors[SaleLineField.entryUnit] = conversionFailureMessage(ConversionFailureReason.unknownUnit);
+        errors[SaleLineField.entryUnit] = conversionFailureMessage(
+          ConversionFailureReason.unknownUnit,
+        );
       } else {
         // 换算失败（没设 / ≤0）在这里拦 —— 文案三种分开（§BD·九）
         final QuantityConversion c = conversion;
@@ -197,7 +198,8 @@ class SaleLineDraft {
   }
 
   /// **录入原文单位**落库值：'' ⇒ `null`（没切单位）
-  String? get entryUnitValue => entryUnit.trim().isEmpty ? null : entryUnit.trim();
+  String? get entryUnitValue =>
+      entryUnit.trim().isEmpty ? null : entryUnit.trim();
 
   /// **录入单位报价**（分）—— 用户按 [entryUnit] 报的价（不落库，
   /// 派生展示见 §BD·三 第 5 条）；非法时 `null`
@@ -284,8 +286,7 @@ class SalePaymentDraft {
     }
     final int? cents = Money.tryParseYuan(text);
     if (cents == null) {
-      errors[SalePaymentField.amount] =
-          '金额只能填数字，最多两位小数，比如 500';
+      errors[SalePaymentField.amount] = '金额只能填数字，最多两位小数，比如 500';
     } else if (cents <= 0) {
       errors[SalePaymentField.amount] = '收款金额要大于 0';
     }
@@ -401,12 +402,10 @@ class SaleDraft {
   bool get linesOk =>
       validateLines().every((Map<SaleLineField, String> e) => e.isEmpty);
 
-  bool get paymentsOk => validatePayments().every(
-    (Map<SalePaymentField, String> e) => e.isEmpty,
-  );
+  bool get paymentsOk =>
+      validatePayments().every((Map<SalePaymentField, String> e) => e.isEmpty);
 
-  bool get isValid =>
-      validate().isEmpty && linesOk && paymentsOk;
+  bool get isValid => validate().isEmpty && linesOk && paymentsOk;
 
   // ------------------------------------------------------------ 取值（校验通过后）
 
@@ -441,10 +440,9 @@ class SaleDraft {
   /// 超收部分**不落库**（它是找零）：按 [totalCents] 逐行顺次钳制 ⇒
   /// 「合计 ≤ 应收」由构造保证（RULE-002 的约束仍然成立）。
   /// 例：填 `[100]` + 应收 93 ⇒ `[93]`；填 `[50, 50]` + 应收 93 ⇒ `[50, 43]`。
-  List<int> get recordedPaymentCents => Overpay.clamp(
-    <int>[for (final SalePaymentDraft p in payments) p.amountCents ?? 0],
-    totalCents,
-  );
+  List<int> get recordedPaymentCents => Overpay.clamp(<int>[
+    for (final SalePaymentDraft p in payments) p.amountCents ?? 0,
+  ], totalCents);
 
   /// 落库后**实际入账**的收款合计（分）= `min(已填, 应收)`。
   int get recordedPaidCents {

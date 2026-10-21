@@ -148,8 +148,7 @@ class DeliveryLineDraft {
     } else {
       final int? cents = Money.tryParseYuan(priceText);
       if (cents == null) {
-        errors[DeliveryLineField.unitPrice] =
-            '单价只能填数字，最多两位小数，比如 3.50';
+        errors[DeliveryLineField.unitPrice] = '单价只能填数字，最多两位小数，比如 3.50';
       } else if (cents < 0) {
         errors[DeliveryLineField.unitPrice] = '单价不能是负数';
       }
@@ -163,11 +162,15 @@ class DeliveryLineDraft {
       final String? pkg = packageUnit;
       final bool isPackage = pkg != null && pkg.isNotEmpty && unit == pkg;
       if (!isBase && !isPackage) {
-        errors[DeliveryLineField.entryUnit] = conversionFailureMessage(ConversionFailureReason.unknownUnit);
+        errors[DeliveryLineField.entryUnit] = conversionFailureMessage(
+          ConversionFailureReason.unknownUnit,
+        );
       } else {
         final QuantityConversion c = conversion;
         if (c is ConversionFailed) {
-          errors[DeliveryLineField.entryUnit] = conversionFailureMessage(c.reason);
+          errors[DeliveryLineField.entryUnit] = conversionFailureMessage(
+            c.reason,
+          );
         }
       }
     }
@@ -199,7 +202,8 @@ class DeliveryLineDraft {
   }
 
   /// **录入原文单位**落库值：'' ⇒ `null`（没切单位）
-  String? get entryUnitValue => entryUnit.trim().isEmpty ? null : entryUnit.trim();
+  String? get entryUnitValue =>
+      entryUnit.trim().isEmpty ? null : entryUnit.trim();
 
   /// **录入单位报价**（分）—— 用户按 [entryUnit] 报的价（不落库，
   /// 派生展示见 §BD·三 第 5 条）；非法时 `null`
@@ -295,8 +299,7 @@ class DeliveryDraft {
     // 客户**必选** —— 文案说清「为什么」（中老年用户被拦会以为软件坏了，
     // 所以要告诉他「货已经出门了，欠款得有人挂着」）
     if (partyId == null || partyId!.isEmpty) {
-      errors[DeliveryField.party] =
-          '送货要选一个客户 —— 货出了门，这笔欠款要挂在客户名下';
+      errors[DeliveryField.party] = '送货要选一个客户 —— 货出了门，这笔欠款要挂在客户名下';
     }
 
     final String dateText = date.trim();

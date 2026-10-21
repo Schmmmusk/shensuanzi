@@ -113,8 +113,9 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  late final TextEditingController _shopName =
-      TextEditingController(text: widget.config.shopName ?? '');
+  late final TextEditingController _shopName = TextEditingController(
+    text: widget.config.shopName ?? '',
+  );
 
   /// **本页的当前生效配置** —— 每次修改基于它（而不是打开页面时的快照），
   /// 否则连续改两项（先缩放再店名）会互相覆盖
@@ -563,7 +564,10 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
         const SizedBox(height: 4),
         Text(
           lastSync,
-          style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+          style: TextStyle(
+            height: 1.6,
+            color: theme.textTheme.bodySmall?.color,
+          ),
         ),
         const SizedBox(height: 12),
         Row(

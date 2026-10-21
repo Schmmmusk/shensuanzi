@@ -223,9 +223,11 @@ class ExportService implements ExportSink {
     // 2026-09-28 实测：`selfcheck_export` 直接在第一个 await 处退出）。
     // 单字段版本（`BackupService` 的 `() => _running = null`）没这个坑 ——
     // 赋值表达式的值是 `null`，不是 Future。
-    final Future<ExportOutcome> wrapped = _execute(table, target).whenComplete(() {
-      _running.remove(target);
-    });
+    final Future<ExportOutcome> wrapped = _execute(table, target).whenComplete(
+      () {
+        _running.remove(target);
+      },
+    );
     _running[target] = wrapped;
     return wrapped;
   }
@@ -252,7 +254,9 @@ class ExportService implements ExportSink {
 
     final String path = p.join(exportDirectory, fileName);
     try {
-      File(path).writeAsBytesSync(csvBytes(table.header, table.rows), flush: true);
+      File(
+        path,
+      ).writeAsBytesSync(csvBytes(table.header, table.rows), flush: true);
       return ExportSuccess(path: path, rowCount: table.rows.length);
     } catch (error, stack) {
       // #35（2026-10-14）：**按 errno 分流**（映射表在 core 领域层），且

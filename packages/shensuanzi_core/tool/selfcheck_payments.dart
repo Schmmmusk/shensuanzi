@@ -170,27 +170,43 @@ void main() {
     immediate: <PaymentEntry>[PaymentEntry(accountId: cash, amount: 5000)],
   );
   check('applied', full.status == RuleStatus.applied, '${full.reason}');
-  check('生成 2 张单据（sale + 自动 receipt）', countOf('documents') == 2,
-      '${countOf('documents')}');
-  final Row autoReceipt = db.raw
-      .select(
-        'SELECT * FROM documents WHERE doc_type = ? AND ref_doc_id = ?',
-        <Object?>['receipt', full.document!.id],
-      )
-      .first;
+  check(
+    '生成 2 张单据（sale + 自动 receipt）',
+    countOf('documents') == 2,
+    '${countOf('documents')}',
+  );
+  final Row autoReceipt = db.raw.select(
+    'SELECT * FROM documents WHERE doc_type = ? AND ref_doc_id = ?',
+    <Object?>['receipt', full.document!.id],
+  ).first;
   check('自动单类型为 receipt', autoReceipt['doc_type'] == 'receipt');
-  check('自动单号以 SK 开头', autoReceipt['doc_no'].toString().startsWith('SK'),
-      '${autoReceipt['doc_no']}');
-  check('自动单 ref_doc_id 指向 sale', autoReceipt['ref_doc_id'] == full.document!.id);
+  check(
+    '自动单号以 SK 开头',
+    autoReceipt['doc_no'].toString().startsWith('SK'),
+    '${autoReceipt['doc_no']}',
+  );
+  check(
+    '自动单 ref_doc_id 指向 sale',
+    autoReceipt['ref_doc_id'] == full.document!.id,
+  );
   check('自动单 status = settled', autoReceipt['status'] == 'settled');
-  check('自动单 paid_amount = 0（B4′）', autoReceipt['paid_amount'] == 0,
-      '${autoReceipt['paid_amount']}');
+  check(
+    '自动单 paid_amount = 0（B4′）',
+    autoReceipt['paid_amount'] == 0,
+    '${autoReceipt['paid_amount']}',
+  );
   check('自动单金额 = 收款额', autoReceipt['total_amount'] == 5000);
-  check('自动单继承 party_id / account_id',
-      autoReceipt['party_id'] == party1 && autoReceipt['account_id'] == cash);
+  check(
+    '自动单继承 party_id / account_id',
+    autoReceipt['party_id'] == party1 && autoReceipt['account_id'] == cash,
+  );
 
   final Document main = documents.findById(full.document!.id)!;
-  check('主单 status = settled', main.status == DocStatus.settled, '${main.status}');
+  check(
+    '主单 status = settled',
+    main.status == DocStatus.settled,
+    '${main.status}',
+  );
   check('主单 paid_amount = 5000', main.paidAmount == 5000, '${main.paidAmount}');
 
   final String autoId = autoReceipt['id']! as String;
@@ -198,8 +214,11 @@ void main() {
   check('主单不直接写 money_ledger（纪律 11）', money.ofDocument(main.id).isEmpty);
   check('核销关系：sale 已收 5000', settlements.settledAmountOf(main.id) == 5000);
   check('核销关系：receipt 已核销 5000', settlements.allocatedAmountOf(autoId) == 5000);
-  check('往来净额为 0（+5000 后 -5000）', partyLedger.balanceOf(party1) == 0,
-      '${partyLedger.balanceOf(party1)}');
+  check(
+    '往来净额为 0（+5000 后 -5000）',
+    partyLedger.balanceOf(party1) == 0,
+    '${partyLedger.balanceOf(party1)}',
+  );
   check('库存 -10', stock.stockOf(p1) == -10, '${stock.stockOf(p1)}');
 
   section('RULE-002 全赊 / 部分 / 混合');
@@ -209,10 +228,14 @@ void main() {
   check('全赊 applied', credit.status == RuleStatus.applied, '${credit.reason}');
   check('全赊不生成收付款单', countOf('documents') == 3, '${countOf('documents')}');
   check('全赊无资金流水', countOf('money_ledger') == 1, '${countOf('money_ledger')}');
-  check('全赊 status = confirmed',
-      documents.findById(credit.document!.id)!.status == DocStatus.confirmed);
-  check('全赊 paid_amount = 0',
-      documents.findById(credit.document!.id)!.paidAmount == 0);
+  check(
+    '全赊 status = confirmed',
+    documents.findById(credit.document!.id)!.status == DocStatus.confirmed,
+  );
+  check(
+    '全赊 paid_amount = 0',
+    documents.findById(credit.document!.id)!.paidAmount == 0,
+  );
   check('全赊客户欠我 5000', partyLedger.balanceOf(party2) == 5000);
 
   final String p3 = createProduct(code: 'P003');
@@ -223,14 +246,24 @@ void main() {
     partyId: party3,
     immediate: <PaymentEntry>[PaymentEntry(accountId: wechat, amount: 3000)],
   );
-  check('部分收款 applied', partial.status == RuleStatus.applied, '${partial.reason}');
+  check(
+    '部分收款 applied',
+    partial.status == RuleStatus.applied,
+    '${partial.reason}',
+  );
   final Document partialMain = documents.findById(partial.document!.id)!;
-  check('部分收款 status = confirmed（方案 B 无解的场景）',
-      partialMain.status == DocStatus.confirmed, '${partialMain.status}');
+  check(
+    '部分收款 status = confirmed（方案 B 无解的场景）',
+    partialMain.status == DocStatus.confirmed,
+    '${partialMain.status}',
+  );
   check('部分收款 paid_amount = 3000', partialMain.paidAmount == 3000);
   check('部分收款资金入账 3000', money.balanceOf(wechat) == 3000);
-  check('部分收款余 2000 挂账', partyLedger.balanceOf(party3) == 2000,
-      '${partyLedger.balanceOf(party3)}');
+  check(
+    '部分收款余 2000 挂账',
+    partyLedger.balanceOf(party3) == 2000,
+    '${partyLedger.balanceOf(party3)}',
+  );
 
   final String p4 = createProduct(code: 'P004');
   final String party4 = createParty(name: '往来方丁');
@@ -244,16 +277,18 @@ void main() {
     ],
   );
   check('混合支付 applied', mixed.status == RuleStatus.applied, '${mixed.reason}');
-  check('混合支付生成 2 张自动单',
-      db.raw
-              .select(
-                'SELECT COUNT(*) AS c FROM documents WHERE ref_doc_id = ?',
-                <Object?>[mixed.document!.id],
-              )
-              .first['c'] ==
-          2);
-  check('混合支付 status = settled',
-      documents.findById(mixed.document!.id)!.status == DocStatus.settled);
+  check(
+    '混合支付生成 2 张自动单',
+    db.raw.select(
+          'SELECT COUNT(*) AS c FROM documents WHERE ref_doc_id = ?',
+          <Object?>[mixed.document!.id],
+        ).first['c'] ==
+        2,
+  );
+  check(
+    '混合支付 status = settled',
+    documents.findById(mixed.document!.id)!.status == DocStatus.settled,
+  );
   check('混合支付往来清零', partyLedger.balanceOf(party4) == 0);
 
   section('RULE-002 校验与回滚');
@@ -274,8 +309,11 @@ void main() {
   final String p6 = createProduct(code: 'P006');
   final RuleOutcome noParty = sell(productId: p6, partyId: null);
   check('有欠款但无 party_id → rejected', noParty.status == RuleStatus.rejected);
-  check('拒绝原因指向 party_id',
-      noParty.code == RejectCode.ruleInternalError, '${noParty.code}｜${noParty.reason}');
+  check(
+    '拒绝原因指向 party_id',
+    noParty.code == RejectCode.ruleInternalError,
+    '${noParty.code}｜${noParty.reason}',
+  );
   check('拒绝后无残留单据', countOf('documents') == docsBefore);
 
   final String p7 = createProduct(code: 'P007');
@@ -285,8 +323,11 @@ void main() {
     partyId: null,
     immediate: <PaymentEntry>[PaymentEntry(accountId: cash2, amount: 5000)],
   );
-  check('无 party_id 但立即全额收款 → applied（零售散客）',
-      walkIn.status == RuleStatus.applied, '${walkIn.reason}');
+  check(
+    '无 party_id 但立即全额收款 → applied（零售散客）',
+    walkIn.status == RuleStatus.applied,
+    '${walkIn.reason}',
+  );
   check('散客不产生往来流水', countOf('party_ledger') == partyRowsBefore);
 
   // ============================================================ RULE-001
@@ -301,24 +342,35 @@ void main() {
   final RuleOutcome pay = engine.dispatch(
     document: purchase,
     lines: mkLines(purchase.id, p8, 10, 100),
-    immediatePayments: <PaymentEntry>[PaymentEntry(accountId: cash2, amount: 1000)],
+    immediatePayments: <PaymentEntry>[
+      PaymentEntry(accountId: cash2, amount: 1000),
+    ],
     now: now(),
   );
   check('采购立即付款 applied', pay.status == RuleStatus.applied, '${pay.reason}');
-  check('生成 payment 单',
-      db.raw
-              .select(
-                'SELECT COUNT(*) AS c FROM documents WHERE doc_type = ?',
-                <Object?>['payment'],
-              )
-              .first['c'] ==
-          1);
-  check('采购单 status = settled',
-      documents.findById(purchase.id)!.status == DocStatus.settled);
+  check(
+    '生成 payment 单',
+    db.raw.select(
+          'SELECT COUNT(*) AS c FROM documents WHERE doc_type = ?',
+          <Object?>['payment'],
+        ).first['c'] ==
+        1,
+  );
+  check(
+    '采购单 status = settled',
+    documents.findById(purchase.id)!.status == DocStatus.settled,
+  );
   check('库存 +10', stock.stockOf(p8) == 10);
-  check('欠款清零', partyLedger.balanceOf(sup) == 0, '${partyLedger.balanceOf(sup)}');
-  check('资金净额 = 2000 + 5000 - 1000 = 6000', money.balanceOf(cash2) == 6000,
-      '实际 ${money.balanceOf(cash2)}');
+  check(
+    '欠款清零',
+    partyLedger.balanceOf(sup) == 0,
+    '${partyLedger.balanceOf(sup)}',
+  );
+  check(
+    '资金净额 = 2000 + 5000 - 1000 = 6000',
+    money.balanceOf(cash2) == 6000,
+    '实际 ${money.balanceOf(cash2)}',
+  );
 
   // ============================================================ RULE-004/005
   section('RULE-004 手动核销');
@@ -340,10 +392,14 @@ void main() {
     now: now(),
   );
   check('部分核销 applied', r1.status == RuleStatus.applied, '${r1.reason}');
-  check('被核销单 paid_amount = 2000',
-      documents.findById(sale9Id)!.paidAmount == 2000);
-  check('被核销单仍 confirmed',
-      documents.findById(sale9Id)!.status == DocStatus.confirmed);
+  check(
+    '被核销单 paid_amount = 2000',
+    documents.findById(sale9Id)!.paidAmount == 2000,
+  );
+  check(
+    '被核销单仍 confirmed',
+    documents.findById(sale9Id)!.status == DocStatus.confirmed,
+  );
   check('银行入账 2000', money.balanceOf(bank) == 2000);
   check('欠款剩 3000', partyLedger.balanceOf(party9) == 3000);
 
@@ -359,10 +415,14 @@ void main() {
     now: now(),
   );
   check('收满 applied', r2.status == RuleStatus.applied, '${r2.reason}');
-  check('收满后 paid_amount = 5000',
-      documents.findById(sale9Id)!.paidAmount == 5000);
-  check('收满后 status = settled',
-      documents.findById(sale9Id)!.status == DocStatus.settled);
+  check(
+    '收满后 paid_amount = 5000',
+    documents.findById(sale9Id)!.paidAmount == 5000,
+  );
+  check(
+    '收满后 status = settled',
+    documents.findById(sale9Id)!.status == DocStatus.settled,
+  );
   check('收满后欠款清零', partyLedger.balanceOf(party9) == 0);
 
   final Document receiptOver = mkDoc(
@@ -377,8 +437,11 @@ void main() {
     now: now(),
   );
   check('超收 → rejected', r3.status == RuleStatus.rejected);
-  check('拒绝原因指向未收金额',
-      r3.code == RejectCode.ruleValidationFailed, '${r3.code}｜${r3.reason}');
+  check(
+    '拒绝原因指向未收金额',
+    r3.code == RejectCode.ruleValidationFailed,
+    '${r3.code}｜${r3.reason}',
+  );
 
   final Document prepay = mkDoc(
     type: DocType.receipt,
@@ -392,27 +455,43 @@ void main() {
     now: now(),
   );
   check('预收 applied', r4.status == RuleStatus.applied, '${r4.reason}');
-  check('预收单 status = settled',
-      documents.findById(prepay.id)!.status == DocStatus.settled);
-  check('预收不核销任何单',
-      settlements.ofReceipt(prepay.id).single.targetDocId == null);
+  check(
+    '预收单 status = settled',
+    documents.findById(prepay.id)!.status == DocStatus.settled,
+  );
+  check(
+    '预收不核销任何单',
+    settlements.ofReceipt(prepay.id).single.targetDocId == null,
+  );
 
-  check('收付款单缺 account_id → rejected',
-      engine
-          .dispatch(
-            document: mkDoc(type: DocType.receipt, partyId: party9, totalAmount: 100),
-            now: now(),
-          )
-          .code ==
-          RejectCode.ruleInternalError);
-  check('收付款单缺 party_id → rejected',
-      engine
-          .dispatch(
-            document: mkDoc(type: DocType.receipt, accountId: bank, totalAmount: 100),
-            now: now(),
-          )
-          .code ==
-          RejectCode.ruleInternalError);
+  check(
+    '收付款单缺 account_id → rejected',
+    engine
+            .dispatch(
+              document: mkDoc(
+                type: DocType.receipt,
+                partyId: party9,
+                totalAmount: 100,
+              ),
+              now: now(),
+            )
+            .code ==
+        RejectCode.ruleInternalError,
+  );
+  check(
+    '收付款单缺 party_id → rejected',
+    engine
+            .dispatch(
+              document: mkDoc(
+                type: DocType.receipt,
+                accountId: bank,
+                totalAmount: 100,
+              ),
+              now: now(),
+            )
+            .code ==
+        RejectCode.ruleInternalError,
+  );
 
   // ============================================================ 互斥
   section('payload 互斥（sync_protocol §8.1）');
@@ -425,25 +504,31 @@ void main() {
     now: now(),
   );
   check('两者同时非空 → rejected', both.status == RuleStatus.rejected);
-  check('拒绝码 = payload_mutually_exclusive', both.code == RejectCode.payloadMutuallyExclusive, '${both.code}｜${both.reason}');
+  check(
+    '拒绝码 = payload_mutually_exclusive',
+    both.code == RejectCode.payloadMutuallyExclusive,
+    '${both.code}｜${both.reason}',
+  );
 
   // ============================================================ 纪律 11
   section('纪律 11：资金流必须挂在收付款单下');
   final Set<String> mainDocTypes = <String>{
-    for (final Row r in db.raw.select('SELECT DISTINCT doc_type FROM documents'))
+    for (final Row r in db.raw.select(
+      'SELECT DISTINCT doc_type FROM documents',
+    ))
       r['doc_type']! as String,
   };
-  final Row moneyOnMain = db.raw
-      .select('''
+  final Row moneyOnMain = db.raw.select('''
         SELECT COUNT(*) AS c FROM money_ledger m
         JOIN documents d ON d.id = m.document_id
         WHERE d.doc_type NOT IN ('receipt', 'payment')
-      ''')
-      .first;
+      ''').first;
   check('money_ledger 未挂在任何主单上', moneyOnMain['c'] == 0, '${moneyOnMain['c']}');
-  check('存在自动生成的收付款单',
-      mainDocTypes.contains('receipt') && mainDocTypes.contains('payment'),
-      '$mainDocTypes');
+  check(
+    '存在自动生成的收付款单',
+    mainDocTypes.contains('receipt') && mainDocTypes.contains('payment'),
+    '$mainDocTypes',
+  );
 
   // ---------------------------------------------------------------- 核销视图 + 列表过滤
   // 批次 1a（`docs/reply_review.md` §AM·二 / §AN·二）。与
@@ -524,9 +609,7 @@ void main() {
   );
   engine.dispatch(
     document: vreceipt,
-    allocations: <Allocation>[
-      Allocation(targetDocId: vsale2.id, amount: 1000),
-    ],
+    allocations: <Allocation>[Allocation(targetDocId: vsale2.id, amount: 1000)],
     now: now(),
   );
 
@@ -558,41 +641,47 @@ void main() {
       .listDocuments(includeDerived: true)
       .map((DocumentSummary e) => e.document.id)
       .toSet();
-  final String autoReceiptId = db.raw
-          .select(
-            "SELECT id FROM documents "
-            "WHERE doc_type = 'receipt' AND ref_doc_id IS NOT NULL",
-          )
-          .first['id']!
-      as String;
+  final String autoReceiptId =
+      db.raw
+              .select(
+                "SELECT id FROM documents "
+                "WHERE doc_type = 'receipt' AND ref_doc_id IS NOT NULL",
+              )
+              .first['id']!
+          as String;
 
   check('自动生成的收款单不进列表', !shown.contains(autoReceiptId));
-  check(
-      'includeDerived: true 能看到全部', allShown.contains(autoReceiptId));
+  check('includeDerived: true 能看到全部', allShown.contains(autoReceiptId));
   check('手动收款单要显示', shown.contains(vreceipt.id));
-  check('⚠️ 退货单不被误伤（只判 ref_doc_id 会把它一起滤掉）',
-      shown.contains(vret.id));
+  check('⚠️ 退货单不被误伤（只判 ref_doc_id 会把它一起滤掉）', shown.contains(vret.id));
 
-  check('summaryById 命中并带对方名',
-      documents.summaryById(vsale.id)?.partyName == '老王批发');
+  check(
+    'summaryById 命中并带对方名',
+    documents.summaryById(vsale.id)?.partyName == '老王批发',
+  );
   check('summaryById 不存在 → null', documents.summaryById('没有这张单') == null);
 
-  final List<SettlementView> vFromReceipt =
-      settlements.settlementsOfReceipt(vreceipt.id);
+  final List<SettlementView> vFromReceipt = settlements.settlementsOfReceipt(
+    vreceipt.id,
+  );
   final List<SettlementView> vFromTarget = settlements.settlementsOfTarget(
     vsale2.id,
   );
   check(
-      '对称：收款单看 → 对端是销售单',
-      vFromReceipt.single.docId == vsale2.id &&
-          vFromReceipt.single.docNo == documents.findById(vsale2.id)!.docNo);
+    '对称：收款单看 → 对端是销售单',
+    vFromReceipt.single.docId == vsale2.id &&
+        vFromReceipt.single.docNo == documents.findById(vsale2.id)!.docNo,
+  );
   check(
-      '对称：销售单看 → 对端是收款单',
-      vFromTarget.single.docId == vreceipt.id &&
-          vFromTarget.single.docNo == documents.findById(vreceipt.id)!.docNo);
-  check('对称：两方向金额一致（同一笔核销）',
-      vFromReceipt.single.amount == 1000 && vFromTarget.single.amount == 1000,
-      '${vFromReceipt.single.amount} / ${vFromTarget.single.amount}');
+    '对称：销售单看 → 对端是收款单',
+    vFromTarget.single.docId == vreceipt.id &&
+        vFromTarget.single.docNo == documents.findById(vreceipt.id)!.docNo,
+  );
+  check(
+    '对称：两方向金额一致（同一笔核销）',
+    vFromReceipt.single.amount == 1000 && vFromTarget.single.amount == 1000,
+    '${vFromReceipt.single.amount} / ${vFromTarget.single.amount}',
+  );
 
   // ---------------------------------------------------------------- 核销服务
   // 批次 1a（`docs/reply_review.md` §AO）。与 `test/settlement_service_test.dart`
@@ -605,28 +694,43 @@ void main() {
   );
 
   check('方向判定：sale 系 → 收款', SettlementService.isInbound(DocType.sale) == true);
-  check('方向判定：purchase 系 → 付款',
-      SettlementService.isInbound(DocType.purchase) == false);
-  check('方向判定：盘点/收付款单 → 不可核销',
-      SettlementService.isInbound(DocType.stocktake) == null &&
-          SettlementService.isInbound(DocType.receipt) == null);
-  check('内联提示：超收**不再是错误**（§AX·一：多出的是找零）',
-      SettlementService.amountError(rawAmount: '60', unsettledCents: 5000) ==
-          null);
-  check('超收告知：说清「实收 / 入账 / 找零」三件事',
-      (SettlementService.changeNotice(
-                  rawAmount: '60', unsettledCents: 5000, inbound: true) ??
-              '')
-          .contains('实收 ¥60.00，其中 ¥50.00 入账、找零 ¥10.00'));
-  check('按钮文字：超收时是「记 ¥50.00 并找零 ¥10.00」',
-      SettlementService.actionLabel(rawAmount: '60', unsettledCents: 5000) ==
-          '记 ¥50.00 并找零 ¥10.00');
-  check('结论句：部分收款说还欠',
-      SettlementService.resultLine(
-        amountCents: 2000,
-        unsettledCents: 5000,
-        inbound: true,
-      ).contains('还欠 ¥30.00'));
+  check(
+    '方向判定：purchase 系 → 付款',
+    SettlementService.isInbound(DocType.purchase) == false,
+  );
+  check(
+    '方向判定：盘点/收付款单 → 不可核销',
+    SettlementService.isInbound(DocType.stocktake) == null &&
+        SettlementService.isInbound(DocType.receipt) == null,
+  );
+  check(
+    '内联提示：超收**不再是错误**（§AX·一：多出的是找零）',
+    SettlementService.amountError(rawAmount: '60', unsettledCents: 5000) ==
+        null,
+  );
+  check(
+    '超收告知：说清「实收 / 入账 / 找零」三件事',
+    (SettlementService.changeNotice(
+              rawAmount: '60',
+              unsettledCents: 5000,
+              inbound: true,
+            ) ??
+            '')
+        .contains('实收 ¥60.00，其中 ¥50.00 入账、找零 ¥10.00'),
+  );
+  check(
+    '按钮文字：超收时是「记 ¥50.00 并找零 ¥10.00」',
+    SettlementService.actionLabel(rawAmount: '60', unsettledCents: 5000) ==
+        '记 ¥50.00 并找零 ¥10.00',
+  );
+  check(
+    '结论句：部分收款说还欠',
+    SettlementService.resultLine(
+      amountCents: 2000,
+      unsettledCents: 5000,
+      inbound: true,
+    ).contains('还欠 ¥30.00'),
+  );
 
   // 赊账销售 5000 → 部分收 2000 → 再收 3000 → 结清
   final String sp = createProduct(code: 'P-SETTLE');
@@ -660,8 +764,10 @@ void main() {
   );
   check('部分收款：还欠 3000', part1.targetUnsettledAfterCents == 3000);
   check('部分收款：单号前缀 SK', part1.docNo.startsWith('SK'), part1.docNo);
-  check('部分收款：单据仍未结清',
-      documents.findById(ssale.id)!.status == DocStatus.confirmed);
+  check(
+    '部分收款：单据仍未结清',
+    documents.findById(ssale.id)!.status == DocStatus.confirmed,
+  );
 
   // ⚠️ 本条原先断言「超收被服务层拒绝」—— 与 §AX·一（3甲）**直接矛盾**
   // （裁定：超收不再抛，按未收额封顶、多出的是找零）。陈旧断言，已按裁定改写。
@@ -671,13 +777,17 @@ void main() {
     amountCents: 9999,
     now: now(),
   );
-  check('超收按未收额封顶（入账 3000 不是 9999）',
-      capped.amountCents == 3000, '${capped.amountCents}');
-  check('超收差额进找零（6999）',
-      capped.changeCents == 6999, '${capped.changeCents}');
+  check(
+    '超收按未收额封顶（入账 3000 不是 9999）',
+    capped.amountCents == 3000,
+    '${capped.amountCents}',
+  );
+  check('超收差额进找零（6999）', capped.changeCents == 6999, '${capped.changeCents}');
   check('超收后结清', capped.targetUnsettledAfterCents == 0);
-  check('收满后状态 settled',
-      documents.findById(ssale.id)!.status == DocStatus.settled);
+  check(
+    '收满后状态 settled',
+    documents.findById(ssale.id)!.status == DocStatus.settled,
+  );
 
   // 「服务层自己校验一遍」这条防线仍然在 —— 只是触发条件是**已结清**，
   // 不再是「超收」（§AX·一 把超收变成了合法操作）。

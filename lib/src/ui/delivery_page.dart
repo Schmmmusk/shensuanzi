@@ -80,10 +80,10 @@ class DeliveryPage extends StatefulWidget {
   /// 那版默默漏装就是「手机上一切都能建」（静默丢数据），宁可编不过。
   final MasterDataPolicy masterDataPolicy;
 
-
   /// **往来方写入口的队列出口**（2026-10-20，§CV·七十七）。
   /// 手机 = `QueuePartySink`（写镜像 + 入队 + 立即推）；桌面 = `null`。
   final QueuePartySink? partySink;
+
   /// 主数据提交**出口**（桌面 `ServiceMasterSink` / 手机 `QueueMasterSink`）。
   /// ⚠️ 商品表单**必须**走它 —— 手机端的 `ProductService` 建在镜像上。
   final MasterDataSink masterDataSink;
@@ -131,9 +131,7 @@ class _RowCtl {
 
   /// 成对启用 ⇒ 行卡显示单位切换（§BD·三 第 3 条）
   bool get canSwitchPackage =>
-      packageUnit != null &&
-      packageUnit!.isNotEmpty &&
-      (packageSize ?? 0) > 0;
+      packageUnit != null && packageUnit!.isNotEmpty && (packageSize ?? 0) > 0;
 
   /// 数量框 label 上显示的单位
   String get entryUnitDisplay =>
@@ -389,7 +387,10 @@ class _DeliveryPageState extends State<DeliveryPage> {
       // 进宿主日志）。草稿保留，改完能直接再交。
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.reason), duration: const Duration(seconds: 8)),
+        SnackBar(
+          content: Text(error.reason),
+          duration: const Duration(seconds: 8),
+        ),
       );
     } catch (error, stack) {
       setState(() => _saving = false);
@@ -570,46 +571,46 @@ class _DeliveryPageState extends State<DeliveryPage> {
         if (confirmed && context.mounted) Navigator.of(context).pop();
       },
       child: CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
-        const SingleActivator(LogicalKeyboardKey.escape): _cancel,
-      },
-      child: FocusScope(
-        // #37甲（2026-10-14）：这里**必须**是 `FocusScope`，不能降回 `Focus` ——
-        // `CallbackShortcuts` 内部是 `Focus(canRequestFocus: false)`，按键只能靠
-        // **后代节点上溯**经过它；而点页内空白会触发 `EditableText.onTapOutside`
-        // （桌面专属）调 `unfocus()`，默认 `disposition: scope` 把焦点升到
-        // **最近的外层 scope**。若是普通 `Focus`，焦点升到路由的 `FocusScope`
-        // （在 `CallbackShortcuts` **之上**）⇒ 上溯不再经过它 ⇒ Ctrl+S / Esc 静默失效。
-        // 换成 `FocusScope` ⇒ 最近 scope 就是本页 ⇒ 焦点留在页内 ⇒ 恒生效。
-        autofocus: true,
-        // C3·真机反馈 ④：键盘（含输入法候选栏）高度变化时，把焦点字段滚回可视区
-        child: KeyboardReveal(
-          child: Scaffold(
-            body: SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    _headerRow(theme),
-                    const Divider(height: 24),
-                    _linesSection(theme),
-                    _totalBar(theme),
-                    const Divider(height: 24),
-                    // ⚠️ 这里**没有** `_paymentSection` —— 送货单不收钱（§AP）
-                    _noPaymentNote(theme),
-                    const SizedBox(height: 16),
-                    _remarkField(),
-                    const SizedBox(height: 24),
-                    _actions(theme),
-                  ],
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
+          const SingleActivator(LogicalKeyboardKey.escape): _cancel,
+        },
+        child: FocusScope(
+          // #37甲（2026-10-14）：这里**必须**是 `FocusScope`，不能降回 `Focus` ——
+          // `CallbackShortcuts` 内部是 `Focus(canRequestFocus: false)`，按键只能靠
+          // **后代节点上溯**经过它；而点页内空白会触发 `EditableText.onTapOutside`
+          // （桌面专属）调 `unfocus()`，默认 `disposition: scope` 把焦点升到
+          // **最近的外层 scope**。若是普通 `Focus`，焦点升到路由的 `FocusScope`
+          // （在 `CallbackShortcuts` **之上**）⇒ 上溯不再经过它 ⇒ Ctrl+S / Esc 静默失效。
+          // 换成 `FocusScope` ⇒ 最近 scope 就是本页 ⇒ 焦点留在页内 ⇒ 恒生效。
+          autofocus: true,
+          // C3·真机反馈 ④：键盘（含输入法候选栏）高度变化时，把焦点字段滚回可视区
+          child: KeyboardReveal(
+            child: Scaffold(
+              body: SafeArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      _headerRow(theme),
+                      const Divider(height: 24),
+                      _linesSection(theme),
+                      _totalBar(theme),
+                      const Divider(height: 24),
+                      // ⚠️ 这里**没有** `_paymentSection` —— 送货单不收钱（§AP）
+                      _noPaymentNote(theme),
+                      const SizedBox(height: 16),
+                      _remarkField(),
+                      const SizedBox(height: 24),
+                      _actions(theme),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -638,15 +639,15 @@ class _DeliveryPageState extends State<DeliveryPage> {
                   // 送货的客户**必选**，没有「散客」这一档 ⇒ 空的时候是提示语，
                   // 不是「散客（当场结清）」（那是销售页的说法）
                   _partyName ?? '点这里选客户（必选）',
-                  style: TextStyle(height: 1.6, color: theme.colorScheme.onSurface),
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.colorScheme.onSurface,
+                  ),
                 ),
               ),
             ),
             if (_partyName != null)
-              TextButton(
-                onPressed: _clearParty,
-                child: const Text('换一个客户'),
-              ),
+              TextButton(onPressed: _clearParty, child: const Text('换一个客户')),
           ],
         ),
       ),
@@ -668,7 +669,10 @@ class _DeliveryPageState extends State<DeliveryPage> {
                 ),
                 child: Text(
                   _fmtDate(_date),
-                  style: TextStyle(height: 1.6, color: theme.colorScheme.onSurface),
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.colorScheme.onSurface,
+                  ),
                 ),
               ),
             ),
@@ -683,9 +687,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
     children: <Widget>[
       Row(
         children: <Widget>[
-          Expanded(
-            child: Text('商品明细 *', style: theme.textTheme.titleMedium),
-          ),
+          Expanded(child: Text('商品明细 *', style: theme.textTheme.titleMedium)),
         ],
       ),
       if (_invalid?.fieldErrors[DeliveryField.lines] != null) ...<Widget>[
@@ -986,8 +988,8 @@ class _LineCard extends StatelessWidget {
                 children: <Widget>[
                   ChoiceChip(
                     label: Text(row.baseUnit ?? ''),
-                    selected: row.entryUnit.isEmpty ||
-                        row.entryUnit == row.baseUnit,
+                    selected:
+                        row.entryUnit.isEmpty || row.entryUnit == row.baseUnit,
                     onSelected: (_) {
                       row.switchEntryUnit(''); // §BG 方案 A：预填价跟着换
                       onChanged();
@@ -1106,8 +1108,9 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
   void _onNameFocusChanged() {
     if (_nameFocus.hasFocus) return;
     final String name = _query.text.trim();
-    final Party? existing =
-        name.isEmpty ? null : widget.partyService.findByNameIncludingInactive(name);
+    final Party? existing = name.isEmpty
+        ? null
+        : widget.partyService.findByNameIncludingInactive(name);
     final String? hint = partySameNameHint(
       existing,
       adding: const <PartyRole>[PartyRole.customer],
@@ -1148,14 +1151,13 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
             );
       if (!mounted) return;
       // #40①：与销售页同源（`partyMutationNotice`）—— 追加身份 / 复活停用档都要说
-      final String? notice =
-          partyMutationNotice(result, role: PartyRole.customer);
+      final String? notice = partyMutationNotice(
+        result,
+        role: PartyRole.customer,
+      );
       if (notice != null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(notice),
-            duration: const Duration(seconds: 4),
-          ),
+          SnackBar(content: Text(notice), duration: const Duration(seconds: 4)),
         );
       }
       Navigator.of(context).pop(result.party);
@@ -1234,7 +1236,10 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
                     itemCount: _items.length,
                     itemBuilder: (BuildContext context, int index) => ListTile(
                       dense: true,
-                      title: Text(_items[index].name, style: const TextStyle(height: 1.6)),
+                      title: Text(
+                        _items[index].name,
+                        style: const TextStyle(height: 1.6),
+                      ),
                       subtitle: _items[index].phone == null
                           ? null
                           : Text(_items[index].phone!),

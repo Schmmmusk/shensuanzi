@@ -214,8 +214,7 @@ class ProductDraft {
     if (unitName.isEmpty && sizeText.isEmpty) return; // 都没填 = 不启用
 
     if (unitName.isEmpty) {
-      errors[ProductField.packageUnit] =
-          '填了「1 包 = 多少个」，就要给包装起个名字，比如「箱」';
+      errors[ProductField.packageUnit] = '填了「1 包 = 多少个」，就要给包装起个名字，比如「箱」';
     }
     if (sizeText.isEmpty) {
       errors[ProductField.packageSize] = '填了包装单位，就要填 1 包 = 多少个，比如 12';
@@ -281,8 +280,7 @@ class ProductDraft {
   void _checkPackageNote(Map<ProductField, String> errors) {
     final String text = packageNote.trim();
     if (text.length > maxPackageNoteLength) {
-      errors[ProductField.packageNote] =
-          '包装说明太长了，写一句话就好，比如「1 箱 = 48 瓶」';
+      errors[ProductField.packageNote] = '包装说明太长了，写一句话就好，比如「1 箱 = 48 瓶」';
     }
   }
 
@@ -324,7 +322,16 @@ class ProductDraft {
   /// 10 以上退回阿拉伯数字（「十二条商品」反而难读）
   static String _countLabel(int value) {
     const List<String> chinese = <String>[
-      '', '', '两', '三', '四', '五', '六', '七', '八', '九',
+      '',
+      '',
+      '两',
+      '三',
+      '四',
+      '五',
+      '六',
+      '七',
+      '八',
+      '九',
     ];
     if (value >= 2 && value < chinese.length) return chinese[value];
     return '$value';

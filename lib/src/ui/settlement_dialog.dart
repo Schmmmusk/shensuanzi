@@ -279,12 +279,16 @@ class _SettlementDialogState extends State<_SettlementDialog> {
                   isExpanded: true,
                   onChanged: _saving
                       ? null
-                      : (Account? account) => setState(() => _account = account),
+                      : (Account? account) =>
+                            setState(() => _account = account),
                   items: <DropdownMenuItem<Account>>[
                     for (final Account account in _accounts)
                       DropdownMenuItem<Account>(
                         value: account,
-                        child: Text(account.name, style: const TextStyle(height: 1.6)),
+                        child: Text(
+                          account.name,
+                          style: const TextStyle(height: 1.6),
+                        ),
                       ),
                   ],
                 ),
@@ -335,7 +339,10 @@ class _SettlementDialogState extends State<_SettlementDialog> {
           const Icon(Icons.info_outline, color: color, size: 20),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(text, style: const TextStyle(height: 1.6, color: color)),
+            child: Text(
+              text,
+              style: const TextStyle(height: 1.6, color: color),
+            ),
           ),
         ],
       ),

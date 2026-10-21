@@ -154,8 +154,9 @@ class World {
   static Future<World> start() async {
     resetClock();
     final Db hostDb = Db.openInMemory();
-    final HostIdentity identity =
-        HostIdentityStore.inMemory().loadOrCreate(now: _hostNow);
+    final HostIdentity identity = HostIdentityStore.inMemory().loadOrCreate(
+      now: _hostNow,
+    );
     final String token = identity.plaintextToken!;
     final HostHttpServer server = await HostHttpServer.start(
       db: hostDb,
@@ -186,8 +187,10 @@ class World {
     final String partyId = newId();
     clientA.queue.enqueue(
       SyncQueueEntry.create(
-        masterOp(Schema.products, productId,
-            <String, Object?>{'code': 'P001', 'name': '商品甲'}),
+        masterOp(Schema.products, productId, <String, Object?>{
+          'code': 'P001',
+          'name': '商品甲',
+        }),
         now: now(),
       ),
     );
@@ -201,8 +204,18 @@ class World {
     if (boot.sent != 2) {
       throw StateError('夹具失败：主数据引导 → ${boot.lastError} ${boot.errors}');
     }
-    return World._(hostDb, server, transport, mirrorA, mirrorB, clientA,
-        clientB, token, productId, partyId);
+    return World._(
+      hostDb,
+      server,
+      transport,
+      mirrorA,
+      mirrorB,
+      clientA,
+      clientB,
+      token,
+      productId,
+      partyId,
+    );
   }
 
   Future<void> dispose() async {
@@ -224,8 +237,10 @@ Future<void> main() async {
 
     // ① A 先拉一次，游标停在「什么都没有」
     await w.clientA.pull();
-    check('拉取后 stock 游标为 0',
-        (w.clientA.cursors.getAll()[SyncCursorKeys.stock] ?? '0') == '0');
+    check(
+      '拉取后 stock 游标为 0',
+      (w.clientA.cursors.getAll()[SyncCursorKeys.stock] ?? '0') == '0',
+    );
 
     // ② 另一台设备 B 在 A 不知情时写了 5 张单
     final List<String> bDocIds = <String>[];
@@ -259,21 +274,29 @@ Future<void> main() async {
     check('A 推了自己的 1 张', aPush.sent == 1, '${aPush.lastError} ${aPush.errors}');
 
     // ④ 关键：自己的 push 不推进拉取游标
-    check('**push 不推进拉取游标**',
-        (w.clientA.cursors.getAll()[SyncCursorKeys.stock] ?? '0') == '0',
-        '${w.clientA.cursors.getAll()}');
+    check(
+      '**push 不推进拉取游标**',
+      (w.clientA.cursors.getAll()[SyncCursorKeys.stock] ?? '0') == '0',
+      '${w.clientA.cursors.getAll()}',
+    );
 
     // ⑤ A 再拉 —— 必须把 B 那 5 张也拉回来
     final SyncPullReport pull = await w.clientA.pull();
-    check('拉到 6 条 stock_ledger（B 的 5 + A 的 1）',
-        pull.entities[Schema.stockLedger] == 6,
-        '${pull.entities[Schema.stockLedger]}');
-    check('B 的 5 张都在本地镜像里',
-        mirroredDocumentIds(w.mirrorA).containsAll(<String>[...bDocIds, aDocId]));
+    check(
+      '拉到 6 条 stock_ledger（B 的 5 + A 的 1）',
+      pull.entities[Schema.stockLedger] == 6,
+      '${pull.entities[Schema.stockLedger]}',
+    );
+    check(
+      'B 的 5 张都在本地镜像里',
+      mirroredDocumentIds(w.mirrorA).containsAll(<String>[...bDocIds, aDocId]),
+    );
     check('镜像共 6 张单', mirroredDocuments(w.mirrorA) == 6);
-    check('库存 = 12（5×1 + 7）',
-        QueryDao(w.mirrorA).stockByProduct()[w.productId] == 12,
-        '${QueryDao(w.mirrorA).stockByProduct()}');
+    check(
+      '库存 = 12（5×1 + 7）',
+      QueryDao(w.mirrorA).stockByProduct()[w.productId] == 12,
+      '${QueryDao(w.mirrorA).stockByProduct()}',
+    );
     await w.dispose();
   }
 
@@ -302,8 +325,11 @@ Future<void> main() async {
     );
 
     final SyncPullReport pull = await skewed.pull();
-    check('时钟快 1h 的客户端照样拉到 1 张',
-        pull.entities[Schema.documents] == 1, '${pull.entities[Schema.documents]}');
+    check(
+      '时钟快 1h 的客户端照样拉到 1 张',
+      pull.entities[Schema.documents] == 1,
+      '${pull.entities[Schema.documents]}',
+    );
     check('且就是 B 那张', mirroredDocumentIds(skewedMirror).contains(bDocId));
     skewedMirror.close();
     await w.dispose();
@@ -331,29 +357,34 @@ Future<void> main() async {
 
     await w.clientB.pull();
     final Map<String, Object?> row = Map<String, Object?>.from(
-      w.mirrorB.raw
-          .select('SELECT * FROM documents WHERE id = ?', <Object?>[docId]).first,
+      w.mirrorB.raw.select('SELECT * FROM documents WHERE id = ?', <Object?>[
+        docId,
+      ]).first,
     );
-    check('B 拿到主机分配的正式单号',
-        !(row['doc_no']! as String).startsWith(Document.pendingDocNoPrefix),
-        '${row['doc_no']}');
+    check(
+      'B 拿到主机分配的正式单号',
+      !(row['doc_no']! as String).startsWith(Document.pendingDocNoPrefix),
+      '${row['doc_no']}',
+    );
     check('B 的镜像里有这张单', mirroredDocuments(w.mirrorB) == 1);
     check('B 的库存 = 3', QueryDao(w.mirrorB).stockByProduct()[w.productId] == 3);
 
     await w.clientB.pull();
     check('重复 pull 不产生重复单据', mirroredDocuments(w.mirrorB) == 1);
     check(
-        '重复 pull 不产生重复明细',
-        w.mirrorB.raw
-                .select('SELECT COUNT(*) AS n FROM document_lines')
-                .first['n'] ==
-            1);
+      '重复 pull 不产生重复明细',
+      w.mirrorB.raw
+              .select('SELECT COUNT(*) AS n FROM document_lines')
+              .first['n'] ==
+          1,
+    );
     check(
-        '重复 pull 不产生重复流水',
-        w.mirrorB.raw
-                .select('SELECT COUNT(*) AS n FROM stock_ledger')
-                .first['n'] ==
-            1);
+      '重复 pull 不产生重复流水',
+      w.mirrorB.raw
+              .select('SELECT COUNT(*) AS n FROM stock_ledger')
+              .first['n'] ==
+          1,
+    );
     await w.dispose();
   }
 
@@ -375,25 +406,36 @@ Future<void> main() async {
     );
     await w.clientA.push();
 
-    check('push 后条目不删、转为 sent',
-        w.clientA.queue.withStatus(SyncQueueStatus.sent).any(
-            (SyncQueueEntry e) => e.entityId == docId),
-        '${w.clientA.queue.withStatus(SyncQueueStatus.sent).map((SyncQueueEntry e) => e.entityId)}');
+    check(
+      'push 后条目不删、转为 sent',
+      w.clientA.queue
+          .withStatus(SyncQueueStatus.sent)
+          .any((SyncQueueEntry e) => e.entityId == docId),
+      '${w.clientA.queue.withStatus(SyncQueueStatus.sent).map((SyncQueueEntry e) => e.entityId)}',
+    );
     final StockView before = w.clientA.stockViewOf(w.productId);
-    check('显示库存立刻包含刚卖的 3 件',
-        before.display == 3 && before.unsynced == 3 && before.authoritative == 0,
-        'display=${before.display} authoritative=${before.authoritative}');
-    check('贡献者指向那张单',
-        before.contributors.length == 1 &&
-            before.contributors.single.entityId == docId);
+    check(
+      '显示库存立刻包含刚卖的 3 件',
+      before.display == 3 && before.unsynced == 3 && before.authoritative == 0,
+      'display=${before.display} authoritative=${before.authoritative}',
+    );
+    check(
+      '贡献者指向那张单',
+      before.contributors.length == 1 &&
+          before.contributors.single.entityId == docId,
+    );
 
     await w.clientA.pull();
     final StockView after = w.clientA.stockViewOf(w.productId);
-    check('pull 确认后队列条目被清除',
-        w.clientA.queue.withStatus(SyncQueueStatus.sent).isEmpty);
-    check('权威镜像到位、未同步归零',
-        after.authoritative == 3 && after.unsynced == 0 && !after.hasUnsynced,
-        'authoritative=${after.authoritative} unsynced=${after.unsynced}');
+    check(
+      'pull 确认后队列条目被清除',
+      w.clientA.queue.withStatus(SyncQueueStatus.sent).isEmpty,
+    );
+    check(
+      '权威镜像到位、未同步归零',
+      after.authoritative == 3 && after.unsynced == 0 && !after.hasUnsynced,
+      'authoritative=${after.authoritative} unsynced=${after.unsynced}',
+    );
     await w.dispose();
   }
 
@@ -421,12 +463,15 @@ Future<void> main() async {
     check('B 的 base_version 过期 → conflict', second.conflicts == 1);
     check('冲突条目已删除', w.clientB.queue.all().isEmpty);
     final Map<String, Object?> local = Map<String, Object?>.from(
-      w.mirrorB.raw
-          .select('SELECT name FROM products WHERE id = ?', <Object?>[w.productId])
-          .first,
+      w.mirrorB.raw.select('SELECT name FROM products WHERE id = ?', <Object?>[
+        w.productId,
+      ]).first,
     );
-    check('本地被 server_state 覆盖（主机赢）', local['name'] == '甲改的名字',
-        '${local['name']}');
+    check(
+      '本地被 server_state 覆盖（主机赢）',
+      local['name'] == '甲改的名字',
+      '${local['name']}',
+    );
     await w.dispose();
   }
 
@@ -439,44 +484,61 @@ Future<void> main() async {
     final String bProductId = newId();
     w.clientB.queue.enqueue(
       SyncQueueEntry.create(
-        masterOp(Schema.products, bProductId,
-            <String, Object?>{'code': 'P001', 'name': '商品乙'}),
+        masterOp(Schema.products, bProductId, <String, Object?>{
+          'code': 'P001',
+          'name': '商品乙',
+        }),
         now: now(),
       ),
     );
     final SyncPushReport push = await w.clientB.push();
-    check('B 推成功（改派对客户端不是错误）',
-        push.sent == 1 && push.rejected == 0, push.errors.join(' | '));
+    check(
+      'B 推成功（改派对客户端不是错误）',
+      push.sent == 1 && push.rejected == 0,
+      push.errors.join(' | '),
+    );
 
     final Map<String, Object?> hostRow = Map<String, Object?>.from(
-      w.hostDb.raw
-          .select('SELECT code FROM products WHERE id = ?', <Object?>[bProductId])
-          .first,
+      w.hostDb.raw.select('SELECT code FROM products WHERE id = ?', <Object?>[
+        bProductId,
+      ]).first,
     );
-    check('主机改派了 B 的编码（≠ P001）', hostRow['code'] != 'P001',
-        '${hostRow['code']}');
     check(
-        '两条都落库（改派不是拒绝）',
-        (w.hostDb.raw.select('SELECT COUNT(*) AS n FROM products').first['n']
-                as int) ==
-            2);
+      '主机改派了 B 的编码（≠ P001）',
+      hostRow['code'] != 'P001',
+      '${hostRow['code']}',
+    );
     check(
-        '原占用者（商品甲）仍是 P001',
-        w.hostDb.raw
-                .select("SELECT code FROM products WHERE name = '商品甲'")
-                .first['code'] ==
-            'P001');
+      '两条都落库（改派不是拒绝）',
+      (w.hostDb.raw.select('SELECT COUNT(*) AS n FROM products').first['n']
+              as int) ==
+          2,
+    );
+    check(
+      '原占用者（商品甲）仍是 P001',
+      w.hostDb.raw
+              .select("SELECT code FROM products WHERE name = '商品甲'")
+              .first['code'] ==
+          'P001',
+    );
 
     await w.clientB.pull();
     final List<Map<String, Object?>> mirrorRows = w.mirrorB.raw
-        .select('SELECT id, code FROM products WHERE id = ?', <Object?>[bProductId])
+        .select('SELECT id, code FROM products WHERE id = ?', <Object?>[
+          bProductId,
+        ])
         .map((r) => <String, Object?>{'id': r['id'], 'code': r['code']})
         .toList();
-    check('镜像只有一行（乐观行与 pull 行同 id ⇒ UPSERT 覆盖）',
-        mirrorRows.length == 1, '${mirrorRows.length}');
-    check('镜像收敛到主机改派后的编码',
-        mirrorRows.single['code'] == hostRow['code'],
-        '${mirrorRows.single['code']} vs ${hostRow['code']}');
+    check(
+      '镜像只有一行（乐观行与 pull 行同 id ⇒ UPSERT 覆盖）',
+      mirrorRows.length == 1,
+      '${mirrorRows.length}',
+    );
+    check(
+      '镜像收敛到主机改派后的编码',
+      mirrorRows.single['code'] == hostRow['code'],
+      '${mirrorRows.single['code']} vs ${hostRow['code']}',
+    );
     await w.dispose();
   }
 
@@ -513,12 +575,17 @@ Future<void> main() async {
     final SyncPushReport report = await w.clientA.push();
     check('documentAction（purchase 收签收）→ rejected', report.rejected == 1);
     final SyncQueueEntry after = w.clientA.queue.findById(action.id)!;
-    check('rejected → 进重试而非死信',
-        after.status == SyncQueueStatus.pending && after.retryCount == 1);
+    check(
+      'rejected → 进重试而非死信',
+      after.status == SyncQueueStatus.pending && after.retryCount == 1,
+    );
     // #22 裁定：协议违反（非送货单不能签收）的回执给通用中文 ⇒ 队列里存的
     // 也是它；细节（`purchase 不适用签收`）只在**主机日志**里。
-    check('失败原因 = 协议违反的通用文案',
-        after.lastError == malformedSyncRequestReason, '${after.lastError}');
+    check(
+      '失败原因 = 协议违反的通用文案',
+      after.lastError == malformedSyncRequestReason,
+      '${after.lastError}',
+    );
 
     final SyncClient wrong = SyncClient(
       db: w.mirrorA,
@@ -533,9 +600,11 @@ Future<void> main() async {
     } catch (error) {
       thrown = error;
     }
-    check('错令牌 → SyncHttpException(401)',
-        thrown is SyncHttpException && thrown.isUnauthorized,
-        '$thrown');
+    check(
+      '错令牌 → SyncHttpException(401)',
+      thrown is SyncHttpException && thrown.isUnauthorized,
+      '$thrown',
+    );
     await w.dispose();
   }
 

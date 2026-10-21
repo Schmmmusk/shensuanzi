@@ -97,13 +97,15 @@ void main() {
         now: now(),
       );
       final int t = now() + 100;
-      PartyDao(db).insert(Party(
-        id: newId(),
-        name: '老刘',
-        roles: const <PartyRole>[PartyRole.supplier],
-        createdAt: t,
-        updatedAt: t,
-      ));
+      PartyDao(db).insert(
+        Party(
+          id: newId(),
+          name: '老刘',
+          roles: const <PartyRole>[PartyRole.supplier],
+          createdAt: t,
+          updatedAt: t,
+        ),
+      );
       return service.findByName('老刘')?.id == first.party.id;
     }());
 
@@ -135,8 +137,10 @@ void main() {
         now: now(),
       );
       final int count =
-          db.raw.select("SELECT COUNT(*) AS n FROM parties WHERE name = '老赵'")
-              .first['n']! as int;
+          db.raw
+                  .select("SELECT COUNT(*) AS n FROM parties WHERE name = '老赵'")
+                  .first['n']!
+              as int;
       return asCustomer.action == PartyMutationAction.roleAppended &&
           asCustomer.party.id == supplier.id &&
           count == 1;
@@ -146,21 +150,37 @@ void main() {
       final Db db2 = Db.openInMemory();
       final int t = now();
       final Account account = Account(
-        id: newId(), name: '现金', type: AccountType.cash,
-        createdAt: t, updatedAt: t,
+        id: newId(),
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
       );
       AccountDao(db2).insert(account);
-      ProductDao(db2).insert(Product(
-        id: 'p1', code: 'P0001', name: '商品',
-        costPrice: 300, sellPrice: 500, createdAt: t, updatedAt: t,
-      ));
+      ProductDao(db2).insert(
+        Product(
+          id: 'p1',
+          code: 'P0001',
+          name: '商品',
+          costPrice: 300,
+          sellPrice: 500,
+          createdAt: t,
+          updatedAt: t,
+        ),
+      );
       final Party early = Party(
-        id: newId(), name: '早客', roles: const <PartyRole>[PartyRole.customer],
-        createdAt: t, updatedAt: t,
+        id: newId(),
+        name: '早客',
+        roles: const <PartyRole>[PartyRole.customer],
+        createdAt: t,
+        updatedAt: t,
       );
       final Party late = Party(
-        id: newId(), name: '晚客', roles: const <PartyRole>[PartyRole.customer],
-        createdAt: t, updatedAt: t,
+        id: newId(),
+        name: '晚客',
+        roles: const <PartyRole>[PartyRole.customer],
+        createdAt: t,
+        updatedAt: t,
       );
       PartyDao(db2).insert(early);
       PartyDao(db2).insert(late);
@@ -181,8 +201,8 @@ void main() {
       final bool empty = sales.recentCustomers().isEmpty;
       sales.create(saleFor(early.id, '2026-09-27'), now: now());
       sales.create(saleFor(late.id, '2026-09-28'), now: now());
-      bool ordered = sales.recentCustomers().map((Party p) => p.name).join(',') ==
-          '晚客,早客';
+      bool ordered =
+          sales.recentCustomers().map((Party p) => p.name).join(',') == '晚客,早客';
       sales.create(
         SaleDraft(
           date: '2026-09-29',
@@ -195,26 +215,28 @@ void main() {
         ),
         now: now(),
       );
-      bool stillSame = sales.recentCustomers().map((Party p) => p.name).join(',') ==
-          '晚客,早客';
+      bool stillSame =
+          sales.recentCustomers().map((Party p) => p.name).join(',') == '晚客,早客';
       db2.close();
       return empty && ordered && stillSame;
     }());
-
 
     check('createFull：新建带双角色 + trim；空 roles 拦', () {
       // ⚠️ 独立内存库：前面用例建过的「王老板」会让 ensureParty 复用它，
       // phone/address 就不会写入（只新建时写）
       final Db db2 = Db.openInMemory();
       final PartyService fresh = PartyService(PartyDao(db2));
-      final Party party = fresh.createFull(
-        name: ' 王老板 ',
-        roles: <PartyRole>[PartyRole.supplier, PartyRole.customer],
-        phone: ' 138 ',
-        address: ' 东门 3 号 ',
-        now: now(),
-      ).party;
-      bool ok = party.name == '王老板' &&
+      final Party party = fresh
+          .createFull(
+            name: ' 王老板 ',
+            roles: <PartyRole>[PartyRole.supplier, PartyRole.customer],
+            phone: ' 138 ',
+            address: ' 东门 3 号 ',
+            now: now(),
+          )
+          .party;
+      bool ok =
+          party.name == '王老板' &&
           party.phone == '138' &&
           party.address == '东门 3 号' &&
           party.roles.toSet().containsAll(<PartyRole>[
@@ -234,21 +256,26 @@ void main() {
     check('createFull 同名复用：phone/address 不覆盖，角色追加', () {
       final Db db2 = Db.openInMemory();
       final PartyService fresh = PartyService(PartyDao(db2));
-      final Party first = fresh.createFull(
-        name: '老陈',
-        roles: <PartyRole>[PartyRole.supplier],
-        phone: '138',
-        address: '东门',
-        now: now(),
-      ).party;
-      final Party second = fresh.createFull(
-        name: '老陈',
-        roles: <PartyRole>[PartyRole.customer],
-        phone: '999',
-        address: '西门',
-        now: now() + 1,
-      ).party;
-      final bool ok = second.id == first.id &&
+      final Party first = fresh
+          .createFull(
+            name: '老陈',
+            roles: <PartyRole>[PartyRole.supplier],
+            phone: '138',
+            address: '东门',
+            now: now(),
+          )
+          .party;
+      final Party second = fresh
+          .createFull(
+            name: '老陈',
+            roles: <PartyRole>[PartyRole.customer],
+            phone: '999',
+            address: '西门',
+            now: now() + 1,
+          )
+          .party;
+      final bool ok =
+          second.id == first.id &&
           second.roles.toSet().containsAll(<PartyRole>[
             PartyRole.supplier,
             PartyRole.customer,

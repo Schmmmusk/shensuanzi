@@ -68,15 +68,14 @@ void main() {
   /// ⚠️ 参数是**过滤条件**：`null` = 不限制，**不是**「要求该字段等于 null」
   /// （几乎每个框都有 label 和 hint，按「等于 null」匹配永远落空——
   /// 2026-09-30 四条测试同挂这一处的教训）。
-  Finder field({String? label, String? hint}) => find.byWidgetPredicate(
-    (Widget w) {
-      if (w is! TextField) return false;
-      final InputDecoration? d = w.decoration;
-      if (label != null && d?.labelText != label) return false;
-      if (hint != null && d?.hintText != hint) return false;
-      return true;
-    },
-  );
+  Finder field({String? label, String? hint}) =>
+      find.byWidgetPredicate((Widget w) {
+        if (w is! TextField) return false;
+        final InputDecoration? d = w.decoration;
+        if (label != null && d?.labelText != label) return false;
+        if (hint != null && d?.hintText != hint) return false;
+        return true;
+      });
 
   // ⚠️ 必须是局部 final 变量，**不能写 `get`**：getter 只能放在类 / 库顶层，
   // 写在 main() 里是语法错误（startup_test.dart 查找器一节的老坑，2026-09-29 又踩一次）
@@ -95,9 +94,7 @@ void main() {
       reason: '「例：」= 这里可以自由填（chips 不是白名单）',
     );
 
-    final TextField note = tester.widget<TextField>(
-      field(label: '包装说明（可选）'),
-    );
+    final TextField note = tester.widget<TextField>(field(label: '包装说明（可选）'));
     expect(note.decoration!.hintText, startsWith('例：'));
     expect(
       note.decoration!.helperText,
@@ -106,9 +103,7 @@ void main() {
     );
   });
 
-  testWidgets('AI-6：[其他 ▾] 点击后聚焦单位输入框（打字的显式入口）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('AI-6：[其他 ▾] 点击后聚焦单位输入框（打字的显式入口）', (WidgetTester tester) async {
     await openForm(tester);
 
     expect(find.text('其他 ▾'), findsOneWidget);
@@ -123,9 +118,7 @@ void main() {
     );
   });
 
-  testWidgets('AI-6：常用单位 chips ≤ 15，点一下就填进输入框', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('AI-6：常用单位 chips ≤ 15，点一下就填进输入框', (WidgetTester tester) async {
     await openForm(tester);
 
     final int chipCount = tester.widgetList(find.byType(ActionChip)).length;
@@ -146,9 +139,7 @@ void main() {
   });
 
   // ============================================================ AI-5
-  testWidgets('AI-5：单位说明小字 + 包装说明输入框在场', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('AI-5：单位说明小字 + 包装说明输入框在场', (WidgetTester tester) async {
     await openForm(tester);
 
     expect(
@@ -156,10 +147,7 @@ void main() {
       findsOneWidget,
       reason: '不教一次，按箱建档后卖 1 个就出小数库存',
     );
-    expect(
-      find.textContaining('按箱进的货，装箱关系写在下面的「包装说明」里'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('按箱进的货，装箱关系写在下面的「包装说明」里'), findsOneWidget);
     expect(find.text('包装说明（可选）'), findsOneWidget);
   });
 
@@ -212,16 +200,12 @@ void main() {
     expect(find.byKey(const Key('product-opening-stock')), findsOneWidget);
   });
 
-  testWidgets('#31：桌面（allowOpeningStock 缺省）不显示该框', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#31：桌面（allowOpeningStock 缺省）不显示该框', (WidgetTester tester) async {
     await openForm(tester);
     expect(find.byKey(const Key('product-opening-stock')), findsNothing);
   });
 
-  testWidgets('#31：编辑模式不显示该框（裁定③：编辑改库存本批不做）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#31：编辑模式不显示该框（裁定③：编辑改库存本批不做）', (WidgetTester tester) async {
     final Product existing = service.create(
       const ProductDraft(name: '已有商品', unit: '瓶', sellPrice: '2.00'),
     );
@@ -244,7 +228,10 @@ void main() {
     await tester.enterText(field(label: '商品名称'), '带期初的商品');
     await tester.enterText(unitField, '瓶');
     await tester.enterText(field(label: '售价'), '2.00');
-    await tester.enterText(find.byKey(const Key('product-opening-stock')), '10');
+    await tester.enterText(
+      find.byKey(const Key('product-opening-stock')),
+      '10',
+    );
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
@@ -273,7 +260,10 @@ void main() {
     await tester.enterText(field(label: '商品名称'), '某商品');
     await tester.enterText(unitField, '瓶');
     await tester.enterText(field(label: '售价'), '2.00');
-    await tester.enterText(find.byKey(const Key('product-opening-stock')), 'abc');
+    await tester.enterText(
+      find.byKey(const Key('product-opening-stock')),
+      'abc',
+    );
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
@@ -303,8 +293,11 @@ class _CapturingSink implements MasterDataSink {
   }
 
   @override
-  MasterDataSubmitResult updateProduct(String id, ProductDraft draft, {int? now}) =>
-      MasterDataSubmitResult.saved(service.update(id, draft, now: now));
+  MasterDataSubmitResult updateProduct(
+    String id,
+    ProductDraft draft, {
+    int? now,
+  }) => MasterDataSubmitResult.saved(service.update(id, draft, now: now));
 
   @override
   MasterDataSubmitResult setProductActive(String id, bool active, {int? now}) {

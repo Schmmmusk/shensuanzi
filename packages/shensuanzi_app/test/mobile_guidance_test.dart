@@ -91,15 +91,12 @@ void main() {
 
     test('钉住**双分支**：可能「还没同步下来」，也可能「主机上也没有」', () {
       final String text = mirrorEmptyMessage('商品列表');
-      expect(
-        text,
-        contains('稍等'),
-        reason: '(a) 还没同步下来 —— 等一等就有了',
-      );
+      expect(text, contains('稍等'), reason: '(a) 还没同步下来 —— 等一等就有了');
       expect(
         text,
         contains('电脑上也还没有'),
-        reason: '(b) 主机上也没有 —— 只说 (a) 会让用户以为「等一等就有了」，'
+        reason:
+            '(b) 主机上也没有 —— 只说 (a) 会让用户以为「等一等就有了」，'
             '一直等下去（§CV·十一·五 明说了这条不能简化掉）',
       );
     });

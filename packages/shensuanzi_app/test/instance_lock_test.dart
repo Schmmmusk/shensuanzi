@@ -75,7 +75,11 @@ void main() {
 
     final InstanceLock lock = InstanceLock();
     expect(lock.acquire(dir), InstanceLockResult.acquired);
-    expect(lock.acquire(other), InstanceLockResult.acquired, reason: '换目录要先放旧锁');
+    expect(
+      lock.acquire(other),
+      InstanceLockResult.acquired,
+      reason: '换目录要先放旧锁',
+    );
     expect(lock.directory, other);
 
     // 旧目录已经放开 —— 别人能拿

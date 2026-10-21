@@ -90,7 +90,10 @@ DocumentBuild buildSaleDocument(SaleDraft draft, {required int now}) {
   final List<PaymentEntry> payments = <PaymentEntry>[
     for (int i = 0; i < draft.payments.length; i++)
       if (!draft.payments[i].isBlank && recorded[i] > 0)
-        PaymentEntry(accountId: draft.payments[i].accountId, amount: recorded[i]),
+        PaymentEntry(
+          accountId: draft.payments[i].accountId,
+          amount: recorded[i],
+        ),
   ];
 
   return DocumentBuild(document: document, lines: lines, payments: payments);
@@ -131,7 +134,10 @@ DocumentBuild buildPurchaseDocument(PurchaseDraft draft, {required int now}) {
   final List<PaymentEntry> payments = <PaymentEntry>[
     for (int i = 0; i < draft.payments.length; i++)
       if (!draft.payments[i].isBlank && recorded[i] > 0)
-        PaymentEntry(accountId: draft.payments[i].accountId, amount: recorded[i]),
+        PaymentEntry(
+          accountId: draft.payments[i].accountId,
+          amount: recorded[i],
+        ),
   ];
 
   return DocumentBuild(document: document, lines: lines, payments: payments);

@@ -269,9 +269,7 @@ class HostServiceController {
 
     final Future<HostServiceSnapshot> queued = inFlight == null
         ? action()
-        : inFlight
-              .then((_) => action())
-              .catchError((Object _) => action());
+        : inFlight.then((_) => action()).catchError((Object _) => action());
     final Future<HostServiceSnapshot> guarded = queued.whenComplete(() {
       _flight = null;
       _flightOp = null;
@@ -319,8 +317,7 @@ class HostServiceController {
       _identity ??= _identities.load() ?? _identities.reset(now: _clock());
       _address = await _detectLocalIp();
       if (_address == null) {
-        _addressHint =
-            '找不到局域网地址。请先把电脑连上路由器或手机热点，再关掉重开这个服务。';
+        _addressHint = '找不到局域网地址。请先把电脑连上路由器或手机热点，再关掉重开这个服务。';
       }
       _server = await HostHttpServer.start(
         db: _db,
@@ -368,7 +365,9 @@ class HostServiceController {
   void _noteDataApplied(int appliedCount) {
     _dataAppliedCount += appliedCount;
     // 复制一份再遍历：监听者可能在回调里 remove（比如页面被销毁）
-    for (final void Function() listener in List<void Function()>.of(_dataListeners)) {
+    for (final void Function() listener in List<void Function()>.of(
+      _dataListeners,
+    )) {
       listener();
     }
   }
@@ -401,9 +400,8 @@ class HostServiceController {
 /// 拼接用 `Platform.pathSeparator` 而**不引 `package:path`**：
 /// 本包只此一处拼路径，为一次 join 加一个依赖不划算
 /// （`p.join` 唯一的额外好处是能吃掉结尾多余的分隔符，Windows 本来就容忍）。
-File hostIdentityFile(String dataDirectory) => File(
-  '$dataDirectory${Platform.pathSeparator}$hostIdentityFileName',
-);
+File hostIdentityFile(String dataDirectory) =>
+    File('$dataDirectory${Platform.pathSeparator}$hostIdentityFileName');
 
 /// `host.json` 的文件名（`HostIdentityStore` 只接受一个 `File`，
 /// 名字散在各调用点早晚会漂移 —— 收在这里一处）。

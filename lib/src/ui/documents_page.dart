@@ -159,20 +159,25 @@ class _DocumentsPageState extends State<DocumentsPage> {
     final DateTime startOfToday = DateTime(now.year, now.month, now.day);
     return switch (_range) {
       _TimeRange.today => startOfToday.millisecondsSinceEpoch,
-      _TimeRange.thisWeek => startOfToday
-          .subtract(Duration(days: now.weekday - 1))
-          .millisecondsSinceEpoch,
-      _TimeRange.thisMonth =>
-        DateTime(now.year, now.month, 1).millisecondsSinceEpoch,
+      _TimeRange.thisWeek =>
+        startOfToday
+            .subtract(Duration(days: now.weekday - 1))
+            .millisecondsSinceEpoch,
+      _TimeRange.thisMonth => DateTime(
+        now.year,
+        now.month,
+        1,
+      ).millisecondsSinceEpoch,
       _TimeRange.last30 =>
         startOfToday.subtract(const Duration(days: 30)).millisecondsSinceEpoch,
-      _TimeRange.custom => _customRange == null
-          ? null
-          : DateTime(
-              _customRange!.start.year,
-              _customRange!.start.month,
-              _customRange!.start.day,
-            ).millisecondsSinceEpoch,
+      _TimeRange.custom =>
+        _customRange == null
+            ? null
+            : DateTime(
+                _customRange!.start.year,
+                _customRange!.start.month,
+                _customRange!.start.day,
+              ).millisecondsSinceEpoch,
       _TimeRange.all => null,
     };
   }
@@ -536,7 +541,8 @@ class _DocumentRow extends StatelessWidget {
     final bool isReturnDoc =
         doc.docType == DocType.saleReturn ||
         doc.docType == DocType.purchaseReturn;
-    final bool showUnsettled = unsettled > 0 &&
+    final bool showUnsettled =
+        unsettled > 0 &&
         !isReturnDoc &&
         doc.status != DocStatus.cancelled &&
         doc.docType != DocType.receipt &&
@@ -544,8 +550,9 @@ class _DocumentRow extends StatelessWidget {
     final String unsettledVerb =
         SettlementService.isInbound(doc.docType) == false ? '未付' : '未收';
     // 「已收 / 已付 N 笔」的动词 —— 与上面「未收/未付」同源，不另写一份判断
-    final String paidVerb =
-        SettlementService.isInbound(doc.docType) == false ? '已付' : '已收';
+    final String paidVerb = SettlementService.isInbound(doc.docType) == false
+        ? '已付'
+        : '已收';
 
     // 生命周期摘要（#26 批 3 甲案）：子单被折叠进本行，用户必须能看出
     // 「这笔生意后来退过、收过」。**加粗 + 主色**是裁定要求的强制补偿项

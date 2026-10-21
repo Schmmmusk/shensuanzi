@@ -8,10 +8,7 @@ import 'package:test/test.dart';
 void main() {
   group('shellKindFor（§BH B1a：android ⇒ 移动，其余 ⇒ 桌面）', () {
     test('android ⇒ mobile（唯一走移动壳的平台）', () {
-      expect(
-        shellKindFor(operatingSystem: 'android'),
-        ShellKind.mobile,
-      );
+      expect(shellKindFor(operatingSystem: 'android'), ShellKind.mobile);
     });
 
     test('其余全部 ⇒ desktop（含未支持平台 —— 落桌面壳 = 明确的「未适配」）', () {
@@ -43,11 +40,7 @@ void main() {
     test('手机壳 → 提「底部的按钮」，且**不再**出现「左边」', () {
       final String hint = overviewNavHint(mobileShell: true);
       expect(hint, contains('底部'));
-      expect(
-        hint,
-        isNot(contains('左边')),
-        reason: '手机上写「左边的功能列表」正是 M05 报的错',
-      );
+      expect(hint, isNot(contains('左边')), reason: '手机上写「左边的功能列表」正是 M05 报的错');
     });
 
     test('两套文案都要点出三个高频入口（开单 / 库存 / 商品）', () {

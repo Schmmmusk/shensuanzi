@@ -37,10 +37,8 @@ class StocktakeLineDraft {
   });
 
   /// 从商品带入：数量留空待填（期初没有「参考进价」可预填 —— 成本按 0，AB-2）
-  factory StocktakeLineDraft.fromProduct(Product product) => StocktakeLineDraft(
-    productId: product.id,
-    productName: product.name,
-  );
+  factory StocktakeLineDraft.fromProduct(Product product) =>
+      StocktakeLineDraft(productId: product.id, productName: product.name);
 
   final String productId;
   final String productName;
@@ -139,9 +137,7 @@ class StocktakeDraft {
 
     // 一行都没填（或全是空行）→ 整页级拦截
     if (filled.isEmpty) {
-      return const StocktakeValidation(
-        topError: '至少要填一行：选商品，填店里实际有多少',
-      );
+      return const StocktakeValidation(topError: '至少要填一行：选商品，填店里实际有多少');
     }
 
     final Map<int, String> lineErrors = <int, String>{};
@@ -180,6 +176,7 @@ class StocktakeDraft {
   int get filledCount => filledLines.length;
 
   @override
-  String toString() => 'StocktakeDraft(${lines.length} 行，'
+  String toString() =>
+      'StocktakeDraft(${lines.length} 行，'
       '其中 ${filledLines.length} 行参与盘点)';
 }

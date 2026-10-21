@@ -46,18 +46,9 @@ void main() {
 
   group('syncFailureReason（给客户端的那句话）', () {
     test('三类约束冲突各给一句中文', () {
-      expect(
-        syncFailureReason(ex(2067)),
-        contains('唯一字段重复'),
-      );
-      expect(
-        syncFailureReason(ex(787)),
-        contains('引用的对象在主机上不存在'),
-      );
-      expect(
-        syncFailureReason(ex(1299)),
-        contains('不完整或不合法'),
-      );
+      expect(syncFailureReason(ex(2067)), contains('唯一字段重复'));
+      expect(syncFailureReason(ex(787)), contains('引用的对象在主机上不存在'));
+      expect(syncFailureReason(ex(1299)), contains('不完整或不合法'));
     });
 
     test('存储类故障复用 M15 的分类（措辞面向「主机侧」）', () {
@@ -90,10 +81,7 @@ void main() {
       // **通用**术语（含 SQL / 异常口径）走**共用表**（core 的
       // `forbiddenDevTermsInUserText`）；模块特有的样例 —— 表名 / 样例数据 /
       // 绑定参数占位符 —— 作为 `extra` 留在本模块（§CV·十三·二）。
-      expectNoDevTerms(
-        reason,
-        extra: <String>['p-1', 'P001', '?', 'products'],
-      );
+      expectNoDevTerms(reason, extra: <String>['p-1', 'P001', '?', 'products']);
     });
 
     test('每一类都非空且是完整句子（含句号）', () {

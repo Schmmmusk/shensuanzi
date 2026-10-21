@@ -81,10 +81,9 @@ void main() {
       store.save(
         const AppConfig(dataDirectory: r'D:\数据', uiScale: UiScale.huge),
       );
-      final Map<String, Object?> json =
-          Map<String, Object?>.from(
-            jsonDecode(store.file.readAsStringSync()) as Map,
-          );
+      final Map<String, Object?> json = Map<String, Object?>.from(
+        jsonDecode(store.file.readAsStringSync()) as Map,
+      );
 
       expect(json.keys.toSet(), <String>{
         'data_directory',
@@ -127,34 +126,36 @@ void main() {
     });
 
     test('data_directory 类型不对 / 是空白 → 当作没配', () {
-      store.file.writeAsStringSync(jsonEncode(<String, Object?>{
-        'data_directory': 42,
-      }));
+      store.file.writeAsStringSync(
+        jsonEncode(<String, Object?>{'data_directory': 42}),
+      );
       expect(store.load().dataDirectory, isNull);
 
-      store.file.writeAsStringSync(jsonEncode(<String, Object?>{
-        'data_directory': '   ',
-      }));
+      store.file.writeAsStringSync(
+        jsonEncode(<String, Object?>{'data_directory': '   '}),
+      );
       expect(store.load().dataDirectory, isNull);
     });
 
     test('未知缩放值 → 退回 125%，不抛', () {
-      store.file.writeAsStringSync(jsonEncode(<String, Object?>{
-        'ui_scale': 1.3,
-      }));
+      store.file.writeAsStringSync(
+        jsonEncode(<String, Object?>{'ui_scale': 1.3}),
+      );
       expect(store.load().uiScale, UiScale.standard);
 
-      store.file.writeAsStringSync(jsonEncode(<String, Object?>{
-        'ui_scale': '大',
-      }));
+      store.file.writeAsStringSync(
+        jsonEncode(<String, Object?>{'ui_scale': '大'}),
+      );
       expect(store.load().uiScale, UiScale.standard);
     });
 
     test('多出来的未知键被忽略', () {
-      store.file.writeAsStringSync(jsonEncode(<String, Object?>{
-        'data_directory': r'D:\数据',
-        'something_else': true,
-      }));
+      store.file.writeAsStringSync(
+        jsonEncode(<String, Object?>{
+          'data_directory': r'D:\数据',
+          'something_else': true,
+        }),
+      );
       expect(store.load().dataDirectory, r'D:\数据');
     });
   });
@@ -183,10 +184,13 @@ void main() {
   // ============================================================ 缩放档位
   group('UiScale', () {
     test('五档，数值取自 reply.md', () {
-      expect(
-        UiScale.values.map((UiScale s) => s.factor),
-        <double>[1.0, 1.25, 1.5, 1.75, 2.0],
-      );
+      expect(UiScale.values.map((UiScale s) => s.factor), <double>[
+        1.0,
+        1.25,
+        1.5,
+        1.75,
+        2.0,
+      ]);
     });
 
     test('fromFactor 容差匹配（1.2499999 也算 1.25）', () {
@@ -244,11 +248,7 @@ void main() {
         reason: '文件在、位置读不出来 ⇒ 不是 absent',
       );
       expect(cfgStore.load().dataDirectory, isNull, reason: 'load 退化成默认，不崩');
-      expect(
-        cfgStore.salvageDataDirectory(),
-        original,
-        reason: '反斜杠必须正确反转义',
-      );
+      expect(cfgStore.salvageDataDirectory(), original, reason: '反斜杠必须正确反转义');
     });
 
     test('JSON 完整、但**没有位置字段** ⇒ 同样算 locationLost', () {

@@ -134,12 +134,13 @@ class QueryDao {
   /// **#32**：未签收送货单张数（`in_transit`；「送货 M 笔 · ¥Y」行的小注）。
   int deliveryInTransitCount() =>
       _raw
-          .select(
-            'SELECT COUNT(*) AS c FROM ${Schema.documents} '
-            "WHERE doc_type = '${DocType.delivery.wire}' "
-            "  AND status = '${DocStatus.inTransit.wire}'",
-          )
-          .first['c']! as int;
+              .select(
+                'SELECT COUNT(*) AS c FROM ${Schema.documents} '
+                "WHERE doc_type = '${DocType.delivery.wire}' "
+                "  AND status = '${DocStatus.inTransit.wire}'",
+              )
+              .first['c']!
+          as int;
 
   /// **#32**：应收速览（概览页「要留心」卡）—— 正余额 = 对方欠我（应收）。
   ///
@@ -147,13 +148,14 @@ class QueryDao {
   /// UI 标「（已停用）」）。没有应收 ⇒ 全零 + `topName == null`。
   ReceivablesSummary receivablesSummary() {
     final Map<String, int> balances = partyBalances();
-    final List<MapEntry<String, int>> receivables = balances.entries
-        .where((MapEntry<String, int> e) => e.value > 0)
-        .toList()
-      ..sort(
-        (MapEntry<String, int> a, MapEntry<String, int> b) =>
-            b.value.compareTo(a.value),
-      );
+    final List<MapEntry<String, int>> receivables =
+        balances.entries
+            .where((MapEntry<String, int> e) => e.value > 0)
+            .toList()
+          ..sort(
+            (MapEntry<String, int> a, MapEntry<String, int> b) =>
+                b.value.compareTo(a.value),
+          );
     if (receivables.isEmpty) {
       return const ReceivablesSummary(
         totalCents: 0,
@@ -169,7 +171,10 @@ class QueryDao {
       <Object?>[top.key],
     );
     return ReceivablesSummary(
-      totalCents: receivables.fold(0, (int s, MapEntry<String, int> e) => s + e.value),
+      totalCents: receivables.fold(
+        0,
+        (int s, MapEntry<String, int> e) => s + e.value,
+      ),
       partyCount: receivables.length,
       topName: rows.isEmpty ? null : rows.first['name']! as String,
       topActive: rows.isEmpty || (rows.first['is_active']! as int) == 1,
@@ -180,17 +185,15 @@ class QueryDao {
   /// 是否存在任何单据（§AE 遗漏 1：空库跳过**自动**备份的判定 ——
   /// 刚建好数据目录还没录东西时，不该生成一份份相同的空库备份；
   /// 「手动立即备份」不受此限制，那是用户的主动意图）。
-  bool hasAnyDocument() => _raw
-      .select('SELECT 1 FROM ${Schema.documents} LIMIT 1')
-      .isNotEmpty;
+  bool hasAnyDocument() =>
+      _raw.select('SELECT 1 FROM ${Schema.documents} LIMIT 1').isNotEmpty;
 
   /// 是否存在**任何**库存流水（§AD 遗漏 2）。
   ///
   /// 库存页据此区分入口文案：`false` = 首次 →「录入现有货物」；
   /// `true` = 再次 →「重新清点」。一次 EXISTS 查询，O(1) 级别。
-  bool hasAnyStockLedger() => _raw
-      .select('SELECT 1 FROM ${Schema.stockLedger} LIMIT 1')
-      .isNotEmpty;
+  bool hasAnyStockLedger() =>
+      _raw.select('SELECT 1 FROM ${Schema.stockLedger} LIMIT 1').isNotEmpty;
 
   /// 发生过**正数量入库**（数量 > 0 的流水）的商品集合（§AD 遗漏 1）。
   ///
@@ -210,7 +213,8 @@ class QueryDao {
   };
 
   Map<String, int> _keyedSum(String sql) => <String, int>{
-    for (final Row row in _raw.select(sql)) row['k']! as String: row['v']! as int,
+    for (final Row row in _raw.select(sql))
+      row['k']! as String: row['v']! as int,
   };
 
   /// 最近**交易过**的商品（选择器空查询时显示的「最近使用」）。
@@ -227,7 +231,10 @@ class QueryDao {
     int limit = 20,
   }) {
     if (docTypes.isEmpty) return const <Product>[];
-    final String placeholders = List<String>.filled(docTypes.length, '?').join(',');
+    final String placeholders = List<String>.filled(
+      docTypes.length,
+      '?',
+    ).join(',');
     final List<Map<String, Object?>> rows = _raw.select(
       'SELECT dl.product_id AS pid '
       'FROM ${Schema.documentLines} dl '
@@ -254,12 +261,12 @@ class QueryDao {
   /// 语义与 [recentProducts] 完全对称：[docTypes] 决定哪些单据算「交易过」，
   /// 只含**启用中**的往来方，按最近一次交易时间倒序；没有历史返回空列表。
   /// 无往来的单据（散客/散采）`party_id` 为空，天然被排除。
-  List<Party> recentParties({
-    required List<DocType> docTypes,
-    int limit = 20,
-  }) {
+  List<Party> recentParties({required List<DocType> docTypes, int limit = 20}) {
     if (docTypes.isEmpty) return const <Party>[];
-    final String placeholders = List<String>.filled(docTypes.length, '?').join(',');
+    final String placeholders = List<String>.filled(
+      docTypes.length,
+      '?',
+    ).join(',');
     final List<Map<String, Object?>> rows = _raw.select(
       'SELECT d.party_id AS pid '
       'FROM ${Schema.documents} d '

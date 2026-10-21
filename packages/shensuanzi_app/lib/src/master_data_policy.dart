@@ -53,6 +53,7 @@ class MasterDataPolicy {
   final bool canCreateAccounts;
 
   @override
-  String toString() => 'MasterDataPolicy(products: $canCreateProducts, '
+  String toString() =>
+      'MasterDataPolicy(products: $canCreateProducts, '
       'parties: $canCreateParties, accounts: $canCreateAccounts)';
 }

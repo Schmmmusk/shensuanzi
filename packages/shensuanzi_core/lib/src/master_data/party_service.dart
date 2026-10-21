@@ -127,14 +127,18 @@ class PartyService {
           syncVersion: inactive.syncVersion,
         );
         _dao.update(revived);
-        return PartyMutation(party: revived, action: PartyMutationAction.revived);
+        return PartyMutation(
+          party: revived,
+          action: PartyMutationAction.revived,
+        );
       }
       final Party party = Party(
         id: newId(),
         name: trimmed,
         phone: (phone == null || phone.trim().isEmpty) ? null : phone.trim(),
-        address:
-            (address == null || address.trim().isEmpty) ? null : address.trim(),
+        address: (address == null || address.trim().isEmpty)
+            ? null
+            : address.trim(),
         roles: <PartyRole>[role],
         createdAt: stamp,
         updatedAt: stamp,
@@ -144,7 +148,10 @@ class PartyService {
     }
 
     if (existing.roles.contains(role)) {
-      return PartyMutation(party: existing, action: PartyMutationAction.existing);
+      return PartyMutation(
+        party: existing,
+        action: PartyMutationAction.existing,
+      );
     }
 
     // 同名但没有这个 role → 追加（保持 roles 去重、顺序稳定）
@@ -241,8 +248,9 @@ class PartyService {
       id: existing.id,
       name: trimmed,
       phone: (phone == null || phone.trim().isEmpty) ? null : phone.trim(),
-      address:
-          (address == null || address.trim().isEmpty) ? null : address.trim(),
+      address: (address == null || address.trim().isEmpty)
+          ? null
+          : address.trim(),
       // 去重且保序（`LinkedHashSet`）—— 重复角色会让界面印出「客户 / 客户」
       roles: roles == null
           ? existing.roles

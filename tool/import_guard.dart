@@ -273,7 +273,9 @@ String? _asRepoPath(String path) {
   if (path.startsWith('dart:')) return null;
   if (path.startsWith('package:')) {
     const String prefix = 'package:$rootPackage/';
-    return path.startsWith(prefix) ? 'lib/${path.substring(prefix.length)}' : null;
+    return path.startsWith(prefix)
+        ? 'lib/${path.substring(prefix.length)}'
+        : null;
   }
   return null; // 相对路径由调用方按所在目录解析
 }
@@ -494,5 +496,6 @@ bool _isDirective(String line) {
 }
 
 /// 该名字是不是本文件自己声明的（自己声明的就不用导入）。
-bool _declares(String body, String name) =>
-    RegExp('\\b(class|enum|typedef|mixin|extension)\\s+$name\\b').hasMatch(body);
+bool _declares(String body, String name) => RegExp(
+  '\\b(class|enum|typedef|mixin|extension)\\s+$name\\b',
+).hasMatch(body);

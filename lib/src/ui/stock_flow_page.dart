@@ -73,7 +73,10 @@ class StockFlowPage extends StatelessWidget {
                 ? Center(
                     child: Text(
                       '还没有出入库流水。',
-                      style: TextStyle(height: 1.8, color: Theme.of(context).hintColor),
+                      style: TextStyle(
+                        height: 1.8,
+                        color: Theme.of(context).hintColor,
+                      ),
                     ),
                   )
                 : ListView.builder(
@@ -81,13 +84,22 @@ class StockFlowPage extends StatelessWidget {
                     itemCount: flow.length + 1, // 末尾多一行灰字说明
                     itemBuilder: (BuildContext context, int index) {
                       if (index == flow.length) {
-                        return _footerNote(context, narrow, mobileShell, onOpenDocument != null);
+                        return _footerNote(
+                          context,
+                          narrow,
+                          mobileShell,
+                          onOpenDocument != null,
+                        );
                       }
                       final StockFlowEntry entry = flow[index];
                       final Widget row = narrow
-                          ? _NarrowFlowCard(entry: entry, showCost: !mobileShell)
+                          ? _NarrowFlowCard(
+                              entry: entry,
+                              showCost: !mobileShell,
+                            )
                           : _WideFlowTile(entry: entry, showCost: !mobileShell);
-                      final bool canTap = !mobileShell && onOpenDocument != null;
+                      final bool canTap =
+                          !mobileShell && onOpenDocument != null;
                       return InkWell(
                         key: Key('stock-flow-row-${entry.documentId}'),
                         onTap: canTap
@@ -127,7 +139,8 @@ Widget _footerNote(
   if (canOpen) {
     text = '点流水行可以打开对应单据。';
   } else if (mobileShell) {
-    text = '手机不显示成本 —— 成本只在电脑上显示。\n'
+    text =
+        '手机不显示成本 —— 成本只在电脑上显示。\n'
         '想查看单据详情？到电脑上打开「单据」页就能看到。';
   } else {
     text = '想查看单据详情？在「单据」页找到对应单号。';
@@ -182,13 +195,19 @@ class _NarrowFlowCard extends StatelessWidget {
             '${entry.docNo}'
             '${entry.timeEstimated ? ' · 离线' : ''}'
             ' · ${StockFlowPage._fmtDate(entry.occurredAt)}',
-            style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+            style: TextStyle(
+              height: 1.6,
+              color: theme.textTheme.bodySmall?.color,
+            ),
           ),
           if (showCost)
             Text(
               '成本 ¥${Money.format(entry.totalCost)}'
               '（每件 ¥${Money.format(entry.unitCost)}）',
-              style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+              style: TextStyle(
+                height: 1.6,
+                color: theme.textTheme.bodySmall?.color,
+              ),
             ),
         ],
       ),
@@ -216,12 +235,18 @@ class _WideFlowTile extends StatelessWidget {
               children: <Widget>[
                 Text(
                   entry.docNo,
-                  style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    height: 1.6,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 Text(
                   '${entry.docType.label}'
                   '${entry.timeEstimated ? ' · 离线' : ''}',
-                  style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
                 ),
               ],
             ),
@@ -237,12 +262,18 @@ class _WideFlowTile extends StatelessWidget {
           if (showCost)
             Text(
               '¥${Money.format(entry.totalCost)}',
-              style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+              style: TextStyle(
+                height: 1.6,
+                color: theme.textTheme.bodySmall?.color,
+              ),
             ),
           if (showCost) const SizedBox(width: 16),
           Text(
             StockFlowPage._fmtDate(entry.occurredAt),
-            style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+            style: TextStyle(
+              height: 1.6,
+              color: theme.textTheme.bodySmall?.color,
+            ),
           ),
         ],
       ),

@@ -50,8 +50,7 @@ class DeliveryDraftInvalid implements DraftInvalidException {
 /// 共用这一份（裁定 ⑥：客户端不跑规则，但**不等于不校验**）。
 DeliveryDraftInvalid? deliveryDraftFailure(DeliveryDraft draft) {
   final Map<DeliveryField, String> fieldErrors = draft.validate();
-  final List<Map<DeliveryLineField, String>> lineErrors =
-      draft.validateLines();
+  final List<Map<DeliveryLineField, String>> lineErrors = draft.validateLines();
   if (fieldErrors.isNotEmpty ||
       lineErrors.any((Map<DeliveryLineField, String> e) => e.isNotEmpty)) {
     return DeliveryDraftInvalid(fieldErrors, lineErrors);
@@ -99,9 +98,7 @@ class DeliverySigned {
   final DocStatus status;
 
   /// 给用户看的一句话 —— **判断与文案都在 core**（UI 只取值，铁律）。
-  String get message => alreadyDone
-      ? '$docNo 早就签收过了，这次什么都没变。'
-      : '$docNo 已签收。';
+  String get message => alreadyDone ? '$docNo 早就签收过了，这次什么都没变。' : '$docNo 已签收。';
 }
 
 /// 送货服务。**不注入 `AppEnvironment` 之类的东西** —— 它只关心库与规则。
@@ -143,14 +140,14 @@ class DeliveryService {
   ///
   /// 直接在内存里筛：送货单是小批量单据，且 `listDocuments` 已有类型过滤
   /// —— 为它单开一条 SQL 不划算（多一处口径）。
-  List<DocumentSummary> pendingDeliveries({int limit = 50}) => <DocumentSummary>[
-    for (final DocumentSummary summary
-        in _docs.listDocuments(
-        types: const <DocType>{DocType.delivery},
-        limit: limit,
-      ))
-      if (summary.document.status == DocStatus.inTransit) summary,
-  ];
+  List<DocumentSummary> pendingDeliveries({int limit = 50}) =>
+      <DocumentSummary>[
+        for (final DocumentSummary summary in _docs.listDocuments(
+          types: const <DocType>{DocType.delivery},
+          limit: limit,
+        ))
+          if (summary.document.status == DocStatus.inTransit) summary,
+      ];
 
   /// 某商品还有多少在途（送货单里未签收的数量合计）。
   /// 实现在 `QueryDao.inTransitByProduct`（「在店可售」的水位线）。
@@ -228,12 +225,12 @@ class DeliveryService {
           status: doc.status,
         );
       default:
-      // #23 补丁：只有**业务拒绝**（用户能改）才带类型抛出；协议违反 /
-      // 内部 bug（target_missing / rule_internal_error 等）保持既有
-      // StateError 真错误语义（UI「请再试一次」+ 日志，M15）。
-      final RuleRejected? business = outcome.businessRejection;
-      if (business != null) throw business;
-      throw StateError(outcome.reason ?? '签收被拒绝（${outcome.status.name}）');
+        // #23 补丁：只有**业务拒绝**（用户能改）才带类型抛出；协议违反 /
+        // 内部 bug（target_missing / rule_internal_error 等）保持既有
+        // StateError 真错误语义（UI「请再试一次」+ 日志，M15）。
+        final RuleRejected? business = outcome.businessRejection;
+        if (business != null) throw business;
+        throw StateError(outcome.reason ?? '签收被拒绝（${outcome.status.name}）');
     }
   }
 }

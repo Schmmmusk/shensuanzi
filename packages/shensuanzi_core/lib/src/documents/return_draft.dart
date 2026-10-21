@@ -301,10 +301,9 @@ class ReturnDraft {
   /// **落库的退款金额**（分，与 [refunds] 按位置对齐）—— 与
   /// `SaleDraft.recordedPaymentCents` 同构：超出合计的部分是找零，不落库
   /// （裁定 5：草稿层保证 `SUM(immediate_payments) ≤ total_amount`）。
-  List<int> get recordedRefundCents => Overpay.clamp(
-    <int>[for (final ReturnRefundDraft refund in refunds) refund.amountCents ?? 0],
-    totalCents,
-  );
+  List<int> get recordedRefundCents => Overpay.clamp(<int>[
+    for (final ReturnRefundDraft refund in refunds) refund.amountCents ?? 0,
+  ], totalCents);
 
   Map<ReturnField, String> validate() {
     final Map<ReturnField, String> errors = <ReturnField, String>{};
@@ -328,9 +327,8 @@ class ReturnDraft {
 
   bool get linesOk =>
       validateLines().every((Map<ReturnLineField, String> e) => e.isEmpty);
-  bool get refundsOk => validateRefunds().every(
-    (Map<ReturnRefundField, String> e) => e.isEmpty,
-  );
+  bool get refundsOk =>
+      validateRefunds().every((Map<ReturnRefundField, String> e) => e.isEmpty);
   bool get isValid => validate().isEmpty && linesOk && refundsOk;
 
   @override

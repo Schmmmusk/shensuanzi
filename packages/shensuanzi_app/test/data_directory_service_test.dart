@@ -39,10 +39,7 @@ void main() {
 
     test('与策略层同源（不自己算一遍）', () {
       expect(service.policy, same(service.bootstrap.policy));
-      expect(
-        service.resolveDefault(),
-        service.policy.defaultDataDirectory(),
-      );
+      expect(service.resolveDefault(), service.policy.defaultDataDirectory());
     });
   });
 
@@ -51,8 +48,9 @@ void main() {
     test('ok / warn / reject 三档都能返回', () {
       expect(service.validate(r'D:\神算子数据').verdict, DirectoryVerdict.ok);
 
-      final DirectoryAdvice warn =
-          service.validate(r'C:\Users\tester\AppData\Local\神算子');
+      final DirectoryAdvice warn = service.validate(
+        r'C:\Users\tester\AppData\Local\神算子',
+      );
       expect(warn.verdict, DirectoryVerdict.warn);
       expect(warn.isUsable, isTrue, reason: '警告不拦人');
 
@@ -81,8 +79,9 @@ void main() {
     });
 
     test('目录不存在 → 会被创建出来', () {
-      final DataLocation location =
-          service.ensureInitialized(p.join(box.path, 'a', 'b', '神算子数据'));
+      final DataLocation location = service.ensureInitialized(
+        p.join(box.path, 'a', 'b', '神算子数据'),
+      );
       expect(Directory(location.directory).existsSync(), isTrue);
     });
 
@@ -198,15 +197,18 @@ void main() {
     test('spaceHint 取真实容量，拿不到就 null', () {
       expect(service.spaceHint(r'D:\神算子数据'), 'D 盘剩余 128.0 GB');
       expect(
-        serviceIn(box, environment: machine(drives: <DriveInfo>[]))
-            .spaceHint(r'D:\神算子数据'),
+        serviceIn(
+          box,
+          environment: machine(drives: <DriveInfo>[]),
+        ).spaceHint(r'D:\神算子数据'),
         isNull,
       );
     });
 
     test('open 打开的是数据目录里的库，user_version 已写入', () {
-      final DataLocation location =
-          service.ensureInitialized(sandboxPath(box, 'data'));
+      final DataLocation location = service.ensureInitialized(
+        sandboxPath(box, 'data'),
+      );
       final Db db = service.open(location);
 
       expect(File(location.databasePath).existsSync(), isTrue);
@@ -243,11 +245,15 @@ void main() {
     }
 
     test('目录正常 → 刷新成功、返回 null、标记真的跟上了', () {
-      final DataLocation location =
-          service.ensureInitialized(sandboxPath(box, 'data'), now: 111);
+      final DataLocation location = service.ensureInitialized(
+        sandboxPath(box, 'data'),
+        now: 111,
+      );
 
-      final Object? error =
-          service.tryRefreshMarker(location, Schema.version + 1);
+      final Object? error = service.tryRefreshMarker(
+        location,
+        Schema.version + 1,
+      );
 
       expect(error, isNull);
       expect(
@@ -261,8 +267,7 @@ void main() {
       final DataLocation location = locationAt(blockingFile('blocked'));
 
       // 关键断言：这里**不写** `throwsA` —— 它必须**安静地**返回一个原因。
-      final Object? error =
-          service.tryRefreshMarker(location, Schema.version);
+      final Object? error = service.tryRefreshMarker(location, Schema.version);
 
       expect(error, isNotNull);
       expect(error, isA<FileSystemException>());

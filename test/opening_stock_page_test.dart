@@ -35,10 +35,18 @@ void main() {
     service = StocktakeService(engine: RuleEngine(db), queries: queries);
 
     final Product a = Product(
-      id: newId(), code: 'P0001', name: '可乐', createdAt: t, updatedAt: t,
+      id: newId(),
+      code: 'P0001',
+      name: '可乐',
+      createdAt: t,
+      updatedAt: t,
     );
     final Product b = Product(
-      id: newId(), code: 'P0002', name: '薯片', createdAt: t, updatedAt: t,
+      id: newId(),
+      code: 'P0002',
+      name: '薯片',
+      createdAt: t,
+      updatedAt: t,
     );
     ProductDao(db).insert(a);
     ProductDao(db).insert(b);
@@ -118,8 +126,7 @@ void main() {
   testWidgets('选商品 + 填数量 → 行内显示账面数与差额（建议 1）', (WidgetTester tester) async {
     seedBook(<String, int>{p1: 10});
     await tester.pumpWidget(
-      page(isFirstTime: false, book: queries.stockByProduct(),
-          onDone: () {}),
+      page(isFirstTime: false, book: queries.stockByProduct(), onDone: () {}),
     );
 
     await fillRow(tester, row: 0, productName: '可乐', qty: '3');
@@ -135,11 +142,11 @@ void main() {
     expect(find.textContaining('无变化'), findsOneWidget);
   });
 
-  testWidgets('确认弹窗：摘要 + 用户语言（AD-5）；确认后 SnackBar + 返回', (WidgetTester tester) async {
+  testWidgets('确认弹窗：摘要 + 用户语言（AD-5）；确认后 SnackBar + 返回', (
+    WidgetTester tester,
+  ) async {
     bool done = false;
-    await tester.pumpWidget(
-      page(isFirstTime: true, onDone: () => done = true),
-    );
+    await tester.pumpWidget(page(isFirstTime: true, onDone: () => done = true));
 
     await fillRow(tester, row: 0, productName: '可乐', qty: '10');
     await tester.tap(find.byKey(const Key('opening-add-row')));
@@ -162,8 +169,7 @@ void main() {
   testWidgets('原样重录 → SnackBar 诚实反馈「都无变化」（建议 2）', (WidgetTester tester) async {
     seedBook(<String, int>{p1: 10});
     await tester.pumpWidget(
-      page(isFirstTime: false, book: queries.stockByProduct(),
-          onDone: () {}),
+      page(isFirstTime: false, book: queries.stockByProduct(), onDone: () {}),
     );
 
     await fillRow(tester, row: 0, productName: '可乐', qty: '10');
@@ -172,15 +178,16 @@ void main() {
     await tester.tap(find.byKey(const Key('opening-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('都无变化'), findsOneWidget,
-        reason: '不能假装「已录入」让用户以为改了什么');
+    expect(
+      find.textContaining('都无变化'),
+      findsOneWidget,
+      reason: '不能假装「已录入」让用户以为改了什么',
+    );
   });
 
   testWidgets('同商品两行 → 提交时行级「已经在上面」（AD-3），页面不关', (WidgetTester tester) async {
     bool done = false;
-    await tester.pumpWidget(
-      page(isFirstTime: true, onDone: () => done = true),
-    );
+    await tester.pumpWidget(page(isFirstTime: true, onDone: () => done = true));
 
     await fillRow(tester, row: 0, productName: '可乐', qty: '10');
     await tester.tap(find.byKey(const Key('opening-add-row')));
@@ -197,9 +204,7 @@ void main() {
 
   testWidgets('取消：有内容先确认「放弃这次录入吗」→ 放弃后返回', (WidgetTester tester) async {
     bool done = false;
-    await tester.pumpWidget(
-      page(isFirstTime: true, onDone: () => done = true),
-    );
+    await tester.pumpWidget(page(isFirstTime: true, onDone: () => done = true));
 
     await fillRow(tester, row: 0, productName: '可乐', qty: '10');
     await tester.tap(find.byKey(const Key('opening-cancel')));
@@ -212,15 +217,12 @@ void main() {
   });
 
   testWidgets('选择器：空查询显示「全部商品」而不是「最近使用」（AD-2 差异）', (WidgetTester tester) async {
-    await tester.pumpWidget(
-      page(isFirstTime: true, onDone: () {}),
-    );
+    await tester.pumpWidget(page(isFirstTime: true, onDone: () {}));
 
     await tester.tap(find.byKey(const Key('opening-product-0')));
     await tester.pumpAndSettle();
 
-    expect(find.text('全部商品'), findsOneWidget,
-        reason: '首次录入没有「最近」，空查询直接给全集');
+    expect(find.text('全部商品'), findsOneWidget, reason: '首次录入没有「最近」，空查询直接给全集');
     expect(find.text('可乐'), findsOneWidget);
     expect(find.text('薯片'), findsOneWidget);
   });

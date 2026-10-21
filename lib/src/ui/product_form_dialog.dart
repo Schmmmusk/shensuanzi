@@ -41,8 +41,20 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 /// 单位要填最小售卖单位，按箱进按个卖的写进包装说明；超过 15 个就失去
 /// 「快捷」的意义，剩下的用户自己打字）。
 const List<String> _commonUnits = <String>[
-  '件', '个', '斤', '公斤', '瓶', '包', '袋',
-  '盒', '条', '桶', '捆', '扎', '提', '串',
+  '件',
+  '个',
+  '斤',
+  '公斤',
+  '瓶',
+  '包',
+  '袋',
+  '盒',
+  '条',
+  '桶',
+  '捆',
+  '扎',
+  '提',
+  '串',
 ];
 
 /// 提示色（条码重复这类「需要注意但不拦人」的话）。
@@ -186,7 +198,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   /// 用户一改这个字段就把它那条错误清掉 —— 边改边消，而不是等再点一次保存
   void _clearError(ProductField field) {
     if (!_errors.containsKey(field)) return;
-    setState(() => _errors = Map<ProductField, String>.from(_errors)..remove(field));
+    setState(
+      () => _errors = Map<ProductField, String>.from(_errors)..remove(field),
+    );
   }
 
   /// 查重全在 core 里（`barcodeOwners` + `barcodeNotice`），这里只负责摆出来。
@@ -397,8 +411,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                     child: TextField(
                       controller: _packageUnit,
                       textInputAction: TextInputAction.next,
-                      onChanged: (_) =>
-                          _clearError(ProductField.packageUnit),
+                      onChanged: (_) => _clearError(ProductField.packageUnit),
                       decoration: _decoration(
                         ProductField.packageUnit,
                         label: '包装单位（可选）',
@@ -412,8 +425,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                       controller: _packageSize,
                       keyboardType: const TextInputType.numberWithOptions(),
                       textInputAction: TextInputAction.next,
-                      onChanged: (_) =>
-                          _clearError(ProductField.packageSize),
+                      onChanged: (_) => _clearError(ProductField.packageSize),
                       decoration: _decoration(
                         ProductField.packageSize,
                         label: '1 包 = 多少（可选）',
@@ -478,7 +490,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                     border: const OutlineInputBorder(),
                     isDense: true,
                     errorText: _openingError,
-                    helperText: '货架上现在实际有多少（按商品单位填）—— '
+                    helperText:
+                        '货架上现在实际有多少（按商品单位填）—— '
                         '同步前库存页会标「期初 … 待同步」',
                   ),
                 ),
@@ -512,9 +525,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
               const SizedBox(height: 12),
               Text(
-                isNew
-                    ? '商品编码由系统自动编号，不用你填。'
-                    : '编码由系统生成，不会因为编辑而改变。',
+                isNew ? '商品编码由系统自动编号，不用你填。' : '编码由系统生成，不会因为编辑而改变。',
                 style: TextStyle(
                   height: 1.6,
                   color: Theme.of(context).textTheme.bodySmall?.color,
@@ -569,10 +580,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
           Icon(Icons.error_outline, color: color, size: 20),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              _failure!,
-              style: TextStyle(color: color, height: 1.6),
-            ),
+            child: Text(_failure!, style: TextStyle(color: color, height: 1.6)),
           ),
         ],
       ),

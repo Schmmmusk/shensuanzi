@@ -424,7 +424,10 @@ class MissingMigrationException implements Exception {
 /// 旧代码读新结构会静默错误或崩溃 —— **拒绝比崩溃好**：
 /// 拒绝能明确告诉用户怎么办，崩溃只会让用户以为软件坏了。
 class SchemaTooNewException implements Exception {
-  const SchemaTooNewException({required this.dbVersion, required this.appVersion});
+  const SchemaTooNewException({
+    required this.dbVersion,
+    required this.appVersion,
+  });
 
   /// 库文件的实际版本（`PRAGMA user_version`）
   final int dbVersion;

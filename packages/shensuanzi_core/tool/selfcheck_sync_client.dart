@@ -83,23 +83,23 @@ Map<String, Object?> pullBody({
   'has_more': hasMore,
 };
 
-Map<String, Object?> docRow(String id,
-        {String docNo = 'CG20260926-001'}) => <String, Object?>{
-  'id': id,
-  'doc_no': docNo,
-  'doc_type': 'purchase',
-  'status': 'confirmed',
-  'party_id': null,
-  'account_id': null,
-  'total_amount': 1000,
-  'paid_amount': 0,
-  'ref_doc_id': null,
-  'occurred_at': 1700000000000,
-  'time_estimated': 0,
-  'created_at': 1700000000000,
-  'updated_at': 1700000000000,
-  'remark': null,
-};
+Map<String, Object?> docRow(String id, {String docNo = 'CG20260926-001'}) =>
+    <String, Object?>{
+      'id': id,
+      'doc_no': docNo,
+      'doc_type': 'purchase',
+      'status': 'confirmed',
+      'party_id': null,
+      'account_id': null,
+      'total_amount': 1000,
+      'paid_amount': 0,
+      'ref_doc_id': null,
+      'occurred_at': 1700000000000,
+      'time_estimated': 0,
+      'created_at': 1700000000000,
+      'updated_at': 1700000000000,
+      'remark': null,
+    };
 
 Map<String, Object?> lineRow(String id, String documentId) => <String, Object?>{
   'id': id,
@@ -147,13 +147,16 @@ SyncOperation docOp(String id, String docType, List<int> quantities) =>
       },
     );
 
-Map<String, Object?> receipt(String entityId, String status, {String? reason}) =>
-    <String, Object?>{
-      'entity_id': entityId,
-      'status': status,
-      // `?reason` = 空值感知元素（等价于 `if (reason != null) 'reason': reason`）
-      'reason': ?reason,
-    };
+Map<String, Object?> receipt(
+  String entityId,
+  String status, {
+  String? reason,
+}) => <String, Object?>{
+  'entity_id': entityId,
+  'status': status,
+  // `?reason` = 空值感知元素（等价于 `if (reason != null) 'reason': reason`）
+  'reason': ?reason,
+};
 
 Map<String, Object?> pushBody(List<Map<String, Object?>> results) =>
     <String, Object?>{'results': results};
@@ -188,23 +191,28 @@ Future<void> main() async {
     } catch (error) {
       thrown = error;
     }
-    check('镜像开着外键 → 构造时明确拒绝',
-        thrown is StateError &&
-            thrown.message.contains('foreignKeys: false'),
-        '$thrown');
+    check(
+      '镜像开着外键 → 构造时明确拒绝',
+      thrown is StateError && thrown.message.contains('foreignKeys: false'),
+      '$thrown',
+    );
     strict.close();
   }
 
   section('落库顺序');
   {
     const List<String> order = SyncClient.applyOrder;
-    check('主数据排在明细之前（不照 §8.2 的字段顺序）',
-        order.indexOf(Schema.products) < order.indexOf(Schema.documentLines) &&
-            order.indexOf(Schema.documents) < order.indexOf(Schema.stockLedger));
-    check('覆盖全部 9 个实体，且无多余',
-        order.toSet().length == 9 &&
-            order.toSet().difference(SyncPullResult.entityNames.toSet()).isEmpty,
-        '${order.toSet().difference(SyncPullResult.entityNames.toSet())}');
+    check(
+      '主数据排在明细之前（不照 §8.2 的字段顺序）',
+      order.indexOf(Schema.products) < order.indexOf(Schema.documentLines) &&
+          order.indexOf(Schema.documents) < order.indexOf(Schema.stockLedger),
+    );
+    check(
+      '覆盖全部 9 个实体，且无多余',
+      order.toSet().length == 9 &&
+          order.toSet().difference(SyncPullResult.entityNames.toSet()).isEmpty,
+      '${order.toSet().difference(SyncPullResult.entityNames.toSet())}',
+    );
   }
 
   // ============================================================ 游标表
@@ -217,19 +225,25 @@ Future<void> main() async {
       SyncCursorKeys.doc: '1700000000000|0192abc',
     }, now: now());
     check('upsertAll 写入', client.cursors.getAll().length == 2);
-    check('值原样保存（不解析）',
-        client.cursors.getAll()[SyncCursorKeys.doc] == '1700000000000|0192abc');
+    check(
+      '值原样保存（不解析）',
+      client.cursors.getAll()[SyncCursorKeys.doc] == '1700000000000|0192abc',
+    );
 
-    client.cursors.upsertAll(<String, String>{SyncCursorKeys.stock: '500'},
-        now: now());
+    client.cursors.upsertAll(<String, String>{
+      SyncCursorKeys.stock: '500',
+    }, now: now());
     check('覆盖不是新增', client.cursors.getAll().length == 2);
     check('覆盖后的值', client.cursors.getAll()[SyncCursorKeys.stock] == '500');
 
     const String opaque = 'eyJzZXEiOjEyMywiayI6ImFiYyJ9';
-    client.cursors
-        .upsertAll(<String, String>{SyncCursorKeys.money: opaque}, now: now());
-    check('不透明游标（base64 风格）照样存回',
-        client.cursors.getAll()[SyncCursorKeys.money] == opaque);
+    client.cursors.upsertAll(<String, String>{
+      SyncCursorKeys.money: opaque,
+    }, now: now());
+    check(
+      '不透明游标（base64 风格）照样存回',
+      client.cursors.getAll()[SyncCursorKeys.money] == opaque,
+    );
 
     client.cursors.clear();
     check('clear 清空', client.cursors.getAll().isEmpty);
@@ -238,42 +252,64 @@ Future<void> main() async {
   // ============================================================ 队列
   section('SyncQueueDao');
   {
-    final SyncQueueEntry entry =
-        client.queue.enqueue(SyncQueueEntry.create(docOp('d1', 'sale', <int>[3]),
-            now: now()));
+    final SyncQueueEntry entry = client.queue.enqueue(
+      SyncQueueEntry.create(docOp('d1', 'sale', <int>[3]), now: now()),
+    );
     final List<SyncQueueEntry> due = client.queue.due(now());
-    check('入队 → pending 且立即可送',
-        due.length == 1 && due.single.status == SyncQueueStatus.pending);
-    check('payload 往返（lines 仍是数组）',
-        due.single.toOperation().payload['lines'] is List<Object?>);
+    check(
+      '入队 → pending 且立即可送',
+      due.length == 1 && due.single.status == SyncQueueStatus.pending,
+    );
+    check(
+      'payload 往返（lines 仍是数组）',
+      due.single.toOperation().payload['lines'] is List<Object?>,
+    );
 
     client.queue.markSent(entry.id);
     check('markSent 后不再是到期条目', client.queue.due(now()).isEmpty);
-    check('markSent 后仍在表里（sent）',
-        client.queue.withStatus(SyncQueueStatus.sent).length == 1);
+    check(
+      'markSent 后仍在表里（sent）',
+      client.queue.withStatus(SyncQueueStatus.sent).length == 1,
+    );
 
-    client.queue.markFailed(entry.id,
-        error: '规则拒绝', retryCount: 1, nextRetryAt: 5000, dead: false);
+    client.queue.markFailed(
+      entry.id,
+      error: '规则拒绝',
+      retryCount: 1,
+      nextRetryAt: 5000,
+      dead: false,
+    );
     final SyncQueueEntry? after = client.queue.findById(entry.id);
-    check('markFailed(dead=false) → 仍 pending', after!.status == SyncQueueStatus.pending);
+    check(
+      'markFailed(dead=false) → 仍 pending',
+      after!.status == SyncQueueStatus.pending,
+    );
     check('退避时间生效', !after.isDue(4999) && after.isDue(5000));
     check('失败原因已记', after.lastError == '规则拒绝');
 
-    client.queue.markFailed(entry.id,
-        error: '重试超限', retryCount: 11, nextRetryAt: 0, dead: true);
-    check('markFailed(dead=true) → 死信 failed',
-        client.queue.findById(entry.id)!.status == SyncQueueStatus.failed);
+    client.queue.markFailed(
+      entry.id,
+      error: '重试超限',
+      retryCount: 11,
+      nextRetryAt: 0,
+      dead: true,
+    );
+    check(
+      'markFailed(dead=true) → 死信 failed',
+      client.queue.findById(entry.id)!.status == SyncQueueStatus.failed,
+    );
 
     // D2b：镜像主数据行的 `isPending` 判定（未确认 = pending + sent；failed 不算）
-    check('死信不算「未确认」',
-        !client.queue.unconfirmedEntityIds().contains('d1'));
+    check('死信不算「未确认」', !client.queue.unconfirmedEntityIds().contains('d1'));
     final SyncQueueEntry probe = client.queue.enqueue(
-        SyncQueueEntry.create(docOp('d2', 'sale', <int>[1]), now: now()));
-    check('pending 算「未确认」',
-        client.queue.unconfirmedEntityIds().contains('d2'));
+      SyncQueueEntry.create(docOp('d2', 'sale', <int>[1]), now: now()),
+    );
+    check('pending 算「未确认」', client.queue.unconfirmedEntityIds().contains('d2'));
     client.queue.markSent(probe.id);
-    check('sent 仍算「未确认」（主机已收下、等 pull）',
-        client.queue.unconfirmedEntityIds().contains('d2'));
+    check(
+      'sent 仍算「未确认」（主机已收下、等 pull）',
+      client.queue.unconfirmedEntityIds().contains('d2'),
+    );
     client.queue.clearConfirmed(<String>{'d2'});
     check('pull 确认后不再算', !client.queue.unconfirmedEntityIds().contains('d2'));
 
@@ -283,19 +319,19 @@ Future<void> main() async {
     final PendingMarks marks = PendingMarks(client.queue);
     check('PendingMarks：确认后为空', marks.ids.isEmpty);
     final SyncQueueEntry markProbe = client.queue.enqueue(
-        SyncQueueEntry.create(docOp('d3', 'sale', <int>[1]), now: now()));
+      SyncQueueEntry.create(docOp('d3', 'sale', <int>[1]), now: now()),
+    );
     check('PendingMarks：新入队 ⇒ 该行「待同步」', marks.ids.contains('d3'));
     client.queue.markSent(markProbe.id);
-    check('PendingMarks：sent 仍算「待同步」（等 pull 确认）',
-        marks.ids.contains('d3'));
+    check('PendingMarks：sent 仍算「待同步」（等 pull 确认）', marks.ids.contains('d3'));
 
     // ⚠️ **反向**：`clearConfirmed` **只删 `sent`** —— 还没推送（`pending`）的条目
     // 不因 pull 被清（否则本地唯一那份数据就没了；R-14 附带问题 3）。
     client.queue.enqueue(
-        SyncQueueEntry.create(docOp('d4', 'sale', <int>[1]), now: now()));
+      SyncQueueEntry.create(docOp('d4', 'sale', <int>[1]), now: now()),
+    );
     client.queue.clearConfirmed(<String>{'d4'});
-    check('PendingMarks：pending 不因 pull 被清（只清 sent）',
-        marks.ids.contains('d4'));
+    check('PendingMarks：pending 不因 pull 被清（只清 sent）', marks.ids.contains('d4'));
     db.close();
   }
 
@@ -308,41 +344,54 @@ Future<void> main() async {
     final Db triageDb = Db.openInMemory();
     final SyncQueueDao triage = SyncQueueDao(triageDb);
     SyncQueueEntry t(String id) => SyncQueueEntry(
-        id: id,
-        entity: Schema.documents,
-        entityId: 'entity-$id',
-        operation: SyncOpType.createDocument,
-        createdAt: 1700000000000);
+      id: id,
+      entity: Schema.documents,
+      entityId: 'entity-$id',
+      operation: SyncOpType.createDocument,
+      createdAt: 1700000000000,
+    );
 
-    check('空队列 ⇒ 已同步（0 / 0）',
-        triage.counts().pendingCount == 0 &&
-            triage.counts().failedCount == 0 &&
-            triage.counts().isSynced);
+    check(
+      '空队列 ⇒ 已同步（0 / 0）',
+      triage.counts().pendingCount == 0 &&
+          triage.counts().failedCount == 0 &&
+          triage.counts().isSynced,
+    );
 
     triage.enqueue(t('t1'));
-    check('一条 pending ⇒ 待同步 1、未同步',
-        triage.counts().pendingCount == 1 && !triage.counts().isSynced);
+    check(
+      '一条 pending ⇒ 待同步 1、未同步',
+      triage.counts().pendingCount == 1 && !triage.counts().isSynced,
+    );
 
     triage.markSent('t1');
-    check('pending → sent ⇒ **已同步**（sent 不显示 —— 主机已收下）',
-        triage.counts().pendingCount == 0 &&
-            triage.counts().isSynced &&
-            triage.count() == 1);
+    check(
+      'pending → sent ⇒ **已同步**（sent 不显示 —— 主机已收下）',
+      triage.counts().pendingCount == 0 &&
+          triage.counts().isSynced &&
+          triage.count() == 1,
+    );
 
     triage.enqueue(t('t2'));
     triage.enqueue(t('t3'));
-    triage.markFailed('t3',
-        error: 'rejected',
-        retryCount: SyncClient.maxRetries + 1,
-        nextRetryAt: 0,
-        dead: true);
-    check('死信 ⇒ 失败 1，与待同步**并列**不覆盖',
-        triage.counts().pendingCount == 1 &&
-            triage.counts().failedCount == 1 &&
-            !triage.counts().isSynced);
-    check('明细列表：pending / failed 各自可查（withStatus）',
-        triage.withStatus(SyncQueueStatus.pending).single.id == 't2' &&
-            triage.withStatus(SyncQueueStatus.failed).single.id == 't3');
+    triage.markFailed(
+      't3',
+      error: 'rejected',
+      retryCount: SyncClient.maxRetries + 1,
+      nextRetryAt: 0,
+      dead: true,
+    );
+    check(
+      '死信 ⇒ 失败 1，与待同步**并列**不覆盖',
+      triage.counts().pendingCount == 1 &&
+          triage.counts().failedCount == 1 &&
+          !triage.counts().isSynced,
+    );
+    check(
+      '明细列表：pending / failed 各自可查（withStatus）',
+      triage.withStatus(SyncQueueStatus.pending).single.id == 't2' &&
+          triage.withStatus(SyncQueueStatus.failed).single.id == 't3',
+    );
     triageDb.close();
   }
 
@@ -365,8 +414,10 @@ Future<void> main() async {
     check('路径 ${SyncClient.pullPath}', t2.last.uri.path == SyncClient.pullPath);
     check('Bearer 头', t2.last.headers['Authorization'] == 'Bearer tok-abc');
     check('limit 参数', t2.last.uri.queryParameters['limit'] == '100');
-    check('首次拉取不带 since（缺失即从头拉）',
-        !t2.last.uri.queryParameters.containsKey(SyncCursorKeys.stock));
+    check(
+      '首次拉取不带 since（缺失即从头拉）',
+      !t2.last.uri.queryParameters.containsKey(SyncCursorKeys.stock),
+    );
 
     c2.cursors.upsertAll(<String, String>{
       SyncCursorKeys.stock: '200',
@@ -374,10 +425,12 @@ Future<void> main() async {
     }, now: now());
     t2.replyJson(pullBody());
     await c2.pull();
-    check('已存游标原样进查询串',
-        t2.last.uri.queryParameters[SyncCursorKeys.stock] == '200' &&
-            t2.last.uri.queryParameters[SyncCursorKeys.doc] ==
-                '1700000000000|0192abc');
+    check(
+      '已存游标原样进查询串',
+      t2.last.uri.queryParameters[SyncCursorKeys.stock] == '200' &&
+          t2.last.uri.queryParameters[SyncCursorKeys.doc] ==
+              '1700000000000|0192abc',
+    );
 
     section('pull · 落库与 B8');
     const Map<String, String> cursors = <String, String>{
@@ -390,19 +443,24 @@ Future<void> main() async {
       SyncCursorKeys.parties: '1700000000100|0192jkl',
       SyncCursorKeys.accounts: '1700000000100|0192mno',
     };
-    t2.replyJson(pullBody(
-      documents: <Map<String, Object?>>[docRow('d1')],
-      lines: <Map<String, Object?>>[lineRow('l1', 'd1')],
-      products: <Map<String, Object?>>[productRow(_productId)],
-      cursors: cursors,
-    ));
+    t2.replyJson(
+      pullBody(
+        documents: <Map<String, Object?>>[docRow('d1')],
+        lines: <Map<String, Object?>>[lineRow('l1', 'd1')],
+        products: <Map<String, Object?>>[productRow(_productId)],
+        cursors: cursors,
+      ),
+    );
     final SyncPullReport report = await c2.pull();
     check('落库 3 行', report.totalRows == 3, '${report.totalRows}');
     check('documents 1 行', report.entities[Schema.documents] == 1);
     check('document_lines 1 行', report.entities[Schema.documentLines] == 1);
     check('products 1 行', report.entities[Schema.products] == 1);
-    check('B8：sync_cursor 与 next_cursors 逐字段一致',
-        _mapEquals(c2.cursors.getAll(), cursors), '${c2.cursors.getAll()}');
+    check(
+      'B8：sync_cursor 与 next_cursors 逐字段一致',
+      _mapEquals(c2.cursors.getAll(), cursors),
+      '${c2.cursors.getAll()}',
+    );
 
     section('pull · 幂等与覆盖');
     final Map<String, Object?> samePage = pullBody(
@@ -411,8 +469,10 @@ Future<void> main() async {
     );
     t2.replyJson(samePage);
     await c2.pull();
-    check('重复拉同一页不产生重复行',
-        db2.raw.select('SELECT COUNT(*) AS n FROM documents').first['n'] == 1);
+    check(
+      '重复拉同一页不产生重复行',
+      db2.raw.select('SELECT COUNT(*) AS n FROM documents').first['n'] == 1,
+    );
 
     // 本地乐观写入的占位单据 → 被主机版本覆盖（doc_no 回填）
     db2.raw.execute(
@@ -420,18 +480,24 @@ Future<void> main() async {
       'occurred_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
       <Object?>['d9', '~local-1', 'purchase', 'confirmed', 0, 1, 1, 1],
     );
-    t2.replyJson(pullBody(
-      documents: <Map<String, Object?>>[
-        docRow('d9', docNo: 'CG20260926-009'),
-      ],
-    ));
+    t2.replyJson(
+      pullBody(
+        documents: <Map<String, Object?>>[
+          docRow('d9', docNo: 'CG20260926-009'),
+        ],
+      ),
+    );
     await c2.pull();
     final Map<String, Object?> merged = Map<String, Object?>.from(
-      db2.raw.select('SELECT * FROM documents WHERE id = ?', <Object?>['d9']).first,
+      db2.raw.select('SELECT * FROM documents WHERE id = ?', <Object?>[
+        'd9',
+      ]).first,
     );
     check('已存在的行被主机版本覆盖', merged['doc_no'] == 'CG20260926-009');
-    check('覆盖不产生第二行',
-        db2.raw.select('SELECT COUNT(*) AS n FROM documents').first['n'] == 2);
+    check(
+      '覆盖不产生第二行',
+      db2.raw.select('SELECT COUNT(*) AS n FROM documents').first['n'] == 2,
+    );
 
     section('pull · 边界');
     t2.replyJson(
@@ -441,20 +507,24 @@ Future<void> main() async {
         ],
     );
     final SyncPullReport unknown = await c2.pull();
-    check('未知实体键被忽略（不落库）',
-        !unknown.entities.containsKey('warehouses') && unknown.totalRows == 1);
+    check(
+      '未知实体键被忽略（不落库）',
+      !unknown.entities.containsKey('warehouses') && unknown.totalRows == 1,
+    );
 
-    final int docsBefore = db2.raw
-        .select('SELECT COUNT(*) AS n FROM documents')
-        .first['n']! as int;
+    final int docsBefore =
+        db2.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']!
+            as int;
     c2.cursors.clear();
-    t2.replyJson(pullBody(
-      documents: <Map<String, Object?>>[docRow('d1')],
-      products: <Map<String, Object?>>[
-        <String, Object?>{'code': 'P-no-id', 'name': '坏行'},
-      ],
-      cursors: <String, String>{SyncCursorKeys.stock: '1'},
-    ));
+    t2.replyJson(
+      pullBody(
+        documents: <Map<String, Object?>>[docRow('d1')],
+        products: <Map<String, Object?>>[
+          <String, Object?>{'code': 'P-no-id', 'name': '坏行'},
+        ],
+        cursors: <String, String>{SyncCursorKeys.stock: '1'},
+      ),
+    );
     Object? thrown;
     try {
       await c2.pull();
@@ -462,9 +532,11 @@ Future<void> main() async {
       thrown = error;
     }
     check('缺 id 的行 → FormatException', thrown is FormatException, '$thrown');
-    check('整批回滚：行没落',
-        db2.raw.select('SELECT COUNT(*) AS n FROM documents').first['n'] ==
-            docsBefore);
+    check(
+      '整批回滚：行没落',
+      db2.raw.select('SELECT COUNT(*) AS n FROM documents').first['n'] ==
+          docsBefore,
+    );
     check('整批回滚：游标没推进', c2.cursors.getAll().isEmpty);
 
     t2.replyRaw(401, '{"error":"令牌错误"}');
@@ -474,8 +546,10 @@ Future<void> main() async {
     } catch (error) {
       httpError = error;
     }
-    check('401 → SyncHttpException',
-        httpError is SyncHttpException && httpError.isUnauthorized);
+    check(
+      '401 → SyncHttpException',
+      httpError is SyncHttpException && httpError.isUnauthorized,
+    );
 
     t2.replyJson(<String, Object?>{'documents': <Object?>[]});
     Object? missingCursor;
@@ -499,9 +573,9 @@ Future<void> main() async {
 
     // doc_no 撞车：主机侧唯一，所以这只可能是本地镜像损坏 ——
     // 要求给出**带上下文**的 StateError，而不是裸的 SqliteException
-    final int docsBeforeClash = db2.raw
-        .select('SELECT COUNT(*) AS n FROM documents')
-        .first['n']! as int;
+    final int docsBeforeClash =
+        db2.raw.select('SELECT COUNT(*) AS n FROM documents').first['n']!
+            as int;
     t2.replyJson(pullBody(documents: <Map<String, Object?>>[docRow('d2')]));
     Object? clash;
     try {
@@ -509,25 +583,31 @@ Future<void> main() async {
     } catch (error) {
       clash = error;
     }
-    check('doc_no 撞车 → 带上下文的 StateError',
-        clash is StateError && clash.message.contains('doc_no'), '$clash');
-    check('撞车也整批回滚',
-        db2.raw.select('SELECT COUNT(*) AS n FROM documents').first['n'] ==
-            docsBeforeClash);
+    check(
+      'doc_no 撞车 → 带上下文的 StateError',
+      clash is StateError && clash.message.contains('doc_no'),
+      '$clash',
+    );
+    check(
+      '撞车也整批回滚',
+      db2.raw.select('SELECT COUNT(*) AS n FROM documents').first['n'] ==
+          docsBeforeClash,
+    );
 
     section('pull · 清除已确认的 sent');
-    final SyncQueueEntry seen =
-        c2.queue.enqueue(SyncQueueEntry.create(docOp('d1', 'sale', <int>[1]), now: now()));
-    final SyncQueueEntry notSeen =
-        c2.queue.enqueue(SyncQueueEntry.create(docOp('d2', 'sale', <int>[1]), now: now()));
+    final SyncQueueEntry seen = c2.queue.enqueue(
+      SyncQueueEntry.create(docOp('d1', 'sale', <int>[1]), now: now()),
+    );
+    final SyncQueueEntry notSeen = c2.queue.enqueue(
+      SyncQueueEntry.create(docOp('d2', 'sale', <int>[1]), now: now()),
+    );
     c2.queue.markSent(seen.id);
     c2.queue.markSent(notSeen.id);
     t2.replyJson(pullBody(documents: <Map<String, Object?>>[docRow('d1')]));
     final SyncPullReport cleared = await c2.pull();
     check('本次见到的 sent 条目被清除', cleared.confirmedQueueEntries == 1);
     check('见到的条目已删', c2.queue.findById(seen.id) == null);
-    check('未确认的（分页之外）留着',
-        c2.queue.findById(notSeen.id) != null);
+    check('未确认的（分页之外）留着', c2.queue.findById(notSeen.id) != null);
     db2.close();
   }
 
@@ -545,34 +625,49 @@ Future<void> main() async {
 
     section('push · 状态流转');
     final SyncPushReport empty = await c3.push();
-    check('队列为空 → 不发请求',
-        empty.attempts == 0 && t3.requests.isEmpty);
+    check('队列为空 → 不发请求', empty.attempts == 0 && t3.requests.isEmpty);
 
-    final SyncQueueEntry a =
-        c3.queue.enqueue(SyncQueueEntry.create(docOp('d-a', 'sale', <int>[3]), now: now()));
-    final SyncQueueEntry b =
-        c3.queue.enqueue(SyncQueueEntry.create(docOp('d-b', 'sale', <int>[3]), now: now()));
-    t3.replyJson(pushBody(<Map<String, Object?>>[
-      receipt('d-b', 'applied'),
-      receipt('d-a', 'rejected', reason: 'unknown_action: un_cancel'),
-    ]));
+    final SyncQueueEntry a = c3.queue.enqueue(
+      SyncQueueEntry.create(docOp('d-a', 'sale', <int>[3]), now: now()),
+    );
+    final SyncQueueEntry b = c3.queue.enqueue(
+      SyncQueueEntry.create(docOp('d-b', 'sale', <int>[3]), now: now()),
+    );
+    t3.replyJson(
+      pushBody(<Map<String, Object?>>[
+        receipt('d-b', 'applied'),
+        receipt('d-a', 'rejected', reason: 'unknown_action: un_cancel'),
+      ]),
+    );
     final SyncPushReport pushed = await c3.push();
-    check('回执按 entity_id 配对（顺序打乱不影响）',
-        pushed.sent == 1 && pushed.rejected == 1);
-    check('applied → 条目转 sent（**不删除**）',
-        c3.queue.findById(b.id)!.status == SyncQueueStatus.sent);
-    check('rejected → 转 pending 并记原因',
-        c3.queue.findById(a.id)!.status == SyncQueueStatus.pending &&
-            c3.queue.findById(a.id)!.lastError == 'unknown_action: un_cancel');
+    check(
+      '回执按 entity_id 配对（顺序打乱不影响）',
+      pushed.sent == 1 && pushed.rejected == 1,
+    );
+    check(
+      'applied → 条目转 sent（**不删除**）',
+      c3.queue.findById(b.id)!.status == SyncQueueStatus.sent,
+    );
+    check(
+      'rejected → 转 pending 并记原因',
+      c3.queue.findById(a.id)!.status == SyncQueueStatus.pending &&
+          c3.queue.findById(a.id)!.lastError == 'unknown_action: un_cancel',
+    );
     check('推送请求是 POST', t3.last.method == 'POST');
-    check('请求体含 operations 数组',
-        (jsonDecode(t3.last.body!) as Map<String, Object?>)['operations'] is List<Object?>);
+    check(
+      '请求体含 operations 数组',
+      (jsonDecode(t3.last.body!) as Map<String, Object?>)['operations']
+          is List<Object?>,
+    );
 
     section('push · 结构与边界');
     // a 还在退避中、b 已是 sent ⇒ 没有到期条目 ⇒ 不该再发请求
     final SyncPushReport idle = await c3.push();
-    check('没有到期条目 → 不发请求（sent 不会被重复推送）',
-        idle.attempts == 0 && t3.requests.length == 1, '${t3.requests.length}');
+    check(
+      '没有到期条目 → 不发请求（sent 不会被重复推送）',
+      idle.attempts == 0 && t3.requests.length == 1,
+      '${t3.requests.length}',
+    );
 
     final SyncQueueEntry conflictEntry = c3.queue.enqueue(
       SyncQueueEntry.create(
@@ -586,21 +681,27 @@ Future<void> main() async {
         now: now(),
       ),
     );
-    t3.replyJson(pushBody(<Map<String, Object?>>[
-      <String, Object?>{
-        'entity_id': _productId,
-        'status': 'conflict',
-        'server_state': productRow(_productId),
-      },
-    ]));
+    t3.replyJson(
+      pushBody(<Map<String, Object?>>[
+        <String, Object?>{
+          'entity_id': _productId,
+          'status': 'conflict',
+          'server_state': productRow(_productId),
+        },
+      ]),
+    );
     final SyncPushReport conflicted = await c3.push();
-    check('conflict → 覆盖本地 + 删除条目',
-        conflicted.conflicts == 1 && c3.queue.findById(conflictEntry.id) == null);
-    check('本地被 server_state 覆盖（主机赢）',
-        db3.raw
-                .select('SELECT name FROM products WHERE id = ?', <Object?>[_productId])
-                .first['name'] ==
-            '商品');
+    check(
+      'conflict → 覆盖本地 + 删除条目',
+      conflicted.conflicts == 1 && c3.queue.findById(conflictEntry.id) == null,
+    );
+    check(
+      '本地被 server_state 覆盖（主机赢）',
+      db3.raw.select('SELECT name FROM products WHERE id = ?', <Object?>[
+            _productId,
+          ]).first['name'] ==
+          '商品',
+    );
     db3.close();
   }
 
@@ -624,37 +725,52 @@ Future<void> main() async {
     );
     final List<int> delays = <int>[];
     for (int i = 0; i < 4; i++) {
-      t4.replyJson(pushBody(<Map<String, Object?>>[
-        receipt('d1', 'rejected', reason: 'x'),
-      ]));
+      t4.replyJson(
+        pushBody(<Map<String, Object?>>[
+          receipt('d1', 'rejected', reason: 'x'),
+        ]),
+      );
       await backoff.push();
       final SyncQueueEntry current = backoff.queue.findById(entry.id)!;
       delays.add(current.nextRetryAt - fixed);
       // 退避归零 —— 模拟「等到期了再试一次」（否则条目不可送，push 不发请求）
-      backoff.queue.markFailed(entry.id,
-          error: 'x',
-          retryCount: current.retryCount,
-          nextRetryAt: 0,
-          dead: false);
-    }
-    check('退避序列 1s / 4s / 16s / 64s', delays.join(',') == '1000,4000,16000,64000',
-        delays.join(','));
-
-    backoff.queue.markFailed(entry.id,
+      backoff.queue.markFailed(
+        entry.id,
         error: 'x',
-        retryCount: SyncClient.maxRetries + 1,
+        retryCount: current.retryCount,
         nextRetryAt: 0,
-        dead: true);
-    check('重试超限 → 死信 failed',
-        backoff.queue.findById(entry.id)!.status == SyncQueueStatus.failed);
-    check('死信**退出自动重试**（due 不含它）',
-        backoff.queue.due(fixed).isEmpty &&
-            !backoff.queue.findById(entry.id)!.isDue(fixed));
+        dead: false,
+      );
+    }
+    check(
+      '退避序列 1s / 4s / 16s / 64s',
+      delays.join(',') == '1000,4000,16000,64000',
+      delays.join(','),
+    );
+
+    backoff.queue.markFailed(
+      entry.id,
+      error: 'x',
+      retryCount: SyncClient.maxRetries + 1,
+      nextRetryAt: 0,
+      dead: true,
+    );
+    check(
+      '重试超限 → 死信 failed',
+      backoff.queue.findById(entry.id)!.status == SyncQueueStatus.failed,
+    );
+    check(
+      '死信**退出自动重试**（due 不含它）',
+      backoff.queue.due(fixed).isEmpty &&
+          !backoff.queue.findById(entry.id)!.isDue(fixed),
+    );
     backoff.queue.requeue(entry.id);
-    check('requeue 放回队列（清零重试与错误）',
-        backoff.queue.findById(entry.id)!.status == SyncQueueStatus.pending &&
-            backoff.queue.findById(entry.id)!.retryCount == 0 &&
-            backoff.queue.findById(entry.id)!.lastError == null);
+    check(
+      'requeue 放回队列（清零重试与错误）',
+      backoff.queue.findById(entry.id)!.status == SyncQueueStatus.pending &&
+          backoff.queue.findById(entry.id)!.retryCount == 0 &&
+          backoff.queue.findById(entry.id)!.lastError == null,
+    );
 
     section('push · 传输层失败与无回执');
     final SyncQueueEntry q = backoff.queue.enqueue(
@@ -662,11 +778,15 @@ Future<void> main() async {
     );
     t4.replyThrow(StateError('断网'));
     final SyncPushReport netFail = await backoff.push();
-    check('传输异常不抛出、整批退避',
-        netFail.attempts >= 1 && netFail.retried == netFail.attempts,
-        '${netFail.attempts}/${netFail.retried}');
-    check('断网不是业务拒绝（状态仍 pending）',
-        backoff.queue.findById(q.id)!.status == SyncQueueStatus.pending);
+    check(
+      '传输异常不抛出、整批退避',
+      netFail.attempts >= 1 && netFail.retried == netFail.attempts,
+      '${netFail.attempts}/${netFail.retried}',
+    );
+    check(
+      '断网不是业务拒绝（状态仍 pending）',
+      backoff.queue.findById(q.id)!.status == SyncQueueStatus.pending,
+    );
     check('断网原因已记', backoff.queue.findById(q.id)!.lastError!.contains('断网'));
 
     final SyncQueueEntry noReceipt = backoff.queue.enqueue(
@@ -675,14 +795,23 @@ Future<void> main() async {
     t4.replyJson(pushBody(<Map<String, Object?>>[]));
     final SyncPushReport missing = await backoff.push();
     check('没有回执 → 该条排重试', missing.retried >= 1);
-    check('无回执条目仍 pending',
-        backoff.queue.findById(noReceipt.id)!.status == SyncQueueStatus.pending);
-    check('无回执的原因写明「主机未返回回执」',
-        backoff.queue.findById(noReceipt.id)!.lastError == '主机未返回该条目的回执',
-        '${backoff.queue.findById(noReceipt.id)!.lastError}');
+    check(
+      '无回执条目仍 pending',
+      backoff.queue.findById(noReceipt.id)!.status == SyncQueueStatus.pending,
+    );
+    check(
+      '无回执的原因写明「主机未返回回执」',
+      backoff.queue.findById(noReceipt.id)!.lastError == '主机未返回该条目的回执',
+      '${backoff.queue.findById(noReceipt.id)!.lastError}',
+    );
 
-    backoff.queue.markFailed(noReceipt.id,
-        error: 'x', retryCount: 0, nextRetryAt: 0, dead: false);
+    backoff.queue.markFailed(
+      noReceipt.id,
+      error: 'x',
+      retryCount: 0,
+      nextRetryAt: 0,
+      dead: false,
+    );
     t4.replyRaw(500, 'boom');
     Object? httpError;
     try {
@@ -690,10 +819,14 @@ Future<void> main() async {
     } catch (error) {
       httpError = error;
     }
-    check('非 200 → SyncHttpException（不伪装成业务拒绝）',
-        httpError is SyncHttpException);
-    check('非 200 也记了 HTTP 状态',
-        backoff.queue.findById(noReceipt.id)!.lastError!.contains('HTTP 500'));
+    check(
+      '非 200 → SyncHttpException（不伪装成业务拒绝）',
+      httpError is SyncHttpException,
+    );
+    check(
+      '非 200 也记了 HTTP 状态',
+      backoff.queue.findById(noReceipt.id)!.lastError!.contains('HTTP 500'),
+    );
     db4.close();
   }
 
@@ -713,18 +846,33 @@ Future<void> main() async {
       SyncQueueEntry.create(docOp('x', type, qty), now: now()),
     );
 
-    check('purchase → +', _mapEquals(delta('purchase', <int>[10]), <String, int>{'p0': 10}));
-    check('sale → −', _mapEquals(delta('sale', <int>[3]), <String, int>{'p0': -3}));
-    check('sale_return → +',
-        _mapEquals(delta('sale_return', <int>[2]), <String, int>{'p0': 2}));
-    check('purchase_return → −',
-        _mapEquals(delta('purchase_return', <int>[4]), <String, int>{'p0': -4}));
-    check('delivery → −', _mapEquals(delta('delivery', <int>[5]), <String, int>{'p0': -5}));
+    check(
+      'purchase → +',
+      _mapEquals(delta('purchase', <int>[10]), <String, int>{'p0': 10}),
+    );
+    check(
+      'sale → −',
+      _mapEquals(delta('sale', <int>[3]), <String, int>{'p0': -3}),
+    );
+    check(
+      'sale_return → +',
+      _mapEquals(delta('sale_return', <int>[2]), <String, int>{'p0': 2}),
+    );
+    check(
+      'purchase_return → −',
+      _mapEquals(delta('purchase_return', <int>[4]), <String, int>{'p0': -4}),
+    );
+    check(
+      'delivery → −',
+      _mapEquals(delta('delivery', <int>[5]), <String, int>{'p0': -5}),
+    );
     check('stocktake → 空（客户端算不出账面数量）', delta('stocktake', <int>[7]).isEmpty);
     check('receipt → 空', delta('receipt', <int>[7]).isEmpty);
     check('payment → 空', delta('payment', <int>[7]).isEmpty);
-    check('多行分别累计',
-        _mapEquals(delta('sale', <int>[3, 2]), <String, int>{'p0': -3, 'p1': -2}));
+    check(
+      '多行分别累计',
+      _mapEquals(delta('sale', <int>[3, 2]), <String, int>{'p0': -3, 'p1': -2}),
+    );
     check(
       '主数据操作不影响库存',
       SyncClient.deltaOf(
@@ -739,21 +887,33 @@ Future<void> main() async {
       ).isEmpty,
     );
 
-    final SyncQueueEntry d1 =
-        c5.queue.enqueue(SyncQueueEntry.create(docOp('a', 'purchase', <int>[10]), now: now()));
-    final SyncQueueEntry d2 =
-        c5.queue.enqueue(SyncQueueEntry.create(docOp('b', 'sale', <int>[3]), now: now()));
-    final SyncQueueEntry d3 =
-        c5.queue.enqueue(SyncQueueEntry.create(docOp('c', 'sale', <int>[2]), now: now()));
+    final SyncQueueEntry d1 = c5.queue.enqueue(
+      SyncQueueEntry.create(docOp('a', 'purchase', <int>[10]), now: now()),
+    );
+    final SyncQueueEntry d2 = c5.queue.enqueue(
+      SyncQueueEntry.create(docOp('b', 'sale', <int>[3]), now: now()),
+    );
+    final SyncQueueEntry d3 = c5.queue.enqueue(
+      SyncQueueEntry.create(docOp('c', 'sale', <int>[2]), now: now()),
+    );
     c5.queue.markSent(d2.id);
-    c5.queue.markFailed(d3.id,
-        error: 'x', retryCount: 11, nextRetryAt: 0, dead: true);
-    check('unsyncedDelta 合计 pending + sent + failed',
-        _mapEquals(c5.unsyncedDelta(), <String, int>{'p0': 5}),
-        '${c5.unsyncedDelta()}');
-    check('a 仍是 pending / c 已死信',
-        c5.queue.findById(d1.id)!.status == SyncQueueStatus.pending &&
-            c5.queue.findById(d3.id)!.status == SyncQueueStatus.failed);
+    c5.queue.markFailed(
+      d3.id,
+      error: 'x',
+      retryCount: 11,
+      nextRetryAt: 0,
+      dead: true,
+    );
+    check(
+      'unsyncedDelta 合计 pending + sent + failed',
+      _mapEquals(c5.unsyncedDelta(), <String, int>{'p0': 5}),
+      '${c5.unsyncedDelta()}',
+    );
+    check(
+      'a 仍是 pending / c 已死信',
+      c5.queue.findById(d1.id)!.status == SyncQueueStatus.pending &&
+          c5.queue.findById(d3.id)!.status == SyncQueueStatus.failed,
+    );
 
     section('库存视图（权威 + 未同步）');
     // 权威镜像：stock_ledger +10
@@ -799,8 +959,11 @@ Future<void> main() async {
     check('未同步影响 = -3', view.unsynced == -3, '${view.unsynced}');
     check('显示库存 = 7（刚卖掉的立刻可见）', view.display == 7, '${view.display}');
     check('有未同步影响标记', view.hasUnsynced);
-    check('贡献者指向那张单', view.contributors.length == 1 &&
-        view.contributors.single.entityId == 'sale-1');
+    check(
+      '贡献者指向那张单',
+      view.contributors.length == 1 &&
+          view.contributors.single.entityId == 'sale-1',
+    );
 
     section('时钟偏移');
     // 固定时钟：偏移是「两个时刻之差」，用会推进的时钟算不出确定值
@@ -813,12 +976,13 @@ Future<void> main() async {
       clock: () => fixedClock,
     );
     check('默认 offset = 0', clocked.clockOffset.offsetMs == 0);
-    check('未配对时估算主机时刻 = 本地时刻',
-        clocked.estimatedServerTime() == fixedClock);
+    check('未配对时估算主机时刻 = 本地时刻', clocked.estimatedServerTime() == fixedClock);
     final int offset = clocked.recordClockOffset(fixedClock + 3600000);
     check('记录 server − client', offset == 3600000, '$offset');
-    check('估算主机时刻 = 本地 + offset',
-        clocked.estimatedServerTime() == fixedClock + 3600000);
+    check(
+      '估算主机时刻 = 本地 + offset',
+      clocked.estimatedServerTime() == fixedClock + 3600000,
+    );
     clocked.recordClockOffset(fixedClock + 2000);
     check('重复记录会覆盖', clocked.clockOffset.offsetMs == 2000);
     db5.close();
@@ -855,19 +1019,22 @@ Future<void> main() async {
     );
     c6.queue.markSent(entry49.id);
     // 两页：d1 第 1 页、d2 末页 —— 旧实现只在末页清理、集合只含末页的行
-    t6.replyJson(pullBody(
-      documents: <Map<String, Object?>>[docRow('d1', docNo: 'SC-49-1')],
-      hasMore: true,
-      cursors: <String, String>{SyncCursorKeys.doc: 'a|1'},
-    ));
-    t6.replyJson(pullBody(
-      documents: <Map<String, Object?>>[docRow('d2', docNo: 'SC-49-2')],
-      cursors: <String, String>{SyncCursorKeys.doc: 'a|2'},
-    ));
+    t6.replyJson(
+      pullBody(
+        documents: <Map<String, Object?>>[docRow('d1', docNo: 'SC-49-1')],
+        hasMore: true,
+        cursors: <String, String>{SyncCursorKeys.doc: 'a|1'},
+      ),
+    );
+    t6.replyJson(
+      pullBody(
+        documents: <Map<String, Object?>>[docRow('d2', docNo: 'SC-49-2')],
+        cursors: <String, String>{SyncCursorKeys.doc: 'a|2'},
+      ),
+    );
     final SyncPullReport paged49 = await c6.pull();
     check('两页拉完', paged49.pages == 2);
-    check('#49 非末页的 sent 条目被清（旧实现清 0）',
-        c6.queue.findById(entry49.id) == null);
+    check('#49 非末页的 sent 条目被清（旧实现清 0）', c6.queue.findById(entry49.id) == null);
     check('#49 清后无 pending', c6.queue.counts().pendingCount == 0);
 
     section('#50：窗口下界 = min(默认窗口, floor)');
@@ -877,9 +1044,11 @@ Future<void> main() async {
     final int? seenFloor = int.tryParse(
       t6.last.uri.queryParameters['doc_updated_since'] ?? '',
     );
-    check('#50 floor 更早 ⇒ 下界取 floor',
-        seenFloor != null && (seenFloor - floor50).abs() <= 2,
-        '$seenFloor vs $floor50');
+    check(
+      '#50 floor 更早 ⇒ 下界取 floor',
+      seenFloor != null && (seenFloor - floor50).abs() <= 2,
+      '$seenFloor vs $floor50',
+    );
     t6.replyJson(pullBody());
     final int clockAtRequest = now();
     await c6.pull(
@@ -889,69 +1058,82 @@ Future<void> main() async {
     final int? seenDefault = int.tryParse(
       t6.last.uri.queryParameters['doc_updated_since'] ?? '',
     );
-    check('#50 floor 晚于默认窗口 ⇒ 取 7 天窗口（不许收紧）',
-        seenDefault != null &&
-            (seenDefault - (clockAtRequest - const Duration(days: 7).inMilliseconds))
-                    .abs() <=
-                2,
-        '$seenDefault');
+    check(
+      '#50 floor 晚于默认窗口 ⇒ 取 7 天窗口（不许收紧）',
+      seenDefault != null &&
+          (seenDefault -
+                      (clockAtRequest - const Duration(days: 7).inMilliseconds))
+                  .abs() <=
+              2,
+      '$seenDefault',
+    );
 
     section('#48：pushAll 有界连续推送（batchLimit=2、3 条 ⇒ 两批）');
-    c6.queue.enqueue(SyncQueueEntry.create(
-      docOp('p48-1', 'sale', <int>[1]),
-      now: now(),
-    ));
-    c6.queue.enqueue(SyncQueueEntry.create(
-      docOp('p48-2', 'sale', <int>[1]),
-      now: now(),
-    ));
-    c6.queue.enqueue(SyncQueueEntry.create(
-      docOp('p48-3', 'sale', <int>[1]),
-      now: now(),
-    ));
-    t6.replyJson(pushBody(<Map<String, Object?>>[
-      receipt('p48-1', 'applied'),
-      receipt('p48-2', 'applied'),
-    ]));
-    t6.replyJson(pullBody(
-      documents: <Map<String, Object?>>[
-        docRow('p48-1', docNo: 'SC-48-1'),
-        docRow('p48-2', docNo: 'SC-48-2'),
-      ],
-    ));
+    c6.queue.enqueue(
+      SyncQueueEntry.create(docOp('p48-1', 'sale', <int>[1]), now: now()),
+    );
+    c6.queue.enqueue(
+      SyncQueueEntry.create(docOp('p48-2', 'sale', <int>[1]), now: now()),
+    );
+    c6.queue.enqueue(
+      SyncQueueEntry.create(docOp('p48-3', 'sale', <int>[1]), now: now()),
+    );
+    t6.replyJson(
+      pushBody(<Map<String, Object?>>[
+        receipt('p48-1', 'applied'),
+        receipt('p48-2', 'applied'),
+      ]),
+    );
+    t6.replyJson(
+      pullBody(
+        documents: <Map<String, Object?>>[
+          docRow('p48-1', docNo: 'SC-48-1'),
+          docRow('p48-2', docNo: 'SC-48-2'),
+        ],
+      ),
+    );
     t6.replyJson(pushBody(<Map<String, Object?>>[receipt('p48-3', 'applied')]));
-    t6.replyJson(pullBody(
-      documents: <Map<String, Object?>>[docRow('p48-3', docNo: 'SC-48-3')],
-    ));
+    t6.replyJson(
+      pullBody(
+        documents: <Map<String, Object?>>[docRow('p48-3', docNo: 'SC-48-3')],
+      ),
+    );
     final SyncPushReport loopReport = await c6.pushAll();
-    check('#48 两批推完 3 条', loopReport.batches == 2 && loopReport.sent == 3,
-        'batches=${loopReport.batches} sent=${loopReport.sent}');
-    check('#48 每批后 pull 确认（confirmedTotal=3）',
-        loopReport.confirmedTotal == 3, '${loopReport.confirmedTotal}');
+    check(
+      '#48 两批推完 3 条',
+      loopReport.batches == 2 && loopReport.sent == 3,
+      'batches=${loopReport.batches} sent=${loopReport.sent}',
+    );
+    check(
+      '#48 每批后 pull 确认（confirmedTotal=3）',
+      loopReport.confirmedTotal == 3,
+      '${loopReport.confirmedTotal}',
+    );
     check('#48 队空 ⇒ remaining=0', loopReport.remaining == 0);
 
     // 撞上限：再来 3 条、只许推 1 批 ⇒ remaining = 1
-    c6.queue.enqueue(SyncQueueEntry.create(
-      docOp('p48-4', 'sale', <int>[1]),
-      now: now(),
-    ));
-    c6.queue.enqueue(SyncQueueEntry.create(
-      docOp('p48-5', 'sale', <int>[1]),
-      now: now(),
-    ));
-    c6.queue.enqueue(SyncQueueEntry.create(
-      docOp('p48-6', 'sale', <int>[1]),
-      now: now(),
-    ));
-    t6.replyJson(pushBody(<Map<String, Object?>>[
-      receipt('p48-4', 'applied'),
-      receipt('p48-5', 'applied'),
-    ]));
+    c6.queue.enqueue(
+      SyncQueueEntry.create(docOp('p48-4', 'sale', <int>[1]), now: now()),
+    );
+    c6.queue.enqueue(
+      SyncQueueEntry.create(docOp('p48-5', 'sale', <int>[1]), now: now()),
+    );
+    c6.queue.enqueue(
+      SyncQueueEntry.create(docOp('p48-6', 'sale', <int>[1]), now: now()),
+    );
+    t6.replyJson(
+      pushBody(<Map<String, Object?>>[
+        receipt('p48-4', 'applied'),
+        receipt('p48-5', 'applied'),
+      ]),
+    );
     t6.replyJson(pullBody());
     final SyncPushReport capped = await c6.pushAll(maxBatches: 1);
-    check('#48 撞上限 ⇒ remaining 如实 > 0',
-        capped.batches == 1 && capped.remaining == 1,
-        'remaining=${capped.remaining}');
+    check(
+      '#48 撞上限 ⇒ remaining 如实 > 0',
+      capped.batches == 1 && capped.remaining == 1,
+      'remaining=${capped.remaining}',
+    );
 
     db6.close();
   }
@@ -995,18 +1177,21 @@ Future<void> main() async {
     section('#47 丁：挂起条目的重试 / 放弃出口');
     final SyncQueueEntry held = heldDoc('d-held');
     c7.queue.markHeld(held.id, reason: '这条单是在连接上一台主机时开的');
-    check('挂起条目仍计入未同步影响（设计语义）',
-        c7.unsyncedDelta()[heldProduct] == -3);
+    check('挂起条目仍计入未同步影响（设计语义）', c7.unsyncedDelta()[heldProduct] == -3);
     c7.queue.delete(held.id);
-    check('放弃（delete）⇒ 从估算中退出、条目消失',
-        c7.unsyncedDelta()[heldProduct] == null &&
-            c7.queue.findById(held.id) == null);
+    check(
+      '放弃（delete）⇒ 从估算中退出、条目消失',
+      c7.unsyncedDelta()[heldProduct] == null &&
+          c7.queue.findById(held.id) == null,
+    );
     final SyncQueueEntry retried = heldDoc('d-retry');
     c7.queue.markHeld(retried.id, reason: 'x');
     c7.queue.requeue(retried.id);
-    check('重试（requeue）⇒ 回 pending、立即到期',
-        c7.queue.findById(retried.id)!.status == SyncQueueStatus.pending &&
-            c7.queue.due(now()).isNotEmpty);
+    check(
+      '重试（requeue）⇒ 回 pending、立即到期',
+      c7.queue.findById(retried.id)!.status == SyncQueueStatus.pending &&
+          c7.queue.due(now()).isNotEmpty,
+    );
     db7.close();
   }
 

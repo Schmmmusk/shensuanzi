@@ -235,11 +235,7 @@ class SyncResponse {
   /// 这个工厂的存在是为了让「协议违反却把细节写进 `reason`」**不可表示**：
   /// 走它的分支**给不出**自定义文案，细节必须由调用方送进 `onInternalError`。
   factory SyncResponse.malformed(String entityId, RejectCode code) =>
-      SyncResponse.rejected(
-        entityId,
-        malformedSyncRequestReason,
-        code: code,
-      );
+      SyncResponse.rejected(entityId, malformedSyncRequestReason, code: code);
 
   final String entityId;
   final SyncStatus status;
@@ -267,7 +263,8 @@ class SyncResponse {
   };
 
   @override
-  String toString() => 'SyncResponse(${status.wire}'
+  String toString() =>
+      'SyncResponse(${status.wire}'
       '${reasonCode == null ? '' : ', ${reasonCode!.wire}'}'
       '${reason == null ? '' : ', $reason'})';
 }

@@ -28,7 +28,10 @@ void main() {
         expect(section.blocks, isNotEmpty, reason: '${section.id} 是空章');
         expect(ids.add(section.id), isTrue, reason: 'id 重复：${section.id}');
       }
-      expect(ids, containsAll(<String>['backup', 'export', 'faq', 'first-run']));
+      expect(
+        ids,
+        containsAll(<String>['backup', 'export', 'faq', 'first-run']),
+      );
     });
 
     test('版本戳必须出现在正文（「反馈与版本」一章）', () {
@@ -61,13 +64,20 @@ void main() {
     );
 
     test('存在且与当前版本同源（改版本忘重新生成 → 红）', () {
-      expect(htmlFile.existsSync(), isTrue,
-          reason: 'packaging/用户手册.html 缺失 —— '
-              '在 packages/shensuanzi_app 下运行 '
-              '`dart run tool/make_manual_html.dart` 生成');
+      expect(
+        htmlFile.existsSync(),
+        isTrue,
+        reason:
+            'packaging/用户手册.html 缺失 —— '
+            '在 packages/shensuanzi_app 下运行 '
+            '`dart run tool/make_manual_html.dart` 生成',
+      );
       final String html = htmlFile.readAsStringSync();
-      expect(html, contains(AppVersion.display),
-          reason: 'HTML 里的版本戳过期 —— 重新运行生成脚本');
+      expect(
+        html,
+        contains(AppVersion.display),
+        reason: 'HTML 里的版本戳过期 —— 重新运行生成脚本',
+      );
       expect(html, contains('charset="utf-8"'));
     });
   });

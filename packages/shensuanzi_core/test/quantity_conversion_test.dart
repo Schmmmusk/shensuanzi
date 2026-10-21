@@ -54,10 +54,7 @@ void main() {
       expect(r, isA<ConversionFailed>());
       final ConversionFailed f = r as ConversionFailed;
       expect(f.reason, ConversionFailureReason.packageSizeMissing);
-      expect(
-        conversionFailureMessage(f.reason),
-        '这个商品没设包装换算',
-      );
+      expect(conversionFailureMessage(f.reason), '这个商品没设包装换算');
     });
 
     test('packageSize <= 0 ⇒ packageSizeInvalid（纯函数兜底）', () {

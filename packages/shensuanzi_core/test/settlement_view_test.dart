@@ -90,13 +90,17 @@ void main() {
     updatedAt: now(),
   );
 
-  DocumentLine line(Document d, String productId, int quantity, int unitPrice) =>
-      DocumentLine.create(
-        documentId: d.id,
-        productId: productId,
-        quantity: quantity,
-        unitPrice: unitPrice,
-      );
+  DocumentLine line(
+    Document d,
+    String productId,
+    int quantity,
+    int unitPrice,
+  ) => DocumentLine.create(
+    documentId: d.id,
+    productId: productId,
+    quantity: quantity,
+    unitPrice: unitPrice,
+  );
 
   RuleOutcome run(
     Document d, {
@@ -146,9 +150,10 @@ void main() {
         accountId: acc,
         totalAmount: 1000,
       );
-      run(receipt, allocs: <Allocation>[
-        Allocation(targetDocId: sale2.id, amount: 1000),
-      ]);
+      run(
+        receipt,
+        allocs: <Allocation>[Allocation(targetDocId: sale2.id, amount: 1000)],
+      );
 
       // ④ 销售退货 —— **平铺口径**下必须显示（`rootsOnly: false`）。
       // ⚠️ 2026-10-18（#26 批 3）：**列表 UI 默认走 `rootsOnly: true`**（一笔生意一行），
@@ -172,13 +177,14 @@ void main() {
           .toSet();
 
       // 自动生成的收款单（唯一的 ref_doc_id 非空 receipt）
-      final String autoReceiptId = db.raw
-              .select(
-                "SELECT id FROM documents "
-                "WHERE doc_type = 'receipt' AND ref_doc_id IS NOT NULL",
-              )
-              .first['id']!
-          as String;
+      final String autoReceiptId =
+          db.raw
+                  .select(
+                    "SELECT id FROM documents "
+                    "WHERE doc_type = 'receipt' AND ref_doc_id IS NOT NULL",
+                  )
+                  .first['id']!
+              as String;
       expect(shown, isNot(contains(autoReceiptId)), reason: '自动单不进列表');
       expect(all, contains(autoReceiptId), reason: '要全量时能看到（参数有效）');
 
@@ -190,11 +196,7 @@ void main() {
       );
       expect(shown, contains(sale1.id));
       expect(shown, contains(sale2.id));
-      expect(
-        all.length,
-        greaterThan(shown.length),
-        reason: '全量一定不少于默认视图',
-      );
+      expect(all.length, greaterThan(shown.length), reason: '全量一定不少于默认视图');
     });
 
     test('导出口径与列表一致（同一个 _summaries）', () {
@@ -268,9 +270,10 @@ void main() {
         accountId: acc,
         totalAmount: 3000,
       );
-      run(receipt, allocs: <Allocation>[
-        Allocation(targetDocId: sale.id, amount: 3000),
-      ]);
+      run(
+        receipt,
+        allocs: <Allocation>[Allocation(targetDocId: sale.id, amount: 3000)],
+      );
 
       final List<SettlementView> fromReceipt = settlements.settlementsOfReceipt(
         receipt.id,
@@ -303,9 +306,10 @@ void main() {
         accountId: acc,
         totalAmount: 800,
       );
-      run(prepay, allocs: <Allocation>[
-        Allocation(targetDocId: null, amount: 800),
-      ]);
+      run(
+        prepay,
+        allocs: <Allocation>[Allocation(targetDocId: null, amount: 800)],
+      );
 
       final List<SettlementView> views = settlements.settlementsOfReceipt(
         prepay.id,
@@ -371,11 +375,7 @@ void main() {
           .map((DocumentSummary e) => e.document.id)
           .toSet();
       expect(shown, contains(delivery.id), reason: '原送货单保留 —— 它是唯一入口');
-      expect(
-        shown,
-        isNot(contains(reject.id)),
-        reason: '整单退回的派生退货单不该并排出现',
-      );
+      expect(shown, isNot(contains(reject.id)), reason: '整单退回的派生退货单不该并排出现');
 
       // 要全量（按「销售退货」筛选时页面会传 includeDerived）时能看到
       expect(
@@ -449,11 +449,7 @@ void main() {
           .listDocuments()
           .map((DocumentSummary e) => e.document.id)
           .toSet();
-      expect(
-        shown,
-        contains(ret.id),
-        reason: '⚠️ 折叠条件只认「原单已作废」—— 正常退货必须显示',
-      );
+      expect(shown, contains(ret.id), reason: '⚠️ 折叠条件只认「原单已作废」—— 正常退货必须显示');
       expect(shown, contains(sale.id));
       // 行上的退货额也要有（列表显示「已退 ¥15.00」）
       expect(
@@ -510,34 +506,22 @@ void main() {
           .map((DocumentSummary e) => e.document.id)
           .toSet();
 
-      final Set<String> unsettled = idsFor(
-        const <DocumentStatusView>{DocumentStatusView.unsettled},
-      );
+      final Set<String> unsettled = idsFor(const <DocumentStatusView>{
+        DocumentStatusView.unsettled,
+      });
       expect(unsettled, contains(sale.id), reason: '60 的单退了 15 ⇒ 仍欠 45');
-      expect(
-        unsettled,
-        isNot(contains(paid.id)),
-        reason: '已结清的不算未结清',
-      );
-      expect(
-        unsettled,
-        contains(delivery.id),
-        reason: '在途送货单也还欠着钱（货送了没收到钱）',
-      );
-      expect(
-        unsettled,
-        isNot(contains(ret.id)),
-        reason: '退货单本身不产生欠款',
-      );
+      expect(unsettled, isNot(contains(paid.id)), reason: '已结清的不算未结清');
+      expect(unsettled, contains(delivery.id), reason: '在途送货单也还欠着钱（货送了没收到钱）');
+      expect(unsettled, isNot(contains(ret.id)), reason: '退货单本身不产生欠款');
 
-      final Set<String> cancelledIds = idsFor(
-        const <DocumentStatusView>{DocumentStatusView.cancelled},
-      );
+      final Set<String> cancelledIds = idsFor(const <DocumentStatusView>{
+        DocumentStatusView.cancelled,
+      });
       expect(cancelledIds, isEmpty, reason: '本夹具没有作废单');
 
-      final Set<String> awaiting = idsFor(
-        const <DocumentStatusView>{DocumentStatusView.awaitingSignature},
-      );
+      final Set<String> awaiting = idsFor(const <DocumentStatusView>{
+        DocumentStatusView.awaitingSignature,
+      });
       expect(awaiting, <String>{delivery.id});
 
       // 多选 = 并集

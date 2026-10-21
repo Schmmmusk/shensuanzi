@@ -30,29 +30,35 @@ void main() {
     settlements = SettlementService(db: db, engine: RuleEngine(db));
 
     final int t = 1700000000000;
-    ProductDao(db).insert(Product(
-      id: 'p1',
-      code: 'P0001',
-      name: '矿泉水',
-      costPrice: 300,
-      sellPrice: 500,
-      createdAt: t,
-      updatedAt: t,
-    ));
-    AccountDao(db).insert(Account(
-      id: 'a1',
-      name: '现金',
-      type: AccountType.cash,
-      createdAt: t,
-      updatedAt: t,
-    ));
-    PartyDao(db).insert(Party(
-      id: 'pt1',
-      name: '李姐',
-      roles: const <PartyRole>[PartyRole.customer],
-      createdAt: t,
-      updatedAt: t,
-    ));
+    ProductDao(db).insert(
+      Product(
+        id: 'p1',
+        code: 'P0001',
+        name: '矿泉水',
+        costPrice: 300,
+        sellPrice: 500,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    AccountDao(db).insert(
+      Account(
+        id: 'a1',
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    PartyDao(db).insert(
+      Party(
+        id: 'pt1',
+        name: '李姐',
+        roles: const <PartyRole>[PartyRole.customer],
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
   });
 
   tearDown(() {
@@ -96,7 +102,6 @@ void main() {
     ),
   );
 
-
   testWidgets('显示单号 / 对方 / 金额 / 状态 / 明细；赊账单给 [收款] 按钮', (
     WidgetTester tester,
   ) async {
@@ -112,12 +117,14 @@ void main() {
 
     expect(find.byKey(const Key('settle-button')), findsOneWidget);
     expect(find.textContaining('收款 ¥10.00'), findsOneWidget);
-    expect(find.byKey(const Key('copy-doc-no')), findsOneWidget, reason: '复制单号挪到本页');
+    expect(
+      find.byKey(const Key('copy-doc-no')),
+      findsOneWidget,
+      reason: '复制单号挪到本页',
+    );
   });
 
-  testWidgets('对话框：预填未收额；超收 → 内联告知、不弹第二个窗、按未收额落库', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('对话框：预填未收额；超收 → 内联告知、不弹第二个窗、按未收额落库', (WidgetTester tester) async {
     final Document doc = sellOnCredit();
     await tester.pumpWidget(page(doc.id));
     await tester.pumpAndSettle();
@@ -157,9 +164,7 @@ void main() {
     );
   });
 
-  testWidgets('全额收款 → SnackBar + 状态变已结清 + 按钮消失', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('全额收款 → SnackBar + 状态变已结清 + 按钮消失', (WidgetTester tester) async {
     final Document doc = sellOnCredit();
     await tester.pumpWidget(page(doc.id));
     await tester.pumpAndSettle();
@@ -197,9 +202,7 @@ void main() {
     expect(find.textContaining('收款 ¥7.00'), findsOneWidget, reason: '按钮金额变成剩余');
   });
 
-  testWidgets('收款单显示「这笔钱核销到了」+ 对端单号；不能再核销', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('收款单显示「这笔钱核销到了」+ 对端单号；不能再核销', (WidgetTester tester) async {
     final Document sale = sellOnCredit();
     final SettlementSaved saved = settlements.settle(
       targetDocId: sale.id,
@@ -297,7 +300,12 @@ void main() {
       ],
       now: 1700000000000,
     );
-    final Document reject = mk('sr-1', DocType.saleReturn, 1000, ref: delivery.id);
+    final Document reject = mk(
+      'sr-1',
+      DocType.saleReturn,
+      1000,
+      ref: delivery.id,
+    );
     engine.dispatch(
       document: reject,
       lines: <DocumentLine>[
@@ -375,20 +383,14 @@ void main() {
     expect(find.text('已退货'), findsNothing);
   });
 
-  testWidgets('拒收的送货单：只说「已作废」，**不再**冒出「已签收」', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('拒收的送货单：只说「已作废」，**不再**冒出「已签收」', (WidgetTester tester) async {
     // 真机截图 bug：同一屏上同时出现「已作废（客户拒收）」+「已签收」。
     // 根因是 `_actionRow` 的 else 分支把 cancelled 也当成「已签收」。
     await tester.pumpWidget(page(rejectedDelivery()));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('已作废'), findsWidgets);
-    expect(
-      find.textContaining('已签收'),
-      findsNothing,
-      reason: '作废的单不可能同时是「已签收」',
-    );
+    expect(find.textContaining('已签收'), findsNothing, reason: '作废的单不可能同时是「已签收」');
     expect(
       find.textContaining('不用收付款'),
       findsNothing,
@@ -534,10 +536,6 @@ void main() {
       findsNothing,
       reason: '「未收」这一行不再出现（标签本身就是「还要收多少」）',
     );
-    expect(
-      find.textContaining('¥-'),
-      findsNothing,
-      reason: '界面不再出现负数金额',
-    );
+    expect(find.textContaining('¥-'), findsNothing, reason: '界面不再出现负数金额');
   });
 }

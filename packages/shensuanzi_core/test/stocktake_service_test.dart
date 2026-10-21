@@ -25,28 +25,29 @@ void main() {
     });
 
     test('只有空行（空行忽略后一行都不剩）→ 同样拦下', () {
-      final StocktakeValidation v = const StocktakeDraft(lines: <StocktakeLineDraft>[
-        StocktakeLineDraft(),
-        StocktakeLineDraft(),
-      ]).validate();
+      final StocktakeValidation v = const StocktakeDraft(
+        lines: <StocktakeLineDraft>[StocktakeLineDraft(), StocktakeLineDraft()],
+      ).validate();
       expect(v.isValid, isFalse);
       expect(v.topError, contains('至少要填一行'));
       expect(v.lineErrors, isEmpty, reason: '空行不占错误位');
     });
 
     test('选了商品没填数量 → 行级「请填数量」', () {
-      const StocktakeDraft draft = StocktakeDraft(lines: <StocktakeLineDraft>[
-        StocktakeLineDraft(productId: 'p1', productName: '可乐'),
-      ]);
+      const StocktakeDraft draft = StocktakeDraft(
+        lines: <StocktakeLineDraft>[
+          StocktakeLineDraft(productId: 'p1', productName: '可乐'),
+        ],
+      );
       final StocktakeValidation v = draft.validate();
       expect(v.topError, isNull);
       expect(v.lineErrors[0], contains('请填数量'));
     });
 
     test('填了数量没选商品 → 行级「请选一个商品」', () {
-      const StocktakeDraft draft = StocktakeDraft(lines: <StocktakeLineDraft>[
-        StocktakeLineDraft(quantity: '10'),
-      ]);
+      const StocktakeDraft draft = StocktakeDraft(
+        lines: <StocktakeLineDraft>[StocktakeLineDraft(quantity: '10')],
+      );
       expect(draft.validate().lineErrors[0], contains('请选一个商品'));
     });
 
@@ -64,8 +65,16 @@ void main() {
     test('同商品两行 → 第二行报「已经在上面」（AD-3）', () {
       final StocktakeValidation v = const StocktakeDraft(
         lines: <StocktakeLineDraft>[
-          StocktakeLineDraft(productId: 'p1', productName: '可乐', quantity: '10'),
-          StocktakeLineDraft(productId: 'p1', productName: '可乐', quantity: '20'),
+          StocktakeLineDraft(
+            productId: 'p1',
+            productName: '可乐',
+            quantity: '10',
+          ),
+          StocktakeLineDraft(
+            productId: 'p1',
+            productName: '可乐',
+            quantity: '20',
+          ),
         ],
       ).validate();
       expect(v.lineErrors.containsKey(0), isFalse, reason: '第一行无辜');
@@ -73,20 +82,28 @@ void main() {
     });
 
     test('空行 + 一实行 → 通过；filledCount 只数实行的', () {
-      final StocktakeDraft draft = StocktakeDraft(lines: <StocktakeLineDraft>[
-        StocktakeLineDraft(),
-        const StocktakeLineDraft(productId: 'p1', productName: '可乐', quantity: '10'),
-      ]);
+      final StocktakeDraft draft = StocktakeDraft(
+        lines: <StocktakeLineDraft>[
+          StocktakeLineDraft(),
+          const StocktakeLineDraft(
+            productId: 'p1',
+            productName: '可乐',
+            quantity: '10',
+          ),
+        ],
+      );
       expect(draft.validate().isValid, isTrue);
       expect(draft.filledCount, 1);
     });
 
     test('toActualQuantities：只含填了的行，空行跳过', () {
-      final StocktakeDraft draft = StocktakeDraft(lines: <StocktakeLineDraft>[
-        StocktakeLineDraft(),
-        const StocktakeLineDraft(productId: 'p1', quantity: '10'),
-        const StocktakeLineDraft(productId: 'p2', quantity: '5'),
-      ]);
+      final StocktakeDraft draft = StocktakeDraft(
+        lines: <StocktakeLineDraft>[
+          StocktakeLineDraft(),
+          const StocktakeLineDraft(productId: 'p1', quantity: '10'),
+          const StocktakeLineDraft(productId: 'p2', quantity: '5'),
+        ],
+      );
       expect(draft.toActualQuantities(), <String, int>{'p1': 10, 'p2': 5});
     });
   });
@@ -101,10 +118,7 @@ void main() {
     setUp(() {
       db = newMemoryDb();
       queries = QueryDao(db);
-      service = StocktakeService(
-        engine: RuleEngine(db),
-        queries: queries,
-      );
+      service = StocktakeService(engine: RuleEngine(db), queries: queries);
       // 两件商品：p1「可乐」p2「薯片」
       db.raw.execute(
         "INSERT INTO products (id, code, name, cost_price, created_at, updated_at) "
@@ -143,8 +157,11 @@ void main() {
     test('期初成本按 0 记（AB-2）：cost 余值为 0，但商品「进过货」', () {
       service.create(draftOf(<String, String>{'p1': '10'}), now: t);
       expect(queries.costByProduct()['p1'], 0, reason: '无历史 → surplusCost = 0');
-      expect(queries.inboundProductIds(), contains('p1'),
-          reason: '§AD 遗漏 1：成本列据此显示「待校准」而不是「未进货」');
+      expect(
+        queries.inboundProductIds(),
+        contains('p1'),
+        reason: '§AD 遗漏 1：成本列据此显示「待校准」而不是「未进货」',
+      );
     });
 
     test('原样再录一遍 → 全部「无变化」；库存不动；新单照记', () {
@@ -157,8 +174,10 @@ void main() {
       );
       expect(r.changedCount, 0, reason: '建议 2：诚实反馈「都无变化」');
       expect(r.unchangedCount, 2);
-      expect(queries.stockByProduct(), <String, int>{'p1': 10, 'p2': 5},
-          reason: '实际数量语义：不是累加');
+      expect(queries.stockByProduct(), <String, int>{
+        'p1': 10,
+        'p2': 5,
+      }, reason: '实际数量语义：不是累加');
       expect(_docCount(db), docsBefore + 1, reason: '盘点单照常入账（可追溯）');
     });
 
@@ -180,8 +199,10 @@ void main() {
       );
 
       final Map<String, Object?> doc = db.raw
-          .select("SELECT doc_type, total_amount, status, remark FROM documents "
-              "WHERE id = '${r.documentId}'")
+          .select(
+            "SELECT doc_type, total_amount, status, remark FROM documents "
+            "WHERE id = '${r.documentId}'",
+          )
           .first;
       expect(doc['doc_type'], 'stocktake');
       expect(doc['total_amount'], 0, reason: 'RULE-009 硬约束');
@@ -192,9 +213,13 @@ void main() {
     });
 
     test('OBS-09① 备注随来源变：期初录入 / 重新清点**不能都写「期初录入」**', () {
-      String remarkOf(StocktakeResult r) => db.raw
-          .select("SELECT remark FROM documents WHERE id = '${r.documentId}'")
-          .first['remark']! as String;
+      String remarkOf(StocktakeResult r) =>
+          db.raw
+                  .select(
+                    "SELECT remark FROM documents WHERE id = '${r.documentId}'",
+                  )
+                  .first['remark']!
+              as String;
 
       // 首建账（页面以 isFirstTime: true 传入）
       final StocktakeResult first = service.create(
@@ -239,9 +264,9 @@ void main() {
         draftOf(<String, String>{'p1': '10'}),
         now: t,
       );
-      final Map<String, int> flow = DocumentDao(db).stockFlowByProductOf(
-        r.documentId,
-      );
+      final Map<String, int> flow = DocumentDao(
+        db,
+      ).stockFlowByProductOf(r.documentId);
       expect(flow, <String, int>{'p1': 10});
 
       // 账面 = 实盘 − 差额；再盘一次到 8 ⇒ 差额 −2（盘亏）
@@ -249,10 +274,9 @@ void main() {
         draftOf(<String, String>{'p1': '8'}),
         now: t,
       );
-      expect(
-        DocumentDao(db).stockFlowByProductOf(r2.documentId),
-        <String, int>{'p1': -2},
-      );
+      expect(DocumentDao(db).stockFlowByProductOf(r2.documentId), <String, int>{
+        'p1': -2,
+      });
       // 非盘点单也有流水差额（出库是负数），这个方法不挑单据类型
       expect(DocumentDao(db).stockFlowByProductOf('不存在的单'), isEmpty);
     });
@@ -268,7 +292,9 @@ void main() {
     test('行数 > 0 但全是空行 → 同样拦下（空行不算「填了一行」）', () {
       expect(
         () => service.create(
-          const StocktakeDraft(lines: <StocktakeLineDraft>[StocktakeLineDraft()]),
+          const StocktakeDraft(
+            lines: <StocktakeLineDraft>[StocktakeLineDraft()],
+          ),
           now: t,
         ),
         throwsA(isA<StocktakeDraftInvalid>()),

@@ -123,11 +123,12 @@ void main() {
   String syncProduct({String code = 'P001', int costPrice = 0}) {
     final String id = newId();
     final SyncResponse response = server.handle(
-      opMaster('products', id, SyncOpType.createMasterData, payload: {
-        'code': code,
-        'name': '商品-$code',
-        'cost_price': costPrice,
-      }),
+      opMaster(
+        'products',
+        id,
+        SyncOpType.createMasterData,
+        payload: {'code': code, 'name': '商品-$code', 'cost_price': costPrice},
+      ),
       now: now(),
     );
     expect(response.status, SyncStatus.applied, reason: response.reason);
@@ -137,9 +138,12 @@ void main() {
   String syncParty() {
     final String id = newId();
     final SyncResponse response = server.handle(
-      opMaster('parties', id, SyncOpType.createMasterData, payload: {
-        'name': '往来方',
-      }),
+      opMaster(
+        'parties',
+        id,
+        SyncOpType.createMasterData,
+        payload: {'name': '往来方'},
+      ),
       now: now(),
     );
     expect(response.status, SyncStatus.applied, reason: response.reason);
@@ -149,11 +153,16 @@ void main() {
   String syncAccount({int initialBalance = 0}) {
     final String id = newId();
     final SyncResponse response = server.handle(
-      opMaster('accounts', id, SyncOpType.createMasterData, payload: {
-        'name': '现金',
-        'type': 'cash',
-        'initial_balance': initialBalance,
-      }),
+      opMaster(
+        'accounts',
+        id,
+        SyncOpType.createMasterData,
+        payload: {
+          'name': '现金',
+          'type': 'cash',
+          'initial_balance': initialBalance,
+        },
+      ),
       now: now(),
     );
     expect(response.status, SyncStatus.applied, reason: response.reason);
@@ -196,8 +205,11 @@ void main() {
       expect(response.status, SyncStatus.applied, reason: response.reason);
 
       final Document saved = DocumentDao(db).findById(purchase.id)!;
-      expect(saved.docNo, isNot(startsWith(Document.pendingDocNoPrefix)),
-          reason: '主机分配了正式单号');
+      expect(
+        saved.docNo,
+        isNot(startsWith(Document.pendingDocNoPrefix)),
+        reason: '主机分配了正式单号',
+      );
       expect(countOf('stock_ledger'), 1);
       expect(countOf('party_ledger'), 1);
       expect(StockLedgerDao(db).stockOf(p), 10);
@@ -226,17 +238,18 @@ void main() {
 
     test('落库走 RuleEngine：无 party_id 的赊账销售被规则拒绝', () {
       final String p = syncProduct();
-      final Document sale = pending(
-        type: DocType.sale,
-        totalAmount: 500,
-      );
+      final Document sale = pending(type: DocType.sale, totalAmount: 500);
       final SyncResponse response = server.handle(
         opCreateDocument(sale, lines: oneLine(sale.id, p, 1, 500)),
         now: now(),
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reasonCode, RejectCode.ruleInternalError, reason: response.reason);
+      expect(
+        response.reasonCode,
+        RejectCode.ruleInternalError,
+        reason: response.reason,
+      );
       expect(DocumentDao(db).findById(sale.id), isNull);
     });
 
@@ -263,7 +276,9 @@ void main() {
       expect(response.status, SyncStatus.applied, reason: response.reason);
       expect(
         db.raw
-            .select("SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'receipt'")
+            .select(
+              "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'receipt'",
+            )
             .first['c'],
         1,
       );
@@ -382,8 +397,11 @@ void main() {
       );
 
       expect(response.status, SyncStatus.rejected);
-      expect(response.reasonCode, RejectCode.fieldTypeMismatch,
-          reason: response.reason);
+      expect(
+        response.reasonCode,
+        RejectCode.fieldTypeMismatch,
+        reason: response.reason,
+      );
       // 列名细节**只进日志** —— 照抄上面「含主机专属列（created_at）」那条的完整模式
       // （#22 裁定；用例名原来写「且原因点出列名」却没断，属**用例名撒谎**，§CV·十九）。
       // ⚠️ 断**精确子串**：`doc_type` 也出现在 detail 的「必填 id / doc_type / …」提示里，
@@ -395,7 +413,9 @@ void main() {
       // tool 侧镜像是 `tool/selfcheck_sync.dart:390`（**不是** `selfcheck_host` ——
       // 那个是「明细漏 id」= `lines` 路径）。
       expect(
-        internalErrors.any((String e) => e.contains('RowDecodeException(doc_type: 缺少这一列)')),
+        internalErrors.any(
+          (String e) => e.contains('RowDecodeException(doc_type: 缺少这一列)'),
+        ),
         isTrue,
         reason: '缺了哪个列只进日志，且必须点到具体列名',
       );
@@ -443,10 +463,12 @@ void main() {
 
     test('幂等：同 id 两次 → already_exists', () {
       final String id = newId();
-      final SyncOperation op = opMaster('products', id, SyncOpType.createMasterData, payload: {
-        'code': 'P901',
-        'name': '商品',
-      });
+      final SyncOperation op = opMaster(
+        'products',
+        id,
+        SyncOpType.createMasterData,
+        payload: {'code': 'P901', 'name': '商品'},
+      );
       expect(server.handle(op, now: now()).status, SyncStatus.applied);
       expect(server.handle(op, now: now()).status, SyncStatus.alreadyExists);
       expect(countOf('products'), 1);
@@ -454,11 +476,12 @@ void main() {
 
     test('含主机专属列（sync_version）→ rejected', () {
       final SyncResponse response = server.handle(
-        opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-          'code': 'P902',
-          'name': '商品',
-          'sync_version': 5,
-        }),
+        opMaster(
+          'products',
+          newId(),
+          SyncOpType.createMasterData,
+          payload: {'code': 'P902', 'name': '商品', 'sync_version': 5},
+        ),
         now: now(),
       );
 
@@ -468,11 +491,12 @@ void main() {
 
     test('未知列 → rejected', () {
       final SyncResponse response = server.handle(
-        opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-          'code': 'P903',
-          'name': '商品',
-          'nope': 1,
-        }),
+        opMaster(
+          'products',
+          newId(),
+          SyncOpType.createMasterData,
+          payload: {'code': 'P903', 'name': '商品', 'nope': 1},
+        ),
         now: now(),
       );
 
@@ -482,11 +506,12 @@ void main() {
 
     test('bool 值被拒（wire 约定布尔用 1/0）', () {
       final SyncResponse response = server.handle(
-        opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-          'code': 'P904',
-          'name': '商品',
-          'is_active': true,
-        }),
+        opMaster(
+          'products',
+          newId(),
+          SyncOpType.createMasterData,
+          payload: {'code': 'P904', 'name': '商品', 'is_active': true},
+        ),
         now: now(),
       );
 
@@ -521,10 +546,12 @@ void main() {
 
       final String secondId = newId();
       final SyncResponse response = server.handle(
-        opMaster('products', secondId, SyncOpType.createMasterData, payload: {
-          'code': 'P001',
-          'name': '商品乙',
-        }),
+        opMaster(
+          'products',
+          secondId,
+          SyncOpType.createMasterData,
+          payload: {'code': 'P001', 'name': '商品乙'},
+        ),
         now: now(),
       );
 
@@ -553,17 +580,21 @@ void main() {
       final String idB = newId();
 
       final SyncResponse a = server.handle(
-        opMaster('products', idA, SyncOpType.createMasterData, payload: {
-          'code': 'P001',
-          'name': 'A 的商品',
-        }),
+        opMaster(
+          'products',
+          idA,
+          SyncOpType.createMasterData,
+          payload: {'code': 'P001', 'name': 'A 的商品'},
+        ),
         now: now(),
       );
       final SyncResponse b = server.handle(
-        opMaster('products', idB, SyncOpType.createMasterData, payload: {
-          'code': 'P001',
-          'name': 'B 的商品',
-        }),
+        opMaster(
+          'products',
+          idB,
+          SyncOpType.createMasterData,
+          payload: {'code': 'P001', 'name': 'B 的商品'},
+        ),
         now: now(),
       );
 
@@ -587,10 +618,12 @@ void main() {
             logged.add(error),
       );
       final SyncResponse response = logging.handle(
-        opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-          'code': 5,
-          'name': '商品',
-        }),
+        opMaster(
+          'products',
+          newId(),
+          SyncOpType.createMasterData,
+          payload: {'code': 5, 'name': '商品'},
+        ),
         now: now(),
       );
 
@@ -604,9 +637,9 @@ void main() {
     test('改派只作用于 products：parties 照旧落库', () {
       final String partyId = syncParty();
       expect(
-        db.raw
-            .select('SELECT name FROM parties WHERE id = ?', <Object?>[partyId])
-            .first['name'],
+        db.raw.select('SELECT name FROM parties WHERE id = ?', <Object?>[
+          partyId,
+        ]).first['name'],
         '往来方',
       );
     });
@@ -617,9 +650,13 @@ void main() {
       final String id = syncProduct(code: 'P910');
 
       final SyncResponse response = server.handle(
-        opMaster('products', id, SyncOpType.updateMasterData, baseVersion: 0, payload: {
-          'sell_price': 1234,
-        }),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.updateMasterData,
+          baseVersion: 0,
+          payload: {'sell_price': 1234},
+        ),
         now: now(),
       );
 
@@ -633,17 +670,25 @@ void main() {
       final String id = syncProduct(code: 'P911');
       // 先成功改一次 → 主机版本变成 1
       server.handle(
-        opMaster('products', id, SyncOpType.updateMasterData, baseVersion: 0, payload: {
-          'sell_price': 100,
-        }),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.updateMasterData,
+          baseVersion: 0,
+          payload: {'sell_price': 100},
+        ),
         now: now(),
       );
 
       // 客户端仍以为版本是 0
       final SyncResponse response = server.handle(
-        opMaster('products', id, SyncOpType.updateMasterData, baseVersion: 0, payload: {
-          'sell_price': 999,
-        }),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.updateMasterData,
+          baseVersion: 0,
+          payload: {'sell_price': 999},
+        ),
         now: now(),
       );
 
@@ -657,9 +702,12 @@ void main() {
     test('缺 base_version → rejected', () {
       final String id = syncProduct(code: 'P912');
       final SyncResponse response = server.handle(
-        opMaster('products', id, SyncOpType.updateMasterData, payload: {
-          'sell_price': 1,
-        }),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.updateMasterData,
+          payload: {'sell_price': 1},
+        ),
         now: now(),
       );
 
@@ -671,10 +719,13 @@ void main() {
     test('目标不存在 ⇒ upsert：用 payload 的 id 建档（返回 applied）', () {
       final String id = newId();
       final SyncResponse response = server.handle(
-        opMaster('products', id, SyncOpType.updateMasterData, baseVersion: 0, payload: {
-          'name': '离线建的商品',
-          'sell_price': 350,
-        }),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.updateMasterData,
+          baseVersion: 0,
+          payload: {'name': '离线建的商品', 'sell_price': 350},
+        ),
         now: now(),
       );
 
@@ -690,36 +741,49 @@ void main() {
       final String id = newId();
       // ① update 先到（create 进重试被排到后面 —— 正是 §CV·3 要消除的乱序）
       final SyncResponse first = server.handle(
-        opMaster('products', id, SyncOpType.updateMasterData, baseVersion: 0, payload: {
-          'name': '张三',
-          'sell_price': 100,
-        }),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.updateMasterData,
+          baseVersion: 0,
+          payload: {'name': '张三', 'sell_price': 100},
+        ),
         now: now(),
       );
       expect(first.status, SyncStatus.applied, reason: first.reason);
 
       // ② create 后到 ⇒ 已存在
       final SyncResponse second = server.handle(
-        opMaster('products', id, SyncOpType.createMasterData, payload: {
-          'name': '张三',
-          'code': 'P0042',
-          'sell_price': 100,
-        }),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.createMasterData,
+          payload: {'name': '张三', 'code': 'P0042', 'sell_price': 100},
+        ),
         now: now(),
       );
       expect(second.status, SyncStatus.alreadyExists);
 
-      final int rows = db.raw
-          .select('SELECT COUNT(*) AS n FROM products WHERE id = ?', <Object?>[id])
-          .first['n']! as int;
+      final int rows =
+          db.raw.select(
+                'SELECT COUNT(*) AS n FROM products WHERE id = ?',
+                <Object?>[id],
+              ).first['n']!
+              as int;
       expect(rows, 1, reason: 'upsert + already_exists ⇒ 收敛到一行');
     });
 
     test('upsert 遇缺必填（name）⇒ rejected 且回执不含 SQL / 表名', () {
       final SyncResponse response = server.handle(
-        opMaster('products', newId(), SyncOpType.updateMasterData, baseVersion: 0, payload: {
-          'sell_price': 1, // 缺 name（NOT NULL）
-        }),
+        opMaster(
+          'products',
+          newId(),
+          SyncOpType.updateMasterData,
+          baseVersion: 0,
+          payload: {
+            'sell_price': 1, // 缺 name（NOT NULL）
+          },
+        ),
         now: now(),
       );
 
@@ -739,10 +803,13 @@ void main() {
       // 用**别人正在用**的 code 去 update —— 修复前这会撞 `code UNIQUE` ⇒
       // rejected + 指数退避重试到死信（这张编辑永远补不上）
       final SyncResponse response = server.handle(
-        opMaster('products', other, SyncOpType.updateMasterData, baseVersion: 0, payload: {
-          'code': 'P810',
-          'sell_price': 999,
-        }),
+        opMaster(
+          'products',
+          other,
+          SyncOpType.updateMasterData,
+          baseVersion: 0,
+          payload: {'code': 'P810', 'sell_price': 999},
+        ),
         now: now(),
       );
 
@@ -778,9 +845,12 @@ void main() {
 
       // products.name 是 NOT NULL ⇒ 缺 name 触发 SQLITE_CONSTRAINT_NOTNULL
       final SyncResponse response = logging.handle(
-        opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-          'code': 'P820',
-        }),
+        opMaster(
+          'products',
+          newId(),
+          SyncOpType.createMasterData,
+          payload: {'code': 'P820'},
+        ),
         now: now(),
       );
 
@@ -806,9 +876,12 @@ void main() {
 
     test('没给 onInternalError 也不崩（测试 / 自检默认场景）', () {
       final SyncResponse response = server.handle(
-        opMaster('products', newId(), SyncOpType.createMasterData, payload: {
-          'code': 'P821',
-        }),
+        opMaster(
+          'products',
+          newId(),
+          SyncOpType.createMasterData,
+          payload: {'code': 'P821'},
+        ),
         now: now(),
       );
       expect(response.status, SyncStatus.rejected);
@@ -832,7 +905,11 @@ void main() {
 
     test('已删 → already_exists（幂等）', () {
       final String id = syncProduct(code: 'P921');
-      final SyncOperation op = opMaster('products', id, SyncOpType.deleteMasterData);
+      final SyncOperation op = opMaster(
+        'products',
+        id,
+        SyncOpType.deleteMasterData,
+      );
 
       expect(server.handle(op, now: now()).status, SyncStatus.applied);
       expect(server.handle(op, now: now()).status, SyncStatus.alreadyExists);
@@ -842,9 +919,12 @@ void main() {
     test('payload 含 id 以外的字段 → rejected', () {
       final String id = syncProduct(code: 'P922');
       final SyncResponse response = server.handle(
-        opMaster('products', id, SyncOpType.deleteMasterData, payload: {
-          'name': '改个名',
-        }),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.deleteMasterData,
+          payload: {'name': '改个名'},
+        ),
         now: now(),
       );
 
@@ -887,8 +967,11 @@ void main() {
             .status,
         SyncStatus.applied,
       );
-      expect(DocumentDao(db).findById(delivery.id)!.status, DocStatus.inTransit,
-          reason: '送货单一律以 in_transit 起步');
+      expect(
+        DocumentDao(db).findById(delivery.id)!.status,
+        DocStatus.inTransit,
+        reason: '送货单一律以 in_transit 起步',
+      );
 
       final SyncResponse response = server.handle(
         SyncOperation(
@@ -904,7 +987,10 @@ void main() {
       );
 
       expect(response.status, SyncStatus.applied, reason: response.reason);
-      expect(DocumentDao(db).findById(delivery.id)!.status, DocStatus.delivered);
+      expect(
+        DocumentDao(db).findById(delivery.id)!.status,
+        DocStatus.delivered,
+      );
     });
 
     test('已是 delivered → already_exists（重复签收是 no-op，R-3.1）', () {
@@ -935,7 +1021,10 @@ void main() {
       );
 
       expect(server.handle(action, now: now()).status, SyncStatus.applied);
-      expect(server.handle(action, now: now()).status, SyncStatus.alreadyExists);
+      expect(
+        server.handle(action, now: now()).status,
+        SyncStatus.alreadyExists,
+      );
     });
 
     test('cancelled 收到签收 → conflict + server_state（R-3.4：状态不匹配，'
@@ -978,10 +1067,16 @@ void main() {
 
       expect(response.status, SyncStatus.conflict);
       expect(response.serverState, isNotNull);
-      expect(response.serverState!['status'], DocStatus.cancelled.wire,
-          reason: 'server_state 必须带主机当前状态 —— 客户端拿它对齐');
-      expect(DocumentDao(db).findById(delivery.id)!.status, DocStatus.cancelled,
-          reason: 'conflict 不改主机状态');
+      expect(
+        response.serverState!['status'],
+        DocStatus.cancelled.wire,
+        reason: 'server_state 必须带主机当前状态 —— 客户端拿它对齐',
+      );
+      expect(
+        DocumentDao(db).findById(delivery.id)!.status,
+        DocStatus.cancelled,
+        reason: 'conflict 不改主机状态',
+      );
     });
 
     test('未知动作名 → rejected + unknown_action（R-3.4：规则不允许）', () {
@@ -1102,7 +1197,11 @@ void main() {
     });
 
     test('任意表名都进不来（schemas / sqlite_master）', () {
-      for (final String entity in <String>['sqlite_master', 'document_lines', 'x']) {
+      for (final String entity in <String>[
+        'sqlite_master',
+        'document_lines',
+        'x',
+      ]) {
         final SyncResponse response = server.handle(
           SyncOperation(
             entity: entity,
@@ -1129,10 +1228,12 @@ void main() {
       );
 
       final List<SyncResponse> results = server.push(<SyncOperation>[
-        opMaster('products', p, SyncOpType.createMasterData, payload: {
-          'code': 'P930',
-          'name': '商品',
-        }),
+        opMaster(
+          'products',
+          p,
+          SyncOpType.createMasterData,
+          payload: {'code': 'P930', 'name': '商品'},
+        ),
         // 中间夹一条必然失败的
         const SyncOperation(
           entity: 'nope',
@@ -1153,17 +1254,24 @@ void main() {
       final String a = newId();
       final String b = newId();
       final List<SyncResponse> results = server.push(<SyncOperation>[
-        opMaster('products', a, SyncOpType.createMasterData, payload: {
-          'code': 'PA',
-          'name': 'A',
-        }),
-        opMaster('products', b, SyncOpType.createMasterData, payload: {
-          'code': 'PB',
-          'name': 'B',
-        }),
+        opMaster(
+          'products',
+          a,
+          SyncOpType.createMasterData,
+          payload: {'code': 'PA', 'name': 'A'},
+        ),
+        opMaster(
+          'products',
+          b,
+          SyncOpType.createMasterData,
+          payload: {'code': 'PB', 'name': 'B'},
+        ),
       ], now: now());
 
-      expect(<String>{for (final SyncResponse r in results) r.entityId}, <String>{a, b});
+      expect(
+        <String>{for (final SyncResponse r in results) r.entityId},
+        <String>{a, b},
+      );
     });
   });
 
@@ -1297,7 +1405,10 @@ void main() {
     });
 
     test('游标格式错误 → 抛 FormatException（HTTP 层应映射成 400）', () {
-      expect(() => server.pull(docSince: 'not-a-cursor'), throwsFormatException);
+      expect(
+        () => server.pull(docSince: 'not-a-cursor'),
+        throwsFormatException,
+      );
       expect(() => server.pull(stockSince: 'x'), throwsFormatException);
     });
 
@@ -1345,26 +1456,29 @@ void main() {
       );
 
       final SyncResponse response = server.handle(
-        opCreateDocument(purchase, lines: <DocumentLine>[
-          DocumentLine.create(
-            documentId: purchase.id,
-            productId: p,
-            quantity: 1,
-            unitPrice: 100,
-          ),
-          DocumentLine.create(
-            documentId: purchase.id,
-            productId: p,
-            quantity: 1,
-            unitPrice: 100,
-          ),
-          DocumentLine.create(
-            documentId: purchase.id,
-            productId: p,
-            quantity: 1,
-            unitPrice: 100,
-          ),
-        ]),
+        opCreateDocument(
+          purchase,
+          lines: <DocumentLine>[
+            DocumentLine.create(
+              documentId: purchase.id,
+              productId: p,
+              quantity: 1,
+              unitPrice: 100,
+            ),
+            DocumentLine.create(
+              documentId: purchase.id,
+              productId: p,
+              quantity: 1,
+              unitPrice: 100,
+            ),
+            DocumentLine.create(
+              documentId: purchase.id,
+              productId: p,
+              quantity: 1,
+              unitPrice: 100,
+            ),
+          ],
+        ),
         now: now(),
       );
       expect(response.status, SyncStatus.applied, reason: response.reason);
@@ -1454,7 +1568,10 @@ void main() {
       final Map<String, Object?> changed = bSecond.entities['products']!.single;
       expect(changed['cost_price'], 120);
       expect(changed['sync_version'], 1, reason: '乐观锁计数 +1');
-      expect(changed['updated_at'], greaterThan(bFirst.entities['products']!.single['updated_at'] as int));
+      expect(
+        changed['updated_at'],
+        greaterThan(bFirst.entities['products']!.single['updated_at'] as int),
+      );
     });
 
     test('未改动的主数据不会重复出现在增量页里', () {
@@ -1481,7 +1598,11 @@ void main() {
       final SyncPullResult after = server.pull(
         productsSince: before.nextCursors[SyncCursorKeys.products]!,
       );
-      expect(after.entities['products']!, hasLength(1), reason: '软删必须可见，否则客户端永远不知道');
+      expect(
+        after.entities['products']!,
+        hasLength(1),
+        reason: '软删必须可见，否则客户端永远不知道',
+      );
       expect(after.entities['products']!.single['is_active'], 0);
     });
 
@@ -1504,10 +1625,12 @@ void main() {
       for (int i = 0; i < count; i++) {
         final String id = newId();
         final SyncResponse response = server.handle(
-          opMaster('products', id, SyncOpType.createMasterData, payload: <String, Object?>{
-            'code': 'P96$i',
-            'name': '商品$i',
-          }),
+          opMaster(
+            'products',
+            id,
+            SyncOpType.createMasterData,
+            payload: <String, Object?>{'code': 'P96$i', 'name': '商品$i'},
+          ),
           now: stamp, // ← 刻意同一毫秒
         );
         expect(response.status, SyncStatus.applied, reason: response.reason);
@@ -1531,10 +1654,7 @@ void main() {
     });
 
     test('主数据游标格式错误 → 抛 FormatException', () {
-      expect(
-        () => server.pull(productsSince: 'oops'),
-        throwsFormatException,
-      );
+      expect(() => server.pull(productsSince: 'oops'), throwsFormatException);
     });
 
     // ---- has_more（2026-10-07，docs/reply.md §1 / §2）----
@@ -1546,11 +1666,7 @@ void main() {
       syncPurchase(p, party, 1, 100);
 
       final SyncPullResult full = server.pull(limit: 1);
-      expect(
-        full.hasMore,
-        isTrue,
-        reason: 'stock_ledger 有两行、limit=1 ⇒ 还有下一页',
-      );
+      expect(full.hasMore, isTrue, reason: 'stock_ledger 有两行、limit=1 ⇒ 还有下一页');
 
       // ⚠️ **不要硬编码「推哪几路」**（我第一版就错在这里）：一次采购同时写
       // `stock_ledger` + `party_ledger`，还有主数据等多路，各自独立推进。
@@ -1649,8 +1765,7 @@ void main() {
 
       // 无 docSince（全量）+ 窗口覆盖这张单 ⇒ 两条路径都命中
       final SyncPullResult withWindow = server.pull(docUpdatedSince: 0);
-      final List<Map<String, Object?>> docs =
-          withWindow.entities['documents']!;
+      final List<Map<String, Object?>> docs = withWindow.entities['documents']!;
       expect(docs, hasLength(1), reason: '按 id 去重，不许同一单出现两次');
 
       // ⚠️ **反向验证**（2026-10-07）：窗口是「尽力而为的补齐」，**不许**它成为
@@ -1726,7 +1841,9 @@ void main() {
         status: SyncStatus.conflict,
         serverState: <String, Object?>{'sync_version': 2},
       );
-      expect(conflict.toJson()['server_state'], <String, Object?>{'sync_version': 2});
+      expect(conflict.toJson()['server_state'], <String, Object?>{
+        'sync_version': 2,
+      });
       expect(conflict.toJson().containsKey('reason'), isFalse);
     });
 
@@ -1745,26 +1862,33 @@ void main() {
   // 落账（与桌面期初同一条 RULE-009 / surplusCost 通路）。原子：
   // 期初失败 ⇒ 建档也回滚（裁定①「要么都成、要么都不做」）。
   group('#31 建档期初（opening_quantity）', () {
-    Map<String, Object?> payload(Map<String, Object?> extra) => <String, Object?>{
-      'code': 'P900',
-      'name': '带期初的商品',
-      'cost_price': 0,
-      ...extra,
-    };
+    Map<String, Object?> payload(Map<String, Object?> extra) =>
+        <String, Object?>{
+          'code': 'P900',
+          'name': '带期初的商品',
+          'cost_price': 0,
+          ...extra,
+        };
 
     test('opening_quantity ⇒ applied + 商品存在 + stocktake 单落账', () {
       final String id = newId();
       final SyncResponse response = server.handle(
-        opMaster('products', id, SyncOpType.createMasterData,
-            payload: payload(<String, Object?>{'opening_quantity': 36})),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.createMasterData,
+          payload: payload(<String, Object?>{'opening_quantity': 36}),
+        ),
         now: now(),
       );
       expect(response.status, SyncStatus.applied, reason: response.reason);
 
       // 商品已建档
       expect(
-        db.raw.select('SELECT COUNT(*) AS c FROM products WHERE id = ?',
-            <Object?>[id]).first['c'],
+        db.raw.select(
+          'SELECT COUNT(*) AS c FROM products WHERE id = ?',
+          <Object?>[id],
+        ).first['c'],
         1,
       );
       // 期初 = 一张 stocktake 文档（桌面期初同一条 RULE-009 通路）
@@ -1775,10 +1899,11 @@ void main() {
       expect(doc['total_amount'], 0, reason: 'RULE-009：盘点/期初总额必须为 0');
       // 库存流水：实际数量 36（账面 0 ⇒ diff = +36）
       expect(
-        db.raw
-            .select('SELECT COALESCE(SUM(quantity),0) AS s FROM stock_ledger '
-                'WHERE product_id = ?', <Object?>[id])
-            .first['s'],
+        db.raw.select(
+          'SELECT COALESCE(SUM(quantity),0) AS s FROM stock_ledger '
+          'WHERE product_id = ?',
+          <Object?>[id],
+        ).first['s'],
         36,
       );
     });
@@ -1786,14 +1911,21 @@ void main() {
     test('不带 opening_quantity ⇒ 纯建档（无 stocktake 单）', () {
       final String id = newId();
       final SyncResponse response = server.handle(
-        opMaster('products', id, SyncOpType.createMasterData,
-            payload: payload(const <String, Object?>{})),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.createMasterData,
+          payload: payload(const <String, Object?>{}),
+        ),
         now: now(),
       );
       expect(response.status, SyncStatus.applied);
       expect(
-        db.raw.select(
-            "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'").first['c'],
+        db.raw
+            .select(
+              "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
+            )
+            .first['c'],
         0,
       );
     });
@@ -1801,10 +1933,12 @@ void main() {
     test('opening_quantity 出现在其它表 ⇒ malformed（客户端 bug 不重试）', () {
       final String id = newId();
       final SyncResponse response = server.handle(
-        opMaster('parties', id, SyncOpType.createMasterData, payload: {
-          'name': '某客户',
-          'opening_quantity': 5,
-        }),
+        opMaster(
+          'parties',
+          id,
+          SyncOpType.createMasterData,
+          payload: {'name': '某客户', 'opening_quantity': 5},
+        ),
         now: now(),
       );
       // malformed = rejected + 专用码（协议违反 ⇒ 通用中文，客户端不重试）
@@ -1820,18 +1954,22 @@ void main() {
     test('opening_quantity 类型/取值不符 ⇒ malformed', () {
       for (final Object? bad in <Object?>['36', 0, -3, 1.5]) {
         final SyncResponse response = server.handle(
-          opMaster('products', newId(), SyncOpType.createMasterData,
-              payload: payload(<String, Object?>{'opening_quantity': bad})),
+          opMaster(
+            'products',
+            newId(),
+            SyncOpType.createMasterData,
+            payload: payload(<String, Object?>{'opening_quantity': bad}),
+          ),
           now: now(),
         );
-        expect(response.status, SyncStatus.rejected,
-            reason: 'opening_quantity = $bad 应被拒');
+        expect(
+          response.status,
+          SyncStatus.rejected,
+          reason: 'opening_quantity = $bad 应被拒',
+        );
         expect(response.reasonCode, RejectCode.malformedParameter);
       }
-      expect(
-        db.raw.select('SELECT COUNT(*) AS c FROM products').first['c'],
-        0,
-      );
+      expect(db.raw.select('SELECT COUNT(*) AS c FROM products').first['c'], 0);
     });
 
     test('已存在 + opening_quantity ⇒ malformed（期初只在建档路径处理）', () {
@@ -1839,25 +1977,30 @@ void main() {
       expect(
         server
             .handle(
-              opMaster('products', id, SyncOpType.createMasterData,
-                  payload: payload(const <String, Object?>{})),
+              opMaster(
+                'products',
+                id,
+                SyncOpType.createMasterData,
+                payload: payload(const <String, Object?>{}),
+              ),
               now: now(),
             )
             .status,
         SyncStatus.applied,
       );
       final SyncResponse again = server.handle(
-        opMaster('products', id, SyncOpType.createMasterData,
-            payload: payload(<String, Object?>{'opening_quantity': 10})),
+        opMaster(
+          'products',
+          id,
+          SyncOpType.createMasterData,
+          payload: payload(<String, Object?>{'opening_quantity': 10}),
+        ),
         now: now(),
       );
       expect(again.status, SyncStatus.rejected, reason: again.reason);
       expect(again.reasonCode, RejectCode.malformedParameter);
       // 商品未被第二次操作改动（行数不变）
-      expect(
-        db.raw.select('SELECT COUNT(*) AS c FROM products').first['c'],
-        1,
-      );
+      expect(db.raw.select('SELECT COUNT(*) AS c FROM products').first['c'], 1);
     });
   });
 
@@ -1882,11 +2025,7 @@ void main() {
       expect(calls, <int>[1], reason: '真的写进去了 ⇒ 界面该重读');
 
       s.push(<SyncOperation>[create], now: now());
-      expect(
-        calls,
-        <int>[1],
-        reason: 'already_exists 不是新数据 —— 拿它当信号会让界面反复重建',
-      );
+      expect(calls, <int>[1], reason: 'already_exists 不是新数据 —— 拿它当信号会让界面反复重建');
     });
   });
 }

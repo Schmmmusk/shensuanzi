@@ -28,19 +28,17 @@ class AccountDao {
     );
   }
 
-  bool exists(String id) => _raw
-      .select('SELECT 1 FROM ${Schema.accounts} WHERE id = ? LIMIT 1', <Object?>[
-        id,
-      ])
-      .isNotEmpty;
+  bool exists(String id) => _raw.select(
+    'SELECT 1 FROM ${Schema.accounts} WHERE id = ? LIMIT 1',
+    <Object?>[id],
+  ).isNotEmpty;
 
   /// ⚠️ **#42 甲 · L1**：坏行跳过 + 计数（见 `party_dao.findById` 的同款说明）。
   Account? findById(String id) {
     final List<Account> found = decodeRows(
-      _raw.select(
-        'SELECT * FROM ${Schema.accounts} WHERE id = ?',
-        <Object?>[id],
-      ),
+      _raw.select('SELECT * FROM ${Schema.accounts} WHERE id = ?', <Object?>[
+        id,
+      ]),
       (Map<String, Object?> row) =>
           Account.fromRow(row, failures: db.readFailures),
       table: Schema.accounts,

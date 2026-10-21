@@ -27,11 +27,12 @@ enum ScanFailureKind {
 ///
 /// **未知值一律 [ScanFailureKind.generic]** —— 宁可笼统，也不乱猜一个
 /// 用户照着做却无效的指引。
-ScanFailureKind scanFailureKindOf(String errorCodeName) => switch (errorCodeName) {
-  'permissionDenied' => ScanFailureKind.permissionDenied,
-  'unsupported' => ScanFailureKind.unsupported,
-  _ => ScanFailureKind.generic,
-};
+ScanFailureKind scanFailureKindOf(String errorCodeName) =>
+    switch (errorCodeName) {
+      'permissionDenied' => ScanFailureKind.permissionDenied,
+      'unsupported' => ScanFailureKind.unsupported,
+      _ => ScanFailureKind.generic,
+    };
 
 /// 给用户看的**中文**说明（含「怎么办」）。
 ///

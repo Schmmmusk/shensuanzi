@@ -90,13 +90,11 @@ class StockLedgerDao {
 
   /// 账面库存 = `SUM(quantity)`（`docs/data_model.md` §五 不变量 1）
   int stockOf(String productId) {
-    final Row row = _raw
-        .select(
-          'SELECT COALESCE(SUM(quantity), 0) AS s FROM ${Schema.stockLedger} '
-          'WHERE product_id = ?',
-          <Object?>[productId],
-        )
-        .first;
+    final Row row = _raw.select(
+      'SELECT COALESCE(SUM(quantity), 0) AS s FROM ${Schema.stockLedger} '
+      'WHERE product_id = ?',
+      <Object?>[productId],
+    ).first;
     return row['s']! as int;
   }
 
@@ -240,13 +238,11 @@ class PartyLedgerDao {
   /// 往来余额 = `SUM(amount)`。**正数 = 对方欠我，负数 = 我欠对方**
   /// （`docs/data_model.md` §五 不变量 3）
   int balanceOf(String partyId) {
-    final Row row = _raw
-        .select(
-          'SELECT COALESCE(SUM(amount), 0) AS s FROM ${Schema.partyLedger} '
-          'WHERE party_id = ?',
-          <Object?>[partyId],
-        )
-        .first;
+    final Row row = _raw.select(
+      'SELECT COALESCE(SUM(amount), 0) AS s FROM ${Schema.partyLedger} '
+      'WHERE party_id = ?',
+      <Object?>[partyId],
+    ).first;
     return row['s']! as int;
   }
 
@@ -344,13 +340,11 @@ class MoneyLedgerDao {
 
   /// 账户余额 = `initial_balance + SUM(amount)`（`docs/data_model.md` §五 不变量）
   int balanceOf(String accountId) {
-    final Row row = _raw
-        .select(
-          'SELECT COALESCE(SUM(amount), 0) AS s FROM ${Schema.moneyLedger} '
-          'WHERE account_id = ?',
-          <Object?>[accountId],
-        )
-        .first;
+    final Row row = _raw.select(
+      'SELECT COALESCE(SUM(amount), 0) AS s FROM ${Schema.moneyLedger} '
+      'WHERE account_id = ?',
+      <Object?>[accountId],
+    ).first;
     return row['s']! as int;
   }
 

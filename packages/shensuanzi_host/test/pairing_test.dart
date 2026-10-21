@@ -53,18 +53,25 @@ void main() {
         '随便一句话',
         '',
       ]) {
-        expect(() => PairingPayload.parse(bad), throwsFormatException, reason: bad);
+        expect(
+          () => PairingPayload.parse(bad),
+          throwsFormatException,
+          reason: bad,
+        );
       }
     });
 
     test('缺字段 → FormatException', () {
       expect(
-        () => PairingPayload.parse('shensuanzi://pair?host_id=h&ip=1.1.1.1&port=1'),
+        () => PairingPayload.parse(
+          'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=1',
+        ),
         throwsFormatException,
         reason: '缺 token',
       );
       expect(
-        () => PairingPayload.parse('shensuanzi://pair?ip=1.1.1.1&port=1&token=t'),
+        () =>
+            PairingPayload.parse('shensuanzi://pair?ip=1.1.1.1&port=1&token=t'),
         throwsFormatException,
         reason: '缺 host_id',
       );
@@ -92,7 +99,11 @@ void main() {
       final PairingQr qr = PairingQr(sample);
       final List<List<bool>> matrix = qr.matrix;
 
-      expect(qr.moduleCount, greaterThanOrEqualTo(21), reason: '最小 QR 版本是 21×21');
+      expect(
+        qr.moduleCount,
+        greaterThanOrEqualTo(21),
+        reason: '最小 QR 版本是 21×21',
+      );
       expect(matrix, hasLength(qr.moduleCount));
       for (final List<bool> row in matrix) {
         expect(row, hasLength(qr.moduleCount));
@@ -140,18 +151,10 @@ void main() {
     test('encodeCount：构造为 0（惰性）→ 首次访问后恰好 1 → 之后不再增长', () {
       final PairingQr qr = PairingQr(sample);
 
-      expect(
-        qr.encodeCount,
-        0,
-        reason: '构造**不编码**（惰性）——「构造即编码」也是要拦的错误形态',
-      );
+      expect(qr.encodeCount, 0, reason: '构造**不编码**（惰性）——「构造即编码」也是要拦的错误形态');
 
       final List<List<bool>> matrix = qr.matrix;
-      expect(
-        qr.encodeCount,
-        1,
-        reason: '首次访问，编码一次 —— 语义 = 底层 QrImage 的构造次数',
-      );
+      expect(qr.encodeCount, 1, reason: '首次访问，编码一次 —— 语义 = 底层 QrImage 的构造次数');
       expect(matrix, hasLength(qr.moduleCount));
 
       qr.matrix;
@@ -160,11 +163,7 @@ void main() {
 
       qr.moduleCount;
       qr.uri;
-      expect(
-        qr.encodeCount,
-        1,
-        reason: '跨字段访问仍不增长（同一次编码被所有成员共享）',
-      );
+      expect(qr.encodeCount, 1, reason: '跨字段访问仍不增长（同一次编码被所有成员共享）');
     });
 
     test('缓存后的矩阵与「直接用 qr 包现算」逐 bit 一致（缓存没改语义）', () {

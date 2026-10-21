@@ -66,8 +66,11 @@ void main() {
       expect(loaded.hostId, first.hostId, reason: 'host_id 不变');
       expect(loaded.tokenHash, first.tokenHash);
       expect(loaded.canShowQr, isFalse, reason: '重启后画不出二维码');
-      expect(loaded.authorizes(first.plaintextToken), isTrue,
-          reason: '校验只需要哈希，重启后照样能校验');
+      expect(
+        loaded.authorizes(first.plaintextToken),
+        isTrue,
+        reason: '校验只需要哈希，重启后照样能校验',
+      );
     });
 
     test('reset 换新 host_id 与新令牌，旧令牌立刻失效', () {
@@ -78,8 +81,11 @@ void main() {
 
       expect(after.hostId, isNot(before.hostId));
       expect(after.canShowQr, isTrue);
-      expect(after.authorizes(before.plaintextToken), isFalse,
-          reason: '一键重置 → 所有设备需重新配对');
+      expect(
+        after.authorizes(before.plaintextToken),
+        isFalse,
+        reason: '一键重置 → 所有设备需重新配对',
+      );
       expect(after.authorizes(after.plaintextToken), isTrue);
       expect(store.storedHash(), after.tokenHash);
     });

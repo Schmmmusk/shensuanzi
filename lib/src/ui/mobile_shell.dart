@@ -68,7 +68,10 @@ class _MobileShellState extends State<MobileShell> {
           appBar: AppBar(title: Text(destination.label)),
           body: Column(
             children: <Widget>[
-              _SyncStatusBar(sync: widget.shell.mobileSync, version: widget.shell),
+              _SyncStatusBar(
+                sync: widget.shell.mobileSync,
+                version: widget.shell,
+              ),
               Expanded(
                 child: appShellPage(
                   widget.shell,
@@ -143,14 +146,8 @@ class _MobileShellState extends State<MobileShell> {
       ),
       ListTile(
         leading: const Icon(Icons.info_outline),
-        title: Text(
-          '版本与反馈',
-          style: const TextStyle(height: 1.6),
-        ),
-        subtitle: Text(
-          AppVersion.display,
-          style: const TextStyle(height: 1.6),
-        ),
+        title: Text('版本与反馈', style: const TextStyle(height: 1.6)),
+        subtitle: Text(AppVersion.display, style: const TextStyle(height: 1.6)),
         trailing: const Icon(Icons.chevron_right),
         // 反馈方式（GitHub / 邮箱）与版本说明都在帮助页最后一章
         onTap: () {
@@ -162,7 +159,10 @@ class _MobileShellState extends State<MobileShell> {
         padding: const EdgeInsets.all(16),
         child: Text(
           '数据保存在手机的应用私有目录里；卸载应用会删除全部数据。',
-          style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+          style: TextStyle(
+            height: 1.6,
+            color: theme.textTheme.bodySmall?.color,
+          ),
         ),
       ),
     ],
@@ -194,7 +194,10 @@ class _MobileShellState extends State<MobileShell> {
         // 三态条常驻所有 tab 顶部（裁定 ④「顶部常驻」）；明细见 [_SyncStatusBar]
         child: Column(
           children: <Widget>[
-            _SyncStatusBar(sync: widget.shell.mobileSync, version: widget.shell),
+            _SyncStatusBar(
+              sync: widget.shell.mobileSync,
+              version: widget.shell,
+            ),
             // #42 甲 · L4（2026-10-14）：读数据不全的提示条 —— 与桌面壳**共用
             // 同一个 widget**（`read_failure_banner.dart`，照 `appShellPage` 的先例）。
             // 位置放在三态条**下面**：三态条是「同步进度」（常态），这条是「异常提醒」，
@@ -334,7 +337,9 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
     }
     if (triage.isSynced) return;
     final SyncQueueDao dao = SyncQueueDao(sync.openMirror());
-    final List<SyncQueueEntry> pending = dao.withStatus(SyncQueueStatus.pending);
+    final List<SyncQueueEntry> pending = dao.withStatus(
+      SyncQueueStatus.pending,
+    );
     final List<SyncQueueEntry> failed = dao.withStatus(SyncQueueStatus.failed);
     if (!mounted) return;
     await showModalBottomSheet<void>(
@@ -353,7 +358,10 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
             for (final SyncQueueEntry entry in pending)
               ListTile(
                 leading: const Icon(Icons.schedule_outlined),
-                title: Text(_docLabel(entry), style: const TextStyle(height: 1.4)),
+                title: Text(
+                  _docLabel(entry),
+                  style: const TextStyle(height: 1.4),
+                ),
                 // #53（外测 M02，二稿裁定 2026-10-16）：这里列的都是「没传上的」
                 // —— 直说补救动作，不承诺「联网自动推」。
                 subtitle: const Text(
@@ -367,7 +375,10 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
                   Icons.error_outline,
                   color: Theme.of(sheetContext).colorScheme.error,
                 ),
-                title: Text(_docLabel(entry), style: const TextStyle(height: 1.4)),
+                title: Text(
+                  _docLabel(entry),
+                  style: const TextStyle(height: 1.4),
+                ),
                 subtitle: Text(
                   // #47 丁（2026-10-16 裁定）：换主机挂起（`markHeld`）与普通推送失败
                   // 共用 `failed` 状态；挂起的原因写在 `lastError`（机读标记 =
@@ -409,7 +420,10 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
   /// 两种场景数据上无法区分（同店换电脑 / 换了经营主体）——
   /// 所以不替用户判断，**把语义讲清让他自己选**（「二次确认」挡不住跨店错误，
   /// 理解语义才能）。确认 ⇒ `requeue` 放回队列 + 立即推一次。
-  Future<void> _confirmRetry(BuildContext sheetContext, SyncQueueEntry entry) async {
+  Future<void> _confirmRetry(
+    BuildContext sheetContext,
+    SyncQueueEntry entry,
+  ) async {
     final bool? confirmed = await showDialog<bool>(
       context: sheetContext,
       builder: (BuildContext dialogContext) => AlertDialog(
@@ -445,7 +459,10 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
   /// 裁定快路径 = **删除**（放弃后估算立刻恢复准确）；「标 `discarded` 可审计、
   /// 可撤销 + 机读标记」登记为待办（与 #24 同族，动 schema 时一起做）。
   /// 删除不可逆 ⇒ 必须确认，且文案写清后果（裁定原文：核对库存后手工校准）。
-  Future<void> _confirmDiscard(BuildContext sheetContext, SyncQueueEntry entry) async {
+  Future<void> _confirmDiscard(
+    BuildContext sheetContext,
+    SyncQueueEntry entry,
+  ) async {
     final bool? confirmed = await showDialog<bool>(
       context: sheetContext,
       builder: (BuildContext dialogContext) => AlertDialog(

@@ -362,13 +362,14 @@ void main(List<String> args) {
   // ⚠️ 必须排除 `sqlite_autoindex_%`：TEXT 主键与 UNIQUE 约束会自动生成
   // 隐藏索引（11 张 TEXT 主键表 + products.code + documents.doc_no = 13 个），
   // 它们不是我们写的索引。只数**显式**的 26 个。
-  final int indexCount = db
-      .select(
-        "SELECT COUNT(*) AS n FROM sqlite_master "
-        "WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'",
-      )
-      .first['n']!
-      as int;
+  final int indexCount =
+      db
+              .select(
+                "SELECT COUNT(*) AS n FROM sqlite_master "
+                "WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'",
+              )
+              .first['n']!
+          as int;
   if (indexCount != _expectedIndexCount) {
     problems.add('索引 $indexCount 个，应为 $_expectedIndexCount 个');
   }

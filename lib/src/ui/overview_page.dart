@@ -136,10 +136,7 @@ class _OverviewPageState extends State<OverviewPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
-                          Text(
-                            reminder,
-                            style: const TextStyle(height: 1.6),
-                          ),
+                          Text(reminder, style: const TextStyle(height: 1.6)),
                           const SizedBox(height: 10),
                           if (widget.onBackupNow != null)
                             FilledButton.icon(
@@ -241,7 +238,8 @@ class _OverviewPageState extends State<OverviewPage> {
         // 概览页先回答「数据在哪、能不能用、从哪开始」，经营数字是**第二眼**的东西。
         // ⚠️ 必须带顶部间距：手机壳这里是 `Column` 竖排三卡，
         // 紧贴上一段文字会看起来「卡片边缘叠在一起」（用户 2026-10-20 报的现象）。
-        if (widget.queries != null && widget.queries!.hasAnyDocument()) ...<Widget>[
+        if (widget.queries != null &&
+            widget.queries!.hasAnyDocument()) ...<Widget>[
           const SizedBox(height: 20),
           _businessCards(theme),
         ],
@@ -283,7 +281,11 @@ class _OverviewPageState extends State<OverviewPage> {
         if (widget.mobileShell && unsynced > 0)
           Text(
             '仅已同步 · 有 $unsynced 条未同步',
-            style: const TextStyle(height: 1.6, fontSize: 12, color: _noticeColor),
+            style: const TextStyle(
+              height: 1.6,
+              fontSize: 12,
+              color: _noticeColor,
+            ),
           ),
       ],
     );
@@ -314,7 +316,11 @@ class _OverviewPageState extends State<OverviewPage> {
         if (negativeStock > 0)
           Text(
             '负库存 $negativeStock 种 —— 可能是没录期初或超卖，点「库存」看看',
-            style: const TextStyle(height: 1.7, fontSize: 15, color: Colors.red),
+            style: const TextStyle(
+              height: 1.7,
+              fontSize: 15,
+              color: Colors.red,
+            ),
           ),
         if (receivables.totalCents <= 0 && negativeStock == 0)
           const Text('目前没有要留心的事。', style: TextStyle(height: 1.7)),
@@ -364,7 +370,10 @@ class _OverviewPageState extends State<OverviewPage> {
           todayCard,
           const SizedBox(height: 10),
           careCard,
-          if (widget.onNavigate != null) ...<Widget>[const SizedBox(height: 10), entriesCard],
+          if (widget.onNavigate != null) ...<Widget>[
+            const SizedBox(height: 10),
+            entriesCard,
+          ],
         ],
       );
     }

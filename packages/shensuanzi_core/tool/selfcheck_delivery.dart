@@ -113,15 +113,19 @@ Document mkDoc({
   updatedAt: now(),
 );
 
-List<DocumentLine> oneLine(String documentId, String productId, int qty, int price) =>
-    <DocumentLine>[
-      DocumentLine.create(
-        documentId: documentId,
-        productId: productId,
-        quantity: qty,
-        unitPrice: price,
-      ),
-    ];
+List<DocumentLine> oneLine(
+  String documentId,
+  String productId,
+  int qty,
+  int price,
+) => <DocumentLine>[
+  DocumentLine.create(
+    documentId: documentId,
+    productId: productId,
+    quantity: qty,
+    unitPrice: price,
+  ),
+];
 
 bool applied(RuleOutcome o) => o.status == RuleStatus.applied;
 
@@ -182,22 +186,41 @@ void main() {
     final String p = createProduct();
     final String supplier = createParty(name: '供应商甲');
     final String customer = createParty(name: '客户乙');
-    seedStock(p, supplier: supplier, qty: 20, unitPrice: 100); // 库存 20 / 成本 2000
+    seedStock(
+      p,
+      supplier: supplier,
+      qty: 20,
+      unitPrice: 100,
+    ); // 库存 20 / 成本 2000
 
-    final RuleOutcome outcome = deliver(p, customer: customer, qty: 10, unitPrice: 100);
+    final RuleOutcome outcome = deliver(
+      p,
+      customer: customer,
+      qty: 10,
+      unitPrice: 100,
+    );
 
     check('送货 applied', applied(outcome), '${outcome.reason}');
     check('库存 20 → 10（货离店即扣）', stock.stockOf(p) == 10, '${stock.stockOf(p)}');
 
     final StockLedger row = stock.ofProduct(p).last;
     check('quantity = -10', row.quantity == -10, '${row.quantity}');
-    check('total_cost = -1000（2000 × 10 / 20）', row.totalCost == -1000,
-        '${row.totalCost}');
+    check(
+      'total_cost = -1000（2000 × 10 / 20）',
+      row.totalCost == -1000,
+      '${row.totalCost}',
+    );
 
-    check('客户往来 +1000', partyLedger.balanceOf(customer) == 1000,
-        '${partyLedger.balanceOf(customer)}');
-    check('供应商往来 -2000', partyLedger.balanceOf(supplier) == -2000,
-        '${partyLedger.balanceOf(supplier)}');
+    check(
+      '客户往来 +1000',
+      partyLedger.balanceOf(customer) == 1000,
+      '${partyLedger.balanceOf(customer)}',
+    );
+    check(
+      '供应商往来 -2000',
+      partyLedger.balanceOf(supplier) == -2000,
+      '${partyLedger.balanceOf(supplier)}',
+    );
     check(
       '主机分配了正式单号',
       !outcome.document!.docNo.contains(Document.pendingDocNoPrefix),
@@ -223,11 +246,15 @@ void main() {
     );
 
     check('送货 applied', applied(outcome), '${outcome.reason}');
-    check('主机强制 status = in_transit',
-        outcome.document!.status == DocStatus.inTransit,
-        '${outcome.document!.status}');
-    check('落库后的 status = in_transit',
-        documents.findById(outcome.document!.id)!.status == DocStatus.inTransit);
+    check(
+      '主机强制 status = in_transit',
+      outcome.document!.status == DocStatus.inTransit,
+      '${outcome.document!.status}',
+    );
+    check(
+      '落库后的 status = in_transit',
+      documents.findById(outcome.document!.id)!.status == DocStatus.inTransit,
+    );
     db.close();
   }
 
@@ -264,19 +291,21 @@ void main() {
     check('整单无残留：库存未扣', stock.stockOf(p) == 20, '${stock.stockOf(p)}');
 
     // 有欠款但没有 party_id
-    final Document noParty = mkDoc(
-      type: DocType.delivery,
-      totalAmount: 100,
-    );
+    final Document noParty = mkDoc(type: DocType.delivery, totalAmount: 100);
     final RuleOutcome noPartyOutcome = engine.dispatch(
       document: noParty,
       lines: oneLine(noParty.id, p, 1, 100),
       now: now(),
     );
-    check('有欠款但无 party_id → rejected',
-        noPartyOutcome.status == RuleStatus.rejected);
-    check('拒绝原因指向 party_id',
-        noPartyOutcome.code == RejectCode.ruleInternalError, '${noPartyOutcome.code}｜${noPartyOutcome.reason}');
+    check(
+      '有欠款但无 party_id → rejected',
+      noPartyOutcome.status == RuleStatus.rejected,
+    );
+    check(
+      '拒绝原因指向 party_id',
+      noPartyOutcome.code == RejectCode.ruleInternalError,
+      '${noPartyOutcome.code}｜${noPartyOutcome.reason}',
+    );
     check('该单同样未落库', documents.findById(noParty.id) == null);
     db.close();
   }
@@ -302,21 +331,28 @@ void main() {
     check('送货 applied', applied(outcome), '${outcome.reason}');
 
     final Document saved = documents.findById(outcome.document!.id)!;
-    check('paid_amount = 1000（不变量 B4 无例外）', saved.paidAmount == 1000,
-        '${saved.paidAmount}');
-    check('status 仍为 in_transit（钱到货未签收）',
-        saved.status == DocStatus.inTransit, '${saved.status}');
+    check(
+      'paid_amount = 1000（不变量 B4 无例外）',
+      saved.paidAmount == 1000,
+      '${saved.paidAmount}',
+    );
+    check(
+      'status 仍为 in_transit（钱到货未签收）',
+      saved.status == DocStatus.inTransit,
+      '${saved.status}',
+    );
     check('settlement 已建立', settlements.settledAmountOf(saved.id) == 1000);
 
-    final Row moneyRow = db.raw
-        .select(
-          'SELECT m.amount, d.doc_type FROM money_ledger m '
-          'JOIN documents d ON d.id = m.document_id WHERE d.ref_doc_id = ?',
-          <Object?>[saved.id],
-        )
-        .first;
-    check('资金流挂在 receipt 单下', moneyRow['doc_type'] == 'receipt',
-        '${moneyRow['doc_type']}');
+    final Row moneyRow = db.raw.select(
+      'SELECT m.amount, d.doc_type FROM money_ledger m '
+      'JOIN documents d ON d.id = m.document_id WHERE d.ref_doc_id = ?',
+      <Object?>[saved.id],
+    ).first;
+    check(
+      '资金流挂在 receipt 单下',
+      moneyRow['doc_type'] == 'receipt',
+      '${moneyRow['doc_type']}',
+    );
     check('资金流入 +1000', moneyRow['amount'] == 1000, '${moneyRow['amount']}');
     db.close();
   }
@@ -359,19 +395,31 @@ void main() {
     final String customer = createParty(name: '客户乙');
     seedStock(p, supplier: supplier);
 
-    final RuleOutcome delivered = deliver(p, customer: customer, qty: 10, unitPrice: 100);
+    final RuleOutcome delivered = deliver(
+      p,
+      customer: customer,
+      qty: 10,
+      unitPrice: 100,
+    );
     check('送货 applied', applied(delivered), '${delivered.reason}');
-    check('创建后 status = in_transit',
-        documents.findById(delivered.document!.id)!.status == DocStatus.inTransit);
+    check(
+      '创建后 status = in_transit',
+      documents.findById(delivered.document!.id)!.status == DocStatus.inTransit,
+    );
 
     final RuleOutcome marked = engine.markDelivered(
       documentId: delivered.document!.id,
       now: now(),
     );
     check('签收 applied', applied(marked), '${marked.reason}');
-    check('status → delivered',
-        documents.findById(delivered.document!.id)!.status == DocStatus.delivered);
-    check('paid_amount 仍为 0', documents.findById(delivered.document!.id)!.paidAmount == 0);
+    check(
+      'status → delivered',
+      documents.findById(delivered.document!.id)!.status == DocStatus.delivered,
+    );
+    check(
+      'paid_amount 仍为 0',
+      documents.findById(delivered.document!.id)!.paidAmount == 0,
+    );
     db.close();
   }
 
@@ -406,27 +454,42 @@ void main() {
       final int costBefore = stock.costSnapshotOf(product).totalCost;
       final int partyBefore = partyLedger.balanceOf(cus);
 
-      final RuleOutcome first = engine.markDelivered(documentId: id, now: now());
+      final RuleOutcome first = engine.markDelivered(
+        documentId: id,
+        now: now(),
+      );
       check('已付 $paid → 签收 applied', applied(first), '${first.reason}');
 
       final DocStatus expected = paid >= 1000
           ? DocStatus.settled
           : DocStatus.delivered;
-      check('已付 $paid → status = ${expected.wire}',
-          documents.findById(id)!.status == expected,
-          '${documents.findById(id)!.status}');
+      check(
+        '已付 $paid → status = ${expected.wire}',
+        documents.findById(id)!.status == expected,
+        '${documents.findById(id)!.status}',
+      );
 
       final int updatedAtAfterFirst = documents.findById(id)!.updatedAt;
-      final RuleOutcome second = engine.markDelivered(documentId: id, now: now());
-      check('已付 $paid → 重复签收 alreadyExists',
-          second.status == RuleStatus.alreadyExists, '${second.status}');
+      final RuleOutcome second = engine.markDelivered(
+        documentId: id,
+        now: now(),
+      );
+      check(
+        '已付 $paid → 重复签收 alreadyExists',
+        second.status == RuleStatus.alreadyExists,
+        '${second.status}',
+      );
       check('已付 $paid → 签收不改库存', stock.stockOf(product) == stockBefore);
-      check('已付 $paid → 签收不改库存成本',
-          stock.costSnapshotOf(product).totalCost == costBefore);
+      check(
+        '已付 $paid → 签收不改库存成本',
+        stock.costSnapshotOf(product).totalCost == costBefore,
+      );
       check('已付 $paid → 签收不改往来', partyLedger.balanceOf(cus) == partyBefore);
-      check('已付 $paid → 签收不产生新流水',
-          stock.ofProduct(product).length == stockRows &&
-              partyLedger.ofParty(cus).length == partyRows);
+      check(
+        '已付 $paid → 签收不产生新流水',
+        stock.ofProduct(product).length == stockRows &&
+            partyLedger.ofParty(cus).length == partyRows,
+      );
       check(
         '已付 $paid → 幂等命中时不写 updated_at',
         documents.findById(id)!.updatedAt == updatedAtAfterFirst,
@@ -443,10 +506,17 @@ void main() {
     final String acc2 = createAccount();
     seedStock(prod, supplier: sup2, qty: 20, unitPrice: 100);
 
-    final RuleOutcome d2 = deliver(prod, customer: cus2, qty: 10, unitPrice: 100);
+    final RuleOutcome d2 = deliver(
+      prod,
+      customer: cus2,
+      qty: 10,
+      unitPrice: 100,
+    );
     engine.markDelivered(documentId: d2.document!.id, now: now());
-    check('未收款先签收 → delivered',
-        documents.findById(d2.document!.id)!.status == DocStatus.delivered);
+    check(
+      '未收款先签收 → delivered',
+      documents.findById(d2.document!.id)!.status == DocStatus.delivered,
+    );
 
     final Document receipt = mkDoc(
       type: DocType.receipt,
@@ -462,9 +532,11 @@ void main() {
       now: now(),
     );
     check('核销 applied', applied(settle), '${settle.reason}');
-    check('签收后收满款 → settled',
-        documents.findById(d2.document!.id)!.status == DocStatus.settled,
-        '${documents.findById(d2.document!.id)!.status}');
+    check(
+      '签收后收满款 → settled',
+      documents.findById(d2.document!.id)!.status == DocStatus.settled,
+      '${documents.findById(d2.document!.id)!.status}',
+    );
     db.close();
   }
 
@@ -485,11 +557,16 @@ void main() {
       status: DocStatus.cancelled,
       updatedAt: now(),
     );
-    final RuleOutcome onCancelled = engine.markDelivered(documentId: id, now: now());
-    check('已取消的单不能签收 → rejected',
-        onCancelled.status == RuleStatus.rejected);
-    check('拒绝原因指向 cancelled',
-        onCancelled.code == RejectCode.actionNotApplicable, '${onCancelled.code}｜${onCancelled.reason}');
+    final RuleOutcome onCancelled = engine.markDelivered(
+      documentId: id,
+      now: now(),
+    );
+    check('已取消的单不能签收 → rejected', onCancelled.status == RuleStatus.rejected);
+    check(
+      '拒绝原因指向 cancelled',
+      onCancelled.code == RejectCode.actionNotApplicable,
+      '${onCancelled.code}｜${onCancelled.reason}',
+    );
     check('状态未被改动', documents.findById(id)!.status == DocStatus.cancelled);
 
     final Document purchase = seedStock(p, supplier: supplier);
@@ -497,18 +574,26 @@ void main() {
       documentId: purchase.id,
       now: now(),
     );
-    check('非 delivery 单据不能签收 → rejected',
-        onPurchase.status == RuleStatus.rejected);
-    check('拒绝原因指向「不适用」',
-        onPurchase.code == RejectCode.actionNotApplicable, '${onPurchase.code}｜${onPurchase.reason}');
+    check(
+      '非 delivery 单据不能签收 → rejected',
+      onPurchase.status == RuleStatus.rejected,
+    );
+    check(
+      '拒绝原因指向「不适用」',
+      onPurchase.code == RejectCode.actionNotApplicable,
+      '${onPurchase.code}｜${onPurchase.reason}',
+    );
 
     final RuleOutcome ghost = engine.markDelivered(
       documentId: 'no-such-document',
       now: now(),
     );
     check('单据不存在 → rejected', ghost.status == RuleStatus.rejected);
-    check('拒绝原因指向「不存在」',
-        ghost.code == RejectCode.targetMissing, '${ghost.code}｜${ghost.reason}');
+    check(
+      '拒绝原因指向「不存在」',
+      ghost.code == RejectCode.targetMissing,
+      '${ghost.code}｜${ghost.reason}',
+    );
     check('dispatch 结束后不残留事务', !db.inTransaction);
     db.close();
   }
@@ -529,16 +614,18 @@ void main() {
     }
 
     final int sum =
-        db.raw
-                .select(
-                  'SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_ledger '
-                  'WHERE product_id = ?',
-                  <Object?>[p],
-                )
-                .first['s']!
+        db.raw.select(
+              'SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_ledger '
+              'WHERE product_id = ?',
+              <Object?>[p],
+            ).first['s']!
             as int;
     check('库存 = SUM(stock_ledger.quantity)', stock.stockOf(p) == sum);
-    check('库存 = 20 − 2 − 3 − 4 = 11', stock.stockOf(p) == 11, '${stock.stockOf(p)}');
+    check(
+      '库存 = 20 − 2 − 3 − 4 = 11',
+      stock.stockOf(p) == 11,
+      '${stock.stockOf(p)}',
+    );
     check('dispatch 结束后不残留事务', !db.inTransaction);
     db.close();
   }
@@ -560,16 +647,17 @@ void main() {
       ],
     );
 
-    final Row onMain = db.raw
-        .select('''
+    final Row onMain = db.raw.select('''
           SELECT COUNT(*) AS c FROM money_ledger m
           JOIN documents d ON d.id = m.document_id
           WHERE d.doc_type NOT IN ('receipt', 'payment')
-        ''')
-        .first;
+        ''').first;
     check('money_ledger 未挂在任何主单上', onMain['c'] == 0, '${onMain['c']}');
-    check('现金账户余额 +200', money.balanceOf(account) == 200,
-        '${money.balanceOf(account)}');
+    check(
+      '现金账户余额 +200',
+      money.balanceOf(account) == 200,
+      '${money.balanceOf(account)}',
+    );
     db.close();
   }
 

@@ -77,8 +77,7 @@ class HostIdentity {
   bool get canShowQr => plaintextToken != null;
 
   /// 校验一个客户端出示的 Bearer 令牌
-  bool authorizes(String? candidate) =>
-      HostToken.matches(candidate, tokenHash);
+  bool authorizes(String? candidate) => HostToken.matches(candidate, tokenHash);
 
   Map<String, Object?> toJson() => <String, Object?>{
     'version': 1,

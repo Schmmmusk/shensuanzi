@@ -73,36 +73,51 @@ class A {
   }, 0);
 
   section('B/C/D 反例②：缺同胞导入，且两种假 import 都骗不过');
-  _expect1('没 import ⇒ 1 处（§AZ 那次的真身）', (Directory root) {
-    _write(root, 'lib/b.dart', 'class B {}\n');
-    _write(root, 'lib/a.dart', '''
+  _expect1(
+    '没 import ⇒ 1 处（§AZ 那次的真身）',
+    (Directory root) {
+      _write(root, 'lib/b.dart', 'class B {}\n');
+      _write(root, 'lib/a.dart', '''
 class A {
   B? b;
 }
 ''');
-  }, 1, contains: 'B');
+    },
+    1,
+    contains: 'B',
+  );
 
-  _expect1('注释里的 import 不算指令 ⇒ 仍 1 处', (Directory root) {
-    _write(root, 'lib/b.dart', 'class B {}\n');
-    _write(root, 'lib/a.dart', '''
+  _expect1(
+    '注释里的 import 不算指令 ⇒ 仍 1 处',
+    (Directory root) {
+      _write(root, 'lib/b.dart', 'class B {}\n');
+      _write(root, 'lib/a.dart', '''
 // import 'b.dart';
 
 class A {
   B? b;
 }
 ''');
-  }, 1, contains: 'B');
+    },
+    1,
+    contains: 'B',
+  );
 
-  _expect1('字符串里的 import 不算指令 ⇒ 仍 1 处', (Directory root) {
-    _write(root, 'lib/b.dart', 'class B {}\n');
-    _write(root, 'lib/a.dart', '''
+  _expect1(
+    '字符串里的 import 不算指令 ⇒ 仍 1 处',
+    (Directory root) {
+      _write(root, 'lib/b.dart', 'class B {}\n');
+      _write(root, 'lib/a.dart', '''
 const String decoy = "import 'b.dart';";
 
 class A {
   B? b;
 }
 ''');
-  }, 1, contains: 'B');
+    },
+    1,
+    contains: 'B',
+  );
 
   section('E 私有名跳过（否则三个页面各一份 `_RowCtl` 会连环误报）');
   _expect1('别的文件声明 `class _C`，本文件用它 ⇒ 0 处', (Directory root) {
@@ -156,13 +171,18 @@ class A {
   }, 0);
 
   section('I/J 缺桶导入（检查 ① 的回归）');
-  _expect1('用桶导出名 Zed 却没 import 桶 ⇒ 1 处', (Directory root) {
-    _write(root, 'lib/uses.dart', '''
+  _expect1(
+    '用桶导出名 Zed 却没 import 桶 ⇒ 1 处',
+    (Directory root) {
+      _write(root, 'lib/uses.dart', '''
 class Uses {
   Zed? z;
 }
 ''');
-  }, 1, contains: 'Zed');
+    },
+    1,
+    contains: 'Zed',
+  );
 
   _expect1('import 了桶 ⇒ 0 处', (Directory root) {
     _write(root, 'lib/uses.dart', '''
@@ -236,9 +256,7 @@ void _expect1(
       return;
     }
     if (contains != null &&
-        !report.problems.every(
-          (String p) => p.contains(contains),
-        )) {
+        !report.problems.every((String p) => p.contains(contains))) {
       check(name, false, '问题文案里没提到 `$contains`：${report.problems.join(' | ')}');
       return;
     }

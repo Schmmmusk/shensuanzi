@@ -35,7 +35,8 @@ class DataDirectoryRejected implements Exception {
   String? get howTo => advice.advice;
 
   @override
-  String toString() => 'DataDirectoryRejected(${advice.reason}'
+  String toString() =>
+      'DataDirectoryRejected(${advice.reason}'
       '${advice.advice == null ? '' : ' → ${advice.advice}'})';
 }
 
@@ -76,11 +77,9 @@ class DataLocation {
 
 /// 应用启动器：路径解析 + 配置读写 + 打开数据库
 class AppBootstrap {
-  AppBootstrap({
-    required this.environment,
-    AppConfigStore? configStore,
-  }) : policy = DataDirectoryPolicy(environment),
-       configStore = configStore ?? AppConfigStore.forEnvironment(environment);
+  AppBootstrap({required this.environment, AppConfigStore? configStore})
+    : policy = DataDirectoryPolicy(environment),
+      configStore = configStore ?? AppConfigStore.forEnvironment(environment);
 
   static const String databaseFileName = 'shensuanzi.db';
 
@@ -273,7 +272,8 @@ class AppBootstrap {
         DirectoryAdvice(
           DirectoryVerdict.reject,
           '这个文件夹里已经有别的东西',
-          advice: '换一个空文件夹，或新建一个；'
+          advice:
+              '换一个空文件夹，或新建一个；'
               '确实要放在这里的话，请再确认一次',
         ),
       );

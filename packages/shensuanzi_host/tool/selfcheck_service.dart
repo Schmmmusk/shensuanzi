@@ -98,7 +98,10 @@ Future<void> main() async {
   check('一块网卡都没有 ⇒ null', LocalIp.choose(<NetCandidate>[]) == null);
 
   section('LocalIp.detect 的接缝（扫网卡可注入 ⇒ 兜底分支可断言）');
-  check('扫到空 ⇒ null', await LocalIp.detect(scan: () async => <NetCandidate>[]) == null);
+  check(
+    '扫到空 ⇒ null',
+    await LocalIp.detect(scan: () async => <NetCandidate>[]) == null,
+  );
   check(
     '扫到一堆 loopback ⇒ 全被过滤 ⇒ null',
     await LocalIp.detect(
@@ -130,7 +133,9 @@ Future<void> main() async {
   );
   check(
     '扫网卡本身抛异常 ⇒ 返回 null，**不上抛**（否则整个服务起不来）',
-    await LocalIp.detect(scan: () async => throw const SocketException('no nic')) ==
+    await LocalIp.detect(
+          scan: () async => throw const SocketException('no nic'),
+        ) ==
         null,
   );
 
@@ -156,19 +161,24 @@ Future<void> main() async {
   final HostServiceSnapshot afterStop = await stopping;
   check('**停止没被丢弃**：最终 stopped', afterStop.state == HostServiceState.stopped);
   check('端口真的关了', afterStop.port == null && afterStop.address == null);
-  check('排队在前的 start 自己也算跑完（running）',
-      (await starting).state == HostServiceState.running);
-  check('再次 start 能起来（状态机没卡死）',
-      (await cB.start()).state == HostServiceState.running);
+  check(
+    '排队在前的 start 自己也算跑完（running）',
+    (await starting).state == HostServiceState.running,
+  );
+  check(
+    '再次 start 能起来（状态机没卡死）',
+    (await cB.start()).state == HostServiceState.running,
+  );
   final Future<HostServiceSnapshot> b1 = cB.stop();
   final Future<HostServiceSnapshot> b2 = cB.stop();
   check('连点两下 stop ⇒ identical', identical(b1, b2));
   await b1;
 
   await cB.start();
-  final HostServiceSnapshot resetFlight = await cB
-      .resetToken()
-      .timeout(const Duration(seconds: 10), onTimeout: () => cB.snapshot);
+  final HostServiceSnapshot resetFlight = await cB.resetToken().timeout(
+    const Duration(seconds: 10),
+    onTimeout: () => cB.snapshot,
+  );
   check('resetToken 不自等待、跑得完', resetFlight.state == HostServiceState.running);
   check('resetToken 后仍拿到可扫的码', resetFlight.qrAvailable);
   await cB.stop();
@@ -202,12 +212,13 @@ Future<void> main() async {
     started.port! >= testPorts.start && started.port! <= testPorts.end,
     '${started.port}',
   );
-  check('地址行 = 主机地址：$fakeIp:${started.port}（遗漏 4 的手输兜底）',
-      started.addressLine == '主机地址：$fakeIp:${started.port}');
+  check(
+    '地址行 = 主机地址：$fakeIp:${started.port}（遗漏 4 的手输兜底）',
+    started.addressLine == '主机地址：$fakeIp:${started.port}',
+  );
   check('qrAvailable = true', started.qrAvailable);
   check('needsReset = false', !started.needsReset);
-  check("trafficLabel = '还没有手机连接过'",
-      started.trafficLabel(now()) == '还没有手机连接过');
+  check("trafficLabel = '还没有手机连接过'", started.trafficLabel(now()) == '还没有手机连接过');
   final PairingPayload payload = controller.pairingPayload!;
   check('载荷可解析回自身', PairingPayload.parse(payload.uri).token == payload.token);
   check('载荷里是真实 LAN 地址（不是 0.0.0.0）', payload.uri.contains('ip=$fakeIp'));
@@ -219,17 +230,29 @@ Future<void> main() async {
   final int port = started.port!;
   check('/api/health 免鉴权 ⇒ 200', await get(port, '/api/health') == 200);
   check('pull 不带令牌 ⇒ 401', await get(port, '/api/sync/pull') == 401);
-  check('pull 带错令牌 ⇒ 401', await get(port, '/api/sync/pull', token: 'nope') == 401);
+  check(
+    'pull 带错令牌 ⇒ 401',
+    await get(port, '/api/sync/pull', token: 'nope') == 401,
+  );
   check('401 不计入活动', controller.snapshot.trafficCount == 0);
-  check('pull 带对令牌 ⇒ 200', await get(port, '/api/sync/pull', token: payload.token) == 200);
+  check(
+    'pull 带对令牌 ⇒ 200',
+    await get(port, '/api/sync/pull', token: payload.token) == 200,
+  );
   check('鉴权成功后 trafficCount = 1', controller.snapshot.trafficCount == 1);
-  check("trafficLabel = '最近连接：刚刚'",
-      controller.snapshot.trafficLabel(now()) == '最近连接：刚刚');
+  check(
+    "trafficLabel = '最近连接：刚刚'",
+    controller.snapshot.trafficLabel(now()) == '最近连接：刚刚',
+  );
   final int at = controller.snapshot.lastTrafficAt!;
-  check("5 分钟后 = '最近连接：5 分钟前'",
-      controller.snapshot.trafficLabel(at + 5 * 60000) == '最近连接：5 分钟前');
-  check("3 小时后 = '最近连接：3 小时前'",
-      controller.snapshot.trafficLabel(at + 3 * 3600000) == '最近连接：3 小时前');
+  check(
+    "5 分钟后 = '最近连接：5 分钟前'",
+    controller.snapshot.trafficLabel(at + 5 * 60000) == '最近连接：5 分钟前',
+  );
+  check(
+    "3 小时后 = '最近连接：3 小时前'",
+    controller.snapshot.trafficLabel(at + 3 * 3600000) == '最近连接：3 小时前',
+  );
 
   section('探不到局域网地址：服务照起，但不画码、给「怎么办」');
   final HostServiceController noIp = build(
@@ -254,9 +277,14 @@ Future<void> main() async {
   final PairingPayload fresh = controller.pairingPayload!;
   check('令牌换了', fresh.token != oldToken);
   check('host_id 换了（§9.3：所有设备重新配对）', fresh.hostId != oldHostId);
-  check('新令牌可用', await get(reset.port!, '/api/sync/pull', token: fresh.token) == 200);
-  check('**旧令牌已作废 ⇒ 401**',
-      await get(reset.port!, '/api/sync/pull', token: oldToken) == 401);
+  check(
+    '新令牌可用',
+    await get(reset.port!, '/api/sync/pull', token: fresh.token) == 200,
+  );
+  check(
+    '**旧令牌已作废 ⇒ 401**',
+    await get(reset.port!, '/api/sync/pull', token: oldToken) == 401,
+  );
 
   section('模拟重启：新控制器 + 同一个 host.json（只有哈希）');
   await controller.stop();
@@ -266,10 +294,11 @@ Future<void> main() async {
   check('**qrAvailable = false**（明文不可逆，画不出码）', !sRestart.qrAvailable);
   check('**needsReset = true**（UI 据此给「重新生成」）', sRestart.needsReset);
   check('pairingPayload = null', restarted.pairingPayload == null);
-  check('但**旧令牌照样能鉴权**（服务本身没坏）',
-      await get(sRestart.port!, '/api/sync/pull', token: fresh.token) == 200);
-  check('重启后可重置出可扫的码',
-      (await restarted.resetToken()).qrAvailable);
+  check(
+    '但**旧令牌照样能鉴权**（服务本身没坏）',
+    await get(sRestart.port!, '/api/sync/pull', token: fresh.token) == 200,
+  );
+  check('重启后可重置出可扫的码', (await restarted.resetToken()).qrAvailable);
 
   section('stop：清空运行期状态');
   final HostServiceSnapshot stopped = await restarted.stop();
@@ -280,7 +309,10 @@ Future<void> main() async {
   check('stop 幂等', (await restarted.stop()).state == HostServiceState.stopped);
 
   section('端口全被占 ⇒ failed + 怎么办');
-  final ServerSocket blocker = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
+  final ServerSocket blocker = await ServerSocket.bind(
+    InternetAddress.anyIPv4,
+    0,
+  );
   final HostServiceController busy = build(
     db,
     HostIdentityStore.inMemory(),
@@ -289,7 +321,10 @@ Future<void> main() async {
   final HostServiceSnapshot sBusy = await busy.start();
   check('state = failed', sBusy.state == HostServiceState.failed);
   check("headline = '启动失败'", sBusy.headline == '启动失败');
-  check('failureHint 说清端口', (sBusy.failureHint ?? '').contains('${blocker.port}'));
+  check(
+    'failureHint 说清端口',
+    (sBusy.failureHint ?? '').contains('${blocker.port}'),
+  );
   check('failureHint 给了「怎么办」', (sBusy.failureHint ?? '').contains('防火墙'));
   check('失败时不画码', !sBusy.qrAvailable);
   check('detail 透出 failureHint', sBusy.detail == sBusy.failureHint);
@@ -297,10 +332,14 @@ Future<void> main() async {
   await blocker.close();
 
   section('host.json 位置');
-  check('落在数据目录下（主机设施放文件，不动 schema）',
-      hostIdentityFile('D:/data').path.endsWith(hostIdentityFileName));
-  check('参数是路径字符串（与 DataLocation.directory 同型）',
-      hostIdentityFile('D:/data').path.contains('data'));
+  check(
+    '落在数据目录下（主机设施放文件，不动 schema）',
+    hostIdentityFile('D:/data').path.endsWith(hostIdentityFileName),
+  );
+  check(
+    '参数是路径字符串（与 DataLocation.directory 同型）',
+    hostIdentityFile('D:/data').path.contains('data'),
+  );
 
   stdout.writeln('');
   if (_failures.isEmpty) {

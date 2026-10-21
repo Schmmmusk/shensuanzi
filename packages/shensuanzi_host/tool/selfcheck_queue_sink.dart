@@ -120,7 +120,10 @@ void main() {
     saleEntry.toOperation(),
     now: 1700000000020,
   );
-  check('同一 op 重推 → already_exists（无害）', again.status == SyncStatus.alreadyExists);
+  check(
+    '同一 op 重推 → already_exists（无害）',
+    again.status == SyncStatus.alreadyExists,
+  );
 
   // ---------- ② 采购超付：找回不落库 ----------
   section('采购：超付封顶（§AY·四）');
@@ -147,9 +150,9 @@ void main() {
     now: 1700000000030,
   );
   check('采购 op applied', purchaseResp.status == SyncStatus.applied);
-  final Document? storedPurchase = DocumentDao(db).findById(
-    purchaseEntry.entityId,
-  );
+  final Document? storedPurchase = DocumentDao(
+    db,
+  ).findById(purchaseEntry.entityId);
   check(
     'paid_amount 封顶 3500（多付的 15 元是找回，不落库）',
     storedPurchase?.paidAmount == 3500,
@@ -182,9 +185,9 @@ void main() {
     now: 1700000000040,
   );
   check('送货 op applied', deliveryResp.status == SyncStatus.applied);
-  final Document? storedDelivery = DocumentDao(db).findById(
-    deliveryEntry.entityId,
-  );
+  final Document? storedDelivery = DocumentDao(
+    db,
+  ).findById(deliveryEntry.entityId);
   check(
     'in_transit + 正式单号 SH*',
     storedDelivery != null &&
@@ -229,31 +232,43 @@ void main() {
       ),
     );
     check('建档入队（含编码）', created.isQueued && created.product != null);
-    check('入队文案给了编码', (created.queuedNotice ?? '').contains(created.product!.code));
+    check(
+      '入队文案给了编码',
+      (created.queuedNotice ?? '').contains(created.product!.code),
+    );
 
     final Product mirrorRow = ProductDao(mirror).findById(created.product!.id)!;
-    check('**乐观写镜像**：列表立刻能查到',
-        mirrorRow.name == '矿泉水' && mirrorRow.code == created.product!.code);
+    check(
+      '**乐观写镜像**：列表立刻能查到',
+      mirrorRow.name == '矿泉水' && mirrorRow.code == created.product!.code,
+    );
 
     final List<SyncQueueEntry> entries = SyncQueueDao(mirror).all();
     check('镜像队列恰好 1 条', entries.length == 1);
-    check('op = createMasterData',
-        entries.single.toOperation().operation == SyncOpType.createMasterData);
+    check(
+      'op = createMasterData',
+      entries.single.toOperation().operation == SyncOpType.createMasterData,
+    );
     check(
       'payload **带 code**（建档时它是客户端的建议，主机可改派）',
       entries.single.toOperation().payload.containsKey('code'),
     );
     check(
       'payload **不含主机专属列**（created_at / updated_at / sync_version）',
-      <String>['created_at', 'updated_at', 'sync_version']
-          .every((String k) => !entries.single.toOperation().payload.containsKey(k)),
+      <String>['created_at', 'updated_at', 'sync_version'].every(
+        (String k) => !entries.single.toOperation().payload.containsKey(k),
+      ),
     );
 
-    final SyncResponse hostResp =
-        hostServer.handle(entries.single.toOperation(), now: 1700000001010);
-    check('主机 applied（编码未冲突 ⇒ 原样采用）',
-        hostResp.status == SyncStatus.applied && hostResp.reason == null,
-        '${hostResp.reason}');
+    final SyncResponse hostResp = hostServer.handle(
+      entries.single.toOperation(),
+      now: 1700000001010,
+    );
+    check(
+      '主机 applied（编码未冲突 ⇒ 原样采用）',
+      hostResp.status == SyncStatus.applied && hostResp.reason == null,
+      '${hostResp.reason}',
+    );
     final Product hostRow = ProductDao(host).findById(mirrorRow.id)!;
     check('主机编码 == 镜像编码', hostRow.code == mirrorRow.code);
     check('主机写了 sync_version = 0', hostRow.syncVersion == 0);
@@ -270,49 +285,73 @@ void main() {
       ),
     );
     check('编辑入队', edited.isQueued && edited.product!.name == '矿泉水（大瓶）');
-    check('镜像行已更新（乐观）',
-        ProductDao(mirror).findById(mirrorRow.id)!.name == '矿泉水（大瓶）');
+    check(
+      '镜像行已更新（乐观）',
+      ProductDao(mirror).findById(mirrorRow.id)!.name == '矿泉水（大瓶）',
+    );
 
     final SyncQueueEntry editEntry = SyncQueueDao(mirror).all().last;
     final SyncOperation editOp = editEntry.toOperation();
-    check('op = updateMasterData', editOp.operation == SyncOpType.updateMasterData);
-    check('base_version = 镜像行的旧版本（0）', editOp.baseVersion == 0,
-        '${editOp.baseVersion}');
+    check(
+      'op = updateMasterData',
+      editOp.operation == SyncOpType.updateMasterData,
+    );
+    check(
+      'base_version = 镜像行的旧版本（0）',
+      editOp.baseVersion == 0,
+      '${editOp.baseVersion}',
+    );
     check(
       'payload **不带 code**（系统生成字段客户端不发 —— §CS·五）',
       !editOp.payload.containsKey('code'),
     );
 
     final SyncResponse editResp = hostServer.handle(editOp, now: 1700000001020);
-    check('主机 applied 且版本 +1',
-        editResp.status == SyncStatus.applied &&
-            ProductDao(host).findById(mirrorRow.id)!.syncVersion == 1,
-        '${editResp.reason}');
-    check('主机侧编码一个字没动',
-        ProductDao(host).findById(mirrorRow.id)!.code == mirrorRow.code);
+    check(
+      '主机 applied 且版本 +1',
+      editResp.status == SyncStatus.applied &&
+          ProductDao(host).findById(mirrorRow.id)!.syncVersion == 1,
+      '${editResp.reason}',
+    );
+    check(
+      '主机侧编码一个字没动',
+      ProductDao(host).findById(mirrorRow.id)!.code == mirrorRow.code,
+    );
 
     // 停用：同样走 updateMasterData（带 is_active）
-    final MasterDataSubmitResult off =
-        masterSink.setProductActive(mirrorRow.id, false);
+    final MasterDataSubmitResult off = masterSink.setProductActive(
+      mirrorRow.id,
+      false,
+    );
     check('停用入队', off.isQueued && off.product!.isActive == false);
     final SyncQueueEntry offEntry = SyncQueueDao(mirror).all().last;
-    check('停用也走 updateMasterData', 
-        offEntry.toOperation().operation == SyncOpType.updateMasterData);
-    final SyncResponse offResp =
-        hostServer.handle(offEntry.toOperation(), now: 1700000001030);
-    check('主机 applied 且 is_active = 0',
-        offResp.status == SyncStatus.applied &&
-            ProductDao(host).findById(mirrorRow.id)!.isActive == false,
-        '${offResp.reason}');
+    check(
+      '停用也走 updateMasterData',
+      offEntry.toOperation().operation == SyncOpType.updateMasterData,
+    );
+    final SyncResponse offResp = hostServer.handle(
+      offEntry.toOperation(),
+      now: 1700000001030,
+    );
+    check(
+      '主机 applied 且 is_active = 0',
+      offResp.status == SyncStatus.applied &&
+          ProductDao(host).findById(mirrorRow.id)!.isActive == false,
+      '${offResp.reason}',
+    );
 
     // 校验失败：镜像不留行、队列不增项
     final int queueBefore = SyncQueueDao(mirror).all().length;
     final int mirrorCountBefore =
-        mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n']! as int;
-    final MasterDataSubmitResult bad =
-        masterSink.createProduct(ProductDraft(name: '', unit: '瓶'));
-    check('空名字 ⇒ failure（字段级原因在）',
-        bad.isFailure && bad.error!.errors.containsKey(ProductField.name));
+        mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n']!
+            as int;
+    final MasterDataSubmitResult bad = masterSink.createProduct(
+      ProductDraft(name: '', unit: '瓶'),
+    );
+    check(
+      '空名字 ⇒ failure（字段级原因在）',
+      bad.isFailure && bad.error!.errors.containsKey(ProductField.name),
+    );
     check(
       '失败时**不入队、不乐观写**',
       SyncQueueDao(mirror).all().length == queueBefore &&
@@ -350,28 +389,40 @@ void main() {
       openingQuantity: 36,
     );
     check('#31 建档入队（带期初）', created.isQueued && created.product != null);
-    final SyncOperation op =
-        SyncQueueDao(mirror).all().single.toOperation();
-    check('#31 payload 带 opening_quantity（**一条条目**，不是两条）',
-        op.payload['opening_quantity'] == 36);
+    final SyncOperation op = SyncQueueDao(mirror).all().single.toOperation();
+    check(
+      '#31 payload 带 opening_quantity（**一条条目**，不是两条）',
+      op.payload['opening_quantity'] == 36,
+    );
 
     final SyncResponse resp = hostServer.handle(op, now: 1700000002010);
-    check('#31 主机 applied', resp.status == SyncStatus.applied,
-        '${resp.reason}');
-    check('#31 主机商品已建档',
-        ProductDao(host).findById(created.product!.id) != null);
+    check(
+      '#31 主机 applied',
+      resp.status == SyncStatus.applied,
+      '${resp.reason}',
+    );
+    check(
+      '#31 主机商品已建档',
+      ProductDao(host).findById(created.product!.id) != null,
+    );
     check(
       '#31 期初走 stocktake 单（RULE-009：总额 0）',
-      (host.raw.select(
-            "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
-          ).first['c']! as int) ==
+      (host.raw
+                  .select(
+                    "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
+                  )
+                  .first['c']!
+              as int) ==
           1,
     );
     check(
       '#31 库存流水 = 期初量（账面 0 ⇒ diff = +36）',
-      (host.raw.select(
-            'SELECT COALESCE(SUM(quantity),0) AS s FROM stock_ledger',
-          ).first['s']! as int) ==
+      (host.raw
+                  .select(
+                    'SELECT COALESCE(SUM(quantity),0) AS s FROM stock_ledger',
+                  )
+                  .first['s']!
+              as int) ==
           36,
     );
 
@@ -379,24 +430,28 @@ void main() {
     final MasterDataSubmitResult plain = masterSink.createProduct(
       ProductDraft(name: '没期初的商品', unit: '瓶', sellPrice: '1.00'),
     );
-    check('#31 不填期初 ⇒ payload 不带该键',
-        plain.isQueued &&
-            !SyncQueueDao(mirror)
-                .all()
-                .last
-                .toOperation()
-                .payload
-                .containsKey('opening_quantity'));
+    check(
+      '#31 不填期初 ⇒ payload 不带该键',
+      plain.isQueued &&
+          !SyncQueueDao(
+            mirror,
+          ).all().last.toOperation().payload.containsKey('opening_quantity'),
+    );
     final SyncResponse plainResp = hostServer.handle(
       SyncQueueDao(mirror).all().last.toOperation(),
       now: 1700000002020,
     );
-    check('#31 纯建档 applied 且不产生第二张 stocktake',
-        plainResp.status == SyncStatus.applied &&
-            (host.raw.select(
-                  "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
-                ).first['c']! as int) ==
-                1);
+    check(
+      '#31 纯建档 applied 且不产生第二张 stocktake',
+      plainResp.status == SyncStatus.applied &&
+          (host.raw
+                      .select(
+                        "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'stocktake'",
+                      )
+                      .first['c']!
+                  as int) ==
+              1,
+    );
 
     mirror.close();
     host.close();
@@ -406,7 +461,9 @@ void main() {
   if (_failures.isEmpty) {
     stdout.writeln('全部通过：$_passed 项');
   } else {
-    stdout.writeln('失败 ${_failures.length} 项 / 共 ${_passed + _failures.length} 项：');
+    stdout.writeln(
+      '失败 ${_failures.length} 项 / 共 ${_passed + _failures.length} 项：',
+    );
     for (final String name in _failures) {
       stdout.writeln('  - $name');
     }

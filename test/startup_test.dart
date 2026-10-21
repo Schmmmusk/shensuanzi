@@ -90,10 +90,12 @@ void main() {
   testWidgets('场景 1：没有配置过 → 弹出对话框，且不乱调选择器', (WidgetTester tester) async {
     var picked = 0;
     await tester.pumpWidget(
-      app(pickDirectory: () async {
-        picked++;
-        return null;
-      }),
+      app(
+        pickDirectory: () async {
+          picked++;
+          return null;
+        },
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -201,10 +203,12 @@ void main() {
 
     var picked = 0;
     await tester.pumpWidget(
-      app(pickDirectory: () async {
-        picked++;
-        return null;
-      }),
+      app(
+        pickDirectory: () async {
+          picked++;
+          return null;
+        },
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -235,11 +239,7 @@ void main() {
       findsWidgets,
       reason: '要说清「不见了」而不是「打不开」',
     );
-    expect(
-      find.textContaining('神算子备份'),
-      findsWidgets,
-      reason: '要给出从备份恢复的办法',
-    );
+    expect(find.textContaining('神算子备份'), findsWidgets, reason: '要给出从备份恢复的办法');
     expect(find.text('新建一本空账'), findsOneWidget, reason: '给一条明确的出路，但由用户点');
     expect(
       dbFile.existsSync(),
@@ -295,9 +295,9 @@ void main() {
     Directory(dataDir).createSync(recursive: true);
     DataMarker.write(dataDir, schemaVersion: 1, now: 1700000000000);
     // 把数据库文件写成一个非法 SQLite 文件（非空、但不是有效库）
-    File(p.join(dataDir, AppBootstrap.databaseFileName)).writeAsStringSync(
-      '这不是一个有效的 SQLite 数据库',
-    );
+    File(
+      p.join(dataDir, AppBootstrap.databaseFileName),
+    ).writeAsStringSync('这不是一个有效的 SQLite 数据库');
 
     await tester.pumpWidget(app(pickDirectory: () async => dataDir));
     await tester.pumpAndSettle();
@@ -323,17 +323,19 @@ void main() {
     final String dataDir = p.join(box.path, 'data');
     Directory(dataDir).createSync(recursive: true);
     DataMarker.write(dataDir, schemaVersion: 1, now: 1700000000000);
-    File(p.join(dataDir, AppBootstrap.databaseFileName)).writeAsStringSync(
-      '这不是一个有效的 SQLite 数据库',
-    );
+    File(
+      p.join(dataDir, AppBootstrap.databaseFileName),
+    ).writeAsStringSync('这不是一个有效的 SQLite 数据库');
     store.save(AppConfig(dataDirectory: dataDir));
 
     var picked = 0;
     await tester.pumpWidget(
-      app(pickDirectory: () async {
-        picked++;
-        return null;
-      }),
+      app(
+        pickDirectory: () async {
+          picked++;
+          return null;
+        },
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -369,7 +371,11 @@ void main() {
     // 真机最可能的坏法：写到一半断电 ⇒ JSON 截断，但 `data_directory` 那段还在
     final String dataDir = p.join(box.path, 'data');
     Directory(dataDir).createSync(recursive: true);
-    DataMarker.write(dataDir, schemaVersion: Schema.version, now: 1700000000000);
+    DataMarker.write(
+      dataDir,
+      schemaVersion: Schema.version,
+      now: 1700000000000,
+    );
     Db.open(p.join(dataDir, AppBootstrap.databaseFileName)).close(); // 真库
 
     // 用 jsonEncode 生成**合法**的路径字面量，再手工截断（不手写转义）
@@ -379,10 +385,12 @@ void main() {
 
     var picked = 0;
     await tester.pumpWidget(
-      app(pickDirectory: () async {
-        picked++;
-        return null;
-      }),
+      app(
+        pickDirectory: () async {
+          picked++;
+          return null;
+        },
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -498,11 +506,7 @@ void main() {
       isNull,
       reason: '§AE-3：自动备份失败必须完全静默，不能抛到界面上',
     );
-    expect(
-      backupCard,
-      findsOneWidget,
-      reason: '「备份一直没成功」必须在用户不会主动打开设置页的地方说出来',
-    );
+    expect(backupCard, findsOneWidget, reason: '「备份一直没成功」必须在用户不会主动打开设置页的地方说出来');
     // ⚠️ 文案必须是**失败**那条：这一轮确实试过、确实没成。
     // 「还没有备份过」是另一种处境（从没试过），两条不能混
     expect(

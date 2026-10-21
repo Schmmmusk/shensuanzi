@@ -185,16 +185,17 @@ class _DataDirectoryDialogState extends State<_DataDirectoryDialog> {
                 const SizedBox(height: 16),
               ],
               Text(
-                _model.needsForeignConfirm
-                    ? '这个文件夹里已经有别的东西：'
-                    : '建议放在非系统盘：',
+                _model.needsForeignConfirm ? '这个文件夹里已经有别的东西：' : '建议放在非系统盘：',
                 style: const TextStyle(height: 1.6),
               ),
               const SizedBox(height: 8),
               // 路径可能很长（`C:\Users\xxx\...`），给用户能选中复制的机会
               SelectableText(
                 _model.path,
-                style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  height: 1.6,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               if (_model.capacityHint != null) ...<Widget>[
                 const SizedBox(height: 4),
@@ -223,14 +224,9 @@ class _DataDirectoryDialogState extends State<_DataDirectoryDialog> {
         ),
       ),
       actions: <Widget>[
+        TextButton(onPressed: _busy ? null : _onPick, child: const Text('更改')),
         TextButton(
-          onPressed: _busy ? null : _onPick,
-          child: const Text('更改'),
-        ),
-        TextButton(
-          onPressed: _busy
-              ? null
-              : () => Navigator.of(context).pop(null),
+          onPressed: _busy ? null : () => Navigator.of(context).pop(null),
           child: const Text('退出'),
         ),
         FilledButton(

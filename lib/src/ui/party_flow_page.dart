@@ -69,7 +69,10 @@ class PartyFlowPage extends StatelessWidget {
                 ? Center(
                     child: Text(
                       '还没有往来流水。',
-                      style: TextStyle(height: 1.8, color: Theme.of(context).hintColor),
+                      style: TextStyle(
+                        height: 1.8,
+                        color: Theme.of(context).hintColor,
+                      ),
                     ),
                   )
                 : ListView.builder(
@@ -114,7 +117,7 @@ Widget _footerNote(BuildContext context, bool narrow) {
     child: Text(
       narrow
           ? '想查看单据详情？到电脑上打开「单据」页就能看到 —— '
-              '手机开单会自动同步过去。'
+                '手机开单会自动同步过去。'
           : '想查看单据详情？在「单据」页找到对应单号。',
       textAlign: TextAlign.center,
       style: TextStyle(height: 1.6, color: theme.hintColor),
@@ -267,7 +270,9 @@ class _WideFlowTile extends StatelessWidget {
                 height: 1.6,
                 fontSize: 17,
                 fontWeight: FontWeight.w800,
-                color: receivable ? theme.colorScheme.onSurface : theme.hintColor,
+                color: receivable
+                    ? theme.colorScheme.onSurface
+                    : theme.hintColor,
                 fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
               ),
             ),

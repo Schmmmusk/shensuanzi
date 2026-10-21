@@ -72,12 +72,16 @@ void main() {
       final StocktakeValidation v = const StocktakeDraft(
         lines: <StocktakeLineDraft>[StocktakeLineDraft(), StocktakeLineDraft()],
       ).validate();
-      return !v.isValid && v.topError!.contains('至少要填一行') && v.lineErrors.isEmpty;
+      return !v.isValid &&
+          v.topError!.contains('至少要填一行') &&
+          v.lineErrors.isEmpty;
     }());
 
     check('选商品没填数量 → 行级「请填数量」', () {
       final StocktakeValidation v = const StocktakeDraft(
-        lines: <StocktakeLineDraft>[StocktakeLineDraft(productId: 'p1', productName: '可乐')],
+        lines: <StocktakeLineDraft>[
+          StocktakeLineDraft(productId: 'p1', productName: '可乐'),
+        ],
       ).validate();
       return v.lineErrors[0]!.contains('请填数量');
     }());
@@ -104,27 +108,43 @@ void main() {
     check('同商品两行 → 第二行报「已经在上面」（AD-3）', () {
       final StocktakeValidation v = const StocktakeDraft(
         lines: <StocktakeLineDraft>[
-          StocktakeLineDraft(productId: 'p1', productName: '可乐', quantity: '10'),
-          StocktakeLineDraft(productId: 'p1', productName: '可乐', quantity: '20'),
+          StocktakeLineDraft(
+            productId: 'p1',
+            productName: '可乐',
+            quantity: '10',
+          ),
+          StocktakeLineDraft(
+            productId: 'p1',
+            productName: '可乐',
+            quantity: '20',
+          ),
         ],
       ).validate();
       return !v.lineErrors.containsKey(0) && v.lineErrors[1]!.contains('已经在上面');
     }());
 
     check('空行 + 一实行 → 通过；filledCount 只数实行的', () {
-      final StocktakeDraft d = StocktakeDraft(lines: <StocktakeLineDraft>[
-        StocktakeLineDraft(),
-        const StocktakeLineDraft(productId: 'p1', productName: '可乐', quantity: '10'),
-      ]);
+      final StocktakeDraft d = StocktakeDraft(
+        lines: <StocktakeLineDraft>[
+          StocktakeLineDraft(),
+          const StocktakeLineDraft(
+            productId: 'p1',
+            productName: '可乐',
+            quantity: '10',
+          ),
+        ],
+      );
       return d.validate().isValid && d.filledCount == 1;
     }());
 
     check('toActualQuantities：只含填了的行', () {
-      final StocktakeDraft d = StocktakeDraft(lines: <StocktakeLineDraft>[
-        StocktakeLineDraft(),
-        const StocktakeLineDraft(productId: 'p1', quantity: '10'),
-        const StocktakeLineDraft(productId: 'p2', quantity: '5'),
-      ]);
+      final StocktakeDraft d = StocktakeDraft(
+        lines: <StocktakeLineDraft>[
+          StocktakeLineDraft(),
+          const StocktakeLineDraft(productId: 'p1', quantity: '10'),
+          const StocktakeLineDraft(productId: 'p2', quantity: '5'),
+        ],
+      );
       final Map<String, int> actual = d.toActualQuantities();
       return actual.length == 2 && actual['p1'] == 10 && actual['p2'] == 5;
     }());
@@ -174,8 +194,10 @@ void main() {
 
     check('盘点单形状：stocktake / total_amount=0 / 不碰钱账往来账', () {
       final Map<String, Object?> doc = db.raw
-          .select('SELECT doc_type, total_amount FROM documents '
-              "WHERE doc_type = 'stocktake' LIMIT 1")
+          .select(
+            'SELECT doc_type, total_amount FROM documents '
+            "WHERE doc_type = 'stocktake' LIMIT 1",
+          )
           .first;
       return doc['doc_type'] == 'stocktake' &&
           doc['total_amount'] == 0 &&

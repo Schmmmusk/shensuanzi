@@ -43,20 +43,19 @@ void main() {
     PendingMarks? pendingMarks,
     SettlementService? settlements,
     ExportSink? exports,
-  }) =>
-      MaterialApp(
-        home: Scaffold(
-          body: AccountsPage(
-            service: service,
-            // 缺省桌面（账户可建）⇒ 既有用例**零变化**；mobile() 组显式传入
-            masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
-            pendingMarks: pendingMarks,
-            // #27 批 1：流水页的导出与「跳单据详情」所需服务
-            settlements: settlements,
-            exports: exports,
-          ),
-        ),
-      );
+  }) => MaterialApp(
+    home: Scaffold(
+      body: AccountsPage(
+        service: service,
+        // 缺省桌面（账户可建）⇒ 既有用例**零变化**；mobile() 组显式传入
+        masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
+        pendingMarks: pendingMarks,
+        // #27 批 1：流水页的导出与「跳单据详情」所需服务
+        settlements: settlements,
+        exports: exports,
+      ),
+    ),
+  );
 
   /// 让某个账户成为「主机还没确认」的乐观行（队列里一条 pending 条目）
   PendingMarks pendingFor(String accountId) {
@@ -108,11 +107,7 @@ void main() {
 
   testWidgets('编辑：期初余额只读且不可改（Z-3 方案 A）', (WidgetTester tester) async {
     final Account account = service.create(
-      AccountDraft(
-        name: '现金',
-        type: AccountType.cash,
-        initialBalance: '300',
-      ),
+      AccountDraft(name: '现金', type: AccountType.cash, initialBalance: '300'),
       now: 1700000000000,
     );
 
@@ -213,9 +208,7 @@ void main() {
 
   // ===== #27 批 1（2026-10-17）：账户流水页 + 行同构 =====
 
-  testWidgets('#27：点账户行打开流水页（人可读行 + 导出按钮 + 行跳详情）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#27：点账户行打开流水页（人可读行 + 导出按钮 + 行跳详情）', (WidgetTester tester) async {
     final Account account = service.create(
       AccountDraft(name: '现金', type: AccountType.cash, initialBalance: '300'),
       now: 1700000000000,
@@ -264,9 +257,7 @@ void main() {
     expect(find.byType(DocumentDetailPage), findsOneWidget);
   });
 
-  testWidgets('#27：菜单同构不丢 —— 编辑 / 停用仍在行尾「更多操作」里', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#27：菜单同构不丢 —— 编辑 / 停用仍在行尾「更多操作」里', (WidgetTester tester) async {
     final Account account = service.create(
       AccountDraft(name: '现金', type: AccountType.cash),
       now: 1700000000000,
@@ -293,9 +284,7 @@ void main() {
   // 2026-10-19 用户实测（账户页截图，超大档，窗口与 VSCode 均分 960 宽）：
   // 「微信收款账户」+ 类型标签「微信」+ 右侧金额挤在同一行 ⇒ 黄黑溢出条纹。
   // 根因：`Row[名字, 类型]` 两个都不许收缩。
-  testWidgets('超大档（2.0）+ 窄窗口：账户行不溢出，名字完整显示', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('超大档（2.0）+ 窄窗口：账户行不溢出，名字完整显示', (WidgetTester tester) async {
     service.create(
       AccountDraft(name: '微信收款账户', type: AccountType.wechat),
       now: 1700000000000,

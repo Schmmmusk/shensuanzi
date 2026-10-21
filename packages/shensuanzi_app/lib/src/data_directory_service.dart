@@ -29,13 +29,11 @@ import 'environment.dart';
 import 'startup.dart';
 
 class DataDirectoryService {
-  DataDirectoryService({
-    required this.environment,
-    AppConfigStore? configStore,
-  }) : bootstrap = AppBootstrap(
-         environment: environment,
-         configStore: configStore,
-       );
+  DataDirectoryService({required this.environment, AppConfigStore? configStore})
+    : bootstrap = AppBootstrap(
+        environment: environment,
+        configStore: configStore,
+      );
 
   final AppEnvironment environment;
   final AppBootstrap bootstrap;

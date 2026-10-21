@@ -31,11 +31,10 @@ class ProductDao {
     );
   }
 
-  bool exists(String id) => _raw
-      .select('SELECT 1 FROM ${Schema.products} WHERE id = ? LIMIT 1', <Object?>[
-        id,
-      ])
-      .isNotEmpty;
+  bool exists(String id) => _raw.select(
+    'SELECT 1 FROM ${Schema.products} WHERE id = ? LIMIT 1',
+    <Object?>[id],
+  ).isNotEmpty;
 
   /// 这个**编码**是否已被占用（D1，2026-10-08）。
   ///
@@ -58,10 +57,9 @@ class ProductDao {
 
   Product? findById(String id) {
     final List<Product> found = decodeRows(
-      _raw.select(
-        'SELECT * FROM ${Schema.products} WHERE id = ?',
-        <Object?>[id],
-      ),
+      _raw.select('SELECT * FROM ${Schema.products} WHERE id = ?', <Object?>[
+        id,
+      ]),
       Product.fromRow,
       table: Schema.products,
       failures: db.readFailures,

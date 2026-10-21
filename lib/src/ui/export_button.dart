@@ -30,11 +30,7 @@ Future<void> revealInExplorer(String path) async {
 }
 
 class ExportButton extends StatefulWidget {
-  const ExportButton({
-    super.key,
-    required this.label,
-    required this.export,
-  });
+  const ExportButton({super.key, required this.label, required this.export});
 
   /// 按钮文字（**说清导的是什么**：`导出全部商品` / `导出当前筛选的单据`…）
   final String label;
@@ -56,10 +52,7 @@ class _ExportButtonState extends State<ExportButton> {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     setState(() => _busy = true);
     messenger.showSnackBar(
-      const SnackBar(
-        content: Text('正在导出…'),
-        duration: Duration(seconds: 2),
-      ),
+      const SnackBar(content: Text('正在导出…'), duration: Duration(seconds: 2)),
     );
 
     final ExportOutcome outcome = await widget.export();

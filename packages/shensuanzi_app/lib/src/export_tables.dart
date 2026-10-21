@@ -37,16 +37,7 @@ import 'format.dart';
 /// 商品导出（AF-2：**全部**商品，含停用；不看页面搜索框）
 ExportTable productExportTable(List<Product> products) => ExportTable(
   label: '商品',
-  header: const <String>[
-    '编码',
-    '商品名称',
-    '条码',
-    '单位',
-    '售价',
-    '进价',
-    '安全库存',
-    '状态',
-  ],
+  header: const <String>['编码', '商品名称', '条码', '单位', '售价', '进价', '安全库存', '状态'],
   rows: <List<String>>[
     for (final Product product in products)
       <String>[
@@ -117,7 +108,8 @@ ExportTable partyExportTable({
   label: '往来方',
   header: const <String>['往来方', '角色', '电话', '地址', '应收', '应付', '状态'],
   rows: <List<String>>[
-    for (final Party party in parties) _partyRow(party, balances[party.id] ?? 0),
+    for (final Party party in parties)
+      _partyRow(party, balances[party.id] ?? 0),
   ],
 );
 
@@ -135,15 +127,7 @@ List<String> _partyRow(Party party, int balance) => <String>[
 /// 单据导出（跟随页面的时间 / 类型筛选，但**没有 200 上限**，AF-5）
 ExportTable documentExportTable(List<DocumentSummary> summaries) => ExportTable(
   label: '单据',
-  header: const <String>[
-    '单号',
-    '单据类型',
-    '对方',
-    '金额',
-    '已收付',
-    '状态',
-    '日期',
-  ],
+  header: const <String>['单号', '单据类型', '对方', '金额', '已收付', '状态', '日期'],
   rows: <List<String>>[
     for (final DocumentSummary summary in summaries)
       <String>[
@@ -167,21 +151,20 @@ ExportTable documentExportTable(List<DocumentSummary> summaries) => ExportTable(
 /// `金额` 保持 `party_ledger` 原口径：**正 = 对方欠我增加**（不是「收了多少」）。
 /// 一张收款单是负数。列名不写方向，是因为「收/付」要结合单号看，
 /// 而这条口径在帮助页与流水页是同一句话。
-ExportTable partyFlowExportTable({
-  required List<PartyFlowEntry> flow,
-}) => ExportTable(
-  label: '往来流水',
-  header: const <String>['单号', '单据类型', '金额', '日期'],
-  rows: <List<String>>[
-    for (final PartyFlowEntry entry in flow)
-      <String>[
-        entry.docNo,
-        entry.docType.label,
-        Money.format(entry.amount),
-        formatDateTime(entry.occurredAt),
+ExportTable partyFlowExportTable({required List<PartyFlowEntry> flow}) =>
+    ExportTable(
+      label: '往来流水',
+      header: const <String>['单号', '单据类型', '金额', '日期'],
+      rows: <List<String>>[
+        for (final PartyFlowEntry entry in flow)
+          <String>[
+            entry.docNo,
+            entry.docType.label,
+            Money.format(entry.amount),
+            formatDateTime(entry.occurredAt),
+          ],
       ],
-  ],
-);
+    );
 
 /// 账户流水导出（#27 批 1：某账户的**全部**资金流水；`extra` 带账户名，AF-7）
 ///
@@ -191,22 +174,21 @@ ExportTable partyFlowExportTable({
 ///
 /// `数量` = `stock_ledger.quantity` 原口径：**正 = 入库，负 = 出库**（含盘点 diff）。
 /// `成本` = `total_cost`（成本真相；含盘点行 —— 其 total_cost 为 0）。
-ExportTable stockFlowExportTable({
-  required List<StockFlowEntry> flow,
-}) => ExportTable(
-  label: '商品流水',
-  header: const <String>['单号', '单据类型', '数量', '成本', '日期'],
-  rows: <List<String>>[
-    for (final StockFlowEntry entry in flow)
-      <String>[
-        entry.docNo,
-        entry.docType.label,
-        '${entry.quantity}',
-        Money.format(entry.totalCost),
-        formatDateTime(entry.occurredAt),
+ExportTable stockFlowExportTable({required List<StockFlowEntry> flow}) =>
+    ExportTable(
+      label: '商品流水',
+      header: const <String>['单号', '单据类型', '数量', '成本', '日期'],
+      rows: <List<String>>[
+        for (final StockFlowEntry entry in flow)
+          <String>[
+            entry.docNo,
+            entry.docType.label,
+            '${entry.quantity}',
+            Money.format(entry.totalCost),
+            formatDateTime(entry.occurredAt),
+          ],
       ],
-  ],
-);
+    );
 
 ExportTable accountFlowExportTable({required List<MoneyFlowEntry> flow}) =>
     ExportTable(

@@ -56,16 +56,18 @@ class PurchaseLineDraft {
   });
 
   /// 从商品带入：**单价预填进价**，数量留空待填。
-  factory PurchaseLineDraft.fromProduct(Product product, {String quantity = ''}) =>
-    PurchaseLineDraft(
-      productId: product.id,
-      productName: product.name,
-      quantity: quantity,
-      unitPrice: Money.format(product.costPrice),
-      baseUnit: product.unit,
-      packageUnit: product.packageUnit,
-      packageSize: product.packageSize,
-    );
+  factory PurchaseLineDraft.fromProduct(
+    Product product, {
+    String quantity = '',
+  }) => PurchaseLineDraft(
+    productId: product.id,
+    productName: product.name,
+    quantity: quantity,
+    unitPrice: Money.format(product.costPrice),
+    baseUnit: product.unit,
+    packageUnit: product.packageUnit,
+    packageSize: product.packageSize,
+  );
 
   final String productId;
   final String productName;
@@ -141,8 +143,7 @@ class PurchaseLineDraft {
     } else {
       final int? cents = Money.tryParseYuan(priceText);
       if (cents == null) {
-        errors[PurchaseLineField.unitPrice] =
-            '单价只能填数字，最多两位小数，比如 3.50';
+        errors[PurchaseLineField.unitPrice] = '单价只能填数字，最多两位小数，比如 3.50';
       } else if (cents < 0) {
         errors[PurchaseLineField.unitPrice] = '单价不能是负数';
       }
@@ -156,12 +157,16 @@ class PurchaseLineDraft {
       final String? pkg = packageUnit;
       final bool isPackage = pkg != null && pkg.isNotEmpty && unit == pkg;
       if (!isBase && !isPackage) {
-        errors[PurchaseLineField.entryUnit] = conversionFailureMessage(ConversionFailureReason.unknownUnit);
+        errors[PurchaseLineField.entryUnit] = conversionFailureMessage(
+          ConversionFailureReason.unknownUnit,
+        );
       } else {
         // 换算失败（没设 / ≤0）在这里拦 —— 文案三种分开（§BD·九）
         final QuantityConversion c = conversion;
         if (c is ConversionFailed) {
-          errors[PurchaseLineField.entryUnit] = conversionFailureMessage(c.reason);
+          errors[PurchaseLineField.entryUnit] = conversionFailureMessage(
+            c.reason,
+          );
         }
       }
     }
@@ -193,7 +198,8 @@ class PurchaseLineDraft {
   }
 
   /// **录入原文单位**落库值：'' ⇒ `null`（没切单位）
-  String? get entryUnitValue => entryUnit.trim().isEmpty ? null : entryUnit.trim();
+  String? get entryUnitValue =>
+      entryUnit.trim().isEmpty ? null : entryUnit.trim();
 
   /// **录入单位报价**（分）—— 用户按 [entryUnit] 报的价（不落库，
   /// 派生展示见 §BD·三 第 5 条）；非法时 `null`
@@ -271,7 +277,8 @@ class PurchasePaymentDraft {
   bool get isBlank => amount.trim().isEmpty;
 
   Map<PurchasePaymentField, String> validate() {
-    final Map<PurchasePaymentField, String> errors = <PurchasePaymentField, String>{};
+    final Map<PurchasePaymentField, String> errors =
+        <PurchasePaymentField, String>{};
     final String text = amount.trim();
     if (text.isEmpty) return errors; // 空行跳过，不报错
 
@@ -280,8 +287,7 @@ class PurchasePaymentDraft {
     }
     final int? cents = Money.tryParseYuan(text);
     if (cents == null) {
-      errors[PurchasePaymentField.amount] =
-          '金额只能填数字，最多两位小数，比如 500';
+      errors[PurchasePaymentField.amount] = '金额只能填数字，最多两位小数，比如 500';
     } else if (cents <= 0) {
       errors[PurchasePaymentField.amount] = '付款金额要大于 0';
     }
@@ -400,8 +406,7 @@ class PurchaseDraft {
     (Map<PurchasePaymentField, String> e) => e.isEmpty,
   );
 
-  bool get isValid =>
-      validate().isEmpty && linesOk && paymentsOk;
+  bool get isValid => validate().isEmpty && linesOk && paymentsOk;
 
   // ------------------------------------------------------------ 取值（校验通过后）
 
@@ -436,10 +441,9 @@ class PurchaseDraft {
   /// 多付的部分**不落库**（它是找回）：按 [totalCents] 逐行顺次封顶 ⇒
   /// `SUM(immediate_payments) ≤ total_amount`（RULE-001）由构造保证。
   /// 例：填 `[100]` + 应付 93 ⇒ `[93]`。
-  List<int> get recordedPaymentCents => Overpay.clamp(
-    <int>[for (final PurchasePaymentDraft p in payments) p.amountCents ?? 0],
-    totalCents,
-  );
+  List<int> get recordedPaymentCents => Overpay.clamp(<int>[
+    for (final PurchasePaymentDraft p in payments) p.amountCents ?? 0,
+  ], totalCents);
 
   /// 落库后**实际支出**的付款合计（分）= `min(已填, 应付)`。
   int get recordedPaidCents {
@@ -462,8 +466,10 @@ class PurchaseDraft {
   /// 文案在 [Overpay]，与销售开单页、与核销对话框**同源**。
   ///
   /// ⚠️ 采购方向用「实**付**」（销售是「实收」）—— 只有第一个字不同。
-  String? get overpayNotice =>
-      Overpay(givenCents: paidCents, dueCents: totalCents).notice(paidVerb: '付');
+  String? get overpayNotice => Overpay(
+    givenCents: paidCents,
+    dueCents: totalCents,
+  ).notice(paidVerb: '付');
 
   /// **提交按钮文字** —— §AY·四：与销售 `SaleDraft.saveActionLabel` 同构。
   /// 未多付 ⇒ `保存`；多付 ⇒ `记 ¥93 并找零 ¥7`。

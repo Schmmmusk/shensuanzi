@@ -191,11 +191,18 @@ void main() {
     for (final String productId in <String>['p-1', 'p-2', 'p-3']) {
       final StockView viaClient = client.stockViewOf(productId);
       final StockView viaDelta = delta.stockViewOf(productId);
-      expect(viaClient.authoritative, viaDelta.authoritative, reason: productId);
+      expect(
+        viaClient.authoritative,
+        viaDelta.authoritative,
+        reason: productId,
+      );
       expect(viaClient.unsynced, viaDelta.unsynced, reason: productId);
       expect(viaClient.display, viaDelta.display, reason: productId);
-      expect(viaClient.contributors.length, viaDelta.contributors.length,
-          reason: productId);
+      expect(
+        viaClient.contributors.length,
+        viaDelta.contributors.length,
+        reason: productId,
+      );
     }
     expect(client.unsyncedDelta(), delta.unsyncedDelta());
   });

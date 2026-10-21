@@ -82,7 +82,7 @@ class MasterDataSubmitResult {
   /// 这里照抄会重新踩 M02，故按实际触发列「下次开单 / 切回来 / 立即同步」。
   String? get queuedNotice => isQueued
       ? '已记入待同步（编码 ${product!.code}）。'
-          '下次开单、切回来，或点「立即同步」时会传给电脑。'
+            '下次开单、切回来，或点「立即同步」时会传给电脑。'
       : null;
 
   @override
@@ -105,10 +105,18 @@ abstract class MasterDataSink {
   /// 不再有「两条队列条目乱序」的分支。
   /// ⚠️ 只对**手机队列出口**有意义：主机落库路径的期初走 `StocktakeService`
   /// （整页期初录入），所以 [ServiceMasterSink] 收到非空值即抛（见其文档）。
-  MasterDataSubmitResult createProduct(ProductDraft draft, {int? now, int? openingQuantity});
+  MasterDataSubmitResult createProduct(
+    ProductDraft draft, {
+    int? now,
+    int? openingQuantity,
+  });
 
   /// 编辑。⚠️ **`code` 不变** —— 与 `ProductService.update` 同一口径。
-  MasterDataSubmitResult updateProduct(String id, ProductDraft draft, {int? now});
+  MasterDataSubmitResult updateProduct(
+    String id,
+    ProductDraft draft, {
+    int? now,
+  });
 
   /// 停用 / 恢复（软删，`Agents.md` 纪律 2）。
   MasterDataSubmitResult setProductActive(String id, bool active, {int? now});
@@ -162,11 +170,7 @@ class ServiceMasterSink implements MasterDataSink {
   }
 
   @override
-  MasterDataSubmitResult setProductActive(
-    String id,
-    bool active, {
-    int? now,
-  }) {
+  MasterDataSubmitResult setProductActive(String id, bool active, {int? now}) {
     // 先取一份用于返回（`setActive` 只回 void）—— 找不到就让它抛，与现状一致
     _products.setActive(id, active, now: now);
     return MasterDataSubmitResult.saved(_products.byId(id)!);
@@ -255,11 +259,7 @@ class QueuePartySink {
       address: address,
       now: now,
     );
-    _enqueue(
-      SyncOpType.createMasterData,
-      mutation.party,
-      now: now ?? _clock(),
-    );
+    _enqueue(SyncOpType.createMasterData, mutation.party, now: now ?? _clock());
     return mutation;
   }
 
@@ -471,11 +471,7 @@ class QueueMasterSink implements MasterDataSink {
   }
 
   @override
-  MasterDataSubmitResult setProductActive(
-    String id,
-    bool active, {
-    int? now,
-  }) {
+  MasterDataSubmitResult setProductActive(String id, bool active, {int? now}) {
     final Product? existing = _products.findById(id);
     if (existing == null) throw StateError('镜像里没有这个商品：$id');
 

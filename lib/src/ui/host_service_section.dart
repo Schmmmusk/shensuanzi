@@ -88,9 +88,7 @@ class _HostServicePanelState extends State<HostServicePanel> {
   }
 
   Future<void> _toggle(bool on) async {
-    await _run(
-      () => on ? widget.controller.start() : widget.controller.stop(),
-    );
+    await _run(() => on ? widget.controller.start() : widget.controller.stop());
     if (!mounted) return;
     // 打开成功且手里有明文 ⇒ 立刻把码摆出来（§AH 遗漏 4：
     // 「打开开关 → 显示二维码」，这一步不能要求用户再点一次）
@@ -102,10 +100,8 @@ class _HostServicePanelState extends State<HostServicePanel> {
     if (payload == null) return;
     await showDialog<void>(
       context: context,
-      builder: (BuildContext context) => _PairingDialog(
-        payload: payload,
-        addressLine: _snapshot.addressLine,
-      ),
+      builder: (BuildContext context) =>
+          _PairingDialog(payload: payload, addressLine: _snapshot.addressLine),
     );
   }
 
@@ -190,10 +186,17 @@ class _HostServicePanelState extends State<HostServicePanel> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Icon(_stateIcon(snapshot.state), size: 18, color: _stateColor(theme, snapshot.state)),
+            Icon(
+              _stateIcon(snapshot.state),
+              size: 18,
+              color: _stateColor(theme, snapshot.state),
+            ),
             const SizedBox(width: 6),
             Expanded(
-              child: Text(snapshot.headline, style: const TextStyle(height: 1.6)),
+              child: Text(
+                snapshot.headline,
+                style: const TextStyle(height: 1.6),
+              ),
             ),
           ],
         ),

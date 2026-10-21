@@ -56,9 +56,14 @@ void main() {
 
     test('别人的文件 / 格式不对 → null', () {
       expect(BackupFileName.tryParse('README.txt'), isNull);
-      expect(BackupFileName.tryParse('shensuanzi-schema1-20260928-1530.db.bak'),
-          isNull);
-      expect(BackupFileName.tryParse('shensuanzi-schema1-2026-1530.db'), isNull);
+      expect(
+        BackupFileName.tryParse('shensuanzi-schema1-20260928-1530.db.bak'),
+        isNull,
+      );
+      expect(
+        BackupFileName.tryParse('shensuanzi-schema1-2026-1530.db'),
+        isNull,
+      );
     });
 
     test('分钟粒度：秒被舍弃（同分钟共享同名文件）', () {
@@ -148,19 +153,20 @@ void main() {
 
     test('同周两份旧自动包 → 只删晚的，周代表（最早）保留', () {
       // 08-25（周二）与 08-28（周五）同属周一 08-24 锚的周，均超 30 天
-      final List<BackupFileName> expired = expiredAutoBackups(
-        <BackupFileName>[auto(8, 25), auto(8, 28)],
-        now,
-      );
+      final List<BackupFileName> expired = expiredAutoBackups(<BackupFileName>[
+        auto(8, 25),
+        auto(8, 28),
+      ], now);
       expect(expired.length, 1);
       expect(expired.first.time, DateTime(2026, 8, 28, 12));
     });
 
     test('不同周各留周代表（08-20 单份保留，08-26/08-28 删 08-28）', () {
-      final List<BackupFileName> expired = expiredAutoBackups(
-        <BackupFileName>[auto(8, 20), auto(8, 26), auto(8, 28)],
-        now,
-      );
+      final List<BackupFileName> expired = expiredAutoBackups(<BackupFileName>[
+        auto(8, 20),
+        auto(8, 26),
+        auto(8, 28),
+      ], now);
       expect(expired.length, 1);
       expect(expired.first.time, DateTime(2026, 8, 28, 12));
     });
@@ -374,27 +380,29 @@ void main() {
       expect(dbFileCount(), 0);
     });
 
-    test('自动备份：WAL 事务不丢（AE-1 核心）+ 文件名带 schema 版本（AE-4）',
-        () async {
-      final BackupOutcome r = await service.autoBackup(db: db, hasContent: true);
-      expect(r.ok, isTrue);
-      expect(
-        p.basename(r.path!),
-        'shensuanzi-schema1-20260928-1530.db',
+    test('自动备份：WAL 事务不丢（AE-1 核心）+ 文件名带 schema 版本（AE-4）', () async {
+      final BackupOutcome r = await service.autoBackup(
+        db: db,
+        hasContent: true,
       );
+      expect(r.ok, isTrue);
+      expect(p.basename(r.path!), 'shensuanzi-schema1-20260928-1530.db');
 
       // 打开副本：checkpoint 前的事务必须都在（WAL 回归）
       final Db copy = Db.open(r.path!);
       final int count =
-          (copy.raw.select('SELECT COUNT(*) AS c FROM documents')
-                  .first['c']! as int);
+          (copy.raw.select('SELECT COUNT(*) AS c FROM documents').first['c']!
+              as int);
       copy.close();
       expect(count, 1, reason: 'checkpoint 后副本必须包含全部事务');
     });
 
     test('距上次不足 24h → 自动 skipped', () async {
       await service.autoBackup(db: db, hasContent: true);
-      final BackupOutcome r = await service.autoBackup(db: db, hasContent: true);
+      final BackupOutcome r = await service.autoBackup(
+        db: db,
+        hasContent: true,
+      );
       expect(r.ok, isFalse);
       expect(r.skipped, isTrue);
       expect(r.message, contains('24'));
@@ -466,9 +474,7 @@ void main() {
 
     test('latestBackupFile：4 天前那份会被取到，判定随之生效', () async {
       Directory(backupDir).createSync(recursive: true);
-      File(
-        p.join(backupDir, auto(9, 24).fileName),
-      ).writeAsStringSync('旧备份');
+      File(p.join(backupDir, auto(9, 24).fileName)).writeAsStringSync('旧备份');
 
       final BackupFileName? last = service.latestBackupFile();
       expect(last, isNotNull);
@@ -513,9 +519,8 @@ void main() {
 
     test('保留策略集成：周代表保留、同周晚者删除、手动包保留', () async {
       Directory(backupDir).createSync(recursive: true);
-      void writeDummy(BackupFileName name) => File(
-        p.join(backupDir, name.fileName),
-      ).writeAsStringSync('旧备份');
+      void writeDummy(BackupFileName name) =>
+          File(p.join(backupDir, name.fileName)).writeAsStringSync('旧备份');
 
       writeDummy(auto(8, 3)); // 周 08-03 代表（最早）
       writeDummy(auto(8, 5)); // 同周更晚 → 删
@@ -587,8 +592,11 @@ void main() {
       final BackupOutcome r = await blocked.backupNow(db: db);
       expect(r.ok, isFalse);
       expect(logged, isNotEmpty, reason: '原始异常一个不落全进 onFailure');
-      expect(r.message, localFileFailureAdvice(logged.first),
-          reason: '#43：failure 只带**同一异常**的分类文案');
+      expect(
+        r.message,
+        localFileFailureAdvice(logged.first),
+        reason: '#43：failure 只带**同一异常**的分类文案',
+      );
       expect(r.message, isNot(contains('Exception')), reason: '异常类型名不进用户面');
       expect(r.message, isNot(contains(r'$error')), reason: '旧拼接形态必须消失');
     });

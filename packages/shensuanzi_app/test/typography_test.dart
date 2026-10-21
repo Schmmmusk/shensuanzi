@@ -51,10 +51,7 @@ void main() {
     });
 
     test('有拉丁字母兜底（英文不能掉字形）', () {
-      expect(
-        AppTypography.fontStackFor(isWindows: true),
-        contains('Segoe UI'),
-      );
+      expect(AppTypography.fontStackFor(isWindows: true), contains('Segoe UI'));
     });
   });
 
@@ -76,18 +73,14 @@ void main() {
 
     test('fallbackFor = 栈去掉首选（不重复写一遍）', () {
       final List<String> stack = AppTypography.fontStackFor(isWindows: true);
-      final List<String>? fallback = AppTypography.fallbackFor(
-        isWindows: true,
-      );
+      final List<String>? fallback = AppTypography.fallbackFor(isWindows: true);
 
       expect(fallback, stack.sublist(1));
       expect(fallback, isNot(contains(stack.first)));
     });
 
     test('首选 + 后备拼起来 = 完整栈（不会漏掉任何一层）', () {
-      final List<String>? fallback = AppTypography.fallbackFor(
-        isWindows: true,
-      );
+      final List<String>? fallback = AppTypography.fallbackFor(isWindows: true);
       final List<String> rebuilt = <String>[
         AppTypography.primaryFamilyFor(isWindows: true)!,
         ...?fallback,

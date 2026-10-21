@@ -38,13 +38,26 @@ void main() {
     accounts = AccountDao(db);
 
     final int t = 1700000000000;
-    products.insert(Product(
-      id: 'p1', code: 'P0001', name: '商品',
-      costPrice: 300, sellPrice: 500, createdAt: t, updatedAt: t,
-    ));
-    accounts.insert(Account(
-      id: 'a1', name: '现金', type: AccountType.cash, createdAt: t, updatedAt: t,
-    ));
+    products.insert(
+      Product(
+        id: 'p1',
+        code: 'P0001',
+        name: '商品',
+        costPrice: 300,
+        sellPrice: 500,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    accounts.insert(
+      Account(
+        id: 'a1',
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
   });
 
   tearDown(() {
@@ -120,9 +133,7 @@ void main() {
     return PendingMarks(queue);
   }
 
-  testWidgets('空列表给「怎么办」；新建双角色往来方 → 列表出现「已结清」', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('空列表给「怎么办」；新建双角色往来方 → 列表出现「已结清」', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
     expect(find.textContaining('还没有往来方'), findsOneWidget);
@@ -172,9 +183,7 @@ void main() {
     expect(find.text('总应付 ¥0.00'), findsOneWidget);
   });
 
-  testWidgets('流水页：单号 + 类型 + 方向字 + 底部说明；行不可点', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('流水页：单号 + 类型 + 方向字 + 底部说明；行不可点', (WidgetTester tester) async {
     final Party customer = createCustomer('甲客户');
     creditSale(customer, 100);
 
@@ -206,9 +215,7 @@ void main() {
   // 2026-10-19 用户实测（往来方页截图，超大档，窗口与 VSCode 均分 960 宽）：
   // 「鸿磐」那行的「客户 / 供应商」被压成**竖排单字**，停用标记再撑爆整行。
   // 根因：`Row[Flexible(角色), 非弹性标签]` —— 左侧列只有 ~200px。
-  testWidgets('#34③ 超大档 + 窄窗口：往来方行不溢出，角色不竖排', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#34③ 超大档 + 窄窗口：往来方行不溢出，角色不竖排', (WidgetTester tester) async {
     final Party both = service
         .createFull(
           name: '鸿磐',
@@ -259,9 +266,7 @@ void main() {
   // 2026-10-19 用户实测（窄窗口 + 超大档）：**金额被推出卡片外** ——
   // 原来第 1 行是 `Row[类型, Spacer(), 金额]`，剩余宽度为 0 时 `Spacer` 帮不上忙，
   // 金额整块溢出（截图：金额完整、一半在卡片外，48px 溢出条）。
-  testWidgets('#34⑦ 窄窗口 + 超大档：金额不许被推出卡片', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#34⑦ 窄窗口 + 超大档：金额不许被推出卡片', (WidgetTester tester) async {
     final Party customer = createCustomer('甲客户');
     creditSale(customer, 100);
 
@@ -277,7 +282,9 @@ void main() {
           ).copyWith(textScaler: const TextScaler.linear(2.0)),
           child: child!,
         ),
-        home: Scaffold(body: PartyFlowPage(party: customer, service: service)),
+        home: Scaffold(
+          body: PartyFlowPage(party: customer, service: service),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -305,9 +312,7 @@ void main() {
   // ⚠️ 实测阈值：2.0 倍在 600 / 800 宽下**还挤得下**（我跑过，绿），
   // **3.0 倍**（Windows 200% 显示缩放 × 超大档）才溢出。同一处结构缺陷，
   // 2.0 只是没到阈值 —— 所以断言定在 3.0，修法覆盖所有倍率。
-  testWidgets('#34① 宽屏 + 3.0 倍字号：流水行不溢出，金额完整可见', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#34① 宽屏 + 3.0 倍字号：流水行不溢出，金额完整可见', (WidgetTester tester) async {
     final Party customer = createCustomer('甲客户');
     creditSale(customer, 260);
 
@@ -323,16 +328,14 @@ void main() {
           ).copyWith(textScaler: const TextScaler.linear(3.0)),
           child: child!,
         ),
-        home: Scaffold(body: PartyFlowPage(party: customer, service: service)),
+        home: Scaffold(
+          body: PartyFlowPage(party: customer, service: service),
+        ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(
-      tester.takeException(),
-      isNull,
-      reason: '宽屏 2.0 倍下溢出 = #34① 的真机症状',
-    );
+    expect(tester.takeException(), isNull, reason: '宽屏 2.0 倍下溢出 = #34① 的真机症状');
     expect(
       find.textContaining('¥260.00'),
       findsOneWidget,
@@ -353,7 +356,9 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: PartyFlowPage(party: customer, service: service)),
+        home: Scaffold(
+          body: PartyFlowPage(party: customer, service: service),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -445,15 +450,7 @@ void main() {
     expect(fake.calls, 1);
     final ExportTable table = fake.last;
     expect(table.label, '往来方');
-    expect(table.header, <String>[
-      '往来方',
-      '角色',
-      '电话',
-      '地址',
-      '应收',
-      '应付',
-      '状态',
-    ]);
+    expect(table.header, <String>['往来方', '角色', '电话', '地址', '应收', '应付', '状态']);
     final List<String> row = table.rows.single;
     expect(row[0], '王老板');
     expect(row[1], '客户');
@@ -462,9 +459,7 @@ void main() {
     expect(row[6], '启用');
   });
 
-  testWidgets('导出流水：文件名带往来方名（AF-7），行数 = 该方全部流水', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('导出流水：文件名带往来方名（AF-7），行数 = 该方全部流水', (WidgetTester tester) async {
     final Party customer = createCustomer('王老板');
     creditSale(customer, 100);
 
@@ -472,11 +467,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: PartyFlowPage(
-            party: customer,
-            service: service,
-            exports: fake,
-          ),
+          body: PartyFlowPage(party: customer, service: service, exports: fake),
         ),
       ),
     );
@@ -498,11 +489,7 @@ void main() {
       service.flowsOf(customer.id).length,
       reason: '该往来方的全部流水（不是前 200 条）',
     );
-    expect(
-      fake.extras.single,
-      '王老板',
-      reason: 'AF-7：文件名要带往来方名，否则多个客户的文件名全一样',
-    );
+    expect(fake.extras.single, '王老板', reason: 'AF-7：文件名要带往来方名，否则多个客户的文件名全一样');
   });
 
   // ---------------------------------------------------------------- §审查 OBS-05 后半
@@ -617,11 +604,7 @@ void main() {
     await tester.tap(find.text('停用'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('这个往来方还有没结清的账'),
-      findsNothing,
-      reason: '没欠钱就问一句是骚扰',
-    );
+    expect(find.text('这个往来方还有没结清的账'), findsNothing, reason: '没欠钱就问一句是骚扰');
     expect(service.findByNameIncludingInactive('没来往的')!.isActive, isFalse);
     expect(
       find.byKey(Key('party-row-${idle.id}')),

@@ -103,9 +103,11 @@ void main() {
   // ------------------------------------------------------------ 夹具
 
   /// 单据 id（按单号反查 —— 各 `*Saved` 只带单号不带 id）
-  String idOf(String docNo) => db.raw
-      .select('SELECT id FROM documents WHERE doc_no = ?', <Object?>[docNo])
-      .first['id']! as String;
+  String idOf(String docNo) =>
+      db.raw.select('SELECT id FROM documents WHERE doc_no = ?', <Object?>[
+            docNo,
+          ]).first['id']!
+          as String;
 
   /// 卖 36 瓶（3 箱 × ¥250/箱 = ¥750）给客户甲，全款。
   ///
@@ -130,7 +132,11 @@ void main() {
           ),
         ],
         payments: <SalePaymentDraft>[
-          SalePaymentDraft(accountId: accountId, accountName: '现金', amount: '750'),
+          SalePaymentDraft(
+            accountId: accountId,
+            accountName: '现金',
+            amount: '750',
+          ),
         ],
       ),
     );
@@ -217,9 +223,7 @@ void main() {
         originalDocType: DocType.sale,
         partyId: customerId,
         partyName: '客户甲',
-        lines: <ReturnLineDraft>[
-          bottleLine(qty: '3', amount: '62.50'),
-        ],
+        lines: <ReturnLineDraft>[bottleLine(qty: '3', amount: '62.50')],
       );
       expect(
         () => returns.create(bogus),
@@ -230,7 +234,8 @@ void main() {
             contains('原单不在了'),
           ),
         ),
-        reason: '裁定④改判：用户要知道「原单不在了」才能去确认，'
+        reason:
+            '裁定④改判：用户要知道「原单不在了」才能去确认，'
             '而不是看到「请再试一次」',
       );
     });
@@ -362,7 +367,10 @@ void main() {
         ),
       );
       final String returnId = idOf(saved.docNo);
-      final SettlementService settle = SettlementService(db: db, engine: engine);
+      final SettlementService settle = SettlementService(
+        db: db,
+        engine: engine,
+      );
 
       // ① 退货单读作「未退款额 = 该退的钱」—— 与「未收」同一套函数，
       //    但**不减**它自己造成的冲减（否则永远是 0，入口就出不来）
@@ -387,7 +395,11 @@ void main() {
       // 分录仍挂在**独立收付款单**下（纪律 11），方向是「钱出去」
       final Document refundDoc = documents.findById(refunded.docId)!;
       expect(refundDoc.docType, DocType.payment);
-      expect(refundDoc.refDocId, isNull, reason: '手动核销单的 ref_doc_id 为空（会进单据列表）');
+      expect(
+        refundDoc.refDocId,
+        isNull,
+        reason: '手动核销单的 ref_doc_id 为空（会进单据列表）',
+      );
     });
 
     test('立即退款 ⇒ 生成 payment 单（资金流出）', () {
@@ -401,7 +413,11 @@ void main() {
           partyName: '客户甲',
           lines: <ReturnLineDraft>[boxLine(qty: '1', amount: '250.00')],
           refunds: <ReturnRefundDraft>[
-            ReturnRefundDraft(accountId: accountId, accountName: '现金', amount: '250.00'),
+            ReturnRefundDraft(
+              accountId: accountId,
+              accountName: '现金',
+              amount: '250.00',
+            ),
           ],
         ),
       );
@@ -422,7 +438,11 @@ void main() {
           partyName: '客户甲',
           lines: <ReturnLineDraft>[boxLine(qty: '1', amount: '250.00')],
           refunds: <ReturnRefundDraft>[
-            ReturnRefundDraft(accountId: accountId, accountName: '现金', amount: '300'),
+            ReturnRefundDraft(
+              accountId: accountId,
+              accountName: '现金',
+              amount: '300',
+            ),
           ],
         ),
       );
@@ -447,7 +467,11 @@ void main() {
             ),
           ],
           payments: <PurchasePaymentDraft>[
-            PurchasePaymentDraft(accountId: accountId, accountName: '现金', amount: '20'),
+            PurchasePaymentDraft(
+              accountId: accountId,
+              accountName: '现金',
+              amount: '20',
+            ),
           ],
         ),
       );
@@ -471,7 +495,11 @@ void main() {
             ),
           ],
           refunds: <ReturnRefundDraft>[
-            ReturnRefundDraft(accountId: accountId, accountName: '现金', amount: '8.00'),
+            ReturnRefundDraft(
+              accountId: accountId,
+              accountName: '现金',
+              amount: '8.00',
+            ),
           ],
         ),
       );
@@ -547,7 +575,8 @@ void main() {
         ),
         throwsA(
           isA<ReturnDraftInvalid>().having(
-            (ReturnDraftInvalid e) => e.lineErrors.first[ReturnLineField.quantity],
+            (ReturnDraftInvalid e) =>
+                e.lineErrors.first[ReturnLineField.quantity],
             'quantity 错误文案',
             contains('最多可退 36'),
           ),

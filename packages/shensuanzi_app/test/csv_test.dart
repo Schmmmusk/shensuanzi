@@ -52,16 +52,8 @@ void main() {
         '+12.34',
         reason: '+ 也是合法数字起始（2026-09-28 裁定补进正则）',
       );
-      expect(
-        csvEscape('-2+3'),
-        "'-2+3",
-        reason: '不是数字字面量 → 仍然防护（Excel 真会算它）',
-      );
-      expect(
-        csvEscape('+86 138'),
-        "'+86 138",
-        reason: '「+ 开头」但整个不是数字 → 照旧防护',
-      );
+      expect(csvEscape('-2+3'), "'-2+3", reason: '不是数字字面量 → 仍然防护（Excel 真会算它）');
+      expect(csvEscape('+86 138'), "'+86 138", reason: '「+ 开头」但整个不是数字 → 照旧防护');
     });
 
     test('**千分位会被转义成文本** —— 所以导出的金额绝不能带逗号（2026-09-28 裁定）', () {
@@ -74,11 +66,7 @@ void main() {
       );
       // 正确形态（Money.format）才是数字
       expect(csvEscape('1234.56'), '1234.56');
-      expect(
-        Money.format(123456),
-        '1234.56',
-        reason: '导出用的就是它 —— 不带千分位',
-      );
+      expect(Money.format(123456), '1234.56', reason: '导出用的就是它 —— 不带千分位');
       expect(
         Money.formatGrouped(123456),
         '1,234.56',
@@ -130,14 +118,18 @@ void main() {
       expect(formatDateTime(millis), '2026-09-28 15:30');
       expect(formatFileDate(local), '20260928');
       // 补零
-      expect(formatDateTime(DateTime(2026, 1, 2, 3, 4).millisecondsSinceEpoch),
-          '2026-01-02 03:04');
+      expect(
+        formatDateTime(DateTime(2026, 1, 2, 3, 4).millisecondsSinceEpoch),
+        '2026-01-02 03:04',
+      );
     });
 
     test('formatOccurredAt：零点只印日期，有真时刻印到分（#26① Q3 乙）', () {
       // 主单：`occurred_at` = 当天 00:00（开单页只能选到日）⇒ **不许印 00:00**
-      expect(formatOccurredAt(DateTime(2026, 10, 12).millisecondsSinceEpoch),
-          '2026-10-12');
+      expect(
+        formatOccurredAt(DateTime(2026, 10, 12).millisecondsSinceEpoch),
+        '2026-10-12',
+      );
       // 退货 / 手记收付款：`occurred_at` = 精确时刻 ⇒ 印到分
       expect(
         formatOccurredAt(DateTime(2026, 10, 12, 16, 48).millisecondsSinceEpoch),
@@ -164,7 +156,10 @@ void main() {
       expect(partyRoleLabel(PartyRole.customer), '客户');
       expect(partyRoleLabel(PartyRole.carrier), '司机');
       expect(
-        partyRolesLabel(const <PartyRole>[PartyRole.customer, PartyRole.supplier]),
+        partyRolesLabel(const <PartyRole>[
+          PartyRole.customer,
+          PartyRole.supplier,
+        ]),
         '客户、供应商',
       );
     });

@@ -98,7 +98,8 @@ class AppConfigStore {
   /// `%APPDATA%` 拿不到时退回 `<home>\.shensuanzi\config.json`。
   factory AppConfigStore.forEnvironment(AppEnvironment environment) {
     final String? appData = environment.appData;
-    final String base = appData ?? p.join(environment.homeDirectory, '.shensuanzi');
+    final String base =
+        appData ?? p.join(environment.homeDirectory, '.shensuanzi');
     return AppConfigStore(File(p.join(base, '神算子', 'config.json')));
   }
 

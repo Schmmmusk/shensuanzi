@@ -35,10 +35,7 @@ class _RejectingEngine extends RuleEngine {
 
   @override
   RuleOutcome markDelivered({required String documentId, int? now}) =>
-      RuleOutcome.rejected(
-        '测试拒绝：签收被拒',
-        code: RejectCode.ruleValidationFailed,
-      );
+      RuleOutcome.rejected('测试拒绝：签收被拒', code: RejectCode.ruleValidationFailed);
 }
 
 /// #23 补丁桩：**协议违反**码（target_missing）—— 钉「非业务拒绝保持
@@ -48,7 +45,10 @@ class _ProtocolEngine extends RuleEngine {
 
   @override
   RuleOutcome markDelivered({required String documentId, int? now}) =>
-      RuleOutcome.rejected(malformedSyncRequestReason, code: RejectCode.targetMissing);
+      RuleOutcome.rejected(
+        malformedSyncRequestReason,
+        code: RejectCode.targetMissing,
+      );
 }
 
 void main() {
@@ -196,12 +196,10 @@ void main() {
       final DeliverySaved saved = deliveries.create(deliveryDraft());
       // 按单号反查 id（tests 里 SalesSaved 只带 docNo；用 raw SQL 免依赖 DAO 面）
       final String deliveryId =
-          db.raw
-              .select(
-                'SELECT id FROM documents WHERE doc_no = ?',
-                <Object?>[saved.docNo],
-              )
-              .first['id']! as String;
+          db.raw.select('SELECT id FROM documents WHERE doc_no = ?', <Object?>[
+                saved.docNo,
+              ]).first['id']!
+              as String;
       final DeliveryService rejecting = DeliveryService(
         engine: _RejectingEngine(db),
         queries: queries,
@@ -217,10 +215,7 @@ void main() {
         ),
       );
       // 拒绝后单据状态未变（仍待签收）
-      expect(
-        DocumentDao(db).findById(deliveryId)!.status,
-        DocStatus.inTransit,
-      );
+      expect(DocumentDao(db).findById(deliveryId)!.status, DocStatus.inTransit);
     });
 
     test('SettlementInvalid 是 RuleRejected 的特化（核销先例统一类型）', () {

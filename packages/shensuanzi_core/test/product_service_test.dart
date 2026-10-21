@@ -208,8 +208,8 @@ void main() {
     });
 
     test('一次能报多个字段（界面据此标红多栏）', () {
-      final Map<ProductField, String> errors =
-          const ProductDraft().validate(); // 除了单位默认「件」，其余全空
+      final Map<ProductField, String> errors = const ProductDraft()
+          .validate(); // 除了单位默认「件」，其余全空
       expect(errors.keys, contains(ProductField.name));
       expect(errors.keys, contains(ProductField.sellPrice));
       expect(errors, isNot(contains(ProductField.unit)));
@@ -315,12 +315,10 @@ void main() {
         goodDraft(barcode: '   '),
         now: 1000,
       );
-      final Object? raw = db.raw
-          .select(
-            'SELECT barcode FROM products WHERE id = ?',
-            <Object?>[product.id],
-          )
-          .first['barcode'];
+      final Object? raw = db.raw.select(
+        'SELECT barcode FROM products WHERE id = ?',
+        <Object?>[product.id],
+      ).first['barcode'];
       expect(raw, isNull);
     });
 
@@ -340,12 +338,10 @@ void main() {
         goodDraft(packageNote: '   '),
         now: 1000,
       );
-      final Object? raw = db.raw
-          .select(
-            'SELECT package_note FROM products WHERE id = ?',
-            <Object?>[product.id],
-          )
-          .first['package_note'];
+      final Object? raw = db.raw.select(
+        'SELECT package_note FROM products WHERE id = ?',
+        <Object?>[product.id],
+      ).first['package_note'];
       expect(raw, isNull);
     });
 
@@ -636,10 +632,9 @@ void main() {
       service.setActive(a.id, false, now: 2000);
 
       expect(service.list().map((Product p) => p.name), <String>['乙']);
-      expect(
-        service.list(active: false).map((Product p) => p.name),
-        <String>['甲'],
-      );
+      expect(service.list(active: false).map((Product p) => p.name), <String>[
+        '甲',
+      ]);
       expect(service.list(active: null).length, 2);
     });
 
@@ -647,17 +642,11 @@ void main() {
       service.create(goodDraft(name: '先'), now: 1000);
       service.create(goodDraft(name: '后'), now: 1001);
 
-      expect(
-        service.list().map((Product p) => p.name),
-        <String>['先', '后'],
-      );
+      expect(service.list().map((Product p) => p.name), <String>['先', '后']);
     });
 
     test('query 命中名称 / 编码 / 条码', () {
-      service.create(
-        goodDraft(name: '红富士苹果', barcode: '690111'),
-        now: 1000,
-      );
+      service.create(goodDraft(name: '红富士苹果', barcode: '690111'), now: 1000);
       service.create(goodDraft(name: '娃哈哈水', barcode: '690222'), now: 1001);
 
       expect(service.list(query: '富士').single.name, '红富士苹果');
@@ -796,10 +785,7 @@ void main() {
   group('v3 包装换算两列（成对启用，§BD·四 #2）', () {
     test('只填数量不填单位名 ⇒ packageUnit 报', () {
       final ProductDraft draft = goodDraft(packageSize: '12');
-      expect(
-        draft.validate()[ProductField.packageUnit],
-        contains('就要给包装起个名字'),
-      );
+      expect(draft.validate()[ProductField.packageUnit], contains('就要给包装起个名字'));
     });
 
     test('只填单位名不填数量 ⇒ packageSize 报', () {
@@ -812,21 +798,28 @@ void main() {
 
     test('数量 ≤ 0 ⇒ 报正整数', () {
       expect(
-        goodDraft(packageUnit: '箱', packageSize: '0')
-            .validate()[ProductField.packageSize],
+        goodDraft(
+          packageUnit: '箱',
+          packageSize: '0',
+        ).validate()[ProductField.packageSize],
         contains('正整数'),
       );
       expect(
-        goodDraft(packageUnit: '箱', packageSize: '-3')
-            .validate()[ProductField.packageSize],
+        goodDraft(
+          packageUnit: '箱',
+          packageSize: '-3',
+        ).validate()[ProductField.packageSize],
         contains('正整数'),
       );
     });
 
     test('包装单位与最小单位相同 ⇒ 报（否则换算语义错乱）', () {
       expect(
-        goodDraft(unit: '箱', packageUnit: '箱', packageSize: '12')
-            .validate()[ProductField.packageUnit],
+        goodDraft(
+          unit: '箱',
+          packageUnit: '箱',
+          packageSize: '12',
+        ).validate()[ProductField.packageUnit],
         contains('不能和最小单位'),
       );
     });

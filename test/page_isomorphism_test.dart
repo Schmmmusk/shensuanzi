@@ -32,7 +32,8 @@ String pageSource(String name) {
   expect(
     file.existsSync(),
     isTrue,
-    reason: '读不到 $file —— `flutter test` 必须在**包根**运行'
+    reason:
+        '读不到 $file —— `flutter test` 必须在**包根**运行'
         '（当前目录：${Directory.current.path}）',
   );
   return file.existsSync() ? file.readAsStringSync() : '';
@@ -90,7 +91,8 @@ void expectSameBlock(String header) {
   expect(
     sale,
     isNotNull,
-    reason: '前提：`sale_page.dart` 里找不到特征串「$header」'
+    reason:
+        '前提：`sale_page.dart` 里找不到特征串「$header」'
         '—— 改名 / 挪走就得跟着改本测试（这正是它要防的事）',
   );
   expect(
@@ -102,7 +104,8 @@ void expectSameBlock(String header) {
   expect(
     normalize(sale),
     equals(normalize(delivery)),
-    reason: '「$header」在销售页与送货页**必须逐字同构**（#45 丙）—— '
+    reason:
+        '「$header」在销售页与送货页**必须逐字同构**（#45 丙）—— '
         '一处改了另一处没改，就是 #28① 那次漏改的重演',
   );
 }
@@ -139,7 +142,8 @@ void main() {
         expect(
           pageSource(page),
           contains(marker),
-          reason: '$page 的 `_LineCard` 必须比**最小单位**数量'
+          reason:
+              '$page 的 `_LineCard` 必须比**最小单位**数量'
               '（用 `quantityValue` = 录入单位原始数，按箱录入必然漏报 —— #44）',
         );
       }
@@ -189,7 +193,8 @@ void main() {
         expect(
           purchase.contains(symbol),
           isFalse,
-          reason: '采购页出现 `$symbol` —— 要么真的要做负库存提示（那是**新裁定**，'
+          reason:
+              '采购页出现 `$symbol` —— 要么真的要做负库存提示（那是**新裁定**，'
               '不是「顺手对称」），要么是从另两页复制粘贴带进来的死代码'
               '（D2b 那个 `isPending` 悬空字段的教训）',
         );
@@ -216,7 +221,10 @@ void main() {
         // 不用 blockOf：`_totalBar` 是**表达式体**（`=> Padding(...)`），且块内
         // 注释带中文括号字样，按字符配对会截错。改按**成员边界**切：
         // 到下一个两格缩进的成员 / 文档注释为止。
-        final int nextMember = source.indexOf(RegExp(r'\n  (Widget|///)'), head + 10);
+        final int nextMember = source.indexOf(
+          RegExp(r'\n  (Widget|///)'),
+          head + 10,
+        );
         expect(
           nextMember,
           isNonNegative,
@@ -226,13 +234,15 @@ void main() {
         expect(
           bar,
           contains('Expanded('),
-          reason: '$page 的合计金额格没有弹性 —— 窄屏 + 大字号会被裁切'
+          reason:
+              '$page 的合计金额格没有弹性 —— 窄屏 + 大字号会被裁切'
               '（#52 外测 M13 的原始形态就是 `Spacer`）；有意改掉请三页一起改',
         );
         expect(
           bar,
           isNot(contains('Spacer(')),
-          reason: '$page 的合计金额格退回了 `Spacer()` —— 那格没有弹性，'
+          reason:
+              '$page 的合计金额格退回了 `Spacer()` —— 那格没有弹性，'
               '#52 会复发；金额格必须 Expanded',
         );
       }
@@ -257,7 +267,8 @@ void main() {
           expect(
             source,
             contains(pin),
-            reason: '$page 缺返回拦截特征串「$pin」—— 要么 #51 只改了别的页'
+            reason:
+                '$page 缺返回拦截特征串「$pin」—— 要么 #51 只改了别的页'
                 '（纪律 18），要么这页被有意改掉（那就三页一起改）',
           );
         }

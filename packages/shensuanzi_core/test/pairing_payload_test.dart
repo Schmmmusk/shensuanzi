@@ -46,13 +46,18 @@ void main() {
       '随便一句话',
       '',
     ]) {
-      expect(() => PairingPayload.parse(bad), throwsFormatException, reason: bad);
+      expect(
+        () => PairingPayload.parse(bad),
+        throwsFormatException,
+        reason: bad,
+      );
     }
   });
 
   test('缺字段 → FormatException', () {
     expect(
-      () => PairingPayload.parse('shensuanzi://pair?host_id=h&ip=1.1.1.1&port=1'),
+      () =>
+          PairingPayload.parse('shensuanzi://pair?host_id=h&ip=1.1.1.1&port=1'),
       throwsFormatException,
     );
     expect(
@@ -67,7 +72,11 @@ void main() {
       'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=65536&token=t',
       'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=abc&token=t',
     ]) {
-      expect(() => PairingPayload.parse(bad), throwsFormatException, reason: bad);
+      expect(
+        () => PairingPayload.parse(bad),
+        throwsFormatException,
+        reason: bad,
+      );
     }
   });
 }

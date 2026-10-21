@@ -8,10 +8,7 @@ import 'package:test/test.dart';
 void main() {
   group('entryFieldsShouldStack（M10）', () {
     test('宽屏 + 标准字号 ⇒ 并排（桌面行为零变化）', () {
-      expect(
-        entryFieldsShouldStack(maxWidth: 800, textScale: 1),
-        isFalse,
-      );
+      expect(entryFieldsShouldStack(maxWidth: 800, textScale: 1), isFalse);
     });
 
     test('窄屏 + 标准字号 ⇒ 堆叠（阈值 340）', () {

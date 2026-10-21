@@ -381,10 +381,14 @@ void main() {
       expect(over.targetUnsettledAfterCents, 0);
       expect(service.unsettledCentsOf(sale.id), 0, reason: '封顶后正好结清');
       // 现金箱只进 5000（找零不是收入）
-      final int cashIn = db.raw
-          .select('SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
-              'WHERE amount > 0')
-          .first['s']! as int;
+      final int cashIn =
+          db.raw
+                  .select(
+                    'SELECT COALESCE(SUM(amount), 0) AS s FROM money_ledger '
+                    'WHERE amount > 0',
+                  )
+                  .first['s']!
+              as int;
       expect(cashIn, 5000, reason: '⚡ 关键：找零 4999 没进账');
     });
 
@@ -486,7 +490,11 @@ void main() {
       );
 
       // 退货冲减必须立刻反映：未收 60 − 12 = 48
-      expect(service.unsettledCentsOf(sale.id), 4800, reason: '退货冲减未扣 = BUG-04');
+      expect(
+        service.unsettledCentsOf(sale.id),
+        4800,
+        reason: '退货冲减未扣 = BUG-04',
+      );
 
       // 收 40 ⇒ 未收 8（不是 20！）
       service.settle(
@@ -495,7 +503,11 @@ void main() {
         amountCents: 4000,
         now: now(),
       );
-      expect(service.unsettledCentsOf(sale.id), 800, reason: '真实未收 = 60 − 40 − 12');
+      expect(
+        service.unsettledCentsOf(sale.id),
+        800,
+        reason: '真实未收 = 60 − 40 − 12',
+      );
 
       // 收清真实余款 8 ⇒ 0；展示态即可显示「已结清」
       service.settle(

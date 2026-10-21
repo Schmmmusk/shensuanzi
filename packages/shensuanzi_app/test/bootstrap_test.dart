@@ -86,10 +86,9 @@ void main() {
       final String dir = sandboxPath(box, 'data');
       DataMarker.write(dir, schemaVersion: Schema.version, now: 1);
 
-      final Map<String, Object?> json =
-          Map<String, Object?>.from(
-            jsonDecode(DataMarker.fileIn(dir).readAsStringSync()) as Map,
-          );
+      final Map<String, Object?> json = Map<String, Object?>.from(
+        jsonDecode(DataMarker.fileIn(dir).readAsStringSync()) as Map,
+      );
       expect(json['schema_version'], Schema.version);
       expect(json['created_at'], 1);
       expect(json['app'], '神算子');
@@ -102,10 +101,9 @@ void main() {
     test('字段缺失 / 类型不对 → null（不抛）', () {
       final String dir = sandboxPath(box, 'data');
       Directory(dir).createSync(recursive: true);
-      DataMarker.fileIn(dir).writeAsStringSync(jsonEncode(<String, Object?>{
-        'app': '神算子',
-        'schema_version': '三',
-      }));
+      DataMarker.fileIn(dir).writeAsStringSync(
+        jsonEncode(<String, Object?>{'app': '神算子', 'schema_version': '三'}),
+      );
       expect(DataMarker.read(dir), isNull);
     });
   });
@@ -194,9 +192,7 @@ void main() {
     });
 
     test('配置指向一个已废弃的非法目录（如 C:\\Windows\\x）→ null', () {
-      bootstrapIn(box).saveConfig(
-        AppConfig(dataDirectory: r'C:\Windows\神算子'),
-      );
+      bootstrapIn(box).saveConfig(AppConfig(dataDirectory: r'C:\Windows\神算子'));
       expect(bootstrapIn(box).resolved(), isNull);
     });
   });
@@ -239,9 +235,9 @@ void main() {
     });
 
     test('新位置：目录不存在也会被创建', () {
-      final DataLocation location = bootstrapIn(box).prepare(
-        p.join(box.path, 'a', 'b', '神算子数据'),
-      );
+      final DataLocation location = bootstrapIn(
+        box,
+      ).prepare(p.join(box.path, 'a', 'b', '神算子数据'));
       expect(Directory(location.directory).existsSync(), isTrue);
     });
 
@@ -300,9 +296,9 @@ void main() {
     });
 
     test('备份目录是数据目录的兄弟目录', () {
-      final DataLocation location = bootstrapIn(box).prepare(
-        p.join(box.path, '神算子数据'),
-      );
+      final DataLocation location = bootstrapIn(
+        box,
+      ).prepare(p.join(box.path, '神算子数据'));
       expect(location.backupDirectory, p.join(box.path, '神算子备份'));
       expect(
         location.backupDirectory,
@@ -321,8 +317,11 @@ void main() {
       final Db db = bootstrap.open(location);
       expect(File(location.databasePath).existsSync(), isTrue);
 
-      final Object? version =
-          db.raw.select('PRAGMA user_version').first.values.first;
+      final Object? version = db.raw
+          .select('PRAGMA user_version')
+          .first
+          .values
+          .first;
       expect(version, Schema.version);
 
       db.close();
@@ -371,11 +370,7 @@ void main() {
 
       final StartupDecision decision = b.startupDecision();
       expect(decision.scenario, StartupScenario.firstRunWithData);
-      expect(
-        decision.defaultPath,
-        dir,
-        reason: '要告诉用户「是哪个位置已有数据」',
-      );
+      expect(decision.defaultPath, dir, reason: '要告诉用户「是哪个位置已有数据」');
     });
 
     test('配过 + 库能打开 ⇒ openExisting', () {
@@ -431,17 +426,11 @@ void main() {
 
       // ① 文件在、内容不是 SQLite ⇒ brokenDatabase（可「重试」）
       File(created.databasePath).writeAsStringSync('这不是一个有效的 SQLite 库');
-      expect(
-        b.startupDecision().scenario,
-        StartupScenario.brokenDatabase,
-      );
+      expect(b.startupDecision().scenario, StartupScenario.brokenDatabase);
 
       // ② 文件没了 ⇒ missingDatabase（要教从备份恢复）
       File(created.databasePath).deleteSync();
-      expect(
-        b.startupDecision().scenario,
-        StartupScenario.missingDatabase,
-      );
+      expect(b.startupDecision().scenario, StartupScenario.missingDatabase);
     });
 
     test('createEmptyDatabase：只在确实没有文件时建，绝不覆盖', () {
@@ -454,10 +443,7 @@ void main() {
       expect(b.startupDecision().scenario, StartupScenario.openExisting);
 
       // ② 已经有文件（用户刚拷回来的真库）⇒ 明确拒绝，不覆盖
-      expect(
-        () => b.createEmptyDatabase(created),
-        throwsA(isA<StateError>()),
-      );
+      expect(() => b.createEmptyDatabase(created), throwsA(isA<StateError>()));
     });
 
     test('配过 + **目录被删** ⇒ recoverLocation（带上「上次用的路径」）', () {
@@ -503,7 +489,11 @@ void main() {
       // 「注入的默认位置」真的建在磁盘上（有标记 + 真库）——判定必须真的读盘
       final String injected = sandboxPath(box, '注入的默认位置');
       Directory(injected).createSync(recursive: true);
-      DataMarker.write(injected, schemaVersion: Schema.version, now: 1700000000000);
+      DataMarker.write(
+        injected,
+        schemaVersion: Schema.version,
+        now: 1700000000000,
+      );
       Db.open(p.join(injected, AppBootstrap.databaseFileName)).close();
 
       // ① 注入了，而且那个位置**真的有**数据 ⇒ firstRunWithData

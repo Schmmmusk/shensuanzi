@@ -83,8 +83,14 @@ void main() {
       dead: true,
     );
 
-    expect(queue.withStatus(SyncQueueStatus.pending).map((SyncQueueEntry e) => e.id), <String>['e1']);
-    expect(queue.withStatus(SyncQueueStatus.failed).map((SyncQueueEntry e) => e.id), <String>['e3']);
+    expect(
+      queue.withStatus(SyncQueueStatus.pending).map((SyncQueueEntry e) => e.id),
+      <String>['e1'],
+    );
+    expect(
+      queue.withStatus(SyncQueueStatus.failed).map((SyncQueueEntry e) => e.id),
+      <String>['e3'],
+    );
   });
 
   // ---------------- D2b：镜像主数据行的 `isPending` 判定 ----------------

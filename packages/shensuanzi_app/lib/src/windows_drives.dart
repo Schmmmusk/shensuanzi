@@ -92,7 +92,12 @@ List<RawDrive> enumerateWindowsRawDrives() {
       final int? free = local ? _freeBytesOf(k, root) : null;
       final String? label = local ? _volumeLabelOf(k, root) : null;
       out.add(
-        RawDrive(letter: letter, type: type, freeBytes: free, volumeLabel: label),
+        RawDrive(
+          letter: letter,
+          type: type,
+          freeBytes: free,
+          volumeLabel: label,
+        ),
       );
     } finally {
       k.localFree(root.cast<Uint8>());
@@ -163,7 +168,12 @@ typedef _GetDiskFreeSpaceExNative =
       Pointer<Uint64>,
     );
 typedef _GetDiskFreeSpaceEx =
-    int Function(Pointer<Uint16>, Pointer<Uint64>, Pointer<Uint64>, Pointer<Uint64>);
+    int Function(
+      Pointer<Uint16>,
+      Pointer<Uint64>,
+      Pointer<Uint64>,
+      Pointer<Uint64>,
+    );
 
 typedef _GetVolumeInformationNative =
     Int32 Function(

@@ -70,30 +70,37 @@ void main() {
         contains('请填日期'),
       );
       expect(
-        DeliveryDraft(partyId: 'c1', date: '2026/9/27')
-            .validate()[DeliveryField.date],
+        DeliveryDraft(
+          partyId: 'c1',
+          date: '2026/9/27',
+        ).validate()[DeliveryField.date],
         contains('格式不对'),
       );
     });
 
     test('一行都没有 → 报「至少要有一行」', () {
       expect(
-        DeliveryDraft(partyId: 'c1', date: '2026-09-27')
-            .validate()[DeliveryField.lines],
+        DeliveryDraft(
+          partyId: 'c1',
+          date: '2026-09-27',
+        ).validate()[DeliveryField.lines],
         contains('至少要有一行'),
       );
     });
 
     test('行级：数量非正 / 单价非法', () {
-      DeliveryLineDraft line(String qty, String price) => DeliveryLineDraft(
-        productId: 'p1',
-        quantity: qty,
-        unitPrice: price,
-      );
+      DeliveryLineDraft line(String qty, String price) =>
+          DeliveryLineDraft(productId: 'p1', quantity: qty, unitPrice: price);
       expect(line('0', '5').validate()[DeliveryLineField.quantity], isNotNull);
       expect(line('x', '5').validate()[DeliveryLineField.quantity], isNotNull);
-      expect(line('1', '-1').validate()[DeliveryLineField.unitPrice], isNotNull);
-      expect(line('1', '1.234').validate()[DeliveryLineField.unitPrice], isNotNull);
+      expect(
+        line('1', '-1').validate()[DeliveryLineField.unitPrice],
+        isNotNull,
+      );
+      expect(
+        line('1', '1.234').validate()[DeliveryLineField.unitPrice],
+        isNotNull,
+      );
       expect(line('1', '5.00').validate(), isEmpty);
     });
 
@@ -130,10 +137,7 @@ void main() {
 
     setUp(() {
       db = newMemoryDb();
-      service = DeliveryService(
-        engine: RuleEngine(db),
-        queries: QueryDao(db),
-      );
+      service = DeliveryService(engine: RuleEngine(db), queries: QueryDao(db));
       products = ProductDao(db);
       parties = PartyDao(db);
 
@@ -163,19 +167,20 @@ void main() {
 
     tearDown(() => db.close());
 
-    DeliveryDraft draftWith({String? partyId, String qty = '10'}) => DeliveryDraft(
-      partyId: partyId ?? customerId,
-      partyName: '李姐',
-      date: '2026-09-27',
-      lines: <DeliveryLineDraft>[
-        DeliveryLineDraft(
-          productId: productId,
-          productName: '商品-P001',
-          quantity: qty,
-          unitPrice: '5.00',
-        ),
-      ],
-    );
+    DeliveryDraft draftWith({String? partyId, String qty = '10'}) =>
+        DeliveryDraft(
+          partyId: partyId ?? customerId,
+          partyName: '李姐',
+          date: '2026-09-27',
+          lines: <DeliveryLineDraft>[
+            DeliveryLineDraft(
+              productId: productId,
+              productName: '商品-P001',
+              quantity: qty,
+              unitPrice: '5.00',
+            ),
+          ],
+        );
 
     test('校验不通过 → 抛 DeliveryDraftInvalid（带字段级原因）', () {
       expect(
@@ -191,11 +196,7 @@ void main() {
       }
       expect(caught!.fieldErrors[DeliveryField.party], contains('货出了门'));
       expect(caught.summary, contains('货出了门'));
-      expect(
-        caught.lineErrors,
-        isNotEmpty,
-        reason: '与行级校验**按位置对齐**（界面据此标红）',
-      );
+      expect(caught.lineErrors, isNotEmpty, reason: '与行级校验**按位置对齐**（界面据此标红）');
     });
 
     test('成功：单号 SH… / 状态强制 in_transit / 库存 −qty / 欠款挂客户', () {
@@ -203,7 +204,11 @@ void main() {
 
       expect(saved.docNo.startsWith('SH'), isTrue, reason: '送货单号前缀 SH');
       expect(saved.totalCents, 5000);
-      expect(saved.status, DocStatus.inTransit, reason: 'RULE-003 强制 in_transit');
+      expect(
+        saved.status,
+        DocStatus.inTransit,
+        reason: 'RULE-003 强制 in_transit',
+      );
       expect(saved.partyDueCents, 5000);
 
       // 货离店即扣库存（负库存允许 —— 送出去的时候可能账面已经不够）
@@ -229,9 +234,9 @@ void main() {
 
     test('明细行**真的落库**了（不是只写了主单）', () {
       final DeliverySaved saved = service.create(draftWith(), now: now());
-      final DocumentSummary row = service
-          .pendingDeliveries()
-          .firstWhere((DocumentSummary s) => s.document.docNo == saved.docNo);
+      final DocumentSummary row = service.pendingDeliveries().firstWhere(
+        (DocumentSummary s) => s.document.docNo == saved.docNo,
+      );
       final List<DocumentLine> lines = DocumentDao(db).linesOf(row.document.id);
       expect(lines.single.quantity, 10);
       expect(lines.single.unitPrice, 500);
@@ -317,11 +322,7 @@ void main() {
       final DeliverySigned again = service.markDelivered(id, now: now());
       expect(again.alreadyDone, isTrue);
       expect(again.status, DocStatus.delivered);
-      expect(
-        again.message,
-        contains('早就签收过了'),
-        reason: '文案要说清「这次什么都没变」，不是报错',
-      );
+      expect(again.message, contains('早就签收过了'), reason: '文案要说清「这次什么都没变」，不是报错');
     });
 
     test('已收满款时签收 → 直接落到 settled（状态机补完）', () {

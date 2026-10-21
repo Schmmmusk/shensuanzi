@@ -49,9 +49,7 @@ void main() {
     ),
   );
 
-  testWidgets('底部导航：5 个入口的文字标签齐（§AH-5，不许增减改名）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('底部导航：5 个入口的文字标签齐（§AH-5，不许增减改名）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
 
     for (final String label in <String>['概览', '开单', '库存', '往来', '我的']) {
@@ -59,9 +57,7 @@ void main() {
     }
   });
 
-  testWidgets('开单 tab：三个入口（销售 / 采购 / 送货），点销售推整屏', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('开单 tab：三个入口（销售 / 采购 / 送货），点销售推整屏', (WidgetTester tester) async {
     await tester.pumpWidget(page());
 
     await tester.tap(find.text('开单'));
@@ -77,10 +73,7 @@ void main() {
     await tester.tap(find.text('销售开单'));
     await tester.pumpAndSettle();
     expect(
-      find.descendant(
-        of: find.byType(AppBar),
-        matching: find.text('销售开单'),
-      ),
+      find.descendant(of: find.byType(AppBar), matching: find.text('销售开单')),
       findsOneWidget,
       reason: '整屏 AppBar 标题 = 入口名',
     );
@@ -276,9 +269,7 @@ void main() {
       onBackupNow: () async => const BackupOutcome.failure('不应被调到'),
       onExportBackup: () async => '导出成功',
     );
-    return MaterialApp(
-      home: mobileShell ? MobileShell(shell: shell) : shell,
-    );
+    return MaterialApp(home: mobileShell ? MobileShell(shell: shell) : shell);
   }
 
   testWidgets('#46：手机不给「立即备份」—— 数据安全出口是「导出本机数据文件」', (
@@ -288,19 +279,24 @@ void main() {
 
     // 初始 tab = 概览：橙卡（提醒）与按钮整块不出现
     expect(find.text('立即备份'), findsNothing);
-    expect(find.text('已 5 天没备份'), findsNothing,
-        reason: '提醒随门一起断 ⇒ 橙卡整块消失');
+    expect(find.text('已 5 天没备份'), findsNothing, reason: '提醒随门一起断 ⇒ 橙卡整块消失');
 
     // 我的 → 设置：备份区不出现；「导出本机数据文件」不许被一起藏掉
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
-    expect(find.text('立即备份'), findsNothing,
-        reason: '手机主库是空壳，备份它 = 假安全（既有裁定：手机不叫「备份」）');
+    expect(
+      find.text('立即备份'),
+      findsNothing,
+      reason: '手机主库是空壳，备份它 = 假安全（既有裁定：手机不叫「备份」）',
+    );
     expect(find.textContaining('上次备份'), findsNothing);
-    expect(find.text('导出本机数据文件'), findsOneWidget,
-        reason: '手机真正的数据安全出口 —— 打包镜像库 + 主库 + 未同步单据清单');
+    expect(
+      find.text('导出本机数据文件'),
+      findsOneWidget,
+      reason: '手机真正的数据安全出口 —— 打包镜像库 + 主库 + 未同步单据清单',
+    );
   });
 
   testWidgets('#46 反向：桌面壳（mobileShell=false）照常显示「立即备份」', (
@@ -316,9 +312,7 @@ void main() {
   //
   // 用**真镜像 + 真配对 + 真 DAO**（不是摆放层的空壳）—— 这两条要穿过
   // `_showDetail` 的 linked 门、真三态计数与真数据库写入。
-  testWidgets('#47 丁：挂起条目显示双出口；放弃 ⇒ 条目删除、三态条归零', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#47 丁：挂起条目显示双出口；放弃 ⇒ 条目删除、三态条归零', (WidgetTester tester) async {
     final (MobileSyncService sync, String queueId) = wiredSync();
     await tester.pumpWidget(syncWiredPage(sync));
     await tester.pumpAndSettle();
@@ -395,4 +389,3 @@ class _HangingTransport implements Transport {
   Future<TransportResponse> send(TransportRequest request) =>
       Completer<TransportResponse>().future;
 }
-

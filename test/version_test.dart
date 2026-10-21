@@ -30,7 +30,8 @@ void main() {
     expect(
       parts.first,
       AppVersion.value,
-      reason: 'pubspec 的版本号与 AppVersion.value 不一致 —— '
+      reason:
+          'pubspec 的版本号与 AppVersion.value 不一致 —— '
           '改一边忘了另一边（用户看到的与构建出来的就会不是一个东西）',
     );
     expect(
@@ -45,7 +46,8 @@ void main() {
     expect(
       AppVersion.display,
       contains('第六个可部署版本'),
-      reason: '限定词与 `AppVersion.build` 同步手改（中文数字）—— bump 版本时'
+      reason:
+          '限定词与 `AppVersion.build` 同步手改（中文数字）—— bump 版本时'
           '这里和 `version.dart` 必须一起动，漏一边测试立刻红',
     );
   });
@@ -59,13 +61,15 @@ void main() {
     expect(
       match,
       isNotNull,
-      reason: 'Runner.rc 里必须有一条「带引号字面量」的 ProductVersion '
+      reason:
+          'Runner.rc 里必须有一条「带引号字面量」的 ProductVersion '
           '（用宏 `VERSION_AS_STRING` 会带上构建号，属性页会显示成 0.1.0+1）',
     );
     expect(
       match!.group(1),
       AppVersion.value,
-      reason: 'Runner.rc 的 ProductVersion 是写死的 —— 改版本号时这里也要改，'
+      reason:
+          'Runner.rc 的 ProductVersion 是写死的 —— 改版本号时这里也要改，'
           '它在「文件属性」里用户直接能看到',
     );
   });
@@ -78,7 +82,8 @@ void main() {
     expect(
       nonAscii,
       isEmpty,
-      reason: 'rc.exe 按**系统代码页**解码源文件（简体中文机器 = GBK），'
+      reason:
+          'rc.exe 按**系统代码页**解码源文件（简体中文机器 = GBK），'
           '而 Flutter 生成的 CMake 的 `/utf-8` 是语言限定的（只给 C/C++），'
           '管不到资源编译器（`docs/windows_build.md` §7.1）。'
           '⚠️ 注意：rc.exe 本身**支持** `/utf-8`（MSVC 2019 16.x 起）——'
@@ -95,7 +100,8 @@ void main() {
     expect(
       m!.group(1),
       'Shensuanzi - Inventory & Bookkeeping',
-      reason: '2026-09-29 裁定：属性页保持英文；`&` 代替 `and` + '
+      reason:
+          '2026-09-29 裁定：属性页保持英文；`&` 代替 `and` + '
           '首字母大写是属性页观感（40 字符栏宽里更紧凑）',
     );
   });

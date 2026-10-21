@@ -78,9 +78,7 @@ void main() {
 
   testWidgets('「恢复默认大小」一键重置（遗漏 2）', (WidgetTester tester) async {
     // 先调到超大
-    store.save(
-      AppConfig(uiScale: UiScale.giant, shopName: null),
-    );
+    store.save(AppConfig(uiScale: UiScale.giant, shopName: null));
     current = store.load();
     AppConfig? received;
     await tester.pumpWidget(page((AppConfig config) => received = config));
@@ -113,8 +111,10 @@ void main() {
     current = store.load();
     AppConfig? received;
     await tester.pumpWidget(
-      page((AppConfig config) => received = config,
-          backupDirectory: r'D:\神算子备份'),
+      page(
+        (AppConfig config) => received = config,
+        backupDirectory: r'D:\神算子备份',
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -178,9 +178,7 @@ void main() {
     final Color expected = Theme.of(
       tester.element(find.byType(SettingsPage)),
     ).colorScheme.error;
-    final Text line = tester.widget<Text>(
-      find.text('上次备份：9月24日 12:00（自动）'),
-    );
+    final Text line = tester.widget<Text>(find.text('上次备份：9月24日 12:00（自动）'));
     expect(line.style?.color, expected, reason: '数据安全要看得见');
 
     await tester.pumpWidget(
@@ -194,9 +192,7 @@ void main() {
     expect(calm.style?.color, isNull, reason: '正常情况不刷红');
   });
 
-  testWidgets('备份不可用（库没就绪）→ 状态与按钮都不摆，说明文案仍在', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('备份不可用（库没就绪）→ 状态与按钮都不摆，说明文案仍在', (WidgetTester tester) async {
     store.save(const AppConfig(dataDirectory: r'D:\shensuanzi_data'));
     current = store.load();
     await tester.pumpWidget(
@@ -208,9 +204,7 @@ void main() {
     expect(find.textContaining('每天首次打开软件会自动备份一次'), findsOneWidget);
   });
 
-  testWidgets('点「立即备份」立刻禁用 +「备份中…」（遗漏 11 防连点）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('点「立即备份」立刻禁用 +「备份中…」（遗漏 11 防连点）', (WidgetTester tester) async {
     store.save(const AppConfig(dataDirectory: r'D:\shensuanzi_data'));
     current = store.load();
     final Completer<BackupOutcome> gate = Completer<BackupOutcome>();
@@ -245,9 +239,7 @@ void main() {
   // ---- 多设备同步（§AH · AH-A；原 §AG-6「开发中」占位已换成实装）----
 
   testWidgets('库没就绪时不装作能用：整段显示「暂时用不了」', (WidgetTester tester) async {
-    await tester.pumpWidget(
-      page((AppConfig _) {}, hostService: null),
-    );
+    await tester.pumpWidget(page((AppConfig _) {}, hostService: null));
 
     expect(find.text('多设备同步'), findsOneWidget);
     expect(find.textContaining('数据目录还没准备好'), findsOneWidget);
@@ -255,9 +247,7 @@ void main() {
     expect(find.byKey(const Key('host-service-switch')), findsNothing);
   });
 
-  testWidgets('库就绪时出现真正的开关，且默认关（§AH 遗漏 5）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('库就绪时出现真正的开关，且默认关（§AH 遗漏 5）', (WidgetTester tester) async {
     final Db db = Db.openInMemory();
     final HostServiceController hostService = HostServiceController(
       db: db,
@@ -270,15 +260,11 @@ void main() {
       db.close();
     });
 
-    await tester.pumpWidget(
-      page((AppConfig _) {}, hostService: hostService),
-    );
+    await tester.pumpWidget(page((AppConfig _) {}, hostService: hostService));
 
     expect(find.text('多设备同步'), findsOneWidget);
     expect(
-      tester
-          .widget<Switch>(find.byKey(const Key('host-service-switch')))
-          .value,
+      tester.widget<Switch>(find.byKey(const Key('host-service-switch'))).value,
       isFalse,
     );
     expect(find.text('已关闭'), findsOneWidget);

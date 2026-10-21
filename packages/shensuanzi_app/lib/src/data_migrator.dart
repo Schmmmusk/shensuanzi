@@ -61,7 +61,10 @@ class MigrationPlan {
 
 /// 迁移进度（给全屏遮罩的进度反馈 —— 裁定 ③：死等会让用户强杀进程）。
 class MigrationProgress {
-  const MigrationProgress({required this.filesCopied, required this.totalFiles});
+  const MigrationProgress({
+    required this.filesCopied,
+    required this.totalFiles,
+  });
 
   /// 已拷贝的文件数
   final int filesCopied;
@@ -70,7 +73,8 @@ class MigrationProgress {
   final int totalFiles;
 
   /// 0.0 ~ 1.0；总数为 0 时恒 1（空库也能迁）
-  double get fraction => totalFiles == 0 ? 1 : (filesCopied / totalFiles).clamp(0.0, 1.0);
+  double get fraction =>
+      totalFiles == 0 ? 1 : (filesCopied / totalFiles).clamp(0.0, 1.0);
 }
 
 /// 迁移结果。**失败时旧目录一定原样**（见 [DataMigrator.execute] 的退路）。
@@ -180,7 +184,9 @@ class DataMigrator {
       int copied = 0;
       void report() {
         if (onProgress != null) {
-          onProgress(MigrationProgress(filesCopied: copied, totalFiles: plan.fileCount));
+          onProgress(
+            MigrationProgress(filesCopied: copied, totalFiles: plan.fileCount),
+          );
         }
       }
 
@@ -238,7 +244,8 @@ class DataMigrator {
         // #43：旧文案把异常全文拼给了用户（本地文件错误无经营内容，
         // 但不可读）⇒ 改「本地文件」分类文案。⚠️ 此处运行在 isolate 内、
         // 没有日志出口 ⇒ 原始细节不落盘（注册为已知限制，台账 §CV·四十七）。
-        noteWarning = '数据已经搬好了，只是旧文件夹里没能留下「已迁移」说明。'
+        noteWarning =
+            '数据已经搬好了，只是旧文件夹里没能留下「已迁移」说明。'
             '${localFileFailureAdvice(error)} '
             '不影响使用 —— 但**先别删旧文件夹**，确认新位置好用再说。';
       }
@@ -250,7 +257,8 @@ class DataMigrator {
           );
         } catch (_) {
           // 旧备份目录的说明文件同样只是指引；上面主目录那条已经报过了
-          noteWarning ??= '数据已经搬好了，只是旧文件夹里没能留下「已迁移」说明。'
+          noteWarning ??=
+              '数据已经搬好了，只是旧文件夹里没能留下「已迁移」说明。'
               '不影响使用 —— 但**先别删旧文件夹**，确认新位置好用再说。';
         }
       }
@@ -336,9 +344,7 @@ class DataMigrator {
     required String directory,
     required String newDataDirectory,
   }) {
-    final File note = File(
-      p.join(directory, '已迁移-请先阅读.txt'),
-    );
+    final File note = File(p.join(directory, '已迁移-请先阅读.txt'));
     note.writeAsStringSync(_legacyNoteText(newDataDirectory), flush: true);
     return note.path;
   }

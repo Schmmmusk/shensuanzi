@@ -142,7 +142,12 @@ void main() {
       final String p = createProduct();
       final String supplier = createParty(name: '供应商甲');
       final String customer = createParty(name: '客户乙');
-      seedStock(p, supplier: supplier, qty: 20, unitPrice: 100); // 库存 20 / 成本 2000
+      seedStock(
+        p,
+        supplier: supplier,
+        qty: 20,
+        unitPrice: 100,
+      ); // 库存 20 / 成本 2000
 
       final Document delivery = doc(
         type: DocType.delivery,
@@ -231,10 +236,7 @@ void main() {
       final String supplier = createParty(name: '供应商甲');
       seedStock(p, supplier: supplier);
 
-      final Document delivery = doc(
-        type: DocType.delivery,
-        totalAmount: 100,
-      );
+      final Document delivery = doc(type: DocType.delivery, totalAmount: 100);
       final RuleOutcome outcome = engine.dispatch(
         document: delivery,
         lines: oneLine(delivery.id, p, 1, 100),
@@ -242,7 +244,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.ruleInternalError, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.ruleInternalError,
+        reason: outcome.reason,
+      );
       expect(documents.findById(delivery.id), isNull);
     });
   });
@@ -275,30 +281,22 @@ void main() {
 
       final Document saved = documents.findById(delivery.id)!;
       expect(saved.paidAmount, 1000, reason: '不变量 B4 对 delivery 无例外');
-      expect(
-        saved.status,
-        DocStatus.inTransit,
-        reason: '状态机优先：钱到了但货未签收（R-10）',
-      );
+      expect(saved.status, DocStatus.inTransit, reason: '状态机优先：钱到了但货未签收（R-10）');
       expect(settlements.settledAmountOf(delivery.id), 1000);
 
       // 资金流仍挂在自动生成的 receipt 单下（纪律 11）
-      final Row moneyOnMain = db.raw
-          .select(
-            'SELECT COUNT(*) AS c FROM money_ledger m '
-            'JOIN documents d ON d.id = m.document_id WHERE d.ref_doc_id = ?',
-            <Object?>[delivery.id],
-          )
-          .first;
+      final Row moneyOnMain = db.raw.select(
+        'SELECT COUNT(*) AS c FROM money_ledger m '
+        'JOIN documents d ON d.id = m.document_id WHERE d.ref_doc_id = ?',
+        <Object?>[delivery.id],
+      ).first;
       expect(moneyOnMain['c'], 1);
       expect(
-        db.raw
-            .select(
-              'SELECT d.doc_type FROM money_ledger m '
-              'JOIN documents d ON d.id = m.document_id WHERE d.ref_doc_id = ?',
-              <Object?>[delivery.id],
-            )
-            .first['doc_type'],
+        db.raw.select(
+          'SELECT d.doc_type FROM money_ledger m '
+          'JOIN documents d ON d.id = m.document_id WHERE d.ref_doc_id = ?',
+          <Object?>[delivery.id],
+        ).first['doc_type'],
         'receipt',
       );
     });
@@ -472,7 +470,11 @@ void main() {
       expect(second.status, RuleStatus.alreadyExists);
       expect(second.document!.status, DocStatus.delivered);
       expect(stock.ofProduct(p).length, stockRows, reason: '不产生库存流水');
-      expect(partyLedger.ofParty(customer).length, partyRows, reason: '不产生往来流水');
+      expect(
+        partyLedger.ofParty(customer).length,
+        partyRows,
+        reason: '不产生往来流水',
+      );
       expect(
         documents.findById(delivery.id)!.updatedAt,
         updatedAt,
@@ -500,9 +502,9 @@ void main() {
       final int stockBefore = stock.stockOf(p);
       final int stockCostBefore = stock.costSnapshotOf(p).totalCost;
       final int partyBefore = partyLedger.balanceOf(customer);
-      final int stockRowsBefore = db.raw
-          .select('SELECT COUNT(*) AS c FROM stock_ledger')
-          .first['c']! as int;
+      final int stockRowsBefore =
+          db.raw.select('SELECT COUNT(*) AS c FROM stock_ledger').first['c']!
+              as int;
 
       engine.markDelivered(documentId: delivery.id, now: now());
 
@@ -544,7 +546,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.actionNotApplicable, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.actionNotApplicable,
+        reason: outcome.reason,
+      );
       expect(documents.findById(delivery.id)!.status, DocStatus.cancelled);
     });
 
@@ -559,7 +565,11 @@ void main() {
       );
 
       expect(outcome.status, RuleStatus.rejected);
-      expect(outcome.code, RejectCode.actionNotApplicable, reason: outcome.reason);
+      expect(
+        outcome.code,
+        RejectCode.actionNotApplicable,
+        reason: outcome.reason,
+      );
     });
 
     test('单据不存在 → rejected', () {
@@ -636,13 +646,11 @@ void main() {
       }
 
       final int sum =
-          db.raw
-                  .select(
-                    'SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_ledger '
-                    'WHERE product_id = ?',
-                    <Object?>[p],
-                  )
-                  .first['s']!
+          db.raw.select(
+                'SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_ledger '
+                'WHERE product_id = ?',
+                <Object?>[p],
+              ).first['s']!
               as int;
       expect(stock.stockOf(p), sum);
       expect(stock.stockOf(p), 11, reason: '20 − 2 − 3 − 4');

@@ -153,7 +153,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 壳形态：判断在 app 包（纯 Dart，`dart test` 覆盖），这里只取值分支。
   /// 平台不会中途变，`late final` 一次定死。
   late final ShellKind _shellKind =
-      widget.shellKind ?? shellKindFor(operatingSystem: Platform.operatingSystem);
+      widget.shellKind ??
+      shellKindFor(operatingSystem: Platform.operatingSystem);
 
   /// ⚠️ **弹对话框必须用这个 key 的 context，不能用本 State 的 `context`。**
   ///
@@ -445,7 +446,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     final String? root = widget.dataRoot;
     if (root == null) {
       setState(() {
-        _dbFailure = '应用数据目录不可用（没有拿到私有目录）。'
+        _dbFailure =
+            '应用数据目录不可用（没有拿到私有目录）。'
             '请卸载后重新安装再试；如果还不行，请把这句话告诉技术支持。';
       });
       return;
@@ -552,7 +554,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     // 用来替换那句欢迎语的）
     await _chooseDirectory(
       firstRun: false,
-      note: '默认位置（$defaultPath）里已经有一份神算子的数据 —— '
+      note:
+          '默认位置（$defaultPath）里已经有一份神算子的数据 —— '
           '它不会被删掉，你现在选的是新位置。'
           '数据都存在你自己电脑里，不会上传。',
     );
@@ -581,11 +584,13 @@ class _ShensuanziAppState extends State<ShensuanziApp>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text('这个文件夹里已经有神算子的数据：',
-                  style: const TextStyle(height: 1.6)),
+              Text('这个文件夹里已经有神算子的数据：', style: const TextStyle(height: 1.6)),
               Text(
                 target,
-                style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  height: 1.6,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 8),
               const Text(
@@ -754,7 +759,9 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 目录不可用 / 非空 —— 诚实展示原因与「怎么办」，用户可再点一次
       final BuildContext? retryContext = _navigatorKey.currentContext;
       if (retryContext == null || !retryContext.mounted) return;
-      setState(() => _dbFailure = '${error.reason}。${error.howTo ?? '请再选一个文件夹。'}');
+      setState(
+        () => _dbFailure = '${error.reason}。${error.howTo ?? '请再选一个文件夹。'}',
+      );
     }
   }
 
@@ -795,12 +802,12 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         // 会被连坐成「数据文件打不开」，软件整页不可用（目录变只读 / 磁盘满就会）。
         // 所以走**不抛版本**，失败只记一条日志：标记没刷新 ⇒ 下次启动再判一次，
         // 多一条日志而已，**没有功能损失**。
-        final Object? refreshError =
-            _service.tryRefreshMarker(location, schemaVersion);
+        final Object? refreshError = _service.tryRefreshMarker(
+          location,
+          schemaVersion,
+        );
         if (refreshError != null) {
-          _log.write(
-            '刷新标记文件失败（$refreshError）—— 数据可正常使用，下次启动会再试',
-          );
+          _log.write('刷新标记文件失败（$refreshError）—— 数据可正常使用，下次启动会再试');
         }
       }
       final BackupService backup = BackupService(
@@ -833,10 +840,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
           engine: _newEngine(db),
           queries: QueryDao(_db!),
         );
-        _sales = SaleService(
-          engine: _newEngine(db),
-          queries: QueryDao(_db!),
-        );
+        _sales = SaleService(engine: _newEngine(db), queries: QueryDao(_db!));
         _deliveries = DeliveryService(
           engine: _newEngine(db),
           queries: QueryDao(_db!),
@@ -863,8 +867,9 @@ class _ShensuanziAppState extends State<ShensuanziApp>
                 ),
                 // §CS·五 裁定 ③：同步内部的原始异常**只进日志**，
                 // 客户端只收到一句中文（`syncFailureReason`）
-                onInternalError: (String label, Object error, StackTrace stack) =>
-                    _log.crash(error, stack, label: label),
+                onInternalError:
+                    (String label, Object error, StackTrace stack) =>
+                        _log.crash(error, stack, label: label),
               );
         _dbFailure = null;
         _brokenDirectory = null;
@@ -975,12 +980,14 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     );
     final MigrationPlan plan = migrator.plan();
     final DriveInfo? drive = _environment.driveOf(target);
-    if (drive != null && drive.freeBytes != null && drive.freeBytes! < plan.requiredBytes) {
+    if (drive != null &&
+        drive.freeBytes != null &&
+        drive.freeBytes! < plan.requiredBytes) {
       await _migrationMessage(
         navContext,
         '${drive.letter} 盘剩余空间不够：需要约 '
-            '${formatBytes(plan.requiredBytes)}（数据 + 备份 + 余量），'
-            '现在只剩 ${formatBytes(drive.freeBytes)}',
+        '${formatBytes(plan.requiredBytes)}（数据 + 备份 + 余量），'
+        '现在只剩 ${formatBytes(drive.freeBytes)}',
       );
       return;
     }
@@ -996,8 +1003,17 @@ class _ShensuanziAppState extends State<ShensuanziApp>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text('从 ${current.directory}', style: const TextStyle(height: 1.6)),
-              Text('搬到 $target', style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600)),
+              Text(
+                '从 ${current.directory}',
+                style: const TextStyle(height: 1.6),
+              ),
+              Text(
+                '搬到 $target',
+                style: const TextStyle(
+                  height: 1.6,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const SizedBox(height: 8),
               Text(
                 '共 ${plan.fileCount} 个文件、约 ${formatBytes(plan.byteCount)}'
@@ -1007,14 +1023,23 @@ class _ShensuanziAppState extends State<ShensuanziApp>
               const SizedBox(height: 8),
               Text(
                 '原目录不会删除 —— 确认新位置好用之前，它是你唯一的完好备份。',
-                style: TextStyle(height: 1.6, color: Theme.of(context).hintColor),
+                style: TextStyle(
+                  height: 1.6,
+                  color: Theme.of(context).hintColor,
+                ),
               ),
             ],
           ),
         ),
         actions: <Widget>[
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('开始迁移')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('开始迁移'),
+          ),
         ],
       ),
     );
@@ -1111,7 +1136,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     if (popContext != null && popContext.mounted) {
       Navigator.of(popContext, rootNavigator: true).pop();
     }
-    await dialogClosed.future.timeout(const Duration(seconds: 2), onTimeout: () {});
+    await dialogClosed.future.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () {},
+    );
     if (!mounted) return;
 
     // ⑦ 成败处置
@@ -1133,16 +1161,20 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     }
   }
 
-  Future<void> _migrationMessage(BuildContext context, String message) => showDialog<void>(
-    context: context,
-    builder: (BuildContext context) => AlertDialog(
-      title: const Text('先停一下'),
-      content: Text(message, style: const TextStyle(height: 1.6)),
-      actions: <Widget>[
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('知道了')),
-      ],
-    ),
-  );
+  Future<void> _migrationMessage(BuildContext context, String message) =>
+      showDialog<void>(
+        context: context,
+        builder: (BuildContext context) => AlertDialog(
+          title: const Text('先停一下'),
+          content: Text(message, style: const TextStyle(height: 1.6)),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
 
   void _toast(String message) {
     final BuildContext? dialogContext = _navigatorKey.currentContext;
@@ -1159,7 +1191,11 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     if (service == null) return;
     final BuildContext? context = _navigatorKey.currentContext;
     if (context == null || !context.mounted) return;
-    final String? message = await showPairingScanPage(context, service, log: _log);
+    final String? message = await showPairingScanPage(
+      context,
+      service,
+      log: _log,
+    );
     if (!mounted) return;
     setState(() {}); // 裁定 ⑦：镜像可能变了，全部页面重查
     if (message != null) _toast(message);
@@ -1223,7 +1259,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     if (popContext != null && popContext.mounted) {
       Navigator.of(popContext, rootNavigator: true).pop();
     }
-    await dialogClosed.future.timeout(const Duration(seconds: 2), onTimeout: () {});
+    await dialogClosed.future.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () {},
+    );
     if (!mounted) return;
 
     if (outcome.kind == SyncOutcomeKind.authExpired) {
@@ -1474,7 +1513,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 在本应用的界面尺度里**过大**（发布后反馈 2026-10-05，100% 缩放仍大）。
       // 压回与正文协调的尺度；字体族随 ThemeData.fontFamily 自动继承。
       datePickerTheme: const DatePickerThemeData(
-        headerHeadlineStyle: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        headerHeadlineStyle: TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+        ),
         headerHelpStyle: TextStyle(fontSize: 13),
       ),
     );
@@ -1516,7 +1558,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     // §审查 OBS-14：已经在运行 —— 只给「重试」（用户关掉那个实例后再点）
     if (_alreadyRunning) {
       return _StartupPage(
-        message: '神算子已经在运行了。\n请到任务栏找到它，不要重复打开。\n'
+        message:
+            '神算子已经在运行了。\n请到任务栏找到它，不要重复打开。\n'
             '（同一个数据文件夹同时只允许一个神算子开着 —— '
             '同时开两个会有数据风险。）',
         actionLabel: '再试一次',
@@ -1576,8 +1619,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       final SaleService? sales = _sales;
       final PurchaseService? purchases = _purchases;
       final DeliveryService? deliveries = _deliveries;
-      documentSink =
-          sales == null || purchases == null || deliveries == null
+      documentSink = sales == null || purchases == null || deliveries == null
           ? null
           : ServiceSink(
               sales: sales,
@@ -1599,10 +1641,16 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         : SaleService(engine: _newEngine(mirror), queries: QueryDao(mirror));
     final PurchaseService? shellPurchases = mirror == null
         ? _purchases
-        : PurchaseService(engine: _newEngine(mirror), queries: QueryDao(mirror));
+        : PurchaseService(
+            engine: _newEngine(mirror),
+            queries: QueryDao(mirror),
+          );
     final DeliveryService? shellDeliveries = mirror == null
         ? _deliveries
-        : DeliveryService(engine: _newEngine(mirror), queries: QueryDao(mirror));
+        : DeliveryService(
+            engine: _newEngine(mirror),
+            queries: QueryDao(mirror),
+          );
     final ProductService? shellProducts = mirror == null
         ? _products
         : ProductService(mirror);
@@ -1614,7 +1662,9 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         : AccountService(AccountDao(mirror));
     final QueryDao? shellQueries = mirror == null ? _queries : QueryDao(mirror);
     // 仅库存页期初入口用；手机上该入口被引导接管（engine 不会被调）
-    final RuleEngine? shellEngine = mirror == null ? _engine : _newEngine(mirror);
+    final RuleEngine? shellEngine = mirror == null
+        ? _engine
+        : _newEngine(mirror);
     final StockDelta? stockDelta = mirror == null
         ? null
         : StockDelta(db: mirror, queue: SyncQueueDao(mirror));
@@ -1749,19 +1799,23 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 打不开、主机二维码不适用（Android 是客户端），均换友好文案
       dataPathsNote: _shellKind == ShellKind.mobile
           ? '数据存在应用私有目录（由系统管理）。卸载应用会删除全部数据 —— '
-              '账本在电脑主机上，手机丢了不影响账；还没传过去的单可以用下面的'
-              '「导出本机数据文件」发给电脑。'
+                '账本在电脑主机上，手机丢了不影响账；还没传过去的单可以用下面的'
+                '「导出本机数据文件」发给电脑。'
           : null,
       hostSyncNote: _shellKind == ShellKind.mobile
           ? '手机版不做「主机」—— 与电脑连接这样用：\n'
-              '一、到电脑上打开「设置 → 多设备同步」；\n'
-              '二、用手机扫电脑上的二维码；\n'
-              '三、连接后手机开单会自动推送到电脑（断网时先记在待同步队列，'
-              '回到这个界面会自动再试一次，也可以点「立即同步」）。'
+                '一、到电脑上打开「设置 → 多设备同步」；\n'
+                '二、用手机扫电脑上的二维码；\n'
+                '三、连接后手机开单会自动推送到电脑（断网时先记在待同步队列，'
+                '回到这个界面会自动再试一次，也可以点「立即同步」）。'
           : null,
-      onExportBackup: _shellKind == ShellKind.mobile ? _exportBackupMobile : null,
+      onExportBackup: _shellKind == ShellKind.mobile
+          ? _exportBackupMobile
+          : null,
       // §BK·三：更改数据位置 —— 桌面专属（Android 私有目录改不了）
-      onMigrateData: _shellKind == ShellKind.mobile ? null : _migrateDataLocation,
+      onMigrateData: _shellKind == ShellKind.mobile
+          ? null
+          : _migrateDataLocation,
       // §BL·三：手机端同步（桌面是主机，无客户端同步）
       mobileSync: _mobileSyncService,
       onScanPair: _mobileScanPair,

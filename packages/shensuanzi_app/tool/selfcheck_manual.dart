@@ -35,7 +35,10 @@ void main() {
     if (!ids.add(section.id)) allNonEmpty = false;
   }
   check('每章有标题有内容且 id 唯一', allNonEmpty);
-  check('关键章节齐全', ids.containsAll(<String>['backup', 'export', 'faq', 'first-run']));
+  check(
+    '关键章节齐全',
+    ids.containsAll(<String>['backup', 'export', 'faq', 'first-run']),
+  );
 
   String allText = '';
   for (final ManualSection section in sections) {
@@ -60,12 +63,14 @@ void main() {
     p.join(p.dirname(p.fromUri(Platform.script)), '..', '..', '..'),
   );
   final File htmlFile = File(p.join(repoRoot, 'packaging', '用户手册.html'));
-  check('用户手册.html 存在', htmlFile.existsSync(),
-      '运行 dart run tool/make_manual_html.dart 生成');
+  check(
+    '用户手册.html 存在',
+    htmlFile.existsSync(),
+    '运行 dart run tool/make_manual_html.dart 生成',
+  );
   if (htmlFile.existsSync()) {
     final String html = htmlFile.readAsStringSync();
-    check('HTML 版本戳与当前版本一致', html.contains(AppVersion.display),
-        '重新生成手册');
+    check('HTML 版本戳与当前版本一致', html.contains(AppVersion.display), '重新生成手册');
     check('HTML 声明 utf-8', html.contains('charset="utf-8"'));
   }
 

@@ -56,7 +56,10 @@ void main() {
 
     expect(second.action, PartyMutationAction.roleAppended);
     expect(second.party.id, first.party.id, reason: '同一条 party，不是新建');
-    expect(second.party.roles, <PartyRole>[PartyRole.supplier, PartyRole.customer]);
+    expect(second.party.roles, <PartyRole>[
+      PartyRole.supplier,
+      PartyRole.customer,
+    ]);
     expect(second.party.phone, '138', reason: 'phone 只在新建时写');
     // 库里真实状态一致
     final Party? stored = PartyDao(db).findById(first.party.id);
@@ -81,24 +84,37 @@ void main() {
   });
 
   test('同名取**最早建的**（用户的「老朋友」）', () {
-    final PartyMutation first = service.ensureParty(name: '老王', role: PartyRole.supplier, now: now());
-    service.ensureParty(name: '老王', role: PartyRole.supplier, now: now() + 100)
+    final PartyMutation first = service.ensureParty(
+      name: '老王',
+      role: PartyRole.supplier,
+      now: now(),
+    );
+    service
+        .ensureParty(name: '老王', role: PartyRole.supplier, now: now() + 100)
         .action; // 新逻辑下第二次是 existing，不会建第二条；为测「多个同名」手搓一条
     final int t = now() + 200;
-    PartyDao(db).insert(Party(
-      id: newId(),
-      name: '老王',
-      roles: const <PartyRole>[PartyRole.supplier],
-      createdAt: t,
-      updatedAt: t,
-    ));
+    PartyDao(db).insert(
+      Party(
+        id: newId(),
+        name: '老王',
+        roles: const <PartyRole>[PartyRole.supplier],
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
 
     expect(service.findByName('老王')?.id, first.party.id);
   });
 
   test('空名 / 全空格 → StateError（UI 先拦，这里是最后防线）', () {
-    expect(() => service.ensureParty(name: '', role: PartyRole.customer), throwsStateError);
-    expect(() => service.ensureParty(name: '   ', role: PartyRole.customer), throwsStateError);
+    expect(
+      () => service.ensureParty(name: '', role: PartyRole.customer),
+      throwsStateError,
+    );
+    expect(
+      () => service.ensureParty(name: '   ', role: PartyRole.customer),
+      throwsStateError,
+    );
   });
 
   test('采购/销售两侧共用：createSupplier 与 createCustomer 走同一实现', () {
@@ -108,39 +124,55 @@ void main() {
     );
     final Party supplier = purchases.createSupplier('老王').party;
 
-    final PartyMutation asCustomer = PartyService(PartyDao(db)).ensureParty(
-      name: '老王',
-      role: PartyRole.customer,
-      now: now(),
-    );
+    final PartyMutation asCustomer = PartyService(
+      PartyDao(db),
+    ).ensureParty(name: '老王', role: PartyRole.customer, now: now());
 
     expect(asCustomer.action, PartyMutationAction.roleAppended);
     expect(asCustomer.party.id, supplier.id, reason: '同一条 party');
     final int count =
-        db.raw.select("SELECT COUNT(*) AS n FROM parties WHERE name = '老王'")
-            .first['n']! as int;
+        db.raw
+                .select("SELECT COUNT(*) AS n FROM parties WHERE name = '老王'")
+                .first['n']!
+            as int;
     expect(count, 1, reason: '绝不出现两条同名 party');
   });
 
   test('recentCustomers：按最近销售排序；无历史为空；散客被排除', () {
     final int t = now();
     final Account account = Account(
-      id: newId(), name: '现金', type: AccountType.cash,
-      createdAt: t, updatedAt: t,
+      id: newId(),
+      name: '现金',
+      type: AccountType.cash,
+      createdAt: t,
+      updatedAt: t,
     );
     AccountDao(db).insert(account);
-    ProductDao(db).insert(Product(
-      id: 'p1', code: 'P0001', name: '商品',
-      costPrice: 300, sellPrice: 500, createdAt: t, updatedAt: t,
-    ));
+    ProductDao(db).insert(
+      Product(
+        id: 'p1',
+        code: 'P0001',
+        name: '商品',
+        costPrice: 300,
+        sellPrice: 500,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
     final PartyDao partyDao = PartyDao(db);
     final Party early = Party(
-      id: newId(), name: '早客', roles: const <PartyRole>[PartyRole.customer],
-      createdAt: t, updatedAt: t,
+      id: newId(),
+      name: '早客',
+      roles: const <PartyRole>[PartyRole.customer],
+      createdAt: t,
+      updatedAt: t,
     );
     final Party late = Party(
-      id: newId(), name: '晚客', roles: const <PartyRole>[PartyRole.customer],
-      createdAt: t, updatedAt: t,
+      id: newId(),
+      name: '晚客',
+      roles: const <PartyRole>[PartyRole.customer],
+      createdAt: t,
+      updatedAt: t,
     );
     partyDao.insert(early);
     partyDao.insert(late);
@@ -185,21 +217,23 @@ void main() {
       ),
       now: now(),
     );
-    expect(
-      sales.recentCustomers().map((Party p) => p.name).toList(),
-      <String>['晚客', '早客'],
-    );
+    expect(sales.recentCustomers().map((Party p) => p.name).toList(), <String>[
+      '晚客',
+      '早客',
+    ]);
   });
 
   group('createFull（往来方页完整新建，§AA 遗漏 1）', () {
     test('新建带双角色 + 电话地址 trim；空 roles 拦', () {
-      final Party party = service.createFull(
-        name: ' 王老板 ',
-        roles: <PartyRole>[PartyRole.supplier, PartyRole.customer],
-        phone: ' 138 ',
-        address: ' 东门 3 号 ',
-        now: now(),
-      ).party;
+      final Party party = service
+          .createFull(
+            name: ' 王老板 ',
+            roles: <PartyRole>[PartyRole.supplier, PartyRole.customer],
+            phone: ' 138 ',
+            address: ' 东门 3 号 ',
+            now: now(),
+          )
+          .party;
 
       expect(party.name, '王老板');
       expect(party.phone, '138');
@@ -217,21 +251,25 @@ void main() {
     });
 
     test('同名复用：phone/address 不被覆盖，角色追加（Z-4 同一保证）', () {
-      final Party first = service.createFull(
-        name: '老王',
-        roles: <PartyRole>[PartyRole.supplier],
-        phone: '138',
-        address: '东门',
-        now: now(),
-      ).party;
+      final Party first = service
+          .createFull(
+            name: '老王',
+            roles: <PartyRole>[PartyRole.supplier],
+            phone: '138',
+            address: '东门',
+            now: now(),
+          )
+          .party;
 
-      final Party second = service.createFull(
-        name: '老王',
-        roles: <PartyRole>[PartyRole.customer],
-        phone: '999',
-        address: '西门',
-        now: now() + 1,
-      ).party;
+      final Party second = service
+          .createFull(
+            name: '老王',
+            roles: <PartyRole>[PartyRole.customer],
+            phone: '999',
+            address: '西门',
+            now: now() + 1,
+          )
+          .party;
 
       expect(second.id, first.id, reason: '同一条 party');
       expect(second.roles.toSet(), <PartyRole>{
@@ -308,7 +346,10 @@ void main() {
         now: now(),
       );
 
-      expect(updated.roles, <PartyRole>[PartyRole.customer, PartyRole.supplier]);
+      expect(updated.roles, <PartyRole>[
+        PartyRole.customer,
+        PartyRole.supplier,
+      ]);
       expect(updated.syncVersion, before + 1);
       // 角色以外的字段一个都不许动
       expect(updated.id, created.party.id);
@@ -351,7 +392,10 @@ void main() {
         ],
         now: now(),
       );
-      expect(updated.roles, <PartyRole>[PartyRole.supplier, PartyRole.customer]);
+      expect(updated.roles, <PartyRole>[
+        PartyRole.supplier,
+        PartyRole.customer,
+      ]);
     });
 
     test('角色可以清空（UI 会给提示），落库也是空', () {
@@ -384,21 +428,27 @@ void main() {
     });
 
     test('listVisible：启用全显示；停用**无余额**不显示；停用**有余额**必须显示', () {
-      final Party active = service.createFull(
-        name: '在用的',
-        roles: <PartyRole>[PartyRole.customer],
-        now: now(),
-      ).party;
-      final Party idleDisabled = service.createFull(
-        name: '停用无账',
-        roles: <PartyRole>[PartyRole.customer],
-        now: now(),
-      ).party;
-      final Party owingDisabled = service.createFull(
-        name: '停用有账',
-        roles: <PartyRole>[PartyRole.supplier],
-        now: now(),
-      ).party;
+      final Party active = service
+          .createFull(
+            name: '在用的',
+            roles: <PartyRole>[PartyRole.customer],
+            now: now(),
+          )
+          .party;
+      final Party idleDisabled = service
+          .createFull(
+            name: '停用无账',
+            roles: <PartyRole>[PartyRole.customer],
+            now: now(),
+          )
+          .party;
+      final Party owingDisabled = service
+          .createFull(
+            name: '停用有账',
+            roles: <PartyRole>[PartyRole.supplier],
+            now: now(),
+          )
+          .party;
       service.setActive(idleDisabled.id, active: false, now: now());
       service.setActive(owingDisabled.id, active: false, now: now());
 
@@ -411,7 +461,11 @@ void main() {
           .map((Party party) => party.id)
           .toSet();
       expect(visible, contains(active.id), reason: '启用中的照常显示');
-      expect(visible, isNot(contains(idleDisabled.id)), reason: '停用且无余额 ⇒ 不必显示');
+      expect(
+        visible,
+        isNot(contains(idleDisabled.id)),
+        reason: '停用且无余额 ⇒ 不必显示',
+      );
       expect(
         visible,
         contains(owingDisabled.id),
@@ -421,16 +475,20 @@ void main() {
 
     // #40②（2026-10-18 裁定甲）：勾上开关 ⇒ 连「停用且不欠钱」的也列出来
     test('listVisible(includeInactiveWithoutBalance)：把空停用档也放出来', () {
-      final Party active = service.createFull(
-        name: '在用的',
-        roles: <PartyRole>[PartyRole.customer],
-        now: now(),
-      ).party;
-      final Party idleDisabled = service.createFull(
-        name: '停用无账',
-        roles: <PartyRole>[PartyRole.customer],
-        now: now(),
-      ).party;
+      final Party active = service
+          .createFull(
+            name: '在用的',
+            roles: <PartyRole>[PartyRole.customer],
+            now: now(),
+          )
+          .party;
+      final Party idleDisabled = service
+          .createFull(
+            name: '停用无账',
+            roles: <PartyRole>[PartyRole.customer],
+            now: now(),
+          )
+          .party;
       service.setActive(idleDisabled.id, active: false, now: now());
 
       expect(
@@ -475,16 +533,20 @@ void main() {
 
       expect(m.action, PartyMutationAction.roleAppended);
       expect(m.party.id, first.party.id, reason: '同一条档，绝不新建第二条');
-      expect(m.party.roles.toSet(),
-          <PartyRole>{PartyRole.customer, PartyRole.supplier});
+      expect(m.party.roles.toSet(), <PartyRole>{
+        PartyRole.customer,
+        PartyRole.supplier,
+      });
     });
 
     test('createSupplier：同名停用档 ⇒ revived（复活并补齐角色）', () {
-      final Party idle = service.createFull(
-        name: '老李',
-        roles: <PartyRole>[PartyRole.customer],
-        now: now(),
-      ).party;
+      final Party idle = service
+          .createFull(
+            name: '老李',
+            roles: <PartyRole>[PartyRole.customer],
+            now: now(),
+          )
+          .party;
       service.setActive(idle.id, active: false, now: now());
 
       final PartyMutation m = PurchaseService(
@@ -494,8 +556,10 @@ void main() {
 
       expect(m.action, PartyMutationAction.revived);
       expect(m.party.isActive, isTrue);
-      expect(m.party.roles.toSet(),
-          <PartyRole>{PartyRole.customer, PartyRole.supplier});
+      expect(m.party.roles.toSet(), <PartyRole>{
+        PartyRole.customer,
+        PartyRole.supplier,
+      });
     });
 
     test('createFull：全新双角色 ⇒ created（优先级压过 roleAppended）', () {
@@ -505,11 +569,14 @@ void main() {
         now: now(),
       );
       expect(m.action, PartyMutationAction.created);
-      expect(m.party.roles.toSet(),
-          <PartyRole>{PartyRole.supplier, PartyRole.customer});
+      expect(m.party.roles.toSet(), <PartyRole>{
+        PartyRole.supplier,
+        PartyRole.customer,
+      });
     });
 
-    test('createFull：已有供应商再加客户 ⇒ roleAppended', () {      service.createFull(
+    test('createFull：已有供应商再加客户 ⇒ roleAppended', () {
+      service.createFull(
         name: '赵老板',
         roles: <PartyRole>[PartyRole.supplier],
         now: now(),
@@ -520,8 +587,10 @@ void main() {
         now: now() + 1,
       );
       expect(m.action, PartyMutationAction.roleAppended);
-      expect(m.party.roles.toSet(),
-          <PartyRole>{PartyRole.supplier, PartyRole.customer});
+      expect(m.party.roles.toSet(), <PartyRole>{
+        PartyRole.supplier,
+        PartyRole.customer,
+      });
     });
   });
 }

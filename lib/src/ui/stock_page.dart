@@ -84,6 +84,7 @@ class StockPage extends StatefulWidget {
   /// 手机 = `QueueSink`；桌面 = `ServiceSink`（两支都由桌面/手机各自的
   /// 装配传入）。`null` = 未装配（摆放层测试）⇒ 期初页退回 `StocktakeService`。
   final DocumentSink? documentSink;
+
   /// **#27 批 2**：本机能不能建商品（门控）—— 按钮显隐用。
   final bool canCreateProducts;
 
@@ -185,11 +186,15 @@ class _StockPageState extends State<StockPage> {
         '否则清点单只写镜像、到不了电脑',
       );
       return OpeningStockPage(
-        service: StocktakeService(engine: widget.engine, queries: widget.queries),
+        service: StocktakeService(
+          engine: widget.engine,
+          queries: widget.queries,
+        ),
         productService: widget.products,
         // 期初里的「新建商品」：桌面走主机落库；手机壳本页被「重新清点」放开，
         // 所以这里两种壳都要给（§CV·七十八）——手机 = `QueueMasterSink`。
-        masterDataSink: widget.masterDataSink ?? ServiceMasterSink(widget.products),
+        masterDataSink:
+            widget.masterDataSink ?? ServiceMasterSink(widget.products),
         // 2026-10-20（§CV·七十八）：**盘点单的出口**。手机 = `QueueSink`
         //（入队 + 立即推，差额由主机算）；桌面 / 未装配 = null ⇒ 走 [service]。
         documentSink: widget.documentSink,
@@ -205,22 +210,23 @@ class _StockPageState extends State<StockPage> {
 
     // C2·§CC 裁定七：库存叠加 —— 一次遍历队列算全部未同步影响，
     // 行内只查 map；点开拆解才逐商品取 contributors（IO 不进常驻路径）
-    final Map<String, int> unsyncedByProduct = widget.stockDelta
-        ?.unsyncedDelta() ?? const <String, int>{};
+    final Map<String, int> unsyncedByProduct =
+        widget.stockDelta?.unsyncedDelta() ?? const <String, int>{};
     // #31（裁定②）：一次 build 取一次（PendingMarks 文档的 N 次 SQL 警告）
-    final Map<String, int> openingPending = widget.pendingMarks
-        ?.openingQuantityByProduct() ?? const <String, int>{};
+    final Map<String, int> openingPending =
+        widget.pendingMarks?.openingQuantityByProduct() ??
+        const <String, int>{};
     // 搜索：名称 / 编码 / 条码
     final List<Product> matched = _searchText.isEmpty
         ? all
         : all
-            .where(
-              (Product product) =>
-                  product.name.contains(_searchText) ||
-                  product.code.contains(_searchText) ||
-                  (product.barcode ?? '').contains(_searchText),
-            )
-            .toList();
+              .where(
+                (Product product) =>
+                    product.name.contains(_searchText) ||
+                    product.code.contains(_searchText) ||
+                    (product.barcode ?? '').contains(_searchText),
+              )
+              .toList();
 
     /// 有流水 = 账面 / 在途 / **本地未同步影响** 任一不为 0（遗漏 5 的「有意义的数字」）。
     ///
@@ -242,9 +248,7 @@ class _StockPageState extends State<StockPage> {
     // 遗漏 4：按在店可售降序（浏览页，不是查找页）
     int inStore(Product product) =>
         (book[product.id] ?? 0) - (inTransit[product.id] ?? 0);
-    shown.sort(
-      (Product a, Product b) => inStore(b).compareTo(inStore(a)),
-    );
+    shown.sort((Product a, Product b) => inStore(b).compareTo(inStore(a)));
 
     final int hiddenCount = matched.length - shown.length;
 
@@ -255,55 +259,55 @@ class _StockPageState extends State<StockPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-          // §BH·六 B1c·补（2026-10-04 真机反馈：超大字号下标题被按钮挤成竖排）：
-          // 换 Wrap —— 宽屏 spaceBetween 与原右对齐一致，窄屏自动换行
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: <Widget>[
-          // §AD 遗漏 2：入口按钮（文案按首次 / 再次区分）
-          Text('库存', style: theme.textTheme.titleLarge),
-          if (widget.exports != null)
-            ExportButton(
-              key: const Key('export-stock'),
-              // AF-2：说清导的是「有流水或有库存」的那批
-              label: '导出库存',
-              export: () => widget.exports!.write(
-                stockExportTable(
-                  // AF-12：**含停用** —— 停用但有库存的商品也要能对账
-                  //（页面上看不到它们，但导出的账里不能少）
-                  products: widget.products.listForExport(),
-                  book: book,
-                  inTransit: inTransit,
-                  cost: cost,
-                ),
+              // §BH·六 B1c·补（2026-10-04 真机反馈：超大字号下标题被按钮挤成竖排）：
+              // 换 Wrap —— 宽屏 spaceBetween 与原右对齐一致，窄屏自动换行
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: <Widget>[
+                  // §AD 遗漏 2：入口按钮（文案按首次 / 再次区分）
+                  Text('库存', style: theme.textTheme.titleLarge),
+                  if (widget.exports != null)
+                    ExportButton(
+                      key: const Key('export-stock'),
+                      // AF-2：说清导的是「有流水或有库存」的那批
+                      label: '导出库存',
+                      export: () => widget.exports!.write(
+                        stockExportTable(
+                          // AF-12：**含停用** —— 停用但有库存的商品也要能对账
+                          //（页面上看不到它们，但导出的账里不能少）
+                          products: widget.products.listForExport(),
+                          book: book,
+                          inTransit: inTransit,
+                          cost: cost,
+                        ),
+                      ),
+                    ),
+                  TextButton.icon(
+                    key: const Key('stock-open-entry'),
+                    // 2026-10-20（§CV·七十八）：手机端**也能清点** —— 清点单走
+                    // 单据通道入队，差额由主机算（客户端零规则）。原引导删除。
+                    onPressed: () => setState(() => _showOpening = true),
+                    icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                    label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
+                  ),
+                  // #27 批 2（2026-10-17 裁定乙）：库存页的「新建商品」= **补充
+                  // 快速建档入口**（手机壳专属；桌面建档在「商品」页，期初在同页
+                  // 「录入现有货物」）。手机壳 ⇒ 对话框带「当前库存」字段（#31
+                  // stocktake 通路）。桌面不显示 ⇒ 不存在「桌面带库存走什么通路」。
+                  if (widget.mobileShell &&
+                      widget.canCreateProducts &&
+                      widget.masterDataSink != null)
+                    OutlinedButton.icon(
+                      key: const Key('stock-create-product'),
+                      onPressed: () => _createProduct(context),
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('新建商品'),
+                    ),
+                ],
               ),
-            ),
-          TextButton.icon(
-            key: const Key('stock-open-entry'),
-            // 2026-10-20（§CV·七十八）：手机端**也能清点** —— 清点单走
-            // 单据通道入队，差额由主机算（客户端零规则）。原引导删除。
-            onPressed: () => setState(() => _showOpening = true),
-            icon: const Icon(Icons.inventory_2_outlined, size: 18),
-            label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
-          ),
-          // #27 批 2（2026-10-17 裁定乙）：库存页的「新建商品」= **补充
-          // 快速建档入口**（手机壳专属；桌面建档在「商品」页，期初在同页
-          // 「录入现有货物」）。手机壳 ⇒ 对话框带「当前库存」字段（#31
-          // stocktake 通路）。桌面不显示 ⇒ 不存在「桌面带库存走什么通路」。
-          if (widget.mobileShell &&
-              widget.canCreateProducts &&
-              widget.masterDataSink != null)
-            OutlinedButton.icon(
-              key: const Key('stock-create-product'),
-              onPressed: () => _createProduct(context),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('新建商品'),
-            ),
-            ],
-          ),
               const SizedBox(height: 4),
               Text(
                 '「在店可售」= 账面库存 − 送货在途；低库存按它判断。',
@@ -366,7 +370,8 @@ class _StockPageState extends State<StockPage> {
                       ),
                       // §AD-6：空态两段式 —— 首段给「开店」场景，次段给「日常」场景
                       // （手机端期初录入被引导接管 ⇒ 不展示这段，裁定六的空态文案顶上）
-                      if (_searchText.isEmpty && !widget.mobileShell) ...<Widget>[
+                      if (_searchText.isEmpty &&
+                          !widget.mobileShell) ...<Widget>[
                         const SizedBox(height: 8),
                         Card(
                           child: Padding(
@@ -381,8 +386,7 @@ class _StockPageState extends State<StockPage> {
                                   '点右上角的「录入现有货物」，一次记进来',
                                   style: TextStyle(
                                     height: 1.8,
-                                    color:
-                                        theme.textTheme.bodySmall?.color,
+                                    color: theme.textTheme.bodySmall?.color,
                                   ),
                                 ),
                               ],
@@ -484,13 +488,13 @@ class _StockRow extends StatelessWidget {
     final Color mainColor = negative
         ? theme.colorScheme.error
         : low
-            ? const Color(0xFFB45309)
-            : theme.colorScheme.onSurface;
+        ? const Color(0xFFB45309)
+        : theme.colorScheme.onSurface;
     final String? notice = negative
         ? '已超卖，尽快补货或核对账目'
         : low
-            ? '低于安全库存 $safety，该补货了'
-            : null;
+        ? '低于安全库存 $safety，该补货了'
+        : null;
 
     // §审查 OBS-12：**没货了却还有成本** —— 这是「先卖后补」的结果
     //（卖的时候账上没货，出库成本按 0 记；后来进的货，进价没被摊出去，
@@ -507,176 +511,178 @@ class _StockRow extends StatelessWidget {
     return InkWell(
       onTap: onOpen,
       child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      // §AJ·AI-5：有包装说明时附在名称后 —— 用户看着「144 瓶」
-                      // 心算「是几箱」时靠它。纯展示，不参与计算
-                      product.packageNote == null
-                          ? product.name
-                          : '${product.name}（${product.packageNote}）',
-                      style: TextStyle(
-                        height: 1.6,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    Text(
-                      '${product.code}  ·  安全库存 ${product.safetyStock == 0 ? '未设' : product.safetyStock}',
-                      style: TextStyle(
-                        height: 1.6,
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
-                    ),
-                    // #31（2026-10-16 裁定②）：同步前用户刚填的期初量在数字上
-                    // 不出现（stocktake 的 delta 客户端算不出）⇒ 在这里说清，
-                    // 否则「我刚填的 10 件呢？」（技术诚实 ≠ 用户体验）。
-                    // ⚠️ 只作提示，**不参与库存计算**。
-                    if (openingPending != null)
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
                       Text(
-                        '期初 $openingPending（${product.unit}）待同步',
-                        key: Key('opening-pending-${product.id}'),
-                        style: TextStyle(height: 1.6, color: theme.hintColor),
+                        // §AJ·AI-5：有包装说明时附在名称后 —— 用户看着「144 瓶」
+                        // 心算「是几箱」时靠它。纯展示，不参与计算
+                        product.packageNote == null
+                            ? product.name
+                            : '${product.name}（${product.packageNote}）',
+                        style: TextStyle(
+                          height: 1.6,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                  ],
-                ),
-              ),
-              // AA-2：主列大字加粗
-              Text(
-                '$inStore',
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: mainColor,
-                  fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          // C3·真机反馈：成本行原为 Row + Spacer —— 窄屏 / 大字档下
-          // 「成本（均价）+ 金额」固定组溢出。改 Wrap + spaceBetween：
-          // 宽屏两项两端对齐（视觉同旧）；放不下自动换行，永不溢出。
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            alignment: WrapAlignment.spaceBetween,
-            spacing: 8,
-            runSpacing: 2,
-            children: <Widget>[
-              Text(
-                '账面 $book · 在途 $inTransit',
-                style: TextStyle(
-                  height: 1.6,
-                  color: theme.textTheme.bodySmall?.color,
-                ),
-              ),
-              // AA-4：成本（均价）+ 口径说明；负值红色（与负库存联动）
-              Tooltip(
-                message: '按历史加权平均成本计算。\n进价变化时可能与最近一次进价不同。',
-                triggerMode: TooltipTriggerMode.tap,
-                showDuration: const Duration(seconds: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Text(
-                      '成本（均价）',
-                      style: TextStyle(
-                        height: 1.6,
-                        color: theme.textTheme.bodySmall?.color,
+                      Text(
+                        '${product.code}  ·  安全库存 ${product.safetyStock == 0 ? '未设' : product.safetyStock}',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(
-                      Icons.info_outline,
-                      size: 14,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
-                  ],
+                      // #31（2026-10-16 裁定②）：同步前用户刚填的期初量在数字上
+                      // 不出现（stocktake 的 delta 客户端算不出）⇒ 在这里说清，
+                      // 否则「我刚填的 10 件呢？」（技术诚实 ≠ 用户体验）。
+                      // ⚠️ 只作提示，**不参与库存计算**。
+                      if (openingPending != null)
+                        Text(
+                          '期初 $openingPending（${product.unit}）待同步',
+                          key: Key('opening-pending-${product.id}'),
+                          style: TextStyle(height: 1.6, color: theme.hintColor),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              // §AD 遗漏 1：成本三态 —— 「¥0.00」会让首次使用的用户
-              // 以为软件坏了；「待校准」说清了「为什么是 0、什么时候会变」
-              if (!everInbound)
+                // AA-2：主列大字加粗
                 Text(
-                  '未进货',
+                  '$inStore',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: mainColor,
+                    fontFeatures: const <FontFeature>[
+                      FontFeature.tabularFigures(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            // C3·真机反馈：成本行原为 Row + Spacer —— 窄屏 / 大字档下
+            // 「成本（均价）+ 金额」固定组溢出。改 Wrap + spaceBetween：
+            // 宽屏两项两端对齐（视觉同旧）；放不下自动换行，永不溢出。
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 8,
+              runSpacing: 2,
+              children: <Widget>[
+                Text(
+                  '账面 $book · 在途 $inTransit',
                   style: TextStyle(
                     height: 1.6,
-                    fontWeight: FontWeight.w600,
                     color: theme.textTheme.bodySmall?.color,
                   ),
-                )
-              else if (costCents == 0)
+                ),
+                // AA-4：成本（均价）+ 口径说明；负值红色（与负库存联动）
                 Tooltip(
-                  message: '期初录入未记成本。\n下次采购时进价会校准成本。',
+                  message: '按历史加权平均成本计算。\n进价变化时可能与最近一次进价不同。',
                   triggerMode: TooltipTriggerMode.tap,
                   showDuration: const Duration(seconds: 4),
-                  child: Text(
-                    '待校准',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        '成本（均价）',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      Icon(
+                        Icons.info_outline,
+                        size: 14,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 4),
+                // §AD 遗漏 1：成本三态 —— 「¥0.00」会让首次使用的用户
+                // 以为软件坏了；「待校准」说清了「为什么是 0、什么时候会变」
+                if (!everInbound)
+                  Text(
+                    '未进货',
                     style: TextStyle(
                       height: 1.6,
                       fontWeight: FontWeight.w600,
                       color: theme.textTheme.bodySmall?.color,
                     ),
+                  )
+                else if (costCents == 0)
+                  Tooltip(
+                    message: '期初录入未记成本。\n下次采购时进价会校准成本。',
+                    triggerMode: TooltipTriggerMode.tap,
+                    showDuration: const Duration(seconds: 4),
+                    child: Text(
+                      '待校准',
+                      style: TextStyle(
+                        height: 1.6,
+                        fontWeight: FontWeight.w600,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    '¥ ${Money.format(costCents)}',
+                    style: TextStyle(
+                      height: 1.6,
+                      fontWeight: FontWeight.w600,
+                      color: costCents < 0
+                          ? theme.colorScheme.error
+                          : theme.colorScheme.onSurface,
+                    ),
                   ),
-                )
-              else
-                Text(
-                  '¥ ${Money.format(costCents)}',
-                  style: TextStyle(
-                    height: 1.6,
-                    fontWeight: FontWeight.w600,
-                    color: costCents < 0
-                        ? theme.colorScheme.error
-                        : theme.colorScheme.onSurface,
+              ],
+            ),
+            if (notice != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    notice,
+                    style: TextStyle(height: 1.6, color: mainColor),
                   ),
-                ),
-            ],
-          ),
-          if (notice != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  notice,
-                  style: TextStyle(height: 1.6, color: mainColor),
                 ),
               ),
-            ),
-          if (costNotice != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  costNotice,
-                  style: TextStyle(
-                    height: 1.6,
-                    color: theme.textTheme.bodySmall?.color,
+            if (costNotice != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    costNotice,
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
                   ),
                 ),
               ),
-            ),
-          // C2·§CC 裁定七：未同步叠加 —— 橙「≈」/ 负数红 +「可能负库存」；
-          // 行内展开拆解（不打断浏览 —— 裁定七之 2）
-          if (unsynced != 0 && delta != null)
-            _StockDeltaLine(
-              delta: delta,
-              productId: product.id,
-              book: book,
-              unsynced: unsynced,
-            ),
-        ],
-      ),
+            // C2·§CC 裁定七：未同步叠加 —— 橙「≈」/ 负数红 +「可能负库存」；
+            // 行内展开拆解（不打断浏览 —— 裁定七之 2）
+            if (unsynced != 0 && delta != null)
+              _StockDeltaLine(
+                delta: delta,
+                productId: product.id,
+                book: book,
+                unsynced: unsynced,
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -742,9 +748,8 @@ class _StockDeltaLineState extends State<_StockDeltaLine> {
                 style: TextStyle(height: 1.6, color: color),
               ),
               if (_expanded)
-                for (final SyncQueueEntry entry in widget.delta
-                    .stockViewOf(widget.productId)
-                    .contributors)
+                for (final SyncQueueEntry entry
+                    in widget.delta.stockViewOf(widget.productId).contributors)
                   Padding(
                     padding: const EdgeInsets.only(top: 2, left: 8),
                     child: Text(

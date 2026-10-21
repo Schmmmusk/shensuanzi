@@ -87,9 +87,11 @@ void main() {
     }
   });
 
-  String idOf(String docNo) => db.raw
-      .select('SELECT id FROM documents WHERE doc_no = ?', <Object?>[docNo])
-      .first['id']! as String;
+  String idOf(String docNo) =>
+      db.raw.select('SELECT id FROM documents WHERE doc_no = ?', <Object?>[
+            docNo,
+          ]).first['id']!
+          as String;
 
   /// 夹具：卖 3 箱（36 瓶 × 派生价，合计 ¥750）给客户甲，全款。
   Document sell3Boxes() {
@@ -112,7 +114,11 @@ void main() {
           ),
         ],
         payments: <SalePaymentDraft>[
-          SalePaymentDraft(accountId: accountId, accountName: '现金', amount: '750'),
+          SalePaymentDraft(
+            accountId: accountId,
+            accountName: '现金',
+            amount: '750',
+          ),
         ],
       ),
     );
@@ -144,9 +150,7 @@ void main() {
     initialRoute: '/return',
   );
 
-  testWidgets('挂账退货 e2e：数量一填金额自动带出 → 确认对话框 → 落库', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('挂账退货 e2e：数量一填金额自动带出 → 确认对话框 → 落库', (WidgetTester tester) async {
     final Document original = sell3Boxes();
 
     await tester.pumpWidget(page(original));
@@ -167,9 +171,10 @@ void main() {
     await tester.enterText(find.byKey(Key('return-qty-$productId')), '1');
     await tester.pumpAndSettle();
     expect(
-      (tester.widget<TextField>(
-        find.byKey(Key('return-amount-$productId')),
-      ).controller!.text),
+      (tester
+          .widget<TextField>(find.byKey(Key('return-amount-$productId')))
+          .controller!
+          .text),
       '250.00',
       reason: '金额默认 = 累计比例法（裁定 1：不用派生单价）',
     );
@@ -177,9 +182,10 @@ void main() {
     expect(find.textContaining('填 1 箱 = 12 瓶'), findsOneWidget);
     // 退款金额自动合计（§BI·二·补 4）：未手改时跟随行金额合计
     expect(
-      (tester.widget<TextField>(
-        find.byKey(const Key('return-refund-amount')),
-      ).controller!.text),
+      (tester
+          .widget<TextField>(find.byKey(const Key('return-refund-amount')))
+          .controller!
+          .text),
       '250.00',
       reason: '退款金额 = 行金额合计（只在没手改时自动填）',
     );
@@ -234,15 +240,17 @@ void main() {
 
     // 预填全部可退量：数量 12、金额 30.00（¥2.50/瓶 × 12）
     expect(
-      (tester.widget<TextField>(
-        find.byKey(Key('return-qty-$productId')),
-      ).controller!.text),
+      (tester
+          .widget<TextField>(find.byKey(Key('return-qty-$productId')))
+          .controller!
+          .text),
       '12',
     );
     expect(
-      (tester.widget<TextField>(
-        find.byKey(Key('return-amount-$productId')),
-      ).controller!.text),
+      (tester
+          .widget<TextField>(find.byKey(Key('return-amount-$productId')))
+          .controller!
+          .text),
       '30.00',
     );
 
@@ -291,8 +299,9 @@ void main() {
         .widget<DropdownButton<Account>>(find.byType(DropdownButton<Account>));
     expect(dropdown.value, isNotNull, reason: '已选中「现金」');
     expect(
-      dropdown.items!
-          .where((DropdownMenuItem<Account> item) => item.value == dropdown.value),
+      dropdown.items!.where(
+        (DropdownMenuItem<Account> item) => item.value == dropdown.value,
+      ),
       hasLength(1),
       reason: 'value 必须能在 items 里恰好匹配一次（对象同一性）',
     );
@@ -336,18 +345,24 @@ void main() {
     await tester.tap(find.byKey(const Key('return-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('测试拒绝：本次退货超出了原单数量'), findsOneWidget,
-        reason: '#23：业务拒绝显示规则层文案（写「怎么办」）');
-    expect(find.textContaining('请再试一次'), findsNothing,
-        reason: '#23 的洞：通用 catch 的「请再试一次」对业务拒绝是死路');
-    expect(storageLogged, isEmpty,
-        reason: '业务拒绝不是内部错误 ⇒ 不走 onStorageFailure');
+    expect(
+      find.textContaining('测试拒绝：本次退货超出了原单数量'),
+      findsOneWidget,
+      reason: '#23：业务拒绝显示规则层文案（写「怎么办」）',
+    );
+    expect(
+      find.textContaining('请再试一次'),
+      findsNothing,
+      reason: '#23 的洞：通用 catch 的「请再试一次」对业务拒绝是死路',
+    );
+    expect(storageLogged, isEmpty, reason: '业务拒绝不是内部错误 ⇒ 不走 onStorageFailure');
     // 草稿保留：页面还开着（没 pop），已填的数量还在
     expect(find.byKey(const Key('return-save')), findsOneWidget);
     expect(
-      tester.widget<TextField>(
-        find.byKey(Key('return-qty-$productId')),
-      ).controller!.text,
+      tester
+          .widget<TextField>(find.byKey(Key('return-qty-$productId')))
+          .controller!
+          .text,
       '1',
       reason: '#23：业务拒绝后草稿保留（改完能直接再交）',
     );
@@ -364,4 +379,3 @@ class _RuleRejectingService extends ReturnService {
   ReturnSaved create(ReturnDraft draft, {int? now}) =>
       throw const RuleRejected('测试拒绝：本次退货超出了原单数量，请改小');
 }
-

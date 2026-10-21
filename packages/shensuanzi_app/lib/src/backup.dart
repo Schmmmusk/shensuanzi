@@ -94,13 +94,9 @@ class BackupFileName {
 class BackupOutcome {
   const BackupOutcome.ok(this.path, {this.skipped = false}) : message = null;
 
-  const BackupOutcome.skipped(this.message)
-    : path = null,
-      skipped = true;
+  const BackupOutcome.skipped(this.message) : path = null, skipped = true;
 
-  const BackupOutcome.failure(this.message)
-    : path = null,
-      skipped = false;
+  const BackupOutcome.failure(this.message) : path = null, skipped = false;
 
   /// 成功：最终备份文件的完整路径（SnackBar 直接展示，用户可复制）
   final String? path;
@@ -270,9 +266,7 @@ String? backupReminderText({
 String backupOutcomeMessage(BackupOutcome outcome) {
   final String? path = outcome.path;
   if (path == null) return outcome.message ?? '备份没有成功，请稍后再试';
-  return outcome.skipped
-      ? '这一分钟里已经备份过了，没有重复生成：$path'
-      : '已备份到 $path';
+  return outcome.skipped ? '这一分钟里已经备份过了，没有重复生成：$path' : '已备份到 $path';
 }
 
 /// 备份执行服务。判断都在这里；UI 只调 [backupNow] / [autoBackup] /
@@ -327,7 +321,8 @@ class BackupService {
 
   /// 手动备份（设置页 / 概览卡「立即备份」）。**空库也执行**（遗漏 1：
   /// 用户主动意图不受空库限制）。
-  Future<BackupOutcome> backupNow({required Db db}) => _run(db: db, manual: true);
+  Future<BackupOutcome> backupNow({required Db db}) =>
+      _run(db: db, manual: true);
 
   /// 自动备份（启动后调用）。
   ///
@@ -399,8 +394,9 @@ class BackupService {
       Db? check;
       try {
         check = Db.open(tmp);
-        final List<Map<String, Object?>> rows = check.raw
-            .select('PRAGMA integrity_check');
+        final List<Map<String, Object?>> rows = check.raw.select(
+          'PRAGMA integrity_check',
+        );
         final Object? verdict = rows.isEmpty ? null : rows.first.values.first;
         if ('$verdict' != 'ok') {
           return BackupOutcome.failure('备份校验失败，已删除不完整的备份');

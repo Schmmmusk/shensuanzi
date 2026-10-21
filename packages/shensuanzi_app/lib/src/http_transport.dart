@@ -20,7 +20,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:shensuanzi_core/shensuanzi_core.dart' show SyncHttpException, Transport, TransportRequest, TransportResponse;
+import 'package:shensuanzi_core/shensuanzi_core.dart'
+    show SyncHttpException, Transport, TransportRequest, TransportResponse;
 
 class HttpTransport implements Transport {
   HttpTransport({
@@ -36,8 +37,7 @@ class HttpTransport implements Transport {
 
   @override
   Future<TransportResponse> send(TransportRequest request) async {
-    final HttpClient client = HttpClient()
-      ..connectionTimeout = connectTimeout;
+    final HttpClient client = HttpClient()..connectionTimeout = connectTimeout;
     try {
       final HttpClientRequest req = await client
           .openUrl(request.method, request.uri)
@@ -50,8 +50,10 @@ class HttpTransport implements Transport {
       final HttpClientResponse resp = await req.close().timeout(readTimeout);
       // ⚠️ 读 body 也要套超时 —— 服务器发了响应头后卡死的情况，
       // join() 自己永远不会结束（真机「一直拉取中」的根因之一）
-      final String body =
-          await resp.transform(utf8.decoder).join().timeout(readTimeout);
+      final String body = await resp
+          .transform(utf8.decoder)
+          .join()
+          .timeout(readTimeout);
       return TransportResponse(statusCode: resp.statusCode, body: body);
     } on TimeoutException {
       throw SyncHttpException(

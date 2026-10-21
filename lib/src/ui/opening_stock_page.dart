@@ -91,8 +91,7 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
 
   bool _busy = false;
 
-  String get _pageTitle =>
-      widget.isFirstTime ? '录入现有货物' : '重新清点';
+  String get _pageTitle => widget.isFirstTime ? '录入现有货物' : '重新清点';
 
   @override
   void dispose() {
@@ -135,11 +134,10 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
     final Product? picked = await showModalBottomSheet<Product>(
       context: context,
       isScrollControlled: true,
-      builder: (BuildContext sheetContext) =>
-          _OpeningProductPickerSheet(
-            service: widget.productService,
-            sink: widget.masterDataSink,
-          ),
+      builder: (BuildContext sheetContext) => _OpeningProductPickerSheet(
+        service: widget.productService,
+        sink: widget.masterDataSink,
+      ),
     );
     if (picked == null || index >= _rows.length) return;
     setState(() {
@@ -252,9 +250,7 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            '已记录 ${draft.filledCount} 件商品，等同步后电脑上的库存会按实际数量校正',
-          ),
+          content: Text('已记录 ${draft.filledCount} 件商品，等同步后电脑上的库存会按实际数量校正'),
           duration: const Duration(seconds: 3),
         ),
       );
@@ -276,7 +272,8 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
     } on StateError catch (error) {
       setState(() {
         _busy = false;
-        _topError = '保存失败：${error.message}\n你填的内容都还在，'
+        _topError =
+            '保存失败：${error.message}\n你填的内容都还在，'
             '改好后重新点「记入库存」试试。';
       });
       return;
@@ -302,9 +299,9 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
     final String message = result.changedCount == 0
         ? '已提交：${result.unchangedCount} 件商品都无变化，无需更新'
         : result.unchangedCount == 0
-            ? '已录入 ${result.changedCount} 件商品'
-            : '已录入 ${result.changedCount + result.unchangedCount} 件商品'
-                '（其中 ${result.unchangedCount} 件无变化）';
+        ? '已录入 ${result.changedCount} 件商品'
+        : '已录入 ${result.changedCount + result.unchangedCount} 件商品'
+              '（其中 ${result.unchangedCount} 件无变化）';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
     );
@@ -421,8 +418,7 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
                     decoration: InputDecoration(
                       border: const OutlineInputBorder(),
                       isDense: true,
-                      errorText: _lineErrors[index] != null &&
-                              product == null
+                      errorText: _lineErrors[index] != null && product == null
                           ? _lineErrors[index]
                           : null,
                     ),
@@ -492,8 +488,7 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Text('当前账面 $book  ·  ', style: grey),
-          if (delta > 0)
-            Text('将增加 $delta', style: TextStyle(height: 1.6)),
+          if (delta > 0) Text('将增加 $delta', style: TextStyle(height: 1.6)),
           if (delta < 0)
             Text(
               '将减少 ${-delta}',
@@ -503,10 +498,7 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
         ],
       );
     }
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: diff,
-    );
+    return Padding(padding: const EdgeInsets.only(top: 4), child: diff);
   }
 
   Widget _actions(ThemeData theme) => Row(
@@ -537,10 +529,7 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
 /// 空查询显示**全部商品** —— 期初录入的用户可能一件都没采购过，
 /// 没有「最近使用」可显示。新建入口共用 `showProductFormDialog`（遗漏 3）。
 class _OpeningProductPickerSheet extends StatefulWidget {
-  const _OpeningProductPickerSheet({
-    required this.service,
-    required this.sink,
-  });
+  const _OpeningProductPickerSheet({required this.service, required this.sink});
 
   final ProductService service;
 
@@ -619,9 +608,7 @@ class _OpeningProductPickerSheetState
                 ? Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Text(
-                      _searched
-                          ? '没有匹配的商品，可以点下面新建。'
-                          : '还没有商品档案，点下面新建。',
+                      _searched ? '没有匹配的商品，可以点下面新建。' : '还没有商品档案，点下面新建。',
                       textAlign: TextAlign.center,
                       style: const TextStyle(height: 1.6),
                     ),

@@ -75,7 +75,10 @@ Future<void> main() async {
     check('matches null', !HostToken.matches(null, hash));
 
     check('constantTimeEquals 相等', HostToken.constantTimeEquals('abc', 'abc'));
-    check('constantTimeEquals 等长不等', !HostToken.constantTimeEquals('abc', 'abd'));
+    check(
+      'constantTimeEquals 等长不等',
+      !HostToken.constantTimeEquals('abc', 'abd'),
+    );
     check('constantTimeEquals 不等长', !HostToken.constantTimeEquals('abc', 'ab'));
   }
 
@@ -93,8 +96,7 @@ Future<void> main() async {
     check('再次读取 host_id 不变', loaded.hostId == first.hostId);
     check('再次读取哈希不变', loaded.tokenHash == first.tokenHash);
     check('再次读取**没有明文**（哈希不可逆）', !loaded.canShowQr);
-    check('重启后仍能校验旧令牌（只需哈希）',
-        loaded.authorizes(first.plaintextToken));
+    check('重启后仍能校验旧令牌（只需哈希）', loaded.authorizes(first.plaintextToken));
 
     final HostIdentity after = store.reset(now: _fixedNow + 2);
     check('reset 换 host_id', after.hostId != first.hostId);
@@ -118,7 +120,10 @@ Future<void> main() async {
       port: 17890,
       token: 'dG9rZW4=',
     );
-    check('uri 是 shensuanzi://pair', sample.uri.startsWith('shensuanzi://pair?'));
+    check(
+      'uri 是 shensuanzi://pair',
+      sample.uri.startsWith('shensuanzi://pair?'),
+    );
     check('uri 含 host_id', sample.uri.contains('host_id=h-0001'));
     check('uri 含 port', sample.uri.contains('port=17890'));
     check('uri 含 v=1', sample.uri.contains('v=1'));
@@ -136,8 +141,10 @@ Future<void> main() async {
       port: 17891,
       token: 'a-b_c=d+e/f',
     );
-    check('URL 不安全字符也能往返',
-        PairingPayload.parse(tricky.uri).token == tricky.token);
+    check(
+      'URL 不安全字符也能往返',
+      PairingPayload.parse(tricky.uri).token == tricky.token,
+    );
 
     for (final String bad in <String>[
       'https://pair?host_id=x',
@@ -145,17 +152,35 @@ Future<void> main() async {
       '随便一句话',
       '',
     ]) {
-      check('非配对码 → FormatException（$bad）',
-          throws(() => PairingPayload.parse(bad)));
+      check(
+        '非配对码 → FormatException（$bad）',
+        throws(() => PairingPayload.parse(bad)),
+      );
     }
-    check('缺 token → FormatException',
-        throws(() => PairingPayload.parse('shensuanzi://pair?host_id=h&ip=1.1.1.1&port=1')));
-    check('缺 host_id → FormatException',
-        throws(() => PairingPayload.parse('shensuanzi://pair?ip=1.1.1.1&port=1&token=t')));
+    check(
+      '缺 token → FormatException',
+      throws(
+        () => PairingPayload.parse(
+          'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=1',
+        ),
+      ),
+    );
+    check(
+      '缺 host_id → FormatException',
+      throws(
+        () =>
+            PairingPayload.parse('shensuanzi://pair?ip=1.1.1.1&port=1&token=t'),
+      ),
+    );
     for (final String port in <String>['0', '-1', '70000', 'abc']) {
-      check('port=$port → FormatException',
-          throws(() => PairingPayload.parse(
-              'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=$port&token=t')));
+      check(
+        'port=$port → FormatException',
+        throws(
+          () => PairingPayload.parse(
+            'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=$port&token=t',
+          ),
+        ),
+      );
     }
   }
 
@@ -192,14 +217,19 @@ Future<void> main() async {
       token: 'other',
     );
     final List<List<bool>> otherMatrix = PairingQr(other).matrix;
-    check('不同内容矩阵不同', matrix.length != otherMatrix.length || matrix != otherMatrix);
+    check(
+      '不同内容矩阵不同',
+      matrix.length != otherMatrix.length || matrix != otherMatrix,
+    );
   }
 
   // ============================================================ HTTP
   section('HTTP 层');
   {
     final Db db = Db.openInMemory();
-    final HostIdentity identity = HostIdentityStore.inMemory().loadOrCreate(now: _fixedNow);
+    final HostIdentity identity = HostIdentityStore.inMemory().loadOrCreate(
+      now: _fixedNow,
+    );
     final String token = identity.plaintextToken!;
     // 主机侧内部错误日志的捕获（#22 裁定，2026-10-09）：协议违反的**细节只进日志**
     // ⇒「点到列名」这类定位价值由它承担（回执只给通用中文）。
@@ -224,10 +254,15 @@ Future<void> main() async {
     }) async {
       final HttpClient client = HttpClient();
       try {
-        final HttpClientRequest request =
-            await client.openUrl(method, Uri.parse('$base$path'));
+        final HttpClientRequest request = await client.openUrl(
+          method,
+          Uri.parse('$base$path'),
+        );
         if (bearer != null) {
-          request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $bearer');
+          request.headers.set(
+            HttpHeaders.authorizationHeader,
+            'Bearer $bearer',
+          );
         }
         if (rawBody != null) {
           request.write(rawBody);
@@ -246,17 +281,24 @@ Future<void> main() async {
       }
     }
 
-    check('端口落在给定范围',
-        server.port >= _testPorts.start && server.port <= _testPorts.end,
-        '${server.port}');
+    check(
+      '端口落在给定范围',
+      server.port >= _testPorts.start && server.port <= _testPorts.end,
+      '${server.port}',
+    );
 
-    final (int healthStatus, Map<String, Object?> health) =
-        await call('GET', '/api/health');
+    final (int healthStatus, Map<String, Object?> health) = await call(
+      'GET',
+      '/api/health',
+    );
     check('health 无需鉴权 → 200', healthStatus == 200, '$healthStatus');
     check('health.ok = true', health['ok'] == true);
     check('health 用注入的时钟', health['server_time'] == _fixedNow);
-    check('health 不含业务数据',
-        health.keys.toSet().length == 4, '${health.keys.toList()}');
+    check(
+      'health 不含业务数据',
+      health.keys.toSet().length == 4,
+      '${health.keys.toList()}',
+    );
 
     final (int noAuth, Map<String, Object?> noAuthJson) = await call(
       'POST',
@@ -265,8 +307,16 @@ Future<void> main() async {
     );
     check('push 缺令牌 → 401', noAuth == 401, '$noAuth');
     check('401 带 error 说明', '${noAuthJson['error']}'.contains('令牌'));
-    check('push 错令牌 → 401',
-        (await call('POST', '/api/sync/push', bearer: 'nope', body: <String, Object?>{'operations': <Object?>[]})).$1 == 401);
+    check(
+      'push 错令牌 → 401',
+      (await call(
+            'POST',
+            '/api/sync/push',
+            bearer: 'nope',
+            body: <String, Object?>{'operations': <Object?>[]},
+          )).$1 ==
+          401,
+    );
     check('pull 缺令牌 → 401', (await call('GET', '/api/sync/pull')).$1 == 401);
 
     final String productId = newId();
@@ -301,8 +351,16 @@ Future<void> main() async {
     check('第二条 rejected', (results[1]! as Map)['status'] == 'rejected');
     check('一条被拒不拖累同批', ProductDao(db).findById(productId) != null);
 
-    check('非法 JSON → 400',
-        (await call('POST', '/api/sync/push', bearer: token, rawBody: 'nope')).$1 == 400);
+    check(
+      '非法 JSON → 400',
+      (await call(
+            'POST',
+            '/api/sync/push',
+            bearer: token,
+            rawBody: 'nope',
+          )).$1 ==
+          400,
+    );
     final (int noOps, Map<String, Object?> noOpsJson) = await call(
       'POST',
       '/api/sync/push',
@@ -311,52 +369,72 @@ Future<void> main() async {
     );
     check('缺 operations → 400', noOps == 400, '$noOps');
     // §CV·十五：响应体只放**固定文案**（动态异常内容走主机日志）
-    check('400 说明是**固定文案**（不回显异常）',
-        '${noOpsJson['error']}' == '请求格式有误，请重试。',
-        '${noOpsJson['error']}');
+    check(
+      '400 说明是**固定文案**（不回显异常）',
+      '${noOpsJson['error']}' == '请求格式有误，请重试。',
+      '${noOpsJson['error']}',
+    );
 
-    final (int pullStatus, Map<String, Object?> pullJson) =
-        await call('GET', '/api/sync/pull', bearer: token);
+    final (int pullStatus, Map<String, Object?> pullJson) = await call(
+      'GET',
+      '/api/sync/pull',
+      bearer: token,
+    );
     check('pull → 200', pullStatus == 200, '$pullStatus');
     check('pull 含 next_cursors', pullJson.containsKey('next_cursors'));
-    final Map<String, Object?> cursors =
-        Map<String, Object?>.from(pullJson['next_cursors']! as Map);
+    final Map<String, Object?> cursors = Map<String, Object?>.from(
+      pullJson['next_cursors']! as Map,
+    );
     check('stock_since 初始为 0', cursors[SyncCursorKeys.stock] == '0');
     check('doc_since 初始为 0|', cursors[SyncCursorKeys.doc] == '0|');
-    check('products_since 是复合游标',
-        cursors[SyncCursorKeys.products]!.toString().contains('|'),
-        '${cursors[SyncCursorKeys.products]}');
+    check(
+      'products_since 是复合游标',
+      cursors[SyncCursorKeys.products]!.toString().contains('|'),
+      '${cursors[SyncCursorKeys.products]}',
+    );
     check('空库 stock_ledger 为空', (pullJson['stock_ledger']! as List).isEmpty);
     // R-13 方案 A：pull **含主数据**（不再是「只返 6 个业务实体」）。
     // 9 个实体 + next_cursors **+ has_more**（2026-10-07 §CL 新增）= 11 个键。
     // ⚠️ 2026-10-08 修：`has_more` 上线时这里漏更 ⇒ 断言陈旧（2 项常红，
     // 与本次改动无关）—— 凡是数「响应体顶层键个数」的断言，加键就必须改这里。
     check('pull 含主数据（products 在响应里）', pullJson.containsKey('products'));
-    check('pull 恰好 9 个实体 + next_cursors + has_more', pullJson.keys.length == 11,
-        '${pullJson.keys.toList()}');
-    check('实体名与 SyncPullResult.entityNames 一致',
-        pullJson.keys
-            .toSet()
-            .difference(<String>{
-              ...SyncPullResult.entityNames,
-              'next_cursors',
-              'has_more',
-            })
-            .isEmpty);
+    check(
+      'pull 恰好 9 个实体 + next_cursors + has_more',
+      pullJson.keys.length == 11,
+      '${pullJson.keys.toList()}',
+    );
+    check(
+      '实体名与 SyncPullResult.entityNames 一致',
+      pullJson.keys.toSet().difference(<String>{
+        ...SyncPullResult.entityNames,
+        'next_cursors',
+        'has_more',
+      }).isEmpty,
+    );
     check('恰好 8 个游标', cursors.length == 8, '${cursors.length}');
 
-    final (int badCursor, Map<String, Object?> badCursorJson) =
-        await call('GET', '/api/sync/pull?doc_since=oops', bearer: token);
+    final (int badCursor, Map<String, Object?> badCursorJson) = await call(
+      'GET',
+      '/api/sync/pull?doc_since=oops',
+      bearer: token,
+    );
     check('游标非法 → 400', badCursor == 400, '$badCursor');
     // §CV·十五：游标名与值都是诊断信息 ⇒ 进日志，不回显给用户
-    check('400 说明是**固定文案**（不回显「哪个游标」）',
-        '${badCursorJson['error']}' == '请求格式有误，请重试。',
-        '${badCursorJson['error']}');
+    check(
+      '400 说明是**固定文案**（不回显「哪个游标」）',
+      '${badCursorJson['error']}' == '请求格式有误，请重试。',
+      '${badCursorJson['error']}',
+    );
 
-    final (int zeroLimit, Map<String, Object?> zeroLimitJson) =
-        await call('GET', '/api/sync/pull?limit=0', bearer: token);
-    check('limit=0 → 200 且空页',
-        zeroLimit == 200 && (zeroLimitJson['documents']! as List).isEmpty);
+    final (int zeroLimit, Map<String, Object?> zeroLimitJson) = await call(
+      'GET',
+      '/api/sync/pull?limit=0',
+      bearer: token,
+    );
+    check(
+      'limit=0 → 200 且空页',
+      zeroLimit == 200 && (zeroLimitJson['documents']! as List).isEmpty,
+    );
 
     // ---------------------------------------------- createDocument 全链路
     // ⚠️ 主单与明细**都用模型的 toRow()** 生成，不手写 JSON：
@@ -419,31 +497,51 @@ Future<void> main() async {
     ].join(' | ');
 
     check('createDocument 推送 → 200', docPush == 200, '$docPush');
-    check('两条都 applied', docResults.every((Object? r) => (r! as Map)['status'] == 'applied'),
-        receipts());
+    check(
+      '两条都 applied',
+      docResults.every((Object? r) => (r! as Map)['status'] == 'applied'),
+      receipts(),
+    );
     final Document? saved = DocumentDao(db).findById(docId);
     check('单据已落库', saved != null);
-    check('明细 1 行',
-        db.raw.select('SELECT 1 FROM document_lines WHERE document_id = ?',
-            <Object?>[docId]).length == 1);
-    check('主机分配了正式单号（不再是临时展示号）',
-        saved != null && !saved.docNo.startsWith(Document.pendingDocNoPrefix),
-        '${saved?.docNo}');
+    check(
+      '明细 1 行',
+      db.raw.select(
+            'SELECT 1 FROM document_lines WHERE document_id = ?',
+            <Object?>[docId],
+          ).length ==
+          1,
+    );
+    check(
+      '主机分配了正式单号（不再是临时展示号）',
+      saved != null && !saved.docNo.startsWith(Document.pendingDocNoPrefix),
+      '${saved?.docNo}',
+    );
     check('主机写入 paid_amount = 0（派生缓存）', saved?.paidAmount == 0);
 
-    final (int pull2Status, Map<String, Object?> pull2) =
-        await call('GET', '/api/sync/pull', bearer: token);
+    final (int pull2Status, Map<String, Object?> pull2) = await call(
+      'GET',
+      '/api/sync/pull',
+      bearer: token,
+    );
     check('拉取 → 200', pull2Status == 200, '$pull2Status');
     check('documents 1 行', (pull2['documents']! as List).length == 1);
     check('document_lines 1 行', (pull2['document_lines']! as List).length == 1);
     check('stock_ledger 1 行', (pull2['stock_ledger']! as List).length == 1);
     check('party_ledger 1 行', (pull2['party_ledger']! as List).length == 1);
-    final Map<String, Object?> cursors2 =
-        Map<String, Object?>.from(pull2['next_cursors']! as Map);
-    check('stock_since 推进到 1', cursors2[SyncCursorKeys.stock] == '1',
-        '${cursors2[SyncCursorKeys.stock]}');
-    check('doc_since 推进（不再是起始值）',
-        cursors2[SyncCursorKeys.doc] != '0|', '${cursors2[SyncCursorKeys.doc]}');
+    final Map<String, Object?> cursors2 = Map<String, Object?>.from(
+      pull2['next_cursors']! as Map,
+    );
+    check(
+      'stock_since 推进到 1',
+      cursors2[SyncCursorKeys.stock] == '1',
+      '${cursors2[SyncCursorKeys.stock]}',
+    );
+    check(
+      'doc_since 推进（不再是起始值）',
+      cursors2[SyncCursorKeys.doc] != '0|',
+      '${cursors2[SyncCursorKeys.doc]}',
+    );
 
     final (int pull3Status, Map<String, Object?> pull3) = await call(
       'GET',
@@ -477,8 +575,7 @@ Future<void> main() async {
             productId: productId,
             quantity: 1,
             unitPrice: 100,
-          ).toRow()
-            ..remove('id'),
+          ).toRow()..remove('id'),
         ],
       },
     };
@@ -494,22 +591,30 @@ Future<void> main() async {
       (badJson['results']! as List).first! as Map,
     );
     check('明细漏 id → 200 + rejected', badStatus == 200, '$badStatus');
-    check('漏 id 的明细 → rejected', badReceipt['status'] == 'rejected',
-        '${badReceipt['reason']}');
+    check(
+      '漏 id 的明细 → rejected',
+      badReceipt['status'] == 'rejected',
+      '${badReceipt['reason']}',
+    );
     // #22 裁定（2026-10-09）：协议违反的细节**只进日志** ⇒ 回执只给通用中文，
     // 分支区分改由 **reason_code** 承担（这里是 HTTP 层，所以查 JSON 里的字段）。
-    check('漏列 ⇒ reason_code = field_type_mismatch',
-        badReceipt['reason_code'] == 'field_type_mismatch',
-        '${badReceipt['reason_code']}｜${badReceipt['reason']}');
+    check(
+      '漏列 ⇒ reason_code = field_type_mismatch',
+      badReceipt['reason_code'] == 'field_type_mismatch',
+      '${badReceipt['reason_code']}｜${badReceipt['reason']}',
+    );
     // 「原因点到列名」这条要求没被削弱 —— 改由日志承担（回执不再回显）。
-    check('漏列 ⇒ 细节（列名）进主机日志',
-        internalErrors.any((String e) => e.contains('RowDecodeException(id: 缺少这一列)')),
-        internalErrors.join(' | '));
+    check(
+      '漏列 ⇒ 细节（列名）进主机日志',
+      internalErrors.any(
+        (String e) => e.contains('RowDecodeException(id: 缺少这一列)'),
+      ),
+      internalErrors.join(' | '),
+    );
     check('被拒的单据不落库', DocumentDao(db).findById(badDoc) == null);
 
     // ---------------------------------------------- 主数据增量（R-13 方案 A）
-    final String productsCursor =
-        cursors2[SyncCursorKeys.products]! as String;
+    final String productsCursor = cursors2[SyncCursorKeys.products]! as String;
     tick(); // 真实世界里「改价」不会与「创建」挤在同一毫秒
     final (int updStatus, Map<String, Object?> updJson) = await call(
       'POST',
@@ -528,9 +633,11 @@ Future<void> main() async {
       },
     );
     check('改价 → 200', updStatus == 200, '$updStatus');
-    check('改价 applied',
-        ((updJson['results']! as List).single! as Map)['status'] == 'applied',
-        '$updJson');
+    check(
+      '改价 applied',
+      ((updJson['results']! as List).single! as Map)['status'] == 'applied',
+      '$updJson',
+    );
 
     final (int deltaStatus, Map<String, Object?> delta) = await call(
       'GET',
@@ -539,15 +646,22 @@ Future<void> main() async {
       bearer: token,
     );
     check('带 products_since 增量拉取 → 200', deltaStatus == 200, '$deltaStatus');
-    check('增量拉到改动的那一行', (delta['products']! as List).length == 1,
-        '${delta['products']}');
-    check('拉到的是新价 120',
-        ((delta['products']! as List).single! as Map)['cost_price'] == 120);
+    check(
+      '增量拉到改动的那一行',
+      (delta['products']! as List).length == 1,
+      '${delta['products']}',
+    );
+    check(
+      '拉到的是新价 120',
+      ((delta['products']! as List).single! as Map)['cost_price'] == 120,
+    );
     // 每个实体的游标**独立**：只给 products_since，其它实体就按「从头拉」返回。
     // （别指望「给一个游标 ⇒ 整页都是增量的」。）
-    check('各游标独立：只给 products_since 时 documents 从头拉回来',
-        (delta['documents']! as List).isNotEmpty,
-        '${(delta['documents']! as List).length}');
+    check(
+      '各游标独立：只给 products_since 时 documents 从头拉回来',
+      (delta['documents']! as List).isNotEmpty,
+      '${(delta['documents']! as List).length}',
+    );
 
     // ⚠️ 已知边界（R-14）：同一毫秒内的二次改动，带游标拉不到。
     // 这条**断言当前行为**，作用是把这个边界摆在门禁里 ——
@@ -569,10 +683,14 @@ Future<void> main() async {
         ],
       },
     );
-    final (_, Map<String, Object?> boundaryFirst) =
-        await call('GET', '/api/sync/pull', bearer: token);
+    final (_, Map<String, Object?> boundaryFirst) = await call(
+      'GET',
+      '/api/sync/pull',
+      bearer: token,
+    );
     final String boundaryCursor =
-        (boundaryFirst['next_cursors']! as Map)[SyncCursorKeys.products]! as String;
+        (boundaryFirst['next_cursors']! as Map)[SyncCursorKeys.products]!
+            as String;
 
     // 不 tick：与上一次写落在同一毫秒
     await call(
@@ -597,16 +715,25 @@ Future<void> main() async {
           '?products_since=${Uri.encodeQueryComponent(boundaryCursor)}',
       bearer: token,
     );
-    check('R-14 边界：同一毫秒的同 id 改动被增量漏掉',
-        (boundaryDelta['products']! as List).isEmpty,
-        '${boundaryDelta['products']}');
-    final (_, Map<String, Object?> boundaryFull) =
-        await call('GET', '/api/sync/pull', bearer: token);
-    check('R-14 边界：但全量重拉看得到（数据没丢）',
-        ((boundaryFull['products']! as List)
-                .cast<Map<String, Object?>>()
-                .firstWhere((Map<String, Object?> r) => r['id'] == boundaryId))['cost_price'] ==
-            130);
+    check(
+      'R-14 边界：同一毫秒的同 id 改动被增量漏掉',
+      (boundaryDelta['products']! as List).isEmpty,
+      '${boundaryDelta['products']}',
+    );
+    final (_, Map<String, Object?> boundaryFull) = await call(
+      'GET',
+      '/api/sync/pull',
+      bearer: token,
+    );
+    check(
+      'R-14 边界：但全量重拉看得到（数据没丢）',
+      ((boundaryFull['products']! as List)
+              .cast<Map<String, Object?>>()
+              .firstWhere(
+                (Map<String, Object?> r) => r['id'] == boundaryId,
+              ))['cost_price'] ==
+          130,
+    );
 
     await server.close(force: true);
     db.close();

@@ -109,8 +109,7 @@ String syncFailureReason(Object error) {
 /// ② 这些错误**用户确实修不了**（是客户端实现的协议违反，不是用户填错），说清也没用。
 /// ⇒ 「重试」+「反复出现就反馈」就够，**不出现表名 / 字段名 / 任何术语**。
 /// ⚠️ 文案本身也要过 `forbiddenDevTermsInUserText`（`sync_failure_test` 有断言）。
-const String malformedSyncRequestReason =
-    '同步请求格式有误，请重试。如果反复出现，请把这条消息截图发给开发者。';
+const String malformedSyncRequestReason = '同步请求格式有误，请重试。如果反复出现，请把这条消息截图发给开发者。';
 
 /// **规则层内部 bug**（不变量破坏 / 协议违反）时的通用回执（#22 裁定，2026-10-09）。
 ///
@@ -147,4 +146,3 @@ RejectCode storageRejectCode(Object error) {
   }
   return RejectCode.hostStorage;
 }
-

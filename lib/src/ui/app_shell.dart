@@ -312,115 +312,117 @@ Widget appShellPage(
       pendingMarks: shell.pendingMarks,
       onNavigate: onNavigate,
     );
-    } else if (destination.id == 'products') {
-      // 商品是核心闭环的第一块 —— 已实现，不再是占位页
-      page = ProductsPage(
-        service: shell.products,
-        exports: shell.exports,
-        pendingMarks: shell.pendingMarks,
-      );
-    } else if (destination.id == 'sale') {
-      // 店内销售是核心闭环的第三块（RULE-002）；客户「新建」共用 PartyService
-      page = shell.sales == null ||
-              shell.products == null ||
-              shell.parties == null ||
-              shell.documentSink == null ||
-              shell.masterDataSink == null
-          ? _PendingPage(destination: destination)
-          : SalePage(
-              service: shell.sales!,
-              productService: shell.products!,
-              partyService: shell.parties!,
-              // B3b：提交走 Sink（桌面/手机同一份页面代码，无分支）
-              sink: shell.documentSink!,
-              onSubmitted: shell.onDocumentSubmitted,
-              onStorageFailure: shell.onStorageFailure,
-              // M08：本地未同步影响（手机端才有；桌面 null）
-              stockDelta: shell.stockDelta,
-              // §CV·七 ① 乙：主数据门控按**能力**走（商品 v1 可建 / 往来仍引导）
-              masterDataPolicy: shell.masterDataPolicy,
-              partySink: shell.partySink,
-              masterDataSink: shell.masterDataSink!,
-              // #37①：手机壳不显示快捷键后缀（判据与送货页同一处）
-              mobileShell: shell.mobileShell,
-            );
-    } else if (destination.id == 'delivery') {
-      // 送货（批次 1b / RULE-003）：创建即扣库存、状态强制 in_transit，
-      // 客户必选。**不能从销售单转** —— 转了会双扣（§AP）。
-      page =
-          shell.deliveries == null ||
-              shell.products == null ||
-              shell.parties == null ||
-              shell.documentSink == null ||
-              shell.masterDataSink == null
-          ? _PendingPage(destination: destination)
-          : DeliveryPage(
-              service: shell.deliveries!,
-              productService: shell.products!,
-              partyService: shell.parties!,
-              sink: shell.documentSink!,
-              onSubmitted: shell.onDocumentSubmitted,
-              onStorageFailure: shell.onStorageFailure,
-              // M08：本地未同步影响（手机端才有；桌面 null）
-              stockDelta: shell.stockDelta,
-              masterDataPolicy: shell.masterDataPolicy,
-              partySink: shell.partySink,
-              masterDataSink: shell.masterDataSink!,
-              mobileShell: shell.mobileShell,
-            );
-    } else if (destination.id == 'stock') {
-      // 库存查询是 RULE-006 的纯聚合读；期初录入入口（§AD）还要引擎
-      page = shell.engine == null || shell.products == null || shell.queries == null
-          ? _PendingPage(destination: destination)
-          : StockPage(
-              engine: shell.engine!,
-              products: shell.products!,
-              queries: shell.queries!,
-              exports: shell.exports,
-              stockDelta: shell.stockDelta,
-              // #31（裁定②）：「期初 N 件待同步」提示（手机只读镜像队列）
-              pendingMarks: shell.pendingMarks,
-              // #43：期初保存失败的原始异常出口
-              onStorageFailure: shell.onStorageFailure,
-              // #27 批 2：商品流水 + 新建商品补充入口
-              stockFlow: shell.stockFlow,
-              settlements: shell.settlements,
-              masterDataSink: shell.masterDataSink,
-              // 2026-10-20（§CV·七十八）：手机「重新清点」走单据队列
-              documentSink: shell.documentSink,
-              canCreateProducts: shell.masterDataPolicy.canCreateProducts,
-              // 期初入口 + 镜像空态按**壳**走（不是主数据权限 —— 盘点 delta
-              // 客户端算不出，见 `stock_page.dart`）
-              mobileShell: shell.mobileShell,
-            );
-    } else if (destination.id == 'parties') {
-      page = shell.parties == null
-          ? _PendingPage(destination: destination)
-          : PartiesPage(
-              service: shell.parties!,
-              exports: shell.exports,
-              masterDataPolicy: shell.masterDataPolicy,
-              pendingMarks: shell.pendingMarks,
-              // 2026-10-20（§CV·七十七）：手机 = 队列出口（新建 / 编辑 / 停用
-              // 都入队并推给电脑）；桌面 = null ⇒ 走 PartyService，零变化
-              partySink: shell.partySink,
-              mobileShell: shell.mobileShell,
-            );
-    } else if (destination.id == 'documents') {
-      page = shell.documents == null
-          ? _PendingPage(destination: destination)
-          : DocumentsPage(
-              dao: shell.documents!,
-              exports: shell.exports,
-              settlements: shell.settlements,
-              deliveries: shell.deliveries,
-              products: shell.products,
-              returnService: shell.returns,
-              onStorageFailure: shell.onStorageFailure,
-            );
-    } else if (destination.id == 'settings') {
-      // §AI-1：configStore / onConfigChanged 已是 required —— 设置页是常驻
-      // 入口（ui_principles），「占位页」分支整体删除（它曾把生产真机挡在外面）
+  } else if (destination.id == 'products') {
+    // 商品是核心闭环的第一块 —— 已实现，不再是占位页
+    page = ProductsPage(
+      service: shell.products,
+      exports: shell.exports,
+      pendingMarks: shell.pendingMarks,
+    );
+  } else if (destination.id == 'sale') {
+    // 店内销售是核心闭环的第三块（RULE-002）；客户「新建」共用 PartyService
+    page =
+        shell.sales == null ||
+            shell.products == null ||
+            shell.parties == null ||
+            shell.documentSink == null ||
+            shell.masterDataSink == null
+        ? _PendingPage(destination: destination)
+        : SalePage(
+            service: shell.sales!,
+            productService: shell.products!,
+            partyService: shell.parties!,
+            // B3b：提交走 Sink（桌面/手机同一份页面代码，无分支）
+            sink: shell.documentSink!,
+            onSubmitted: shell.onDocumentSubmitted,
+            onStorageFailure: shell.onStorageFailure,
+            // M08：本地未同步影响（手机端才有；桌面 null）
+            stockDelta: shell.stockDelta,
+            // §CV·七 ① 乙：主数据门控按**能力**走（商品 v1 可建 / 往来仍引导）
+            masterDataPolicy: shell.masterDataPolicy,
+            partySink: shell.partySink,
+            masterDataSink: shell.masterDataSink!,
+            // #37①：手机壳不显示快捷键后缀（判据与送货页同一处）
+            mobileShell: shell.mobileShell,
+          );
+  } else if (destination.id == 'delivery') {
+    // 送货（批次 1b / RULE-003）：创建即扣库存、状态强制 in_transit，
+    // 客户必选。**不能从销售单转** —— 转了会双扣（§AP）。
+    page =
+        shell.deliveries == null ||
+            shell.products == null ||
+            shell.parties == null ||
+            shell.documentSink == null ||
+            shell.masterDataSink == null
+        ? _PendingPage(destination: destination)
+        : DeliveryPage(
+            service: shell.deliveries!,
+            productService: shell.products!,
+            partyService: shell.parties!,
+            sink: shell.documentSink!,
+            onSubmitted: shell.onDocumentSubmitted,
+            onStorageFailure: shell.onStorageFailure,
+            // M08：本地未同步影响（手机端才有；桌面 null）
+            stockDelta: shell.stockDelta,
+            masterDataPolicy: shell.masterDataPolicy,
+            partySink: shell.partySink,
+            masterDataSink: shell.masterDataSink!,
+            mobileShell: shell.mobileShell,
+          );
+  } else if (destination.id == 'stock') {
+    // 库存查询是 RULE-006 的纯聚合读；期初录入入口（§AD）还要引擎
+    page =
+        shell.engine == null || shell.products == null || shell.queries == null
+        ? _PendingPage(destination: destination)
+        : StockPage(
+            engine: shell.engine!,
+            products: shell.products!,
+            queries: shell.queries!,
+            exports: shell.exports,
+            stockDelta: shell.stockDelta,
+            // #31（裁定②）：「期初 N 件待同步」提示（手机只读镜像队列）
+            pendingMarks: shell.pendingMarks,
+            // #43：期初保存失败的原始异常出口
+            onStorageFailure: shell.onStorageFailure,
+            // #27 批 2：商品流水 + 新建商品补充入口
+            stockFlow: shell.stockFlow,
+            settlements: shell.settlements,
+            masterDataSink: shell.masterDataSink,
+            // 2026-10-20（§CV·七十八）：手机「重新清点」走单据队列
+            documentSink: shell.documentSink,
+            canCreateProducts: shell.masterDataPolicy.canCreateProducts,
+            // 期初入口 + 镜像空态按**壳**走（不是主数据权限 —— 盘点 delta
+            // 客户端算不出，见 `stock_page.dart`）
+            mobileShell: shell.mobileShell,
+          );
+  } else if (destination.id == 'parties') {
+    page = shell.parties == null
+        ? _PendingPage(destination: destination)
+        : PartiesPage(
+            service: shell.parties!,
+            exports: shell.exports,
+            masterDataPolicy: shell.masterDataPolicy,
+            pendingMarks: shell.pendingMarks,
+            // 2026-10-20（§CV·七十七）：手机 = 队列出口（新建 / 编辑 / 停用
+            // 都入队并推给电脑）；桌面 = null ⇒ 走 PartyService，零变化
+            partySink: shell.partySink,
+            mobileShell: shell.mobileShell,
+          );
+  } else if (destination.id == 'documents') {
+    page = shell.documents == null
+        ? _PendingPage(destination: destination)
+        : DocumentsPage(
+            dao: shell.documents!,
+            exports: shell.exports,
+            settlements: shell.settlements,
+            deliveries: shell.deliveries,
+            products: shell.products,
+            returnService: shell.returns,
+            onStorageFailure: shell.onStorageFailure,
+          );
+  } else if (destination.id == 'settings') {
+    // §AI-1：configStore / onConfigChanged 已是 required —— 设置页是常驻
+    // 入口（ui_principles），「占位页」分支整体删除（它曾把生产真机挡在外面）
     page = SettingsPage(
       config: shell.configStore.load(),
       configStore: shell.configStore,
@@ -440,47 +442,48 @@ Widget appShellPage(
       onScanPair: shell.onScanPair,
       onSyncNow: shell.onSyncNow,
     );
-    } else if (destination.id == 'help') {
-      // AE-6：恢复步骤要带**用户真实的两个文件夹**，否则他照做不下去
-      page = HelpPage(
-        dataDirectory: shell.dataDirectory,
-        backupDirectory: shell.backupDirectory,
-      );
-    } else if (destination.id == 'accounts') {
-      page = shell.accounts == null
-          ? _PendingPage(destination: destination)
-          : AccountsPage(
-              service: shell.accounts!,
-              masterDataPolicy: shell.masterDataPolicy,
-              pendingMarks: shell.pendingMarks,
-              // #27 批 1：流水页的导出与「跳单据详情」所需服务
-              exports: shell.exports,
-              settlements: shell.settlements,
-              deliveries: shell.deliveries,
-              products: shell.products,
-            );
-    } else if (destination.id == 'purchase') {
-      // 采购入库是核心闭环的第二块 —— 库存与规则早就在 core 里（RULE-001）
-      page = shell.purchases == null ||
-              shell.products == null ||
-              shell.documentSink == null ||
-              shell.masterDataSink == null
-          ? _PendingPage(destination: destination)
-          : PurchasePage(
-              service: shell.purchases!,
-              productService: shell.products!,
-              sink: shell.documentSink!,
-              onSubmitted: shell.onDocumentSubmitted,
-              onStorageFailure: shell.onStorageFailure,
-              masterDataPolicy: shell.masterDataPolicy,
-              partySink: shell.partySink,
-              masterDataSink: shell.masterDataSink!,
-              // #37①：手机壳不显示快捷键后缀（判据与送货页同一处）
-              mobileShell: shell.mobileShell,
-            );
-    } else {
-      page = _PendingPage(destination: destination);
-    }
+  } else if (destination.id == 'help') {
+    // AE-6：恢复步骤要带**用户真实的两个文件夹**，否则他照做不下去
+    page = HelpPage(
+      dataDirectory: shell.dataDirectory,
+      backupDirectory: shell.backupDirectory,
+    );
+  } else if (destination.id == 'accounts') {
+    page = shell.accounts == null
+        ? _PendingPage(destination: destination)
+        : AccountsPage(
+            service: shell.accounts!,
+            masterDataPolicy: shell.masterDataPolicy,
+            pendingMarks: shell.pendingMarks,
+            // #27 批 1：流水页的导出与「跳单据详情」所需服务
+            exports: shell.exports,
+            settlements: shell.settlements,
+            deliveries: shell.deliveries,
+            products: shell.products,
+          );
+  } else if (destination.id == 'purchase') {
+    // 采购入库是核心闭环的第二块 —— 库存与规则早就在 core 里（RULE-001）
+    page =
+        shell.purchases == null ||
+            shell.products == null ||
+            shell.documentSink == null ||
+            shell.masterDataSink == null
+        ? _PendingPage(destination: destination)
+        : PurchasePage(
+            service: shell.purchases!,
+            productService: shell.products!,
+            sink: shell.documentSink!,
+            onSubmitted: shell.onDocumentSubmitted,
+            onStorageFailure: shell.onStorageFailure,
+            masterDataPolicy: shell.masterDataPolicy,
+            partySink: shell.partySink,
+            masterDataSink: shell.masterDataSink!,
+            // #37①：手机壳不显示快捷键后缀（判据与送货页同一处）
+            mobileShell: shell.mobileShell,
+          );
+  } else {
+    page = _PendingPage(destination: destination);
+  }
   return page;
 }
 
@@ -568,7 +571,10 @@ class _AppShellState extends State<AppShell> {
     if (current.immersive) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[banner, Expanded(child: page)],
+        children: <Widget>[
+          banner,
+          Expanded(child: page),
+        ],
       );
     }
 
@@ -606,9 +612,7 @@ class _NavColumn extends StatelessWidget {
     for (final NavSection section in NavSection.values) {
       // 用**分隔线 + 间距**分组，不做嵌套折叠（中老年用户不会展开）
       if (children.isNotEmpty) {
-        children.add(
-          const Divider(height: 1, indent: 12, endIndent: 12),
-        );
+        children.add(const Divider(height: 1, indent: 12, endIndent: 12));
       }
       for (final NavDestination destination in AppNavigation.of(section)) {
         children.add(

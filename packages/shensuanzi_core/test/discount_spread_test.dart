@@ -45,10 +45,8 @@ void main() {
 
     test('负数 / 超整单 ⇒ ArgumentError（上游合计栏应先拦）', () {
       expect(
-        () => spreadDiscount(
-          grossAmounts: <int>[5000, 3000],
-          discountCents: -1,
-        ),
+        () =>
+            spreadDiscount(grossAmounts: <int>[5000, 3000], discountCents: -1),
         throwsArgumentError,
       );
       expect(

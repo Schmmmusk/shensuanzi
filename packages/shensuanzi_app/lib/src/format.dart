@@ -128,8 +128,9 @@ String? partySameNameHint(
   if (missing.isEmpty) {
     out.write(' —— 保存后直接用它，不会新建第二条。');
   } else {
-    final String what =
-        missing.map((PartyRole r) => '「${partyRoleLabel(r)}」').join('、');
+    final String what = missing
+        .map((PartyRole r) => '「${partyRoleLabel(r)}」')
+        .join('、');
     out.write(' —— 保存后会加上$what身份，不会新建第二条。');
   }
   return out.toString();

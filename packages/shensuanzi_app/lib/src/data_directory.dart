@@ -45,7 +45,8 @@ class DirectoryAdvice {
   bool get isWarning => verdict == DirectoryVerdict.warn;
 
   @override
-  String toString() => 'DirectoryAdvice(${verdict.name}'
+  String toString() =>
+      'DirectoryAdvice(${verdict.name}'
       '${reason.isEmpty ? '' : ', $reason'})';
 }
 
@@ -206,7 +207,8 @@ class DataDirectoryPolicy {
       return DirectoryAdvice(
         DirectoryVerdict.reject,
         '不能直接放在 $systemLetter 盘根目录',
-        advice: '请选一个子文件夹，例如 '
+        advice:
+            '请选一个子文件夹，例如 '
             '${p.join('$systemLetter:\\', dataFolderName)}',
       );
     }
@@ -245,8 +247,9 @@ class DataDirectoryPolicy {
         return const DirectoryAdvice(
           DirectoryVerdict.warn,
           '这是接在电脑外面的盘（Windows 把 U 盘、移动硬盘、硬盘盒都标成'
-              '「可移动盘」）—— 一拔线或一拔盘，数据就打不开了',
-          advice: '经营数据建议放在机箱里的硬盘上；要随身带走，只把'
+          '「可移动盘」）—— 一拔线或一拔盘，数据就打不开了',
+          advice:
+              '经营数据建议放在机箱里的硬盘上；要随身带走，只把'
               '「神算子备份」文件夹拷过去就行',
         );
       }
@@ -261,7 +264,7 @@ class DataDirectoryPolicy {
         return DirectoryAdvice(
           DirectoryVerdict.warn,
           '${drive.letter} 盘剩余空间不足'
-              '（${formatBytes(drive.freeBytes)}，建议留 ${formatBytes(DriveInfo.minimumFreeBytes)} 以上）',
+          '（${formatBytes(drive.freeBytes)}，建议留 ${formatBytes(DriveInfo.minimumFreeBytes)} 以上）',
           advice: '清理一些空间，或换一个盘',
         );
       }
@@ -270,7 +273,8 @@ class DataDirectoryPolicy {
         return DirectoryAdvice(
           DirectoryVerdict.warn,
           '放在盘根目录不好认，也不好迁移',
-          advice: '建议再建一层文件夹，例如 '
+          advice:
+              '建议再建一层文件夹，例如 '
               '${p.join(drive.root, dataFolderName)}',
         );
       }
@@ -286,7 +290,8 @@ class DataDirectoryPolicy {
     if (drive == null || free == null) return null;
     // 卷标（用户自己在「此电脑」里起的名字）让用户认得出「这是我的哪块盘」
     // —— 只报「E: 盘」对用户是抽象的（§BK·二）
-    final String label = (drive.volumeLabel == null || drive.volumeLabel!.isEmpty)
+    final String label =
+        (drive.volumeLabel == null || drive.volumeLabel!.isEmpty)
         ? ''
         : '「${drive.volumeLabel}」';
     return '${drive.letter} 盘$label剩余 ${formatBytes(free)}';
@@ -331,7 +336,8 @@ class DataDirectoryPolicy {
     return false;
   }
 
-  String _absoluteOr(String path) => p.isAbsolute(path) ? p.normalize(path) : path;
+  String _absoluteOr(String path) =>
+      p.isAbsolute(path) ? p.normalize(path) : path;
 
   /// 比较用的键：统一小写、**去掉末尾分隔符**。
   ///

@@ -67,7 +67,10 @@ class AccountFlowPage extends StatelessWidget {
                 ? Center(
                     child: Text(
                       '还没有资金流水。',
-                      style: TextStyle(height: 1.8, color: Theme.of(context).hintColor),
+                      style: TextStyle(
+                        height: 1.8,
+                        color: Theme.of(context).hintColor,
+                      ),
                     ),
                   )
                 : ListView.builder(
@@ -75,7 +78,11 @@ class AccountFlowPage extends StatelessWidget {
                     itemCount: flow.length + 1, // 末尾多一行灰字说明
                     itemBuilder: (BuildContext context, int index) {
                       if (index == flow.length) {
-                        return _footerNote(context, narrow, onOpenDocument != null);
+                        return _footerNote(
+                          context,
+                          narrow,
+                          onOpenDocument != null,
+                        );
                       }
                       final MoneyFlowEntry entry = flow[index];
                       final Widget row = narrow
@@ -120,9 +127,9 @@ Widget _footerNote(BuildContext context, bool narrow, bool canOpen) {
       canOpen
           ? '点流水行可以打开对应单据。'
           : narrow
-              ? '想查看单据详情？到电脑上打开「单据」页就能看到 —— '
-                  '手机开单会自动同步过去。'
-              : '想查看单据详情？在「单据」页找到对应单号。',
+          ? '想查看单据详情？到电脑上打开「单据」页就能看到 —— '
+                '手机开单会自动同步过去。'
+          : '想查看单据详情？在「单据」页找到对应单号。',
       textAlign: TextAlign.center,
       style: TextStyle(height: 1.6, color: theme.hintColor),
     ),
@@ -168,7 +175,10 @@ class _NarrowFlowCard extends StatelessWidget {
             '${entry.docNo}'
             '${entry.timeEstimated ? ' · 离线' : ''}'
             ' · ${AccountFlowPage._fmtDate(entry.occurredAt)}',
-            style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+            style: TextStyle(
+              height: 1.6,
+              color: theme.textTheme.bodySmall?.color,
+            ),
           ),
         ],
       ),
@@ -195,12 +205,18 @@ class _WideFlowTile extends StatelessWidget {
               children: <Widget>[
                 Text(
                   entry.docNo,
-                  style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    height: 1.6,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 Text(
                   '${entry.docType.label}'
                   '${entry.timeEstimated ? ' · 离线' : ''}',
-                  style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
                 ),
               ],
             ),
@@ -216,7 +232,10 @@ class _WideFlowTile extends StatelessWidget {
           const SizedBox(width: 16),
           Text(
             AccountFlowPage._fmtDate(entry.occurredAt),
-            style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
+            style: TextStyle(
+              height: 1.6,
+              color: theme.textTheme.bodySmall?.color,
+            ),
           ),
         ],
       ),

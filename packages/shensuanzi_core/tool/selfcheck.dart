@@ -107,11 +107,16 @@ void main() {
     check('表 $table', tables.contains(table));
   }
   // 双向：也查「建出来的都在 allTables 里」——单向包含抓不到「加了表却忘了登记」
-  check('没有多余的表（表集与 Schema.allTables 相等）',
-      tables.difference(Schema.allTables.toSet()).isEmpty,
-      '${tables.difference(Schema.allTables.toSet())}');
-  check('schema 版本 = ${Schema.version}', db.schemaVersion == Schema.version,
-      '实际 ${db.schemaVersion}');
+  check(
+    '没有多余的表（表集与 Schema.allTables 相等）',
+    tables.difference(Schema.allTables.toSet()).isEmpty,
+    '${tables.difference(Schema.allTables.toSet())}',
+  );
+  check(
+    'schema 版本 = ${Schema.version}',
+    db.schemaVersion == Schema.version,
+    '实际 ${db.schemaVersion}',
+  );
 
   section('B. 索引');
   const List<String> expectedIndexes = <String>[
@@ -163,7 +168,9 @@ void main() {
         "VALUES (?,?,?,?,?,?)",
         <Object?>['l-bad', 'no-such-doc', _p1, 1, 1, 1],
       );
-      raw.execute('DELETE FROM document_lines WHERE id = ?', <Object?>['l-bad']);
+      raw.execute('DELETE FROM document_lines WHERE id = ?', <Object?>[
+        'l-bad',
+      ]);
     }),
   );
 
@@ -177,9 +184,13 @@ void main() {
   });
   check('三层嵌套返回最内层结果', nested == 42, '实际 $nested');
   check('事务结束后 inTransaction == false', !db.inTransaction);
-  final int inserted = raw
-      .select("SELECT COUNT(*) AS c FROM products WHERE id IN ('p-n1','p-n2')")
-      .first['c']! as int;
+  final int inserted =
+      raw
+              .select(
+                "SELECT COUNT(*) AS c FROM products WHERE id IN ('p-n1','p-n2')",
+              )
+              .first['c']!
+          as int;
   check('嵌套事务内的写入已落盘', inserted == 2, '实际 $inserted');
 
   section('E. 失败回滚');
@@ -192,9 +203,13 @@ void main() {
       });
     }),
   );
-  final int rolledBack = raw
-      .select("SELECT COUNT(*) AS c FROM products WHERE id = 'p-rollback'")
-      .first['c']! as int;
+  final int rolledBack =
+      raw
+              .select(
+                "SELECT COUNT(*) AS c FROM products WHERE id = 'p-rollback'",
+              )
+              .first['c']!
+          as int;
   check('回滚后写入不可见', rolledBack == 0, '实际 $rolledBack');
   check('回滚后 inTransaction == false', !db.inTransaction);
 
@@ -211,75 +226,103 @@ void main() {
       });
     }),
   );
-  final int survivors = raw
-      .select("SELECT COUNT(*) AS c FROM products WHERE id IN ('p-outer','p-inner')")
-      .first['c']! as int;
+  final int survivors =
+      raw
+              .select(
+                "SELECT COUNT(*) AS c FROM products WHERE id IN ('p-outer','p-inner')",
+              )
+              .first['c']!
+          as int;
   check('外层的写入一并回滚', survivors == 0, '实际 $survivors');
 
   section('G. seq_no 每表独立');
   insertStock(raw, 's-1', 1);
   check('另一张流水表可复用 seq_no = 1', !throws(() => insertMoney(raw, 'm-1', 1)));
-  check('同一张表内 seq_no 唯一（UNIQUE 生效）',
-      throws(() => insertStock(raw, 's-dup', 1)));
+  check(
+    '同一张表内 seq_no 唯一（UNIQUE 生效）',
+    throws(() => insertStock(raw, 's-dup', 1)),
+  );
 
   section('H. 金额舍入（round-half-up）');
-  check('302 / 3 = 101', Money.divideRoundHalfUp(302, 3) == 101,
-      '实际 ${Money.divideRoundHalfUp(302, 3)}');
+  check(
+    '302 / 3 = 101',
+    Money.divideRoundHalfUp(302, 3) == 101,
+    '实际 ${Money.divideRoundHalfUp(302, 3)}',
+  );
   check('300 / 3 = 100', Money.divideRoundHalfUp(300, 3) == 100);
   check('1 / 2 = 1（半数进位）', Money.divideRoundHalfUp(1, 2) == 1);
   check('-302 / 3 = -101（半数远离零）', Money.divideRoundHalfUp(-302, 3) == -101);
   check('-1 / 2 = -1', Money.divideRoundHalfUp(-1, 2) == -1);
   check('0 / 7 = 0', Money.divideRoundHalfUp(0, 7) == 0);
   check('除以 0 抛错', throws(() => Money.divideRoundHalfUp(1, 0)));
-  check('Money.format(-1234) = -12.34', Money.format(-1234) == '-12.34',
-      Money.format(-1234));
+  check(
+    'Money.format(-1234) = -12.34',
+    Money.format(-1234) == '-12.34',
+    Money.format(-1234),
+  );
 
   section('I. UUIDv7');
   final List<String> ids = List<String>.generate(500, (_) => newId());
   check('500 个 id 互不相同', ids.toSet().length == 500);
-  check('版本位为 7', ids.every((String id) => id[14] == '7'),
-      ids.firstWhere((String id) => id[14] != '7', orElse: () => '<全部为 7>'));
+  check(
+    '版本位为 7',
+    ids.every((String id) => id[14] == '7'),
+    ids.firstWhere((String id) => id[14] != '7', orElse: () => '<全部为 7>'),
+  );
 
   section('J. 列级断言');
-  Set<Object?> columnsOf(String table) => raw
-      .select('PRAGMA table_info($table)')
-      .map((Row r) => r['name'])
-      .toSet();
-  check('documents 有 time_estimated（P1-9）',
-      columnsOf(Schema.documents).contains('time_estimated'));
+  Set<Object?> columnsOf(String table) =>
+      raw.select('PRAGMA table_info($table)').map((Row r) => r['name']).toSet();
+  check(
+    'documents 有 time_estimated（P1-9）',
+    columnsOf(Schema.documents).contains('time_estimated'),
+  );
   for (final String table in Schema.businessTables) {
     final Set<Object?> cols = columnsOf(table);
     check('$table 无 is_active', !cols.contains('is_active'));
     check('$table 无 sync_version', !cols.contains('sync_version'));
   }
-  check('documents 无 sync_version（P0-7）',
-      !columnsOf(Schema.documents).contains('sync_version'));
+  check(
+    'documents 无 sync_version（P0-7）',
+    !columnsOf(Schema.documents).contains('sync_version'),
+  );
   for (final String table in Schema.masterDataTables) {
     final Set<Object?> cols = columnsOf(table);
-    check('$table 有 is_active + sync_version',
-        cols.contains('is_active') && cols.contains('sync_version'));
+    check(
+      '$table 有 is_active + sync_version',
+      cols.contains('is_active') && cols.contains('sync_version'),
+    );
   }
 
   section('K. 唯一约束');
-  check('doc_no 唯一（先有 X20260925-001）',
-      throws(() => insertDocument(raw, 'd-dup', docNo: 'X20260925-001')));
+  check(
+    'doc_no 唯一（先有 X20260925-001）',
+    throws(() => insertDocument(raw, 'd-dup', docNo: 'X20260925-001')),
+  );
   insertProduct(raw, 'p-code-a', code: 'P001');
-  check('products.code 唯一', throws(() => insertProduct(raw, 'p-dup', code: 'P001')));
-  check('clock_offset 只允许 id = 1',
-      throws(() {
-        raw.execute(
-          'INSERT INTO clock_offset (id, offset_ms, updated_at) VALUES (2, 0, ?)',
-          <Object?>[now()],
-        );
-      }));
+  check(
+    'products.code 唯一',
+    throws(() => insertProduct(raw, 'p-dup', code: 'P001')),
+  );
+  check(
+    'clock_offset 只允许 id = 1',
+    throws(() {
+      raw.execute(
+        'INSERT INTO clock_offset (id, offset_ms, updated_at) VALUES (2, 0, ?)',
+        <Object?>[now()],
+      );
+    }),
+  );
 
   section('L. 文件数据库启用 WAL');
   final Directory tmp = Directory.systemTemp.createTempSync('ssz_selfcheck');
   final String dbPath = '${tmp.path}${Platform.pathSeparator}sc.db';
   final Db fileDb = Db.open(dbPath);
-  check('journal_mode = wal',
-      fileDb.raw.select('PRAGMA journal_mode').first['journal_mode'] == 'wal',
-      '${fileDb.raw.select('PRAGMA journal_mode').first['journal_mode']}');
+  check(
+    'journal_mode = wal',
+    fileDb.raw.select('PRAGMA journal_mode').first['journal_mode'] == 'wal',
+    '${fileDb.raw.select('PRAGMA journal_mode').first['journal_mode']}',
+  );
   check('schema 版本已迁移', fileDb.schemaVersion == Schema.version);
   fileDb.close();
   final Db reopened = Db.open(dbPath);
@@ -291,24 +334,27 @@ void main() {
 
   final List<String> step1 = Schema.migrationStep(1);
   check(
-      'migrationStep(1) 恰好一条 ALTER package_note',
-      step1.length == 1 &&
-          step1.single.contains('ALTER TABLE products ADD COLUMN package_note'),
-      '${step1.length} 条');
+    'migrationStep(1) 恰好一条 ALTER package_note',
+    step1.length == 1 &&
+        step1.single.contains('ALTER TABLE products ADD COLUMN package_note'),
+    '${step1.length} 条',
+  );
 
   // v2 → v3（2026-10-03，§BD）：五列一次到齐
   final List<String> step2 = Schema.migrationStep(2);
   check(
-      'migrationStep(2) 恰好五条 ALTER（两张表 / 五列 / discount 带默认 0）',
-      step2.length == 5 &&
-          step2.every((String s) => s.startsWith('ALTER TABLE')) &&
-          step2[0].contains('ADD COLUMN package_unit TEXT') &&
-          step2[1].contains('ADD COLUMN package_size INTEGER') &&
-          step2[2].contains(
-              'ADD COLUMN discount_amount INTEGER NOT NULL DEFAULT 0') &&
-          step2[3].contains('ADD COLUMN entry_quantity INTEGER') &&
-          step2[4].contains('ADD COLUMN entry_unit TEXT'),
-      '${step2.length} 条');
+    'migrationStep(2) 恰好五条 ALTER（两张表 / 五列 / discount 带默认 0）',
+    step2.length == 5 &&
+        step2.every((String s) => s.startsWith('ALTER TABLE')) &&
+        step2[0].contains('ADD COLUMN package_unit TEXT') &&
+        step2[1].contains('ADD COLUMN package_size INTEGER') &&
+        step2[2].contains(
+          'ADD COLUMN discount_amount INTEGER NOT NULL DEFAULT 0',
+        ) &&
+        step2[3].contains('ADD COLUMN entry_quantity INTEGER') &&
+        step2[4].contains('ADD COLUMN entry_unit TEXT'),
+    '${step2.length} 条',
+  );
   check('改 v3 没回头动 v2 那一步', step1.length == 1);
 
   var missingThrown = false;
@@ -317,8 +363,10 @@ void main() {
   } on MissingMigrationException {
     missingThrown = true;
   }
-  check('migrationStep(当前版) → MissingMigrationException（漏写迁移启动即拦）',
-      missingThrown);
+  check(
+    'migrationStep(当前版) → MissingMigrationException（漏写迁移启动即拦）',
+    missingThrown,
+  );
 
   final Directory migTmp = Directory.systemTemp.createTempSync('ssz_migrate');
   String migPath(String name) => '${migTmp.path}${Platform.pathSeparator}$name';
@@ -358,8 +406,11 @@ void main() {
   // 化石库端到端 —— ⚠️ **先拷贝再打开**：Db.open 会就地迁移，直接打开会改坏化石
   final File fixture = File('test/fixtures/v1_empty.db');
   if (!fixture.existsSync()) {
-    check('化石库 v1_empty.db 存在', false,
-        '缺文件：先在 core 包跑 dart run tool/make_fixture.dart');
+    check(
+      '化石库 v1_empty.db 存在',
+      false,
+      '缺文件：先在 core 包跑 dart run tool/make_fixture.dart',
+    );
   } else {
     final String fxPath = migPath('v1.db');
     fixture.copySync(fxPath);
@@ -378,17 +429,19 @@ void main() {
     final Db fxMigrated = Db.open(fxPath);
     check('化石库升到当前版本', fxMigrated.schemaVersion == Schema.version);
     check(
-        '迁移不丢数据',
-        fxMigrated.raw
-                .select("SELECT name FROM products WHERE id = 'p-v1'")
-                .first['name'] ==
-            '矿泉水');
+      '迁移不丢数据',
+      fxMigrated.raw
+              .select("SELECT name FROM products WHERE id = 'p-v1'")
+              .first['name'] ==
+          '矿泉水',
+    );
     check(
-        '新列对老行取 NULL',
-        fxMigrated.raw
-                .select("SELECT package_note FROM products WHERE id = 'p-v1'")
-                .first['package_note'] ==
-            null);
+      '新列对老行取 NULL',
+      fxMigrated.raw
+              .select("SELECT package_note FROM products WHERE id = 'p-v1'")
+              .first['package_note'] ==
+          null,
+    );
 
     // 环级（审查意见 §五）：不只查「最终到了 v3」，还查**中间 v2 那一环真的跑了**
     // —— 只断言最终结构会漏掉「链跳环」，因为 v2 的列也可能由别的路径补上。
@@ -401,14 +454,15 @@ void main() {
         .map((Row r) => r['name'])
         .toSet();
     check(
-        '环级：v1→v2→v3 **两环都留下产物**（package_note + v3 五列）',
-        fxP.contains('package_note') &&
-            fxP.contains('package_unit') &&
-            fxP.contains('package_size') &&
-            fxL.contains('discount_amount') &&
-            fxL.contains('entry_quantity') &&
-            fxL.contains('entry_unit'),
-        'products / document_lines 的列不全');
+      '环级：v1→v2→v3 **两环都留下产物**（package_note + v3 五列）',
+      fxP.contains('package_note') &&
+          fxP.contains('package_unit') &&
+          fxP.contains('package_size') &&
+          fxL.contains('discount_amount') &&
+          fxL.contains('entry_quantity') &&
+          fxL.contains('entry_unit'),
+      'products / document_lines 的列不全',
+    );
     fxMigrated.close();
 
     // 迁移前自动备份（reply.md Schema 篇 §3.2）—— 升级前必须留退路
@@ -423,9 +477,11 @@ void main() {
           .map((Row r) => r['name'])
           .contains('package_note');
       backupRaw.dispose();
-      check('备份是**迁移前**的样子（v1 且无 package_note）',
-          backupVersion == 1 && !backupHasNewColumn,
-          'v$backupVersion / 有新列=$backupHasNewColumn');
+      check(
+        '备份是**迁移前**的样子（v1 且无 package_note）',
+        backupVersion == 1 && !backupHasNewColumn,
+        'v$backupVersion / 有新列=$backupHasNewColumn',
+      );
     }
 
     // 环级：v2→v3 中途失败 ⇒ **停在 v2**（该版整条事务回滚），重试从断点继续。
@@ -457,24 +513,24 @@ void main() {
         .map((Row r) => r['name'])
         .toSet();
     ringChk.dispose();
-    check('环级：**停在 v2**（v1→v2 已提交并保留）', ringVersion == 2,
-        'v$ringVersion');
+    check('环级：**停在 v2**（v1→v2 已提交并保留）', ringVersion == 2, 'v$ringVersion');
     check(
-        '环级：v2→v3 **整条回滚**（package_unit / discount_amount 都不在）',
-        ringP.contains('package_note') &&
-            !ringP.contains('package_unit') &&
-            !ringL.contains('discount_amount'));
+      '环级：v2→v3 **整条回滚**（package_unit / discount_amount 都不在）',
+      ringP.contains('package_note') &&
+          !ringP.contains('package_unit') &&
+          !ringL.contains('discount_amount'),
+    );
 
     final Database ringFix = sqlite3.open(ringPath);
     ringFix.execute('ALTER TABLE document_lines DROP COLUMN entry_unit');
     ringFix.dispose();
     final Db ringRetry = Db.open(ringPath);
-    check('环级：重试后升到 v3（从断点继续）',
-        ringRetry.schemaVersion == Schema.version);
+    check('环级：重试后升到 v3（从断点继续）', ringRetry.schemaVersion == Schema.version);
     check(
-        '环级：重试生成 before-v2（不覆盖 before-v1）',
-        File('$ringPath.before-v2').existsSync() &&
-            File('$ringPath.before-v1').existsSync());
+      '环级：重试生成 before-v2（不覆盖 before-v1）',
+      File('$ringPath.before-v2').existsSync() &&
+          File('$ringPath.before-v1').existsSync(),
+    );
     ringRetry.close();
   }
 
@@ -494,99 +550,125 @@ void main() {
   // 与 `test/storage_error_test.dart` 镜像：判据是**结果码**不是异常文本。
   section('存储失败分类（storage_error.dart）');
   check(
-      '按结果码分类：锁 / 满 / 只读 / 损坏 / 打不开',
-      classifyStorageFailure(SqliteException(5, 'x')) ==
-              StorageFailureKind.locked &&
-          classifyStorageFailure(SqliteException(13, 'x')) ==
-              StorageFailureKind.full &&
-          classifyStorageFailure(SqliteException(8, 'x')) ==
-              StorageFailureKind.readOnly &&
-          classifyStorageFailure(SqliteException(26, 'x')) ==
-              StorageFailureKind.corrupted &&
-          classifyStorageFailure(SqliteException(14, 'x')) ==
-              StorageFailureKind.unopenable);
-  check('扩展码回到主码（READONLY_RECOVERY 264 ⇒ readOnly）',
-      classifyStorageFailure(SqliteException(264, 'x')) ==
-          StorageFailureKind.readOnly);
-  check('非 SqliteException ⇒ unknown（不抛、不猜）',
-      classifyStorageFailure(StateError('x')) == StorageFailureKind.unknown &&
-          classifyStorageFailure('boom') == StorageFailureKind.unknown);
+    '按结果码分类：锁 / 满 / 只读 / 损坏 / 打不开',
+    classifyStorageFailure(SqliteException(5, 'x')) ==
+            StorageFailureKind.locked &&
+        classifyStorageFailure(SqliteException(13, 'x')) ==
+            StorageFailureKind.full &&
+        classifyStorageFailure(SqliteException(8, 'x')) ==
+            StorageFailureKind.readOnly &&
+        classifyStorageFailure(SqliteException(26, 'x')) ==
+            StorageFailureKind.corrupted &&
+        classifyStorageFailure(SqliteException(14, 'x')) ==
+            StorageFailureKind.unopenable,
+  );
   check(
-      '给用户的文案**不含 SQL / 参数 / 类型名**',
-      !storageFailureNote(SqliteException(
+    '扩展码回到主码（READONLY_RECOVERY 264 ⇒ readOnly）',
+    classifyStorageFailure(SqliteException(264, 'x')) ==
+        StorageFailureKind.readOnly,
+  );
+  check(
+    '非 SqliteException ⇒ unknown（不抛、不猜）',
+    classifyStorageFailure(StateError('x')) == StorageFailureKind.unknown &&
+        classifyStorageFailure('boom') == StorageFailureKind.unknown,
+  );
+  check(
+    '给用户的文案**不含 SQL / 参数 / 类型名**',
+    !storageFailureNote(
+      SqliteException(
         5,
         'while executing INSERT',
         null,
         'INSERT INTO documents (id) VALUES (?)',
         <Object?>['d-1'],
-      )).contains('INSERT'));
-  check('已知类别都说了「内容还在」',
-      <int>[5, 13, 8, 11, 14].every((int c) =>
-          storageFailureNote(SqliteException(c, 'x')).contains('还在')));
-  check('只读走「重新打开」（重试当前连接必然再失败）',
-      storageFailureNote(SqliteException(8, 'x')).contains('重新打开'));
+      ),
+    ).contains('INSERT'),
+  );
+  check(
+    '已知类别都说了「内容还在」',
+    <int>[5, 13, 8, 11, 14].every(
+      (int c) => storageFailureNote(SqliteException(c, 'x')).contains('还在'),
+    ),
+  );
+  check(
+    '只读走「重新打开」（重试当前连接必然再失败）',
+    storageFailureNote(SqliteException(8, 'x')).contains('重新打开'),
+  );
 
   // 与 `test/storage_error_test.dart` 镜像（#54，2026-10-15 外测 M15）：
   // 日志侧只留分类 / 结果码，SQL 与绑定参数不进日志。
   check(
-      '日志行（#54）：SqliteException 不带消息体（SQL / 参数不进日志）',
-      (() {
-        final String line = storageFailureLogLine(SqliteException(
+    '日志行（#54）：SqliteException 不带消息体（SQL / 参数不进日志）',
+    (() {
+      final String line = storageFailureLogLine(
+        SqliteException(
           5,
           'while executing INSERT',
           null,
           'INSERT INTO documents (id, total_amount) VALUES (?, ?)',
           <Object?>['d-1', 6000],
-        ));
-        return line.contains('SqliteException') &&
-            line.contains('码 5') &&
-            line.contains('locked') &&
-            !line.contains('INSERT') &&
-            !line.contains('documents') &&
-            !line.contains('6000');
-      })());
-  check('日志行（#54）：非 SQLite 异常保留原文本（排查要用）',
-      storageFailureLogLine(StateError('boom')).contains('boom'));
+        ),
+      );
+      return line.contains('SqliteException') &&
+          line.contains('码 5') &&
+          line.contains('locked') &&
+          !line.contains('INSERT') &&
+          !line.contains('documents') &&
+          !line.contains('6000');
+    })(),
+  );
+  check(
+    '日志行（#54）：非 SQLite 异常保留原文本（排查要用）',
+    storageFailureLogLine(StateError('boom')).contains('boom'),
+  );
 
   // ============================================ 本地文件写入失败（#35 / #36，2026-10-14）
   //
   // 与 `test/local_file_error_test.dart` 镜像：判据是 **errno**（不按文本），
   // **平台重叠码必须按平台分叉**；给用户的话**不含路径 / errno / 类型名 / 动作前缀**。
   FileSystemException fileEx(int code) => FileSystemException(
-      '写入失败', r'D:\神算子导出\商品_2026-10-14.csv', OSError('os message', code));
+    '写入失败',
+    r'D:\神算子导出\商品_2026-10-14.csv',
+    OSError('os message', code),
+  );
   check(
-      'Windows 32 ⇒ busy（原来叫人「检查磁盘」= 永远修不好）',
-      classifyLocalFileFailure(fileEx(32), windows: true) ==
-          LocalFileFailureKind.busy);
+    'Windows 32 ⇒ busy（原来叫人「检查磁盘」= 永远修不好）',
+    classifyLocalFileFailure(fileEx(32), windows: true) ==
+        LocalFileFailureKind.busy,
+  );
   check(
-      '满：Windows 112 / POSIX 28 ⇒ noSpace',
-      classifyLocalFileFailure(fileEx(112), windows: true) ==
-              LocalFileFailureKind.noSpace &&
-          classifyLocalFileFailure(fileEx(28), windows: false) ==
-              LocalFileFailureKind.noSpace);
+    '满：Windows 112 / POSIX 28 ⇒ noSpace',
+    classifyLocalFileFailure(fileEx(112), windows: true) ==
+            LocalFileFailureKind.noSpace &&
+        classifyLocalFileFailure(fileEx(28), windows: false) ==
+            LocalFileFailureKind.noSpace,
+  );
   check(
-      '⚠️ 重叠码 13 按平台分叉（POSIX=EACCES / Windows=ERROR_INVALID_DATA）',
-      classifyLocalFileFailure(fileEx(13), windows: false) ==
-              LocalFileFailureKind.readOnly &&
-          classifyLocalFileFailure(fileEx(13), windows: true) ==
-              LocalFileFailureKind.unknown);
+    '⚠️ 重叠码 13 按平台分叉（POSIX=EACCES / Windows=ERROR_INVALID_DATA）',
+    classifyLocalFileFailure(fileEx(13), windows: false) ==
+            LocalFileFailureKind.readOnly &&
+        classifyLocalFileFailure(fileEx(13), windows: true) ==
+            LocalFileFailureKind.unknown,
+  );
   check(
-      '非 IO 异常 / 无 osError ⇒ unknown（不抛、不猜）',
-      classifyLocalFileFailure(StateError('x')) ==
-              LocalFileFailureKind.unknown &&
-          classifyLocalFileFailure(const FileSystemException('x')) ==
-              LocalFileFailureKind.unknown);
+    '非 IO 异常 / 无 osError ⇒ unknown（不抛、不猜）',
+    classifyLocalFileFailure(StateError('x')) == LocalFileFailureKind.unknown &&
+        classifyLocalFileFailure(const FileSystemException('x')) ==
+            LocalFileFailureKind.unknown,
+  );
   check(
-      '给用户的话**不含路径 / errno / 类型名 / 动作前缀**',
-      !localFileFailureAdvice(fileEx(32)).contains('神算子导出') &&
-          !localFileFailureAdvice(fileEx(32)).contains('csv') &&
-          !localFileFailureAdvice(fileEx(32)).contains('32') &&
-          !localFileFailureAdvice(fileEx(32)).contains('FileSystemException') &&
-          !localFileFailureAdvice(fileEx(32)).contains('导出失败'));
+    '给用户的话**不含路径 / errno / 类型名 / 动作前缀**',
+    !localFileFailureAdvice(fileEx(32)).contains('神算子导出') &&
+        !localFileFailureAdvice(fileEx(32)).contains('csv') &&
+        !localFileFailureAdvice(fileEx(32)).contains('32') &&
+        !localFileFailureAdvice(fileEx(32)).contains('FileSystemException') &&
+        !localFileFailureAdvice(fileEx(32)).contains('导出失败'),
+  );
   check(
-      'busy 指向「关掉那个程序」、unknown 指向日志',
-      localFileFailureAdvice(fileEx(32)).contains('关掉') &&
-          localFileFailureAdvice(StateError('x')).contains('日志'));
+    'busy 指向「关掉那个程序」、unknown 指向日志',
+    localFileFailureAdvice(fileEx(32)).contains('关掉') &&
+        localFileFailureAdvice(StateError('x')).contains('日志'),
+  );
 
   // ============================================================ 同步失败的中文原因（§CS·五 ③）
   //
@@ -594,35 +676,46 @@ void main() {
   // 给客户端的话里**不含 SQL / 参数 / 表名 / 类型名**（M15 同一条诉求）。
   section('同步失败的中文原因（sync_failure.dart）');
   check(
-      '约束冲突三分：UNIQUE/PK ⇒ duplicate、FK ⇒ missingReference、CHECK/NOT NULL ⇒ invalid',
-      constraintKindOf(SqliteException(2067, 'x')) == ConstraintKind.duplicate &&
-          constraintKindOf(SqliteException(1555, 'x')) ==
-              ConstraintKind.duplicate &&
-          constraintKindOf(SqliteException(787, 'x')) ==
-              ConstraintKind.missingReference &&
-          constraintKindOf(SqliteException(275, 'x')) == ConstraintKind.invalid &&
-          constraintKindOf(SqliteException(1299, 'x')) ==
-              ConstraintKind.invalid);
-  check('主码 19 但扩展码不认识 ⇒ 兜底 invalid（不漏报）',
-      constraintKindOf(SqliteException(19, 'x')) == ConstraintKind.invalid);
-  check('非约束冲突 ⇒ null（存储故障交给 M15 的分类）',
-      constraintKindOf(SqliteException(5, 'x')) == null &&
-          constraintKindOf(StateError('x')) == null);
-  check('存储类故障复用 M15 分类（措辞面向主机）',
-      syncFailureReason(SqliteException(5, 'x')).contains('主机正忙') &&
-          syncFailureReason(SqliteException(13, 'x')).contains('磁盘空间'));
+    '约束冲突三分：UNIQUE/PK ⇒ duplicate、FK ⇒ missingReference、CHECK/NOT NULL ⇒ invalid',
+    constraintKindOf(SqliteException(2067, 'x')) == ConstraintKind.duplicate &&
+        constraintKindOf(SqliteException(1555, 'x')) ==
+            ConstraintKind.duplicate &&
+        constraintKindOf(SqliteException(787, 'x')) ==
+            ConstraintKind.missingReference &&
+        constraintKindOf(SqliteException(275, 'x')) == ConstraintKind.invalid &&
+        constraintKindOf(SqliteException(1299, 'x')) == ConstraintKind.invalid,
+  );
   check(
-      '给客户端的话**不含 SQL / 参数 / 表名 / 类型名**',
-      !syncFailureReason(SqliteException(
+    '主码 19 但扩展码不认识 ⇒ 兜底 invalid（不漏报）',
+    constraintKindOf(SqliteException(19, 'x')) == ConstraintKind.invalid,
+  );
+  check(
+    '非约束冲突 ⇒ null（存储故障交给 M15 的分类）',
+    constraintKindOf(SqliteException(5, 'x')) == null &&
+        constraintKindOf(StateError('x')) == null,
+  );
+  check(
+    '存储类故障复用 M15 分类（措辞面向主机）',
+    syncFailureReason(SqliteException(5, 'x')).contains('主机正忙') &&
+        syncFailureReason(SqliteException(13, 'x')).contains('磁盘空间'),
+  );
+  check(
+    '给客户端的话**不含 SQL / 参数 / 表名 / 类型名**',
+    !syncFailureReason(
+      SqliteException(
         2067,
         'UNIQUE constraint failed: products.code',
         null,
         'INSERT INTO products (id, code) VALUES (?, ?)',
         <Object?>['p-1', 'P001'],
-      )).contains('products'));
-  check('搞不清的错 ⇒ 让用户交日志（不倒异常文本）',
-      syncFailureReason(StateError('内部状态不对')).contains('日志') &&
-          !syncFailureReason(StateError('内部状态不对')).contains('StateError'));
+      ),
+    ).contains('products'),
+  );
+  check(
+    '搞不清的错 ⇒ 让用户交日志（不倒异常文本）',
+    syncFailureReason(StateError('内部状态不对')).contains('日志') &&
+        !syncFailureReason(StateError('内部状态不对')).contains('StateError'),
+  );
 
   db.close();
   check('close() 后可用', !db.inTransaction);
@@ -646,9 +739,14 @@ void main() {
       return true;
     }
   }());
-  check('PartyRole.fromWireOrNull 认不出 ⇒ null（不抛）',
-      PartyRole.fromWireOrNull('  　\t  ') == null);
-  check('PartyRole.fromWireOrNull 认得出', PartyRole.fromWireOrNull('supplier') == PartyRole.supplier);
+  check(
+    'PartyRole.fromWireOrNull 认不出 ⇒ null（不抛）',
+    PartyRole.fromWireOrNull('  　\t  ') == null,
+  );
+  check(
+    'PartyRole.fromWireOrNull 认得出',
+    PartyRole.fromWireOrNull('supplier') == PartyRole.supplier,
+  );
 
   // ---- L1 + L2：往来方（#42 的原始触发点）
   bad.raw.execute(
@@ -658,16 +756,22 @@ void main() {
   );
   final List<Party> parties = PartyDao(bad).findAll();
   check('坏角色**不再抛穿**，该往来方仍然查得到（整页不变灰）', parties.length == 1);
-  check('认得出的角色保留、认不出的丢弃',
-      parties.isNotEmpty &&
-          parties.first.roles.length == 1 &&
-          parties.first.roles.first == PartyRole.supplier);
+  check(
+    '认得出的角色保留、认不出的丢弃',
+    parties.isNotEmpty &&
+        parties.first.roles.length == 1 &&
+        parties.first.roles.first == PartyRole.supplier,
+  );
   check('记了 1 条读失败', bad.readFailures.count == 1);
-  check('记录带**列名 + 原值**（裁定 §二·④：区分「数据坏了」与「枚举拼错」）',
-      bad.readFailures.items.first.column == 'roles' &&
-          bad.readFailures.items.first.value == '  　\t  ');
-  check('日志行不含经营数据（只表名 / 列名 / 原值）',
-      !bad.readFailures.items.first.logLine.contains('王老板'));
+  check(
+    '记录带**列名 + 原值**（裁定 §二·④：区分「数据坏了」与「枚举拼错」）',
+    bad.readFailures.items.first.column == 'roles' &&
+        bad.readFailures.items.first.value == '  　\t  ',
+  );
+  check(
+    '日志行不含经营数据（只表名 / 列名 / 原值）',
+    !bad.readFailures.items.first.logLine.contains('王老板'),
+  );
 
   // ---- 兜底政策：AccountType ⇒ other（**保留行**，余额必须看得见）
   bad.raw.execute(
@@ -676,10 +780,12 @@ void main() {
     <Object?>['ac-bad', '怪账户', 'weird_type', 12345, 1, 1, 1, 0],
   );
   final List<Account> accounts = AccountDao(bad).findAll();
-  check('账户类型认不出 ⇒ 兜底 other，**该行保留**（钱不能少报）',
-      accounts.length == 1 &&
-          accounts.first.type == AccountType.other &&
-          accounts.first.initialBalance == 12345);
+  check(
+    '账户类型认不出 ⇒ 兜底 other，**该行保留**（钱不能少报）',
+    accounts.length == 1 &&
+        accounts.first.type == AccountType.other &&
+        accounts.first.initialBalance == 12345,
+  );
   check('账户那条也计数了', bad.readFailures.count == 2);
 
   // ---- 兜底政策：DocStatus ⇒ confirmed（**不是 draft**，裁定 §二·①）
@@ -690,8 +796,10 @@ void main() {
     <Object?>['doc-bad', 'XS-BAD', 'sale', 'weird_status', 5000, 0, 1, 0, 1, 1],
   );
   final Document? doc = DocumentDao(bad).findById('doc-bad');
-  check('单据状态认不出 ⇒ 兜底 confirmed（**不是 draft**）',
-      doc != null && doc.status == DocStatus.confirmed);
+  check(
+    '单据状态认不出 ⇒ 兜底 confirmed（**不是 draft**）',
+    doc != null && doc.status == DocStatus.confirmed,
+  );
   check('单据类型**认得出**时不受影响', doc != null && doc.docType == DocType.sale);
   check('状态那条也计数了', bad.readFailures.count == 3);
 
@@ -700,12 +808,25 @@ void main() {
     'INSERT INTO ${Schema.documents} (id, doc_no, doc_type, status, total_amount, '
     'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
     'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    <Object?>['doc-worse', 'XS-WORSE', 'weird_type', 'confirmed', 100, 0, 1, 0, 1, 1],
+    <Object?>[
+      'doc-worse',
+      'XS-WORSE',
+      'weird_type',
+      'confirmed',
+      100,
+      0,
+      1,
+      0,
+      1,
+      1,
+    ],
   );
   final List<DocumentSummary> docs = DocumentDao(bad).listDocuments();
-  check('单据类型认不出 ⇒ **跳过该行**（不猜类型）',
-      docs.every((DocumentSummary s) => s.document.id != 'doc-worse') &&
-          docs.any((DocumentSummary s) => s.document.id == 'doc-bad'));
+  check(
+    '单据类型认不出 ⇒ **跳过该行**（不猜类型）',
+    docs.every((DocumentSummary s) => s.document.id != 'doc-worse') &&
+        docs.any((DocumentSummary s) => s.document.id == 'doc-bad'),
+  );
   check('跳过的那条也计数了', bad.readFailures.count == 4);
 
   // ---- 跳过政策：队列枚举认不出 ⇒ 跳过（**不兜底 failed**，裁定 §二·②）
@@ -714,28 +835,40 @@ void main() {
     'status, retry_count, created_at, next_retry_at) '
     'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     <Object?>[
-      'q-bad', Schema.documents, 'doc-bad', 'createDocument', '{}',
-      'weird_status', 0, 1, 0,
+      'q-bad',
+      Schema.documents,
+      'doc-bad',
+      'createDocument',
+      '{}',
+      'weird_status',
+      0,
+      1,
+      0,
     ],
   );
-  check('队列状态认不出 ⇒ 跳过该行（不伪装成 failed）',
-      SyncQueueDao(bad).all().isEmpty);
+  check('队列状态认不出 ⇒ 跳过该行（不伪装成 failed）', SyncQueueDao(bad).all().isEmpty);
   check('队列那条也计数了', bad.readFailures.count == 5);
 
   // ---- L4：文案 + 计数通道的生命周期（裁定 §二·③）
-  check('提示文案带 N 且不含开发术语',
-      readFailureNotice(3) == '有 3 条记录暂时显示不全。' &&
-          !readFailureNotice(3).contains('异常') &&
-          !readFailureNotice(3).contains('SQL'));
+  check(
+    '提示文案带 N 且不含开发术语',
+    readFailureNotice(3) == '有 3 条记录暂时显示不全。' &&
+        !readFailureNotice(3).contains('异常') &&
+        !readFailureNotice(3).contains('SQL'),
+  );
   check('「怎么办」给的是**动作**（恢复备份）', readFailureAdvice.contains('备份与恢复'));
   // ⚠️ 去重是**跑出来才发现的**：第一版按「事件」计数 ⇒ 同一张单据被
   // `listDocuments` 的多个子查询各解一次，N 会随查询次数（和页面重绘）不断长大。
   final int countBefore = bad.readFailures.count;
   DocumentDao(bad).listDocuments(); // 再读一遍**同一批**坏行
-  check('计数是**去重**的（同一行同一列反复读只算一条，N 不随重绘长大）',
-      countBefore == 5 && bad.readFailures.count == 5);
-  check('日志行带行标识（诊断用，不是经营数据）',
-      bad.readFailures.items.any((ReadFailure f) => f.rowId == 'doc-worse'));
+  check(
+    '计数是**去重**的（同一行同一列反复读只算一条，N 不随重绘长大）',
+    countBefore == 5 && bad.readFailures.count == 5,
+  );
+  check(
+    '日志行带行标识（诊断用，不是经营数据）',
+    bad.readFailures.items.any((ReadFailure f) => f.rowId == 'doc-worse'),
+  );
   bad.readFailures.clear();
   check('clear() 后归零（UI 在「知道了」时调用）', bad.readFailures.count == 0);
   // 已告知的坏行**不再重复提醒**，但**新的**坏行照常提醒（裁定 §二·③）
@@ -763,14 +896,18 @@ void main() {
     <Object?>['pa-bad3', '王老板', '["  　\t  "]', 0, 1, 1, 1, 0],
   );
   PartyDao(bad).findAll();
-  check('新增坏行 ⇒ 通知订阅者（UI 才能刷新）',
-      notified >= 1 && bad.readFailures.count == beforeNotify + 1);
+  check(
+    '新增坏行 ⇒ 通知订阅者（UI 才能刷新）',
+    notified >= 1 && bad.readFailures.count == beforeNotify + 1,
+  );
   final int notifiedOnce = notified;
   PartyDao(bad).findAll(); // 同一批坏行（去重后计数不变）
   check('计数没变 ⇒ 不惊动订阅者', notified == notifiedOnce);
   bad.readFailures.clear();
-  check('clear ⇒ 再通知一次（提示条才会消失）',
-      notified == notifiedOnce + 1 && bad.readFailures.count == 0);
+  check(
+    'clear ⇒ 再通知一次（提示条才会消失）',
+    notified == notifiedOnce + 1 && bad.readFailures.count == 0,
+  );
   bad.readFailures.removeListener(onChanged);
   bad.close();
 
