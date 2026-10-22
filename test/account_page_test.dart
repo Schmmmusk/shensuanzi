@@ -257,6 +257,74 @@ void main() {
     expect(find.byType(DocumentDetailPage), findsOneWidget);
   });
 
+  // 2026-10-21（§CV·八十 Q1）：与另外两个流水页同一组判据。
+  testWidgets('#64④ 账户流水页不许把 2.0 夹到 1.15；2.0 下不溢出', (
+    WidgetTester tester,
+  ) async {
+    final Account account = service.create(
+      AccountDraft(name: '现金', type: AccountType.cash, initialBalance: '300'),
+      now: 1700000000000,
+    );
+    // 种一条资金流水（与 #27 同款；规则引擎路径已由 core 覆盖）
+    db.raw.execute(
+      "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
+      'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+      "VALUES ('d1', 'SK20260101-001', 'receipt', 'confirmed', 3000, 3000, "
+      '1700000100000, 0, 1700000100000, 1700000100000)',
+    );
+    MoneyLedgerDao(db).insert(
+      MoneyLedger(
+        id: newId(),
+        accountId: account.id,
+        documentId: 'd1',
+        amount: 3000,
+        seqNo: 1,
+        occurredAt: 1700000100000,
+        createdAt: 1700000100000,
+      ),
+    );
+
+    Future<double> dateLineHeight(double scale) async {
+      // 每次从**空树**重建：否则 Navigator 会把上一次 push 的流水页留着
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      tester.view.physicalSize = const Size(400, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (BuildContext context, Widget? child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: AccountsPage(
+              service: service,
+              masterDataPolicy: const MasterDataPolicy.desktop(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(Key('account-row-${account.id}')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AccountFlowPage), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: '$scale× 下账户流水页溢出');
+      // 量「单号 · 日期」那一行（含 docNo 的 Text）
+      return tester.getSize(find.textContaining('SK20260101-001').first).height;
+    }
+
+    final double h1 = await dateLineHeight(1.0);
+    final double h2 = await dateLineHeight(2.0);
+    expect(
+      h2 / h1,
+      greaterThan(1.6),
+      reason: '字号被夹到 1.15（比值≈1.15）—— 用户选的 2.0 必须真的生效',
+    );
+  });
+
   testWidgets('#27：菜单同构不丢 —— 编辑 / 停用仍在行尾「更多操作」里', (WidgetTester tester) async {
     final Account account = service.create(
       AccountDraft(name: '现金', type: AccountType.cash),

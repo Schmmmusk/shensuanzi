@@ -111,11 +111,9 @@ class StockFlowPage extends StatelessWidget {
                   ),
           ),
         );
-        if (!narrow) return page;
-        return MediaQuery.withClampedTextScaling(
-          maxScaleFactor: 1.15,
-          child: page,
-        );
+        // 2026-10-21（§CV·八十 Q1）：**不再夹字号**（原 1.15 会静默压掉用户的超大档）。
+        // 窄屏靠 `_NarrowFlowCard` 重排（类型/数量用 Wrap，单号+日期单独一行）。
+        return page;
       },
     );
   }
@@ -171,7 +169,14 @@ class _NarrowFlowCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Row(
+          // 2026-10-21（§CV·八十 Q1）：`Row + Spacer` → `Wrap`。
+          // 剩余宽度为 0 时 `Spacer` 帮不上忙，数量会被推出卡片
+          //（与往来流水 #34⑦ 同一处病）。放不下就换行。
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 2,
             children: <Widget>[
               Text(
                 entry.docType.label,
@@ -180,7 +185,6 @@ class _NarrowFlowCard extends StatelessWidget {
                   color: theme.textTheme.bodySmall?.color,
                 ),
               ),
-              const Spacer(),
               Text(
                 '${entry.quantity}',
                 style: const TextStyle(

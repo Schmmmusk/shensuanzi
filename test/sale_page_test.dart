@@ -260,8 +260,24 @@ void main() {
 
     await tapBottomButton(tester, '保存 (Ctrl+S)');
 
-    expect(find.textContaining('请选一个商品'), findsOneWidget);
+    // 2026-10-21：现在会**出现两次** —— 就地标红 + 页顶摘要（§CV·八十 批 1 ③）
+    expect(find.textContaining('请选一个商品'), findsWidgets);
+    expect(find.byKey(const Key('submit-error-summary')), findsOneWidget);
     expect(find.byType(SnackBar), findsNothing);
+  });
+
+  // 2026-10-21（§CV·八十 批 1 ③）：保存失败要**在页顶说清楚哪几处要填**。
+  // 原来只在各字段就地标红 —— 用户视线在页底保存按钮，等于「点了没反应」。
+  testWidgets('保存失败 ⇒ 页顶出现错误摘要（含条数）', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await tapBottomButton(tester, '保存 (Ctrl+S)');
+
+    expect(find.byKey(const Key('submit-error-summary')), findsOneWidget);
+    expect(find.textContaining('还有'), findsWidgets, reason: '要报条数');
+    // 摘要里也要有具体那一条（不只一个数字）
+    expect(find.textContaining('请选一个商品'), findsWidgets);
   });
 
   testWidgets('散客全款 → 保存成功，库存 -10，SnackBar 已结清', (WidgetTester tester) async {
@@ -325,7 +341,11 @@ void main() {
     await fillRow(tester); // 不点全款 → 全赊
     await tapBottomButton(tester, '保存 (Ctrl+S)');
 
-    expect(find.textContaining('散客要当场结清'), findsOneWidget);
+    expect(
+      find.textContaining('散客要当场结清'),
+      findsWidgets,
+      reason: '就地 + 页顶摘要各一次（§CV·八十 批 1 ③）',
+    );
   });
 
   testWidgets('负库存：行内红色提示（打开本页时），保存照常放行', (WidgetTester tester) async {

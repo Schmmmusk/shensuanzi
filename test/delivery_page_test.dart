@@ -200,8 +200,9 @@ void main() {
 
     expect(
       find.textContaining('送货要选一个客户'),
-      findsOneWidget,
-      reason: '文案要说清「货出了门，欠款得有人挂着」，不是干巴巴一句「必填」',
+      findsWidgets,
+      reason: '文案要说清「货出了门，欠款得有人挂着」，不是干巴巴一句「必填」；'
+          '就地 + 页顶摘要各一次（§CV·八十 批 1 ③）',
     );
     expect(documentCount(), 0, reason: '没选客户就不该落库');
     expect(stockSum(), 0, reason: '**也没扣库存** —— 单据没成立');

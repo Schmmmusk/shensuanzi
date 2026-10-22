@@ -169,8 +169,7 @@ class HelpPage extends StatelessWidget {
                         '· 进货 3 箱 → 数量录 144（3 × 48），单价按箱价 ÷ 48 换算\n'
                         '· 卖 1 瓶 → 库存变成 143\n'
                         '· 卖一整箱 → 数量录 48\n\n'
-                        '「1 箱 = 48 瓶」这个换算关系填在商品建档的「包装说明」里，'
-                        '库存页会显示在商品名旁边。\n\n'
+                        '$packageConversionHint\n\n'
                         '系统按「个」记账，你心里按「箱」想就行。',
                   ),
                   // §AE-6：恢复写成**六步能照做**的形式（带真实路径）
@@ -179,15 +178,14 @@ class HelpPage extends StatelessWidget {
                     '备份放在$_backupFolder，名字里带日期。'
                         '每天首次打开软件会自动备份一次，最近 30 天的都留着，'
                         '每个星期最早的那一份会一直留着。\n\n'
+                        // §CV·八十 批 1 ⑤：与手册**同一份步骤**（模板在 app 包）
                         '要恢复的话，照着做：\n'
-                        '1. 先关掉神算子\n'
-                        '2. 打开$_backupFolder\n'
-                        '3. 找到你要恢复的那一份（看名字里的日期），右键「复制」\n'
-                        '4. 打开$_dataFolder，'
-                        '把里面的 shensuanzi.db 改名叫 shensuanzi.db.bak\n'
-                        '5. 右键「粘贴」，把复制的那份贴进来，'
-                        '也改名叫 shensuanzi.db\n'
-                        '6. 重新打开神算子\n\n'
+                        '${<String>[
+                          for (int i = 0; i < backupRestoreStepTemplates.length; i++)
+                            '${i + 1}. ${backupRestoreStepTemplates[i]
+                                .replaceAll('{data}', _dataFolder)
+                                .replaceAll('{backup}', _backupFolder)}',
+                        ].join('\n')}\n\n'
                         '第 4 步「先改名再粘贴」别省 —— 万一贴错了，原来那份还在。',
                   ),
                   // §AE 遗漏 8：诚实地告诉用户边界，不假装「备份万能」

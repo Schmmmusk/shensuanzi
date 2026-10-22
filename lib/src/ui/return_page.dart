@@ -15,6 +15,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'submit_error_summary.dart';
+
 class ReturnPage extends StatefulWidget {
   const ReturnPage({
     super.key,
@@ -68,6 +70,9 @@ class _ReturnPageState extends State<ReturnPage> {
   Map<String, ReturnQuota> _quotas = const <String, ReturnQuota>{};
   List<String> _productIds = const <String>[];
   ReturnDraftInvalid? _invalid;
+
+  /// 保存失败要**滚回页顶**（§CV·八十 批 1 ③）
+  final ScrollController _scroll = ScrollController();
   bool _saving = false;
 
   late final DocType _returnType;
@@ -100,6 +105,7 @@ class _ReturnPageState extends State<ReturnPage> {
 
   @override
   void dispose() {
+    _scroll.dispose();
     _remark.dispose();
     _refundAmount.dispose();
     for (final TextEditingController c in _qty.values) {
@@ -241,6 +247,7 @@ class _ReturnPageState extends State<ReturnPage> {
         _invalid = error;
         _saving = false;
       });
+      _scrollToTop();
     } on RuleRejected catch (error) {
       // #23（裁定甲）：**业务拒绝**（退货超额 / 原单不在了…）—— 规则层文案
       // 已写「怎么办」，照实显示；不调 onStorageFailure（detail 已由引擎
@@ -301,6 +308,27 @@ class _ReturnPageState extends State<ReturnPage> {
     return confirmed == true;
   }
 
+  /// 失败时滚回页顶（用户视线在页底的保存按钮）
+  void _scrollToTop() {
+    if (!_scroll.hasClients) return;
+    _scroll.jumpTo(0);
+  }
+
+  /// 把 typed invalid 摊成「人话」列表给页顶摘要（去重保序）
+  List<String> _submitErrorMessages() {
+    final ReturnDraftInvalid? invalid = _invalid;
+    if (invalid == null) return const <String>[];
+    final List<String> all = <String>[
+      ...invalid.fieldErrors.values,
+      for (final Map<ReturnLineField, String> line in invalid.lineErrors)
+        ...line.values,
+    ];
+    return <String>{
+      for (final String m in all)
+        if (m.trim().isNotEmpty) m,
+    }.toList();
+  }
+
   // ---------------------------------------------------------- 摆放
 
   @override
@@ -310,6 +338,7 @@ class _ReturnPageState extends State<ReturnPage> {
       appBar: AppBar(title: Text('退货 · ${widget.original.docNo}')),
       body: SafeArea(
         child: SingleChildScrollView(
+          controller: _scroll,
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -323,13 +352,8 @@ class _ReturnPageState extends State<ReturnPage> {
                 ),
               ),
               const SizedBox(height: 16),
-              if (_invalid != null) ...<Widget>[
-                Text(
-                  _invalid!.summary,
-                  style: TextStyle(height: 1.6, color: theme.colorScheme.error),
-                ),
-                const SizedBox(height: 12),
-              ],
+              // §CV·八十 批 1 ③：由纯 Text 换成统一摘要（带条数）
+              SubmitErrorSummary(messages: _submitErrorMessages()),
               for (final String pid in _productIds) _lineCard(theme, pid),
               const SizedBox(height: 16),
               _refundSection(theme),

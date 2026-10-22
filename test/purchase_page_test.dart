@@ -146,8 +146,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // 空行**照常报行级错误**（加了一行就得填或删），没有整单级「至少要有一行」
-    expect(find.textContaining('请选一个商品'), findsOneWidget);
-    expect(find.textContaining('请填数量'), findsOneWidget);
+    expect(
+      find.textContaining('请选一个商品'),
+      findsWidgets,
+      reason: '就地 + 页顶摘要各一次（§CV·八十 批 1 ③）',
+    );
+    expect(find.textContaining('请填数量'), findsWidgets);
     expect(find.byType(SnackBar), findsNothing);
   });
 
@@ -175,7 +179,11 @@ void main() {
     await tapBottomButton(tester, '保存 (Ctrl+S)');
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('散采要当场结清'), findsOneWidget);
+    expect(
+      find.textContaining('散采要当场结清'),
+      findsWidgets,
+      reason: '就地 + 页顶摘要各一次（§CV·八十 批 1 ③）',
+    );
   });
 
   testWidgets('选供应商 + 部分付款 → SnackBar 带累计欠款', (WidgetTester tester) async {

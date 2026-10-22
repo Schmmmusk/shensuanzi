@@ -303,6 +303,71 @@ void main() {
     );
   });
 
+  // 2026-10-21（§CV·八十 Q1）：**先补测试，再删 clamp**。
+  // 三个流水页都写了 `withClampedTextScaling(maxScaleFactor: 1.15)` ——
+  // 用户选「超大 200%」进这三页会被静默打回 115%。
+  // 判据分两条：① 字号**真的按 2.0 生效**（量高度比值，clamp 时约 1.15）
+  //              ② 2.0 下**不溢出**（删 clamp 之后要守的那条）
+  testWidgets('#64① 流水页不许把用户的 2.0 静默夹到 1.15', (
+    WidgetTester tester,
+  ) async {
+    final Party customer = createCustomer('甲客户');
+    creditSale(customer, 100);
+
+    Future<double> amountHeight(double scale) async {
+      tester.view.physicalSize = const Size(400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (BuildContext context, Widget? child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: PartyFlowPage(party: customer, service: service),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return tester.getSize(find.textContaining('¥100.00')).height;
+    }
+
+    final double h1 = await amountHeight(1.0);
+    final double h2 = await amountHeight(2.0);
+    expect(
+      h2 / h1,
+      greaterThan(1.6),
+      reason: '字号被夹到 1.15（比值≈1.15）—— 用户选的 2.0 必须真的生效',
+    );
+  });
+
+  testWidgets('#64② 2.0 下流水页不溢出（删 clamp 之后要守的）', (
+    WidgetTester tester,
+  ) async {
+    final Party customer = createCustomer('甲客户');
+    creditSale(customer, 100);
+    tester.view.physicalSize = const Size(400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (BuildContext context, Widget? child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2.0)),
+          child: child!,
+        ),
+        home: Scaffold(body: PartyFlowPage(party: customer, service: service)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   // #34①（2026-10-19 裁定甲）：桌面宽屏 + **超大档**字号。
   //
   // 以前 `_WideFlowTile` 用 `ListTile.trailing`（17sp，**不参与收缩**）：

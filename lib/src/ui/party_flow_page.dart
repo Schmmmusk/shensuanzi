@@ -90,11 +90,12 @@ class PartyFlowPage extends StatelessWidget {
                   ),
           ),
         );
-        if (!narrow) return page;
-        return MediaQuery.withClampedTextScaling(
-          maxScaleFactor: 1.15,
-          child: page,
-        );
+        // 2026-10-21（§CV·八十 Q1）：**不再夹字号**。
+        //
+        // 原来窄屏（<600，手机恒成立）会把用户选的「超大 200%」静默压到 115%
+        // —— 而选超大档的用户**正是因为看不清**。窄屏靠本页已有的
+        // `_NarrowFlowCard`（类型/金额换行、单号与日期两行）重排解决。
+        return page;
       },
     );
   }
@@ -180,26 +181,24 @@ class _NarrowFlowCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 4),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: Text(
-                    entry.docNo,
-                    style: const TextStyle(
-                      height: 1.6,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  PartyFlowPage._fmtDate(entry.occurredAt),
-                  style: TextStyle(
-                    height: 1.6,
-                    color: theme.textTheme.bodySmall?.color,
-                  ),
-                ),
-              ],
+            // 2026-10-21（§CV·八十 Q1）：**日期单独一行**。
+            //
+            // 原来单号与日期并排；实测 280 宽 + 2.0 档时，日期本身就有
+            // 282px（比卡片可用宽度 248px 还宽）⇒ 单号被压成 0 宽、
+            // 逐字竖排，整行溢出 75px。夹字号只是在掩盖它。
+            //
+            // 单号独占一行（可换行，数字按字符折），日期另起一行 ——
+            // 这是窄屏在超大档下唯一不会挤爆的摆法。
+            Text(
+              entry.docNo,
+              style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+            ),
+            Text(
+              PartyFlowPage._fmtDate(entry.occurredAt),
+              style: TextStyle(
+                height: 1.6,
+                color: theme.textTheme.bodySmall?.color,
+              ),
             ),
           ],
         ),

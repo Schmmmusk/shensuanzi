@@ -38,6 +38,7 @@ import 'keyboard_reveal.dart';
 import 'mobile_guidance_dialog.dart';
 import 'entry_unit_hints.dart';
 import 'entry_fields_row.dart';
+import 'submit_error_summary.dart';
 import 'product_form_dialog.dart';
 
 /// 店内送货页。
@@ -268,6 +269,9 @@ class _DeliveryPageState extends State<DeliveryPage> {
   /// 保存失败的字段级原因（用户改任何输入后清掉）
   DeliveryDraftInvalid? _invalid;
 
+  /// 保存失败要**滚回页顶**（§CV·八十 批 1 ③）
+  final ScrollController _scroll = ScrollController();
+
   bool _saving = false;
 
   @override
@@ -278,6 +282,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
 
   @override
   void dispose() {
+    _scroll.dispose();
     _remark.dispose();
     for (final _RowCtl row in _rows) {
       row.dispose();
@@ -377,6 +382,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
           _invalid = result.error! as DeliveryDraftInvalid;
           _saving = false;
         });
+        _scrollToTop();
         return;
       }
       _afterSaved(result);
@@ -589,10 +595,13 @@ class _DeliveryPageState extends State<DeliveryPage> {
             child: Scaffold(
               body: SafeArea(
                 child: SingleChildScrollView(
+                  controller: _scroll,
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
+                      // §CV·八十 批 1 ③：失败时把「哪几处要填」摆在页顶
+                      SubmitErrorSummary(messages: _submitErrorMessages()),
                       _headerRow(theme),
                       const Divider(height: 24),
                       _linesSection(theme),
@@ -613,6 +622,27 @@ class _DeliveryPageState extends State<DeliveryPage> {
         ),
       ),
     );
+  }
+
+  /// 失败时滚回页顶（用户视线在页底的保存按钮）
+  void _scrollToTop() {
+    if (!_scroll.hasClients) return;
+    _scroll.jumpTo(0);
+  }
+
+  /// 把 typed invalid 摊成「人话」列表给页顶摘要（去重保序）
+  List<String> _submitErrorMessages() {
+    final DeliveryDraftInvalid? invalid = _invalid;
+    if (invalid == null) return const <String>[];
+    final List<String> all = <String>[
+      ...invalid.fieldErrors.values,
+      for (final Map<DeliveryLineField, String> line in invalid.lineErrors)
+        ...line.values,
+    ];
+    return <String>{
+      for (final String m in all)
+        if (m.trim().isNotEmpty) m,
+    }.toList();
   }
 
   /// 客户 + 日期

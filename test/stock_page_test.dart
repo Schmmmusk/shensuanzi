@@ -522,6 +522,57 @@ void main() {
     expect(find.byType(OpeningStockPage), findsOneWidget);
   });
 
+  // 2026-10-21（§CV·八十 Q1）：与往来流水同一组判据 —— 字号真的生效 + 2.0 不溢出。
+  testWidgets('#64③ 商品流水页不许把 2.0 夹到 1.15；2.0 下不溢出', (
+    WidgetTester tester,
+  ) async {
+    buy(6);
+    Future<double> quantityHeight(double scale) async {
+      // 每次从**空树**重建（否则 Navigator 留着上一次 push 的流水页）
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      tester.view.physicalSize = const Size(400, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (BuildContext context, Widget? child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: StockPage(
+              engine: RuleEngine(db),
+              products: products,
+              queries: queries,
+              stockFlow: StockLedgerDao(db),
+              mobileShell: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('红富士').first);
+      await tester.pumpAndSettle();
+      expect(find.byType(StockFlowPage), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: '$scale× 下流水页溢出');
+      // 量流水页里「单号 · 日期」那一行的字号效果
+      return tester
+          .getSize(find.textContaining(' · 2026').first)
+          .height;
+    }
+
+    final double h1 = await quantityHeight(1.0);
+    final double h2 = await quantityHeight(2.0);
+    expect(
+      h2 / h1,
+      greaterThan(1.6),
+      reason: '字号被夹到 1.15（比值≈1.15）—— 用户选的 2.0 必须真的生效',
+    );
+  });
+
   testWidgets('#27：新建商品补充入口 —— 手机壳在场、桌面缺省不在', (WidgetTester tester) async {
     await tester.pumpWidget(
       page(

@@ -63,6 +63,35 @@ void main() {
     ),
   );
 
+  // 2026-10-21（§CV·八十 P0-1）：**迁移数据位置后，本页的配置快照必须回灌**。
+  // 原来 `late AppConfig _current = widget.config` 只在 State 首次创建时求值，
+  // 没有 `didUpdateWidget` ⇒ 迁移后改任何设置都会把 `data_directory` 写回旧路径，
+  // 用户下次启动打开旧目录，以为「单据丢了」。
+  testWidgets('P0-1：宿主换了配置（如迁移后）⇒ 改缩放不能把旧路径写回去', (
+    WidgetTester tester,
+  ) async {
+    current = const AppConfig(dataDirectory: r'D://旧位置');
+    AppConfig? received;
+    await tester.pumpWidget(page((AppConfig config) => received = config));
+
+    // 宿主（app.dart）迁移完成后推送新配置
+    current = const AppConfig(dataDirectory: r'D://新位置');
+    await tester.pumpWidget(page((AppConfig config) => received = config));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('setting-scale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('特大').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      received?.dataDirectory,
+      r'D://新位置',
+      reason: '迁移后改设置必须保留**新**路径（旧快照会把它写回旧目录）',
+    );
+    expect(received?.uiScale, UiScale.huge);
+  });
+
   testWidgets('改缩放档位 → 回调新配置 + 落盘（SC-1）', (WidgetTester tester) async {
     AppConfig? received;
     await tester.pumpWidget(page((AppConfig config) => received = config));

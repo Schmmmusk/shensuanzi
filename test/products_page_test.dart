@@ -127,6 +127,29 @@ void main() {
     expect(table.rows.first.sublist(1, 4), <String>['可乐', '', '瓶']);
   });
 
+  // 2026-10-21（§CV·八十，报告 §2.2 漂移 1）：搜不到 ≠ 空库。
+  // 店里有商品、只是搜错了，不能说「还没有商品」—— 否则用户会去重复建档。
+  testWidgets('搜不到时说「没有找到」，不是「还没有商品」', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProductsPage(service: service),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'zzz');
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('没有找到「zzz」'), findsOneWidget);
+    expect(find.text('还没有商品'), findsNothing, reason: '空库才这么说');
+    // 清空按钮在（报告 §2.5：清空搜索全仓只有单据页有）
+    expect(find.byKey(const Key('products-clear-search')), findsOneWidget);
+  });
+
   testWidgets('没接导出服务 → 不显示按钮（与其他可选服务同款判定）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();

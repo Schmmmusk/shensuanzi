@@ -144,11 +144,23 @@ class _ProductsPageState extends State<ProductsPage> {
                 child: TextField(
                   controller: _search,
                   onChanged: (_) => setState(() {}),
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: '搜商品',
                     hintText: '商品名 / 编码 / 条码',
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.search),
+                    // 2026-10-21：加「清空」—— 报告 §2.5「清空搜索全仓只有单据页有」
+                    suffixIcon: _search.text.isEmpty
+                        ? null
+                        : IconButton(
+                            key: const Key('products-clear-search'),
+                            tooltip: '清空',
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _search.clear();
+                              setState(() {});
+                            },
+                          ),
+                    border: const OutlineInputBorder(),
                   ),
                 ),
               ),
@@ -197,7 +209,7 @@ class _ProductsPageState extends State<ProductsPage> {
         const Divider(height: 1),
         Expanded(
           child: rows.isEmpty
-              ? const _Empty()
+              ? _Empty(query: _search.text.trim())
               : ListView.separated(
                   itemCount: rows.length,
                   separatorBuilder: (BuildContext context, int index) =>
@@ -329,31 +341,46 @@ class _ProductRow extends StatelessWidget {
 }
 
 class _Empty extends StatelessWidget {
-  const _Empty();
+  const _Empty({this.query = ''});
+
+  /// 搜索框里的词（空 = 真的一个商品都没有）
+  final String query;
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        Icon(
-          Icons.inventory_2_outlined,
-          size: 40,
-          color: Theme.of(context).textTheme.bodySmall?.color,
-        ),
-        const SizedBox(height: 12),
-        const Text('还没有商品', style: TextStyle(height: 1.6)),
-        const SizedBox(height: 8),
-        Text(
-          '点上面的「新增商品」把店里卖的东西录进来。',
-          style: TextStyle(
-            height: 1.6,
-            color: Theme.of(context).textTheme.bodySmall?.color,
+  Widget build(BuildContext context) {
+    // 2026-10-21（§CV·八十，报告 §2.2 漂移 1）：
+    // **「搜不到」与「空库」必须说两种话**。原来只要搜不到就说「还没有商品」——
+    // 店里有 80 种商品、只是搜错了，用户会去重复建档。
+    final bool searching = query.isNotEmpty;
+    final Color secondary =
+        Theme.of(context).textTheme.bodySmall?.color ?? Colors.black54;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(
+            searching ? Icons.search_off : Icons.inventory_2_outlined,
+            size: 40,
+            color: secondary,
           ),
-        ),
-      ],
-    ),
-  );
+          const SizedBox(height: 12),
+          Text(
+            searching ? '没有找到「$query」' : '还没有商品',
+            textAlign: TextAlign.center,
+            style: const TextStyle(height: 1.6),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            searching
+                ? '换个词试试，或点搜索框右边的 × 清空，看全部商品。'
+                : '点上面的「新增商品」把店里卖的东西录进来。',
+            textAlign: TextAlign.center,
+            style: TextStyle(height: 1.6, color: secondary),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// 数据库没打开成功时的兜底（与概览页同一套说法）

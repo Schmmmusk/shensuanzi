@@ -117,9 +117,30 @@ class _SettingsPageState extends State<SettingsPage> {
     text: widget.config.shopName ?? '',
   );
 
-  /// **本页的当前生效配置** —— 每次修改基于它（而不是打开页面时的快照），
-  /// 否则连续改两项（先缩放再店名）会互相覆盖
+  /// **本页的当前生效配置** —— 每次修改基于它，否则连续改两项
+  ///（先缩放再店名）会互相覆盖。
+  ///
+  /// ⚠️ 它必须能被**父层回灌**（见 [didUpdateWidget]）：2026-10-21 的
+  /// P0-1 就是「只初始化一次、父层换了也不管」—— 迁移数据位置后改任何设置
+  /// 都会把 `data_directory` 写回**旧路径**，用户下次启动打开旧目录。
   late AppConfig _current = widget.config;
+
+  /// **父层换了配置 ⇒ 回灌本页快照**（2026-10-21，§CV·八十 P0-1）。
+  ///
+  /// 触发场景：迁移数据位置后 `app.dart` 用 `copyWith(dataDirectory: 新路径)`
+  /// 推一份新配置下来 —— 若本页还抱着旧快照，`_apply` 就会把旧路径写回
+  /// `config.json`，等于把迁移撤销了（数据在新目录、软件看旧目录）。
+  ///
+  /// ⚠️ 为什么不让 `_apply` 直接基于 `widget.config`：连续改两项时
+  /// （先缩放、紧接着改店名）父层可能还没重建，用 `widget.config` 会把
+  /// 第一项覆盖掉。**`_current` 负责「连续编辑累积」，本方法负责「父层为准」**。
+  @override
+  void didUpdateWidget(covariant SettingsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(widget.config, oldWidget.config)) {
+      _current = widget.config;
+    }
+  }
 
   /// 店名超长的即时提示（SC-2：≤ 20 字符）
   String? _shopNameError;
