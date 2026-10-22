@@ -472,15 +472,8 @@ void main() {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
-    // 编辑走行尾 PopupMenu（行点击是进流水页）
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(Key('party-row-${customer.id}')),
-        matching: find.byIcon(Icons.more_vert),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('编辑资料'));
+    // 编辑走行尾**文字按钮**（行点击是进流水页）—— 2026-10-22 起菜单已删
+    await tester.tap(find.byKey(Key('party-edit-${customer.id}')));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const Key('party-name')), '甲客户（新）');
@@ -568,14 +561,7 @@ void main() {
 
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(Key('party-row-${customer.id}')),
-        matching: find.byIcon(Icons.more_vert),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('编辑资料'));
+    await tester.tap(find.byKey(Key('party-edit-${customer.id}')));
     await tester.pumpAndSettle();
 
     // 编辑对话框里**也有**角色勾选框（以前只有新建才有 —— 想加角色只能重建）
@@ -606,18 +592,8 @@ void main() {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
-    Future<void> openMenu() async {
-      await tester.tap(
-        find.descendant(
-          of: find.byKey(Key('party-row-${customer.id}')),
-          matching: find.byIcon(Icons.more_vert),
-        ),
-      );
-      await tester.pumpAndSettle();
-    }
-
-    await openMenu();
-    await tester.tap(find.text('停用'));
+    // 2026-10-22：`⋮` 菜单已改成行尾文字按钮（§CV·八十三）
+    await tester.tap(find.byKey(Key('party-toggle-${customer.id}')));
     await tester.pumpAndSettle();
 
     // 有未结清的账 ⇒ 必须二次确认，且确认框要说清「还能看到」
@@ -633,9 +609,8 @@ void main() {
       reason: '取消就该原样（不能有副作用）',
     );
 
-    // 再来一次，「还是停用」
-    await openMenu();
-    await tester.tap(find.text('停用'));
+    // 再来一次，「还是停用」（2026-10-22：菜单 → 行尾文字按钮）
+    await tester.tap(find.byKey(Key('party-toggle-${customer.id}')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('还是停用'));
     await tester.pumpAndSettle();
@@ -659,14 +634,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(Key('party-row-${idle.id}')), findsOneWidget);
 
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(Key('party-row-${idle.id}')),
-        matching: find.byIcon(Icons.more_vert),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('停用'));
+    await tester.tap(find.byKey(Key('party-toggle-${idle.id}')));
     await tester.pumpAndSettle();
 
     expect(find.text('这个往来方还有没结清的账'), findsNothing, reason: '没欠钱就问一句是骚扰');

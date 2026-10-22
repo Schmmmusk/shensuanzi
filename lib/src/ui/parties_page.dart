@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'disable_action.dart';
 import 'export_button.dart';
 import 'mobile_guidance_dialog.dart';
 import 'party_flow_page.dart';
@@ -274,45 +275,42 @@ class _PartiesPageState extends State<PartiesPage> {
       await showMobileGuideDialog(context, MobileGuideTopic.editParty);
       return;
     }
-    if (party.isActive) {
+    final bool wasActive = party.isActive;
+    // §CV·八十三：有余额才确认，否则直接执行 + 撤销（三页同一套）
+    if (wasActive) {
       final int balance = widget.service.balanceOf(party.id);
-      if (balance != 0) {
-        final bool? sure = await showDialog<bool>(
-          context: context,
-          builder: (BuildContext dialogContext) => AlertDialog(
-            title: const Text('这个往来方还有没结清的账'),
-            content: Text(
-              '${party.name} 现在还有'
-              '${balance > 0 ? '应收' : '应付'} '
-              '¥${Money.formatGrouped(balance.abs())} 没结清。\n\n'
-              '停用后他不会再出现在开单的客户 / 供应商选择器里；'
-              '但因为还欠着钱，往来方页上仍然会显示他（标着「已停用」），'
-              '想接着和他做生意，点「恢复启用」就行。',
-              style: const TextStyle(height: 1.8),
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: const Text('还是停用'),
-              ),
-            ],
-          ),
-        );
-        if (sure != true || !mounted) return;
+      final bool go = await confirmDisableWithBalance(
+        context,
+        name: party.name,
+        subject: '往来方',
+        title: '这个往来方还有没结清的账',
+        balanceCents: balance,
+        balanceLabel: balance > 0 ? '应收' : '应付',
+      );
+      if (!go || !mounted) return;
+    }
+
+    void write(bool active) {
+      final QueuePartySink? sink = widget.partySink;
+      if (sink == null) {
+        widget.service.setActive(party.id, active: active);
+      } else {
+        // 手机：写镜像 + 入队 + 立即推（与「开单后」同一触发路径）
+        sink.setActive(party.id, active: active);
       }
+      if (mounted) setState(() {});
     }
-    final QueuePartySink? sink = widget.partySink;
-    if (sink == null) {
-      widget.service.setActive(party.id, active: !party.isActive);
-    } else {
-      // 手机：写镜像 + 入队 + 立即推（与「开单后」同一触发路径）
-      sink.setActive(party.id, active: !party.isActive);
-    }
-    if (mounted) setState(() {});
+
+    write(!wasActive);
+    if (!mounted) return;
+    showDisableUndoBar(
+      context,
+      message: wasActive ? '已停用「${party.name}」' : '已恢复「${party.name}」',
+      onUndo: () {
+        if (!mounted) return;
+        write(wasActive);
+      },
+    );
   }
 
   /// 新建（[existing] 为 null）或编辑。
@@ -404,10 +402,13 @@ class _PartyRow extends StatelessWidget {
       onTap: onOpen,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: <Widget>[
-            Expanded(
-              child: Column(
+        // 2026-10-22（§CV·八十三）：行尾两个文字按钮在**窄屏 + 超大档**放不下
+        // （实测 280 宽 / 2.0 溢出），断点随字号放大，窄了换两行。
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints c) {
+            final double scale = MediaQuery.textScalerOf(context).scale(1.0);
+            final bool narrow = c.maxWidth < 480 * scale;
+            final Widget info = Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   // C3·真机反馈：名字与角色标签同行时，标签把名字挤到强制折行
@@ -473,9 +474,8 @@ class _PartyRow extends StatelessWidget {
                     ),
                   ],
                 ],
-              ),
-            ),
-            Text(
+              );
+            final Widget balance = Text(
               balanceText,
               style: TextStyle(
                 height: 1.6,
@@ -483,25 +483,39 @@ class _PartyRow extends StatelessWidget {
                 color: balanceColor,
                 fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
               ),
-            ),
-            PopupMenuButton<String>(
-              tooltip: '更多操作',
-              onSelected: (String action) {
-                if (action == 'edit') {
-                  onEdit();
-                } else if (action == 'toggle') {
-                  onToggleActive();
-                }
-              },
-              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                const PopupMenuItem<String>(value: 'edit', child: Text('编辑资料')),
-                PopupMenuItem<String>(
-                  value: 'toggle',
-                  child: Text(party.isActive ? '停用' : '恢复启用'),
+            );
+            // 2026-10-22（§CV·八十三 批 2 第 9 条 / 报告 §2.2 漂移 5）：
+            // `⋮` → 两个**文字按钮**。`ui_principles.md` §1.1：悬停/点开才知道
+            // 是什么 = 对目标用户不存在。商品页早就是文字按钮，这里对齐。
+            final List<Widget> actions = <Widget>[
+              TextButton(
+                key: Key('party-edit-${party.id}'),
+                onPressed: onEdit,
+                child: const Text('编辑'),
+              ),
+              TextButton(
+                key: Key('party-toggle-${party.id}'),
+                onPressed: onToggleActive,
+                // 术语统一（§CV·八十 Q3）：用「恢复」，不用「恢复启用」
+                child: Text(party.isActive ? '停用' : '恢复'),
+              ),
+            ];
+            if (!narrow) {
+              return Row(
+                children: <Widget>[Expanded(child: info), balance, ...actions],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(children: <Widget>[Expanded(child: info), balance]),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Wrap(children: actions),
                 ),
               ],
-            ),
-          ],
+            );
+          },
         ),
       ),
     );

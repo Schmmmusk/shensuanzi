@@ -14,6 +14,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart'
     show ExportSink, MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'disable_action.dart';
 import 'account_flow_page.dart';
 import 'document_detail_page.dart';
 import 'mobile_guidance_dialog.dart';
@@ -202,8 +203,38 @@ class _AccountsPageState extends State<AccountsPage> {
       await showMobileGuideDialog(context, MobileGuideTopic.editAccount);
       return;
     }
-    widget.service.setActive(account.id, active: !account.isActive);
-    if (mounted) setState(() {});
+    final bool wasActive = account.isActive;
+    // §CV·八十三（报告 §2.2 漂移 4）：原来账户**既不确认也不撤销** ——
+    // 哪怕里面有几千块也能一键停用、且没有退路。现在与往来方同一套：
+    // 有余额先确认，余额为 0 直接执行 + 撤销。
+    if (wasActive) {
+      final int balance = widget.service.balances()[account.id] ?? 0;
+      final bool go = await confirmDisableWithBalance(
+        context,
+        name: account.name,
+        subject: '账户',
+        title: '这个账户里还有钱',
+        balanceCents: balance,
+        balanceLabel: balance > 0 ? '余额' : '欠款',
+      );
+      if (!go || !mounted) return;
+    }
+
+    void write(bool active) {
+      widget.service.setActive(account.id, active: active);
+      if (mounted) setState(() {});
+    }
+
+    write(!wasActive);
+    if (!mounted) return;
+    showDisableUndoBar(
+      context,
+      message: wasActive ? '已停用「${account.name}」' : '已恢复「${account.name}」',
+      onUndo: () {
+        if (!mounted) return;
+        write(wasActive);
+      },
+    );
   }
 
   /// **#27（2026-10-17 批 1）**：打开某账户的流水页（照往来页 `_openFlow` 先例）。
@@ -273,10 +304,14 @@ class _AccountRow extends StatelessWidget {
       onTap: onOpenFlow,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: <Widget>[
-            Expanded(
-              child: Column(
+        // 2026-10-22（§CV·八十三）：行尾改成两个文字按钮后，**窄屏 + 超大档
+        // 放不下一行**（实测 400 宽 / 2.0 溢出 82px）。断点**随字号放大**
+        // （报告 §三·A2：`480 * scale`），窄了就换成两行：金额与按钮各占一行。
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints c) {
+            final double scale = MediaQuery.textScalerOf(context).scale(1.0);
+            final bool narrow = c.maxWidth < 480 * scale;
+            final Widget info = Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   // ⚠️ **名字独占一行，类型标签下移**（2026-10-19 用户实测溢出）：
@@ -318,33 +353,43 @@ class _AccountRow extends StatelessWidget {
                     ),
                   ],
                 ],
-              ),
-            ),
-            Text(
+              );
+            final Widget amount = Text(
               '¥ ${Money.formatGrouped(balanceCents)}',
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w700,
                 fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
               ),
-            ),
-            PopupMenuButton<String>(
-              tooltip: '更多操作',
-              onSelected: (String action) {
-                if (action == 'edit') {
-                  onEdit();
-                } else if (action == 'toggle') {
-                  onToggleActive();
-                }
-              },
-              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                const PopupMenuItem<String>(value: 'edit', child: Text('编辑')),
-                PopupMenuItem<String>(
-                  value: 'toggle',
-                  child: Text(account.isActive ? '停用' : '恢复启用'),
+            );
+            // 2026-10-22（§CV·八十三 批 2 第 9 条）：`⋮` → 文字按钮（同往来方）
+            final List<Widget> actions = <Widget>[
+              TextButton(
+                key: Key('account-edit-${account.id}'),
+                onPressed: onEdit,
+                child: const Text('编辑'),
+              ),
+              TextButton(
+                key: Key('account-toggle-${account.id}'),
+                onPressed: onToggleActive,
+                child: Text(account.isActive ? '停用' : '恢复'),
+              ),
+            ];
+            if (!narrow) {
+              return Row(
+                children: <Widget>[Expanded(child: info), amount, ...actions],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(children: <Widget>[Expanded(child: info), amount]),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Wrap(children: actions),
                 ),
               ],
-            ),
-          ],
+            );
+          },
         ),
       ),
     );

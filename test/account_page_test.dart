@@ -115,11 +115,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // ⚠️ 不能 tap 文字「现金」—— 列表行 + 对话框下拉选中项都叫这个名（歧义）
-    // #27（§CV·五十一③）：行 tap 改开流水后，编辑走行尾「更多操作」菜单
-    //（与 parties 行同构）
-    await tester.tap(find.byTooltip('更多操作'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('编辑'));
+    // 2026-10-22（§CV·八十三）：行尾改成**文字按钮**（原来是 `⋮` 菜单）
+    await tester.tap(find.byKey(Key('account-edit-${account.id}')));
     await tester.pumpAndSettle();
 
     // 期初余额显示为**只读文本**，没有可编辑的期初输入框
@@ -325,7 +322,7 @@ void main() {
     );
   });
 
-  testWidgets('#27：菜单同构不丢 —— 编辑 / 停用仍在行尾「更多操作」里', (WidgetTester tester) async {
+  testWidgets('#27：行尾操作不丢 —— 编辑 / 停用是**文字按钮**（不再是 ⋮ 菜单）', (WidgetTester tester) async {
     final Account account = service.create(
       AccountDraft(name: '现金', type: AccountType.cash),
       now: 1700000000000,
@@ -340,13 +337,85 @@ void main() {
     // 流水为空 ⇒ 空态文案（不是崩溃）
     expect(find.text('还没有资金流水。'), findsOneWidget);
 
-    // 回到列表，行尾「更多操作」里编辑 / 停用照旧
+    // 回到列表：行尾两个**文字按钮**（2026-10-22 起，`⋮` 菜单已删除）
     await tester.pageBack();
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('更多操作'));
+    expect(find.byKey(Key('account-edit-${account.id}')), findsOneWidget);
+    expect(find.byKey(Key('account-toggle-${account.id}')), findsOneWidget);
+    expect(find.byTooltip('更多操作'), findsNothing, reason: '菜单已删');
+  });
+
+  // 2026-10-22（§CV·八十三 / 报告 §2.2 漂移 4）：账户页原来是
+  // **既不确认也不撤销** —— 里面有钱也能一键停用、且没有退路。
+  // 现在与往来方同一套：有余额先确认，余额为 0 直接执行 + 撤销。
+  testWidgets('停用**有余额**的账户：先二次确认', (WidgetTester tester) async {
+    final Account account = service.create(
+      AccountDraft(name: '现金', type: AccountType.cash, initialBalance: '300'),
+      now: 1700000000000,
+    );
+    db.raw.execute(
+      "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
+      'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+      "VALUES ('d1', 'SK20260101-001', 'receipt', 'confirmed', 3000, 3000, "
+      '1700000100000, 0, 1700000100000, 1700000100000)',
+    );
+    MoneyLedgerDao(db).insert(
+      MoneyLedger(
+        id: newId(),
+        accountId: account.id,
+        documentId: 'd1',
+        amount: 3000,
+        seqNo: 1,
+        occurredAt: 1700000100000,
+        createdAt: 1700000100000,
+      ),
+    );
+
+    await tester.pumpWidget(page());
     await tester.pumpAndSettle();
-    expect(find.text('编辑'), findsOneWidget);
-    expect(find.text('停用'), findsOneWidget);
+
+    await tester.tap(find.byKey(Key('account-toggle-${account.id}')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('这个账户里还有钱'), findsOneWidget);
+    // 还没确认 ⇒ 账户仍然是启用的
+    expect(service.list(active: true).map((Account a) => a.id), contains(account.id));
+
+    // 取消 ⇒ 不动
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(service.list(active: true).map((Account a) => a.id), contains(account.id));
+
+    // 再来一次，「还是停用」
+    await tester.tap(find.byKey(Key('account-toggle-${account.id}')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('还是停用'));
+    await tester.pumpAndSettle();
+    expect(service.list(active: true).map((Account a) => a.id), isNot(contains(account.id)));
+  });
+
+  testWidgets('停用**无余额**的账户：不打扰，但有撤销', (WidgetTester tester) async {
+    final Account account = service.create(
+      AccountDraft(name: '空账户', type: AccountType.cash),
+      now: 1700000000000,
+    );
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(Key('account-toggle-${account.id}')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('这个账户里还有钱'),
+      findsNothing,
+      reason: '余额为 0 还问一句是骚扰',
+    );
+    expect(service.list(active: true).map((Account a) => a.id), isNot(contains(account.id)));
+    // 撤销 6 秒内可反悔
+    expect(find.text('已停用「空账户」'), findsOneWidget);
+    await tester.tap(find.text('撤销'));
+    await tester.pumpAndSettle();
+    expect(service.list(active: true).map((Account a) => a.id), contains(account.id));
   });
 
   // 2026-10-19 用户实测（账户页截图，超大档，窗口与 VSCode 均分 960 宽）：
