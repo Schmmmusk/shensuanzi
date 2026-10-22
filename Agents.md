@@ -89,7 +89,7 @@ Android 端是**移动开单终端**（**基础功能已落地**：扫码配对�
 | 退货成本 | 按**原单比例精确回退**（累计分摊 − 已分摊，消除多次退货的舍入余数）。不加 `document_line_id`（R-11 / 2026-09-25） |
 | 送货签收 | 两条路径共用 `RuleEngine.markDelivered`：主机本地 UI + 同步通道 `documentAction: mark_delivered`。见 4.2「动作归约」行 |
 | 拒收 | `sale_return.ref_doc_id` 可指向 `delivery`，成本按原送货单比例回退（RULE-003 → RULE-007） |
-| **商品建档字段** | 第一版**只有 6 个**：名称 / 单位 / 售价 / 进价 / 条码 / 安全库存（`code` 由系统生成，`category` / `remark` 延后）。⚠️ **`barcode` 必须在第一版**（唯一有「补录成本」的字段），`cost_price` / `safety_stock` 也不可隐藏 —— 依据见 §R，字段定义见 `docs/data_model.md` §2.1。⭐ **schema v3 已为建档补 `package_unit` / `package_size`**（包装换算，成对启用），但**建档 UI 尚未跟上**（v3 段 3）—— 跟上之前**不宣称该能力**（纪律 17）；`README` 的能力表同理**保持现状** |
+| **商品建档字段** | 第一版**只有 6 个**：名称 / 单位 / 售价 / 进价 / 条码 / 安全库存（`code` 由系统生成，`category` / `remark` 延后）。⚠️ **`barcode` 必须在第一版**（唯一有「补录成本」的字段），`cost_price` / `safety_stock` 也不可隐藏 —— 依据见 §R，字段定义见 `docs/data_model.md` §2.1。⭐ **包装换算已完整落地**（2026-10-21 更正，§CV·八十 批 1 ⑥）：schema v3 的 `package_unit` / `package_size` **建档 UI 已接线**（`product_form_dialog.dart` 的两格 + 提交 `:182-183`，成对启用才生效），**可以宣称该能力**；`README` 能力表同步。~~建档 UI 尚未跟上~~ 是 2026-10-17 的旧状态，已过时 |
 | **商品编码与排序** | `code` 定宽补零，**不能用来排序**（`P10000` 的字典序小于 `P9999`）。列表排序与取最大编码的具体写法见 `docs/data_model.md` |
 | **退货入口** | 单据详情页发起（`sale` / `delivery` / `purchase` 详情 →「退货」）；**拒收 = 全量 `sale_return` ref delivery**，原送货单在同一事务内置 `cancelled`（**仅限未签收**；已签收的送货单走普通「退货」，单据状态不变）。见 `docs/rules.md` RULE-003/007 |
 | **建档只有一条路径** | 建档 / 编辑**必须走 `ProductService`**（生成编码、校验、补版本都在里面）；Windows 界面与将来的 `SyncServer.createMasterData` **共用同一条路径**。见 §R |
