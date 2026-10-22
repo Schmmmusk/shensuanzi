@@ -21,6 +21,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
@@ -488,7 +489,7 @@ class _StockRow extends StatelessWidget {
     final Color mainColor = negative
         ? theme.colorScheme.error
         : low
-        ? const Color(0xFFB45309)
+        ? AppColors.warningOrange
         : theme.colorScheme.onSurface;
     final String? notice = negative
         ? '已超卖，尽快补货或核对账目'
@@ -730,7 +731,7 @@ class _StockDeltaLineState extends State<_StockDeltaLine> {
     final int estimated = widget.book + widget.unsynced;
     final Color color = estimated < 0
         ? theme.colorScheme.error
-        : const Color(0xFFB45309);
+        : AppColors.warningOrange;
 
     return Padding(
       padding: const EdgeInsets.only(top: 4),

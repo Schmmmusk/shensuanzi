@@ -59,6 +59,32 @@ class ManualQa extends ManualBlock {
   final String answer;
 }
 
+/// **备份恢复的步骤**（帮助页与手册**共用这一份**，2026-10-21 §CV·八十 批 1 ⑤）。
+///
+/// 为什么要有这个常量：原来手册写「替换掉里面那个**同名**的数据文件」，
+/// 而备份文件名是 `shensuanzi-schema3-20261007-0930.db`（带日期），
+/// 与 `shensuanzi.db` **不同名** —— 用户照做只会得到两个文件，软件仍打不开。
+/// 帮助页的六步是对的（含「先改名再粘贴」），现在两处同源。
+///
+/// `{data}` / `{backup}` 是占位符：帮助页填真实路径，手册填「数据文件夹」这类通称。
+const List<String> backupRestoreStepTemplates = <String>[
+  '先关掉神算子',
+  '打开{backup}',
+  '找到要恢复的那一份（看名字里的日期），右键「复制」',
+  '打开{data}，把里面的 shensuanzi.db 改名叫 shensuanzi.db.bak',
+  '右键「粘贴」，把复制的那份贴进来，也改名叫 shensuanzi.db',
+  '重新打开神算子',
+];
+
+/// **装箱换算的正确说法**（帮助页与手册共用）。
+///
+/// 原来帮助页说「1 箱 = 48 瓶填在『包装说明』里」—— 错的：
+/// 换算靠「包装单位」+「1 包 = 多少」两格（`product_form_dialog` 已接线），
+/// 「包装说明」只是备注（表单自己的 helper 就是这么写的）。
+const String packageConversionHint =
+    '「1 箱 = 48 瓶」这种换算，填在商品建档的「包装单位」和「1 包 = 多少」两格里'
+    '（两格都填才生效）；「包装说明」只是给你自己看的备注，不参与记账。';
+
 /// 手册的一章。
 class ManualSection {
   const ManualSection({
@@ -386,7 +412,7 @@ List<ManualSection> buildManualSections({required String versionLine}) =>
           const ManualNote(
             '如果这个人**还有欠款没结清**，点「停用」时会先问你一句。'
             '停用以后，他仍然会留在往来方列表里（标着「已停用 · 账未结清」），'
-            '提醒你这笔账还没收完 —— 想接着做生意，点「恢复启用」就行。',
+            '提醒你这笔账还没收完 —— 想接着做生意，点「恢复」就行。',
           ),
           const ManualNote(
             '列表上方有个「**显示全部（含无欠款的停用档）**」。不勾的时候，'
@@ -548,11 +574,13 @@ List<ManualSection> buildManualSections({required String versionLine}) =>
             '备份放在数据文件夹旁边的「神算子备份」文件夹里，文件名带日期。'
             '最近的 30 天每天留一份；更早的每周留一份；你自己手动备的永不删除。',
           ),
-          const ManualSteps(<String>[
-            '恢复备份只有三步：先完全关闭神算子。',
-            '打开「神算子备份」文件夹，挑一个日期合适的备份文件，'
-                '复制到数据文件夹里，替换掉里面那个同名的数据文件。',
-            '重新打开神算子 —— 数据回到备份那个时刻。',
+          // §CV·八十 批 1 ⑤：与帮助页**同一份步骤**（原来这里写的「替换同名文件」
+          // 是错的 —— 备份文件名带日期，与 shensuanzi.db 不同名，照做走不通）
+          ManualSteps(<String>[
+            for (final String step in backupRestoreStepTemplates)
+              step
+                  .replaceAll('{data}', '数据文件夹')
+                  .replaceAll('{backup}', '「神算子备份」文件夹'),
           ]),
           const ManualNote(
             '升级软件之后，数据文件夹里可能会多出一个名字带「before-v1」这样的文件 —— '
@@ -573,7 +601,7 @@ List<ManualSection> buildManualSections({required String versionLine}) =>
         blocks: <ManualBlock>[
           const ManualParagraph(
             '「设置」页只有几样东西，都改完立即生效，不需要保存按钮：\n'
-            '「界面文字大小」—— 五档，旁边有「恢复默认大小」。\n'
+            '「界面大小」—— 五档，旁边有「恢复默认大小」。\n'
             '「店名」—— 最多 20 个字，显示在概览页顶部。\n'
             '「数据位置」—— 可以点「打开」去看看，也可以点「更改」搬到别的硬盘。\n'
             '「备份位置」—— 它跟着数据位置走（就在数据文件夹旁边），可以点「打开」看。\n'

@@ -27,6 +27,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 // §BL·一：`PairingPayload` 是**同步协议**的 wire 格式，已迁进 `shensuanzi_core`
 // —— host 只是 re-export。这里**直接依赖源头**（`import_guard` 会要求）：
 // 用 `show` 限定，避免与 host 桶里的同名 re-export 撞在一起。
@@ -35,7 +36,6 @@ import 'package:shensuanzi_host/shensuanzi_host.dart';
 
 /// 项目统一的**内联提示色**（与开单页/核销页同款：橙色 ≠ 错误红，
 /// 因为「可以不拦人的提醒一律内联」—— `ui_principles.md` §1.3）。
-const Color _hintAmber = Color(0xFFB45309);
 
 /// 多设备同步区的面板内容。
 class HostServicePanel extends StatefulWidget {
@@ -260,12 +260,12 @@ class _HostServicePanelState extends State<HostServicePanel> {
   Widget _hintLine(String text) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: <Widget>[
-      const Icon(Icons.info_outline, color: _hintAmber, size: 18),
+      const Icon(Icons.info_outline, color: AppColors.warningOrange, size: 18),
       const SizedBox(width: 6),
       Expanded(
         child: Text(
           text,
-          style: const TextStyle(height: 1.6, color: _hintAmber),
+          style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
         ),
       ),
     ],

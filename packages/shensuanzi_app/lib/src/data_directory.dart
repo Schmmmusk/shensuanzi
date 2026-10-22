@@ -164,14 +164,14 @@ class DataDirectoryPolicy {
       return const DirectoryAdvice(
         DirectoryVerdict.reject,
         '还没有选择位置',
-        advice: '请点「更改位置」选一个文件夹',
+        advice: '请点「更改」选一个文件夹',
       );
     }
     if (!p.isAbsolute(path)) {
       return const DirectoryAdvice(
         DirectoryVerdict.reject,
         '这不是一个完整的路径',
-        advice: '请点「更改位置」，从「此电脑」里选一个文件夹',
+        advice: '请点「更改」，从「此电脑」里选一个文件夹',
       );
     }
     final String target = p.normalize(path);

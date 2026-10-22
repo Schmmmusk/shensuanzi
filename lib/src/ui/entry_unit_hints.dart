@@ -10,6 +10,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 /// 返回 0～2 行说明，直接 spread 进行卡的 `Column` children。
@@ -51,7 +52,7 @@ List<Widget> entryUnitHints({
             keptUnit: entryUnit.isEmpty ? base : entryUnit,
             otherUnit: onPackage ? base : pkg,
           ),
-          style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+          style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
         ),
       ),
     ],

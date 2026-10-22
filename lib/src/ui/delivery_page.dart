@@ -24,10 +24,10 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
-    show
-        MasterDataPolicy,
+    show MasterDataPolicy,
         MobileGuideTopic,
         mirrorEmptyMessage,
         partyMutationNotice,
@@ -38,6 +38,7 @@ import 'keyboard_reveal.dart';
 import 'mobile_guidance_dialog.dart';
 import 'entry_unit_hints.dart';
 import 'entry_fields_row.dart';
+import 'stock_snapshot_cache.dart';
 import 'submit_error_summary.dart';
 import 'product_form_dialog.dart';
 
@@ -259,7 +260,13 @@ class _DeliveryPageState extends State<DeliveryPage> {
 
   /// **打开本页时**的库存快照（每商品账面库存）。Z-2：只用于提示，
   /// 不重查不校验 —— 负库存本来就允许，保存必然放行。
-  late final Map<String, int> _stockSnapshot = widget.service.stockSnapshot();
+  /// 库存快照：一次会话内缓存，**提交成功后失效**（§CV·八十一 批 2）。
+  ///
+  /// 原来是 `late final`（只算一次），而 `_afterSaved` 复用同一个 State ⇒
+  /// **第二张送货单**的「当前库存」还含上一单已扣的量 ⇒ 该报负库存时不报。
+  late final StockSnapshotCache _stockSnapshot = StockSnapshotCache(
+    widget.service.stockSnapshot,
+  );
 
   /// 打开本页时的**未同步影响**（M08）：手机刚开的单还没推到电脑，
   /// 权威快照里没有它们 —— 提示要说清「其中本地未同步 N 件」。
@@ -417,6 +424,8 @@ class _DeliveryPageState extends State<DeliveryPage> {
   /// ⚠️ 送货单**没有收款** ⇒ 落库后必然是「全额欠款 + 待签收」，
   /// 所以 SnackBar 不该说「已结清」那一套，而要说清**下一步做什么**。
   void _afterSaved(DocumentSubmitResult result) {
+    // 刚提交的单据已落账 ⇒ 快照作废（§CV·八十一 批 2）
+    _stockSnapshot.invalidate();
     setState(() {
       for (final _RowCtl row in _rows) {
         row.dispose();
@@ -738,7 +747,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
               : _invalid!.lineErrors[i],
           stockOfProduct: _rows[i].product == null
               ? null
-              : _stockSnapshot[_rows[i].product!.id],
+              : _stockSnapshot.value[_rows[i].product!.id],
           // M08：本地未同步影响（同一商品的队列 Δ）
           unsyncedOfProduct: _rows[i].product == null
               ? null
@@ -796,7 +805,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
   Widget _noPaymentNote(ThemeData theme) {
     const TextStyle noteStyle = TextStyle(
       height: 1.6,
-      color: Color(0xFFB45309),
+      color: AppColors.warningOrange,
     );
     // ⚠️ **文案按壳分**（M07 / BUG-06，2026-10-08 修正两处）：
     // ① 原文「退货功能开发中」已过时 —— 退货（RULE-007/008）早已上线；
@@ -1236,7 +1245,7 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
               child: Text(
                 _sameNameHint!,
                 key: const Key('party-same-name-hint'),
-                style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+                style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
               ),
             ),
           const SizedBox(height: 4),

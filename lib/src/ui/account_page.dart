@@ -10,8 +10,10 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
-    show ExportSink, MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
+    show ExportSink, MasterDataPolicy, MobileGuideTopic,
+        mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'disable_action.dart';
@@ -100,7 +102,8 @@ class _AccountsPageState extends State<AccountsPage> {
                 runSpacing: 8,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
-                  Text('资金账户', style: theme.textTheme.titleLarge),
+                  // 术语统一（§CV·八十 Q3 / 附录 A）：导航叫「账户」，页标题不另起一个名
+                  Text('账户', style: theme.textTheme.titleLarge),
                   FilledButton.icon(
                     onPressed: () => _editAccount(context),
                     icon: const Icon(Icons.add),
@@ -527,7 +530,7 @@ class _AccountFormDialogState extends State<_AccountFormDialog> {
                     '再停用这个。',
                     style: TextStyle(
                       height: 1.6,
-                      color: const Color(0xFFB45309),
+                      color: AppColors.warningOrange,
                     ),
                   ),
                 ],

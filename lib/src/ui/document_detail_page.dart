@@ -25,6 +25,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -545,7 +546,7 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
         children.add(
           const Text(
             '这张送货单已签收 —— 要退货请走下面的「退货」。',
-            style: TextStyle(height: 1.6, color: Color(0xFFB45309)),
+            style: TextStyle(height: 1.6, color: AppColors.warningOrange),
           ),
         );
       }

@@ -33,6 +33,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 /// 常用单位。**不是白名单** —— 单位仍是自由文本，这只是「顺手就能点」的快捷方式。
@@ -61,7 +62,7 @@ const List<String> _commonUnits = <String>[
 ///
 /// 刻意**不用主题的 error 红**：红只留给真错误（`docs/ui_principles.md` §二）。
 /// 取深一档的橙是为了白底上对比度够 —— 浅橙在中老年用户的老花屏上会糊掉。
-const Color _noticeColor = Color(0xFFB45309);
+const Color _noticeColor = AppColors.warningOrange;
 
 /// [sink] = **提交出口**（D2b·§CV·七）：桌面 `ServiceMasterSink`（落库）、
 /// 手机 `QueueMasterSink`（**乐观写镜像 + 入队**）。表单只认它。

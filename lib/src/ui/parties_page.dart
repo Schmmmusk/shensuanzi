@@ -16,6 +16,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
@@ -379,7 +380,8 @@ class _PartyRow extends StatelessWidget {
           (PartyRole role) => switch (role) {
             PartyRole.supplier => '供应商',
             PartyRole.customer => '客户',
-            PartyRole.carrier => '承运',
+            // 术语统一（§CV·八十 Q3 / 附录 A）：词汇表与导出 CSV 都是「司机」
+            PartyRole.carrier => '司机',
           },
         )
         .join(' / ');
@@ -683,7 +685,7 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
                 child: Text(
                   _sameNameHint!,
                   key: const Key('party-same-name-hint'),
-                  style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+                  style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
                 ),
               ),
             const SizedBox(height: 8),
@@ -734,7 +736,7 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
                   '该往来方没有角色（不会出现在开单选择器里）。',
-                  style: TextStyle(height: 1.6, color: const Color(0xFFB45309)),
+                  style: TextStyle(height: 1.6, color: AppColors.warningOrange),
                 ),
               ),
           ],

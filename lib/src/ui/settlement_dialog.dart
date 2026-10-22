@@ -13,6 +13,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 /// 打开核销对话框。用户取消 / 直接关闭 → 返回 `null`。
@@ -326,7 +327,7 @@ class _SettlementDialogState extends State<_SettlementDialog> {
   /// 超收告知（橙色）—— 与「错误红」明确区分：它**不拦人**，
   /// 只是把「记多少、找多少」在**提交前**说清（§AX·一 裁定原文的前提）。
   Widget _changeNotice(ThemeData theme, String text) {
-    const Color color = Color(0xFFB45309);
+    const Color color = AppColors.warningOrange;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(

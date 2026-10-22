@@ -19,10 +19,10 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
-    show
-        MasterDataPolicy,
+    show MasterDataPolicy,
         MobileGuideTopic,
         mirrorEmptyMessage,
         partyMutationNotice,
@@ -33,6 +33,7 @@ import 'keyboard_reveal.dart';
 import 'mobile_guidance_dialog.dart';
 import 'entry_unit_hints.dart';
 import 'entry_fields_row.dart';
+import 'stock_snapshot_cache.dart';
 import 'submit_error_summary.dart';
 import 'product_form_dialog.dart';
 
@@ -304,6 +305,11 @@ class _SalePageState extends State<SalePage> {
 
   /// 保存失败要**滚回页顶**（§CV·八十 批 1 ③：错误摘要放在页顶）
   final ScrollController _scroll = ScrollController();
+
+  /// 库存快照：一次会话内缓存，**提交成功后失效**（§CV·八十一 批 2）
+  late final StockSnapshotCache _stockSnapshot = StockSnapshotCache(
+    widget.service.stockSnapshot,
+  );
 
   bool _saving = false;
 
@@ -591,6 +597,9 @@ class _SalePageState extends State<SalePage> {
   /// 只清明细与收款（§X 六 / P-3 同款）。
   /// ⚠️ v1 不显示利润（§Z 遗漏 6）—— SnackBar 只报单号与欠款。
   void _afterSaved(DocumentSubmitResult result) {
+    // 2026-10-22（§CV·八十一 批 2）：刚提交的单据已落账 ⇒ 快照作废，
+    // 下一单看到的「当前库存」才是扣过的（否则该报负库存时不报）
+    _stockSnapshot.invalidate();
     setState(() {
       for (final _RowCtl row in _rows) {
         row.dispose();
@@ -767,9 +776,11 @@ class _SalePageState extends State<SalePage> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    // #28②（2026-10-14）：**每次 build 取一次**（保存后 `_afterSaved` 会 setState
-    // ⇒ 重跑这里）—— 原来 `late final` 只在建页时算，第二单就会拿到过期快照。
-    final Map<String, int> stockSnapshot = widget.service.stockSnapshot();
+    // 2026-10-22（§CV·八十一 批 2）：**不再每次 build 查库**。
+    // 原来这里每 build 一次 `GROUP BY` 全表，而页内任何输入都 `setState`
+    // ⇒ 每敲一个键一次全表聚合（报告 §2.5 的性能项）。
+    // 现在：一次编辑会话内用缓存，**提交成功后失效**（`_afterSaved`）。
+    final Map<String, int> stockSnapshot = _stockSnapshot.value;
     final Map<String, int> unsyncedDelta =
         widget.stockDelta?.unsyncedDelta() ?? const <String, int>{};
     // M09（2026-10-08）：**返回键也要走放弃确认** —— AppBar 返回箭头（手机壳的
@@ -1054,7 +1065,7 @@ class _SalePageState extends State<SalePage> {
           child: Text(
             '还没有资金账户，先到「账户」页新建一个再收款；'
             '在那之前只能全赊（需选客户）。',
-            style: TextStyle(height: 1.6, color: const Color(0xFFB45309)),
+            style: TextStyle(height: 1.6, color: AppColors.warningOrange),
           ),
         )
       else ...<Widget>[
@@ -1094,7 +1105,7 @@ class _SalePageState extends State<SalePage> {
               child: Text(
                 _cashGivenNotice!,
                 key: const Key('sale-cash-given-notice'),
-                style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+                style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
               ),
             ),
         ],
@@ -1117,12 +1128,12 @@ class _SalePageState extends State<SalePage> {
   Widget _overpayLine(ThemeData theme, String text) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: <Widget>[
-      const Icon(Icons.info_outline, color: Color(0xFFB45309), size: 18),
+      const Icon(Icons.info_outline, color: AppColors.warningOrange, size: 18),
       const SizedBox(width: 6),
       Expanded(
         child: Text(
           text,
-          style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+          style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
         ),
       ),
     ],
@@ -1202,7 +1213,7 @@ class _SalePageState extends State<SalePage> {
                         ],
                         // 「不够」是提醒不是拦截 —— 用内联橙，错误红只留给真错误
                         color: notEnough
-                            ? const Color(0xFFB45309)
+                            ? AppColors.warningOrange
                             : theme.colorScheme.onSurface,
                       ),
                     ),
@@ -1236,7 +1247,7 @@ class _SalePageState extends State<SalePage> {
                           FontFeature.tabularFigures(),
                         ],
                         color: notEnough
-                            ? const Color(0xFFB45309)
+                            ? AppColors.warningOrange
                             : theme.colorScheme.onSurface,
                       ),
                     ),
@@ -1785,7 +1796,7 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
               child: Text(
                 _sameNameHint!,
                 key: const Key('party-same-name-hint'),
-                style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+                style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
               ),
             ),
           const SizedBox(height: 4),

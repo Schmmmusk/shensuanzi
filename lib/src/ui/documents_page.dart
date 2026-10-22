@@ -19,6 +19,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
@@ -655,7 +656,7 @@ class _DocumentRow extends StatelessWidget {
                     '$unsettledVerb ¥${Money.formatGrouped(unsettled)}',
                     style: const TextStyle(
                       height: 1.6,
-                      color: Color(0xFFB45309),
+                      color: AppColors.warningOrange,
                     ),
                   ),
               ],

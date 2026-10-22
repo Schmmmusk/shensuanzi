@@ -24,10 +24,10 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
-    show
-        MasterDataPolicy,
+    show MasterDataPolicy,
         MobileGuideTopic,
         mirrorEmptyMessage,
         partyMutationNotice,
@@ -782,7 +782,8 @@ class _PurchasePageState extends State<PurchasePage> {
     children: <Widget>[
       Row(
         children: <Widget>[
-          Expanded(child: Text('商品明细', style: theme.textTheme.titleMedium)),
+          // 2026-10-22（§CV·八十一 批 2 第 8 条）：必填红星与销售/送货同款
+          Expanded(child: Text('商品明细 *', style: theme.textTheme.titleMedium)),
         ],
       ),
       if (_invalid?.fieldErrors[PurchaseField.lines] != null) ...<Widget>[
@@ -871,7 +872,7 @@ class _PurchasePageState extends State<PurchasePage> {
           padding: const EdgeInsets.only(top: 8),
           child: Text(
             '还没有资金账户，先到「账户」页新建一个再付款；在那之前只能全赊（需选供应商）。',
-            style: TextStyle(height: 1.6, color: const Color(0xFFB45309)),
+            style: TextStyle(height: 1.6, color: AppColors.warningOrange),
           ),
         )
       else ...<Widget>[
@@ -914,12 +915,12 @@ class _PurchasePageState extends State<PurchasePage> {
   Widget _overpayLine(ThemeData theme, String text) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: <Widget>[
-      const Icon(Icons.info_outline, color: Color(0xFFB45309), size: 18),
+      const Icon(Icons.info_outline, color: AppColors.warningOrange, size: 18),
       const SizedBox(width: 6),
       Expanded(
         child: Text(
           text,
-          style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+          style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
         ),
       ),
     ],
@@ -1061,8 +1062,8 @@ class _LineCard extends StatelessWidget {
                 onChanged: (_) => onChanged(),
                 decoration: InputDecoration(
                   labelText: row.entryUnitDisplay.isEmpty
-                      ? '数量'
-                      : '数量（${row.entryUnitDisplay}）',
+                      ? '数量 *'
+                      : '数量（${row.entryUnitDisplay}）*',
                   isDense: true,
                   errorText: errors?[PurchaseLineField.quantity],
                 ),
@@ -1083,7 +1084,7 @@ class _LineCard extends StatelessWidget {
                   onChanged();
                 },
                 decoration: InputDecoration(
-                  labelText: row.priceLabel,
+                  labelText: '${row.priceLabel}*',
                   isDense: true,
                   errorText: errors?[PurchaseLineField.unitPrice],
                 ),
@@ -1192,7 +1193,7 @@ class _PayCard extends StatelessWidget {
           // ② 控制器（`pay.account`）是真相，受控组件才与「控制器为真相」一致。
           child: InputDecorator(
             decoration: InputDecoration(
-              labelText: '账户',
+              labelText: '账户 *',
               isDense: true,
               border: const OutlineInputBorder(),
               errorText: errors?[PurchasePaymentField.account],
@@ -1390,10 +1391,26 @@ class _PartyPickerSheetState extends State<_PartyPickerSheet> {
               child: Text(
                 _sameNameHint!,
                 key: const Key('party-same-name-hint'),
-                style: const TextStyle(height: 1.6, color: Color(0xFFB45309)),
+                style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
               ),
             ),
           const SizedBox(height: 8),
+          // 2026-10-22（§CV·八十一 批 2 第 8 条）：**空态要有出路**。
+          // 原来搜不到就一片空白，用户不知道是「没有」还是「卡了」；
+          // 供应商与商品不同（可以现场建），所以直接告诉他下一步。
+          if (_items.isEmpty && _query.text.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                '没有这个供应商。点下面的「新建供应商」把他建进来 —— 建完就能直接选。',
+                key: const Key('supplier-picker-empty'),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  height: 1.6,
+                  color: Theme.of(context).textTheme.bodySmall?.color,
+                ),
+              ),
+            ),
           Flexible(
             child: ListView.builder(
               shrinkWrap: true,

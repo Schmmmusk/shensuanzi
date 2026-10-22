@@ -99,7 +99,9 @@ export 'src/manual_content.dart'
         ManualSection,
         ManualSteps,
         assertManualIsUserFacing,
-        buildManualSections;
+        backupRestoreStepTemplates,
+        buildManualSections,
+        packageConversionHint;
 export 'src/log.dart' show AppLog, formatLogLine, logFileName, logFolderName;
 
 // ---- §AF 数据导出 ----

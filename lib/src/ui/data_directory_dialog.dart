@@ -15,6 +15,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
 /// 弹对话框。返回 `null` = 用户没选就退出了（调用方需要处理这种情况）。
@@ -246,7 +247,7 @@ class _DataDirectoryDialogState extends State<_DataDirectoryDialog> {
     final Color color = isError
         ? Theme.of(context).colorScheme.error
         // 低饱和橙：警告不用纯红（`docs/ui_principles.md` §二）
-        : const Color(0xFF9A5B00);
+        : AppColors.warningOrange;
 
     return Container(
       padding: const EdgeInsets.all(12),

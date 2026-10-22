@@ -14,6 +14,8 @@
 ///   「我的操作被接受了」；服务侧的单飞是兜底，不是替代。
 library;
 
+import 'dart:io' show Process;
+
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -183,9 +185,33 @@ class _OverviewPageState extends State<OverviewPage> {
                     widget.dataDirectory,
                     style: const TextStyle(height: 1.6),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 4),
+                  // 2026-10-22（§CV·八十三 批 2 第 12 条）：**把「打开文件夹」
+                  // 搬到概览**。设置页早就有（`settings_page`），概览只给一条
+                  // 只读路径 —— 用户想看数据在哪，还得跑去设置里翻。
+                  // 手机端不显示（没有「文件管理器打开这个路径」的概念）。
+                  if (!widget.mobileShell)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        key: const Key('overview-open-folder'),
+                        onPressed: () => _openFolder(widget.dataDirectory),
+                        icon: const Icon(Icons.folder_open_outlined, size: 18),
+                        label: const Text('打开文件夹'),
+                      ),
+                    ),
+                  const SizedBox(height: 8),
                   Text(
                     '备份会放在旁边：${widget.backupDirectory}',
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  // `ui_principles.md` 要求的那句核心承诺 —— 页面上原先没有
+                  Text(
+                    '数据只在这台电脑上，不会上传到任何地方。',
                     style: TextStyle(
                       height: 1.6,
                       color: theme.textTheme.bodySmall?.color,
@@ -243,8 +269,64 @@ class _OverviewPageState extends State<OverviewPage> {
           const SizedBox(height: 20),
           _businessCards(theme),
         ],
+        // 2026-10-22（§CV·八十三 批 2 第 12 条）：**空库也要有入口**
+        if (widget.onNavigate != null &&
+            !(widget.queries?.hasAnyDocument() ?? false)) ...<Widget>[
+          const SizedBox(height: 12),
+          _entriesCard(theme),
+        ],
       ],
     );
+  }
+
+  /// 「要开工？」入口卡（§CV·八十三 批 2 第 12 条）。
+  ///
+  /// **空库也要显示** —— 它原来长在 `_businessCards` 里，被
+  /// `hasAnyDocument()` 那道门一起关掉；而空库恰恰是最需要指路的时候。
+  /// 用系统文件管理器打开数据文件夹（Windows；失败静默 —— 不打断用户）。
+  /// 与 `settings_page` 同款实现。
+  Future<void> _openFolder(String path) async {
+    try {
+      await Process.run('explorer', <String>[path]);
+    } catch (_) {
+      // explorer 打不开（路径失效等）不影响页面
+    }
+  }
+
+  Widget _entriesCard(ThemeData theme) {
+    if (widget.onNavigate == null) return const SizedBox.shrink();
+    return _bizCard(
+            theme,
+            key: 'overview-card-entries',
+            title: '要开工？',
+            lines: <Widget>[
+              // 裁定③：入口 = 高频动作（查询类导航已有，不重复）
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  OutlinedButton.icon(
+                    key: const Key('overview-go-sale'),
+                    onPressed: () => widget.onNavigate!('sale'),
+                    icon: const Icon(Icons.point_of_sale_outlined, size: 18),
+                    label: const Text('销售开单'),
+                  ),
+                  OutlinedButton.icon(
+                    key: const Key('overview-go-purchase'),
+                    onPressed: () => widget.onNavigate!('purchase'),
+                    icon: const Icon(Icons.inventory_outlined, size: 18),
+                    label: const Text('采购入库'),
+                  ),
+                  OutlinedButton.icon(
+                    key: const Key('overview-go-delivery'),
+                    onPressed: () => widget.onNavigate!('delivery'),
+                    icon: const Icon(Icons.local_shipping_outlined, size: 18),
+                    label: const Text('送货'),
+                  ),
+                ],
+              ),
+            ],
+          );
   }
 
   /// **#32**：经营速览三卡。桌面横排（各 1/3，裁定⑥）；手机紧凑竖排
@@ -327,40 +409,6 @@ class _OverviewPageState extends State<OverviewPage> {
       ],
     );
 
-    final Widget entriesCard = widget.onNavigate == null
-        ? const SizedBox.shrink()
-        : _bizCard(
-            theme,
-            key: 'overview-card-entries',
-            title: '要开工？',
-            lines: <Widget>[
-              // 裁定③：入口 = 高频动作（查询类导航已有，不重复）
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: <Widget>[
-                  OutlinedButton.icon(
-                    key: const Key('overview-go-sale'),
-                    onPressed: () => widget.onNavigate!('sale'),
-                    icon: const Icon(Icons.point_of_sale_outlined, size: 18),
-                    label: const Text('销售开单'),
-                  ),
-                  OutlinedButton.icon(
-                    key: const Key('overview-go-purchase'),
-                    onPressed: () => widget.onNavigate!('purchase'),
-                    icon: const Icon(Icons.inventory_outlined, size: 18),
-                    label: const Text('采购入库'),
-                  ),
-                  OutlinedButton.icon(
-                    key: const Key('overview-go-delivery'),
-                    onPressed: () => widget.onNavigate!('delivery'),
-                    icon: const Icon(Icons.local_shipping_outlined, size: 18),
-                    label: const Text('送货'),
-                  ),
-                ],
-              ),
-            ],
-          );
 
     if (widget.mobileShell) {
       // 手机：竖排紧凑（裁定⑥）
@@ -372,7 +420,7 @@ class _OverviewPageState extends State<OverviewPage> {
           careCard,
           if (widget.onNavigate != null) ...<Widget>[
             const SizedBox(height: 10),
-            entriesCard,
+            _entriesCard(theme),
           ],
         ],
       );
@@ -385,7 +433,7 @@ class _OverviewPageState extends State<OverviewPage> {
         const SizedBox(width: 12),
         Expanded(child: careCard),
         const SizedBox(width: 12),
-        Expanded(child: entriesCard),
+        Expanded(child: _entriesCard(theme)),
       ],
     );
   }

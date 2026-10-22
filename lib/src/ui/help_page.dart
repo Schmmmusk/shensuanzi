@@ -20,6 +20,7 @@ library;
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
@@ -80,14 +81,14 @@ class HelpPage extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFF7ED),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFFB45309)),
+                    border: Border.all(color: AppColors.warningOrange),
                   ),
                   child: const Text(
                     'Android 版数据存在应用私有目录。卸载应用会删除全部数据。\n'
                     '你的账本一直在电脑主机上，手机丢了不影响账；'
                     '真正会丢的是还没传给电脑的那几张单 —— '
                     '在设置页「导出本机数据文件」可以把它们发给电脑。',
-                    style: TextStyle(height: 1.6, color: Color(0xFF92400E)),
+                    style: TextStyle(height: 1.6, color: AppColors.warningOrange),
                   ),
                 ),
 
