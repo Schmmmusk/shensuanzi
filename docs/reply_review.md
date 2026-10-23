@@ -13493,3 +13493,65 @@ C://Users//yzx//AppData//Local//神算子 不可写（Creation failed, errno = 5
 根侧 **255**（+2）· core **641** · host **152** · app **328** · analyze **0 issues**。
 
 
+
+## §CV·八十八 **批 3 第 19 条：`dart format` 进门禁 + 批 3 收尾**（2026-10-23）
+
+> 报告 §六 排期第 15 条：「`dart format --set-exit-if-changed` 进门禁
+> （顺手把 `app_shell.dart:315-483`、`stock_page.dart:258-306` 格式化掉）」。
+> 这是**批 3（缩放与结构）最后一项**，落地即批 3 收口。
+
+### 一、报告点名的两处「未格式化」已不存在
+
+实测（`dart format --set-exit-if-changed --output=none lib test packages tool`）：
+**274 文件里只有 22 文件待改，且全部是近期编辑留下的行尾空白 / 尾随逗号**
+（`app_shell.dart` / `stock_page.dart` 都不在列 —— 它们已被 `a990ab2`
+的全仓格式化覆盖，报告的行号引用早于那次提交）。
+
+### 二、格式提交按纪律 19 单独走（`743033c`）
+
+- 22 文件，233+/214−。**判据不是 `git diff -w`**：归一化
+  「去全部空白 + 去 `)` `]` `}` 前逗号」后逐文件比对 ⇒ **22 个文件差异 = 0**；
+- 单独一个 commit，哈希写进 `.git-blame-ignore-revs`（`git config` 已配）；
+- ⚠️ **退出码必须直跑取**：`dart format ... | tail` 拿到的是 `tail` 的 0，
+  「需要格式化」会被静默放行 —— 这条 `testing.md` 里 2026-09-26 就记过，
+  本轮实测复现一次（管道版 exit 0，直跑版 exit 1）。
+
+### 三、门禁本体（`docs/testing.md`）
+
+- 「最短正确路径」加**第 0 步**：仓库根直跑
+  `dart format --set-exit-if-changed --output=none lib test packages tool`；
+- §L 根层交付清单加**第 8 行「格式」**：exit 0 才算过；
+  若报了要改 ⇒ 按纪律 19 单独 commit，不混进逻辑提交。
+
+### 四、全门禁实测（提交后复跑，非引用）
+
+| 门禁 | 结果 |
+|---|---|
+| `dart format --set-exit-if-changed` | **exit 0**（274 文件，0 改） |
+| `flutter analyze` | **0 issues** |
+| 根 `flutter test`（摘代理） | **277** 全过 |
+| core `dart test` | **642** 全过 |
+| host `dart test` | **152** 全过 |
+| app `dart test` | **336** 全过 |
+
+⚠️ **app 包不摘代理会红一条**：`mobile_sync_service_test` 的
+「连不上（端口没人听）⇒ unreachable」拿到 `error`（代理回 502）。
+与 §CV·六十三·五 同一现象，**代理假红，非代码问题**。
+
+### 五、连带收尾
+
+- **补提交遗漏文件**：`app_config_test.dart` 的 `effectiveTextScale` 组
+  （第 15 条的用例）漏在 `c5301b2` 之外，补 `64d6238`；
+- `docs/proposals/README.md` 状态表：五页列表骨架提案
+  🔴 待裁定 → **✅ 已裁 + 已落地（§CV·八十七）**。
+
+### 六、批 3 总状态
+
+第 13–19 条（尺寸派生 / 引导页可滚 / 系统字号取大 / 五页列表骨架 /
+手册目录 / 大字号回归护栏 / format 门禁）**全部落地**。
+**已知缺口**（登记在案）：扫码页的 200% 回归用例（依赖 `mobile_scanner`，
+需先 mock 相机）。
+
+**剩余队列**（Q5 裁定挑出、尚未编号的两项 P2）：**对比度**
+（`overview_page.dart` 负库存告警 `Colors.red` ≈3.5:1 → `colorScheme.error`）
+与**点击区**（建档 chips ≈32px / 库存 ⓘ ≈22px → ≥44px）。其余 P2 留 0.7。

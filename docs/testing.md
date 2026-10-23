@@ -24,6 +24,11 @@
 **最短正确路径**（两条命令都不能省，**注意 `cd` 目标**）：
 
 ```bash
+# 第 0 步（仓库根，全仓一遍）：格式门禁
+# ⚠️ 必须直跑，不要接管道 —— 管道后 $? 取到的是 tail 的退出码，
+#    「需要格式化」会被静默放行（2026-09-26 真实漏过一次）。要取退出码就用 ${PIPESTATUS[0]}。
+dart format --set-exit-if-changed --output=none lib test packages tool
+
 # 数据层
 cd packages/shensuanzi_core
 dart pub get      # ← 别漏：test 是 dev_dependency，不装就报 "Could not find package test"
@@ -723,6 +728,7 @@ dart run tool/import_guard.dart        # §AF 复跑返工新增：只查「用�
 | 5 | **未使用导入** | 本次改完有没有多余 import（门禁是 **0 issues，`info` 也算**） |
 | 6 | **`$` 插值里的标识符** | 有没有写错（§AO·四 第一轮） |
 | 7 | **覆写检查** | 引入**继承层**后（如将来的 `DocumentDraft` 基类），逐个核对子类**该覆写的方法有没有 `@override`** —— 漏写时父类默认实现会**静默接管**，`import_guard` 抓不到（§BE·二：`import_guard` 只覆盖导入面） |
+| 8 | **格式** | `dart format --set-exit-if-changed --output=none lib test packages tool` **exit 0**（直跑，别接管道）；若它报了要改 ⇒ 按纪律 19：**纯格式单独一个 commit** + 归一化判据 + 哈希写进 `.git-blame-ignore-revs`，不混进逻辑提交 |
 
 ---
 
