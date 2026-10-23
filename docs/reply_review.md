@@ -12975,6 +12975,175 @@ debug 签名的产物」—— **该文件不存在**（`packaging/` 只有 `mak
 
 **批 2（第 7–12 条）全部完成。**
 
+## §CV·八十四 **批 3 第 18 条：大字号回归补 11 页**（2026-10-23）
+
+> 附录 B 列了「没有覆盖、而本次报出会溢出/被夹缩放」的 12 个页面。
+> 分批方案把第 18 条定义为「**前 17 项不回退的唯一机械保证**」，
+> 且风险表写着「批 3 动尺寸导致新溢出 → **每改一个页面先补该页 200% 用例**」。
+> ⇒ **先立护栏，再动尺寸。**
+
+**写法**（统一，不各写一套）：`platformDispatcher.textScaleFactorTestValue = 2.0`
++ 视口 960×1000 @1.0 + `expect(tester.takeException(), isNull)`。
+比手工包 `MediaQuery` 可靠 —— 后者会被 `MaterialApp` 自建的 MediaQuery 覆盖。
+
+| 页面 | 落在哪个测试文件 | 结果 |
+|---|---|---|
+| 商品 | `products_page_test.dart` | ✅ 不溢出 |
+| 库存 | `stock_page_test.dart` | ✅ |
+| 商品流水 | `stock_page_test.dart`（`StockFlowPage`） | ✅ |
+| 单据列表 | `documents_page_test.dart` | ✅ |
+| 单据详情 | `document_detail_page_test.dart` | ✅ |
+| 核销弹窗 | `document_detail_page_test.dart`（走「收款」真实入口） | ✅ |
+| 概览 | `overview_page_test.dart` | ✅ |
+| 设置 | `settings_page_test.dart` | ✅ |
+| 往来流水 | `parties_page_test.dart`（`PartyFlowPage`） | ✅ |
+| 退货 | `return_page_test.dart` | ✅ |
+| 商品建档表单 | `product_form_dialog_test.dart` | ✅ |
+| **扫码页** | —— | ⏸ **未覆盖**：依赖 `mobile_scanner`（相机插件），widget 测试里会挂；要覆盖需先 mock 相机 |
+
+**账户流水**已有（`account_page_test.dart` 的 `#64④`），未重复。
+
+**结论**：11 页在 2.0 档下**当前都不溢出** —— 说明批 3 改尺寸时有一份干净基线，
+改坏了立刻会红。**扫码页留一个已知缺口，登记在案。**
+
+### 验证
+
+根侧 **266**（+11）· `flutter analyze` **0 issues**。
+
+**diff 形态**：`9 files changed, 233 insertions(+)` —— **零删除**，纯新增。
+（中途 `dart format` 曾把 5 个文件的既有代码重排 27 行，已按纪律 19 还原：
+取 HEAD 版本 + 只把新增块按原风格插回，避免格式噪音混进逻辑提交。）
+
+## §CV·八十五 **批 3 第 13 条：尺寸 + 断点随缩放派生**（2026-10-23）
+
+**病根**：缩放只放大**字**，没放大**布局** —— 导航项高度、金额列宽、断点阈值
+全是写死的常量。字大了格子没大，要么挤成一团要么黄黑溢出。
+
+**收敛成一个来源**：新增 `lib/src/ui/scaled.dart`。
+
+- `uiScaleOf(context)` —— 从 `MediaQuery.textScalerOf` 取**实际生效**的倍数。
+  **不层层传参**：少一处传参少一处漂移；批 3 第 15 条「系统字号取大」落地后，
+  这里一行都不用改。
+- `scaledOf(context, base)` —— 基准尺寸 × 缩放。
+- `isNarrowOf(context, available, {base})` —— 断点跟着缩放走。
+- 基准常量：`narrowBase 480` / `flowNarrowBase 600` /
+  `amountColumnBase 96` / `wideAmountColumnBase 120` / `dateColumnBase 72`。
+
+**落地点**（纪律 18：grep 全部同款，不只改记得的）：
+
+| 位置 | 改动 |
+|---|---|
+| `app_shell.dart` 导航项 | `AppNavigation.itemHeight` → `scaledOf(context, …)` |
+| `products_page.dart` 金额列 | `width: 96` → `scaledOf(context, amountColumnBase)` |
+| `sale_page.dart` 实收框 | `width: 120` → `scaledOf(context, wideAmountColumnBase)` |
+| `document_detail_page.dart` 键名列 | `width: 72` → `scaledOf(context, dateColumnBase)` |
+| 三个流水页（账户/往来/商品） | `< 600` → `isNarrowOf(…, base: flowNarrowBase)` |
+| `sale_page.dart` 款项行 | `< 480` → `isNarrowOf(context, …)` |
+| `parties_page` / `account_page` | 原先手写 `480 * scale`，**收敛到助手** |
+
+**⚠️ 护栏立刻抓到一次真溢出**：`sale_page` 实收框 120→240 后，
+360px 窗口 + 2 倍字号下 `M10` 用例报 **RenderFlex overflowed by 38 pixels**。
+处置：窄屏分支把字段包进 `Flexible`（`SizedBox` 服从父级约束 ⇒ 不够时自动缩），
+宽屏分支保持固定宽度。**这不是「改断言让测试变绿」，是把新引入的溢出修掉。**
+
+### 验证
+
+根侧 **270**（+11 大字号 + 4 助手用例）· `flutter analyze` **0 issues**。
+
+## §CV·八十六 **批 3 第 14/15/17 条**（2026-10-23）
+
+### 第 15 条：系统字号策略 = **取较大值**（不乘）
+
+新增纯 Dart `effectiveTextScale({system, app})`（`app_config.dart`）。
+
+**为什么不乘**：系统 1.3 × 应用 2.0 = **2.6 倍**，界面必崩（导航吃掉全部宽度）。
+**取大值有上界**：`max(1.3, 2.0) = 2.0` —— 应用档位就是天花板。
+
+**语义也对**：用户要么在系统调、要么在应用调，**取他调得更大的那个**；
+两边都调也不会叠成看不懂的大小。
+
+`app.dart` 的 `MaterialApp.builder` 改成先读 `MediaQuery.textScaler`（系统），
+再与应用档位取大。设置页加一句「系统字号调得比这里更大时，会跟着系统走」。
+
+> 副作用是好的：`scaled.dart`（第 13 条）读的就是「实际生效值」，
+> 所以系统字号变大时，**布局尺寸也跟着变大** —— 一行都不用改。
+
+### 第 14 条：一屏引导页全部可滚
+
+| 页 | 处置 |
+|---|---|
+| 启动错误页（`_StartupPage`） | `Center` → `SingleChildScrollView` + 「至少一屏高」的最小高度 + 内层 `Center` 保持居中 |
+| 扫码页引导态（`PairingScanPage`） | `Padding` → `SingleChildScrollView(padding:)` |
+
+**为什么必须改**：2.0 档 + 小窗口下 `Column` 顶破屏幕 ⇒ 按钮被推出可视区，
+用户点不到「重试」/「开始扫码」，等于卡死。
+
+> 扫码页的**扫描态**没动：那一态是 `Expanded(MobileScanner)`（相机预览），
+> 套滚动会让预览失去有界高度。
+
+### 第 17 条：手册目录 + 帮助页 FAQ 分组
+
+- **手册目录**：`ManualPage` 改 `StatefulWidget`，每章挂 `GlobalKey`，
+  顶部加**默认收起**的 `ExpansionTile`（20 章全展开会占半屏）。
+  点一行 → `Scrollable.ensureVisible` 跳过去。
+  ⚠️ **不用「算偏移」**：章高随字号变化，算偏移必然在 200% 档跳错位置。
+- **FAQ 分组**：12 条平铺 ⇒ 插 5 个分组标题（数据在哪、怎么搬 / 账怎么记对 /
+  备份与恢复 / 导出与交账 / 系统提示）。**原顺序本来已成组，只插标题不重排。**
+
+### 验证
+
+根侧 **272** · core **641** · host **152** · app **336** · analyze **0 issues**。
+
+## §CV·八十七 **批 3 第 16 条（进行中）：列表骨架**（2026-10-23）
+
+裁定见 `docs/reply.md`：**①②③ 全按推荐**，另加三条工程要求
+（防抖统一 / `searchKey` 不能丢 / 清空筛选要闭环）—— 三条都做进组件里。
+
+### 已落地
+
+**新增 `lib/src/ui/list_scaffold.dart`**（三段，不抽整页）：
+
+| 组件 | 说明 |
+|---|---|
+| `ListHeader` | 常驻搜索 + × 清空 + 额外筛选 + 计数行；**防抖默认 300ms 且可注入**；`searchKey` 挂到内部 `TextField`（现有测试不受影响）；`onClearAll` 由组件负责清搜索文字 + 调回调（闭环） |
+| `RowChevron` | 行尾箭头，**只给会跳走的行** |
+| `ListEmptyState` | 图标 + 为什么空 + 一条出路（清空搜索 / 清空筛选 / 新建） |
+
+**已接线的页面**：
+
+- **账户**（原先完全没有搜索）：常驻搜索 + `共 N 个` / `找到 N 个` + 搜不到时的「清空搜索」出路。+2 条用例。
+- **往来方**（原先完全没有搜索）：按姓名/电话搜 + 计数 + 空态出路。
+- **库存行箭头**：`onOpen != null` 才加（手机壳/缺流水查询时行不可点，就不加 —— 箭头是承诺）。
+
+### 全五页已接完（同日续）
+
+| 页 | 改动 |
+|---|---|
+| **库存** | 换 `ListHeader`：补 × 清空 + **真实总数**（`共 N 个商品` / `找到 M 个 / 共 N 个`）+ 防抖 |
+| **商品** | 空态换成共用 `ListEmptyState`（「搜不到」与「空库」仍说两种话）；计数注明**真实总数**（无分页，`rows` 就是全量） |
+| **单据** | 换 `ListHeader`：**防抖 300ms**（四路 LIKE）+ **真实总数** + 「清空全部筛选」 |
+
+**单据页的 `limit: 200` 撒谎问题**（裁定 ①）：
+
+`DocumentDao` 抽出 `_docFilter` + `_docFrom` 两个**共用件**，新增
+`countDocuments(...)` —— 与 `listDocuments` **逐字同一份 WHERE/FROM**。
+两处各写一遍、改一处漏一处，谎就回来了；所以共用 + 一条
+「计数与列表一致」的 core 用例当机械保证。
+
+页面计数文案：`共 N 条`，超出上限时 **`只显示 200 条 / 共 N 条`**。
+
+**「清空全部筛选」闭环**（裁定 ③）：点一下 = 清搜索文字（组件负责）
++ 清三排筛选 + 时间范围回到「最近 30 天」+ 清自动切范围说明，一次做完。
+
+### 验证
+
+根侧 **277**（+3）· core **642**（+1：计数与列表逐字一致）· host **152** ·
+app **336** · `flutter analyze` **0 issues**。
+
+### 验证（当前状态）
+
+根侧 **274** · `flutter analyze` **0 issues**。
+
 ## §CV·八十三 **用户实测两条 bug 的修复**（2026-10-22）
 
 > 来源：用户装包实地测试后的反馈（两条都不是审查报告里的）。
