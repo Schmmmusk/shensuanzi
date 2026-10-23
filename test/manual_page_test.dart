@@ -55,9 +55,7 @@ void main() {
   });
 
   // 批 3 第 17 条：手册目录可展开、可跳转。
-  testWidgets('目录：默认收起，展开后 20 章齐全，点一章能跳过去', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('目录：默认收起，展开后 20 章齐全，点一章能跳过去', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -77,5 +75,4 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull, reason: '跳转不该抛异常');
   });
-
 }

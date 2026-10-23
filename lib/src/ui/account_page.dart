@@ -12,8 +12,7 @@ library;
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
-    show ExportSink, MasterDataPolicy, MobileGuideTopic,
-        mirrorEmptyMessage;
+    show ExportSink, MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'scaled.dart';
 
@@ -144,7 +143,9 @@ class _AccountsPageState extends State<AccountsPage> {
                 controller: _search,
                 hintText: '搜账户名',
                 onQueryChanged: (String q) => setState(() => _query = q.trim()),
-                countText: _query.isEmpty ? '共 ${visible.length} 个' : '找到 ${visible.length} 个',
+                countText: _query.isEmpty
+                    ? '共 ${visible.length} 个'
+                    : '找到 ${visible.length} 个',
                 leading: Row(
                   children: <Widget>[
                     Checkbox(
@@ -350,48 +351,48 @@ class _AccountRow extends StatelessWidget {
           builder: (BuildContext context, BoxConstraints c) {
             final bool narrow = isNarrowOf(context, c.maxWidth);
             final Widget info = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  // ⚠️ **名字独占一行，类型标签下移**（2026-10-19 用户实测溢出）：
-                  // 原来是 `Row[名字, 类型]` 且两个都不许收缩 —— 超大档（2.0）下
-                  // 「微信收款账户 + 微信」比左侧列还宽 ⇒ 黄黑溢出条纹
-                  // （截图：账户页，窗口与 VSCode 均分 960 宽）。
-                  //
-                  // 处置与**往来方行**（`parties_page.dart:378-380` 的 C3 裁定）
-                  // 和**商品行**（`products_page.dart:257` 的 `Flexible + ellipsis`）
-                  // 同一思路：名字不与标签抢宽，标签进第二行。
-                  Text(
-                    account.name,
-                    style: TextStyle(
-                      height: 1.6,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: account.isActive
-                          ? theme.colorScheme.onSurface
-                          : theme.hintColor,
-                    ),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                // ⚠️ **名字独占一行，类型标签下移**（2026-10-19 用户实测溢出）：
+                // 原来是 `Row[名字, 类型]` 且两个都不许收缩 —— 超大档（2.0）下
+                // 「微信收款账户 + 微信」比左侧列还宽 ⇒ 黄黑溢出条纹
+                // （截图：账户页，窗口与 VSCode 均分 960 宽）。
+                //
+                // 处置与**往来方行**（`parties_page.dart:378-380` 的 C3 裁定）
+                // 和**商品行**（`products_page.dart:257` 的 `Flexible + ellipsis`）
+                // 同一思路：名字不与标签抢宽，标签进第二行。
+                Text(
+                  account.name,
+                  style: TextStyle(
+                    height: 1.6,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: account.isActive
+                        ? theme.colorScheme.onSurface
+                        : theme.hintColor,
                   ),
-                  Text(
-                    // 第二行 = 「类型 · 期初」/「类型 · 停用说明」——
-                    // 单个 Text 会自然换行，**结构上不可能溢出**
-                    '${kAccountTypeLabels[account.type] ?? account.type.wire} · '
-                    '${account.isActive ? '期初 ¥${Money.format(account.initialBalance)}' : '停用的账户不参与开单，可随时恢复'}',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
+                ),
+                Text(
+                  // 第二行 = 「类型 · 期初」/「类型 · 停用说明」——
+                  // 单个 Text 会自然换行，**结构上不可能溢出**
+                  '${kAccountTypeLabels[account.type] ?? account.type.wire} · '
+                  '${account.isActive ? '期初 ¥${Money.format(account.initialBalance)}' : '停用的账户不参与开单，可随时恢复'}',
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.textTheme.bodySmall?.color,
                   ),
-                  // 乐观行必须可分辨（`data_model.md §4.4` 第 3 条）
-                  if (isPending) ...<Widget>[
-                    const SizedBox(height: 2),
-                    Text(
-                      '待同步',
-                      key: Key('pending-account-${account.id}'),
-                      style: TextStyle(height: 1.6, color: theme.hintColor),
-                    ),
-                  ],
+                ),
+                // 乐观行必须可分辨（`data_model.md §4.4` 第 3 条）
+                if (isPending) ...<Widget>[
+                  const SizedBox(height: 2),
+                  Text(
+                    '待同步',
+                    key: Key('pending-account-${account.id}'),
+                    style: TextStyle(height: 1.6, color: theme.hintColor),
+                  ),
                 ],
-              );
+              ],
+            );
             final Widget amount = Text(
               '¥ ${Money.formatGrouped(balanceCents)}',
               style: theme.textTheme.titleMedium?.copyWith(
@@ -414,13 +415,22 @@ class _AccountRow extends StatelessWidget {
             ];
             if (!narrow) {
               return Row(
-                children: <Widget>[Expanded(child: info), amount, ...actions],
+                children: <Widget>[
+                  Expanded(child: info),
+                  amount,
+                  ...actions,
+                ],
               );
             }
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Row(children: <Widget>[Expanded(child: info), amount]),
+                Row(
+                  children: <Widget>[
+                    Expanded(child: info),
+                    amount,
+                  ],
+                ),
                 Align(
                   alignment: Alignment.centerRight,
                   child: Wrap(children: actions),

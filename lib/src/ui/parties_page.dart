@@ -124,8 +124,7 @@ class _PartiesPageState extends State<PartiesPage> {
         : sorted
               .where(
                 (Party p) =>
-                    p.name.contains(_query) ||
-                    (p.phone ?? '').contains(_query),
+                    p.name.contains(_query) || (p.phone ?? '').contains(_query),
               )
               .toList(growable: false);
 
@@ -455,72 +454,72 @@ class _PartyRow extends StatelessWidget {
           builder: (BuildContext context, BoxConstraints c) {
             final bool narrow = isNarrowOf(context, c.maxWidth);
             final Widget info = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  // C3·真机反馈：名字与角色标签同行时，标签把名字挤到强制折行
-                  // —— 名字独占一行，标签 / 停用标记下移（任何缩放档不折名字）
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                // C3·真机反馈：名字与角色标签同行时，标签把名字挤到强制折行
+                // —— 名字独占一行，标签 / 停用标记下移（任何缩放档不折名字）
+                Text(
+                  party.name,
+                  style: TextStyle(
+                    height: 1.6,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: party.isActive
+                        ? theme.colorScheme.onSurface
+                        : theme.hintColor,
+                  ),
+                ),
+                // ⚠️ **角色独占一行**（2026-10-19 用户实测溢出）：
+                // 原来是 `Row[Flexible(角色), 已停用标签]` —— 超大档（2.0）下
+                // 左侧列只有 ~200px，`Flexible` 把「客户 / 供应商」压到
+                // **一个字一行竖排**（截图：往来方页「鸿磐」那行），
+                // 非弹性的标签再把整行撑爆（黄黑条纹）。
+                //
+                // 处置：角色单独一行（`maxLines: 1` + 省略），停用标记**下移
+                // 到第三行** —— 与账户页/商品页同一思路（标签不与主字段抢宽）。
+                Text(
+                  roleLabels,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
+                ),
+                if (!party.isActive)
+                  // §审查 OBS-05 后半：停用**且有余额**要显眼 ——
+                  // 它出现在列表里的唯一理由就是「这笔账还没结清」，
+                  // 不能和「干干净净停用掉的」长得一样
                   Text(
-                    party.name,
+                    balanceCents != 0 ? '已停用 · 账未结清' : '已停用',
                     style: TextStyle(
                       height: 1.6,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: party.isActive
-                          ? theme.colorScheme.onSurface
+                      fontWeight: balanceCents != 0
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                      color: balanceCents != 0
+                          ? theme.colorScheme.error
                           : theme.hintColor,
                     ),
                   ),
-                  // ⚠️ **角色独占一行**（2026-10-19 用户实测溢出）：
-                  // 原来是 `Row[Flexible(角色), 已停用标签]` —— 超大档（2.0）下
-                  // 左侧列只有 ~200px，`Flexible` 把「客户 / 供应商」压到
-                  // **一个字一行竖排**（截图：往来方页「鸿磐」那行），
-                  // 非弹性的标签再把整行撑爆（黄黑条纹）。
-                  //
-                  // 处置：角色单独一行（`maxLines: 1` + 省略），停用标记**下移
-                  // 到第三行** —— 与账户页/商品页同一思路（标签不与主字段抢宽）。
-                  Text(
-                    roleLabels,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
+                Text(
+                  party.phone ?? '',
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.textTheme.bodySmall?.color,
                   ),
-                  if (!party.isActive)
-                    // §审查 OBS-05 后半：停用**且有余额**要显眼 ——
-                    // 它出现在列表里的唯一理由就是「这笔账还没结清」，
-                    // 不能和「干干净净停用掉的」长得一样
-                    Text(
-                      balanceCents != 0 ? '已停用 · 账未结清' : '已停用',
-                      style: TextStyle(
-                        height: 1.6,
-                        fontWeight: balanceCents != 0
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                        color: balanceCents != 0
-                            ? theme.colorScheme.error
-                            : theme.hintColor,
-                      ),
-                    ),
+                ),
+                // 乐观行必须可分辨（`data_model.md §4.4` 第 3 条）
+                if (isPending) ...<Widget>[
+                  const SizedBox(height: 2),
                   Text(
-                    party.phone ?? '',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
+                    '待同步',
+                    key: Key('pending-party-${party.id}'),
+                    style: TextStyle(height: 1.6, color: theme.hintColor),
                   ),
-                  // 乐观行必须可分辨（`data_model.md §4.4` 第 3 条）
-                  if (isPending) ...<Widget>[
-                    const SizedBox(height: 2),
-                    Text(
-                      '待同步',
-                      key: Key('pending-party-${party.id}'),
-                      style: TextStyle(height: 1.6, color: theme.hintColor),
-                    ),
-                  ],
                 ],
-              );
+              ],
+            );
             final Widget balance = Text(
               balanceText,
               style: TextStyle(
@@ -548,13 +547,22 @@ class _PartyRow extends StatelessWidget {
             ];
             if (!narrow) {
               return Row(
-                children: <Widget>[Expanded(child: info), balance, ...actions],
+                children: <Widget>[
+                  Expanded(child: info),
+                  balance,
+                  ...actions,
+                ],
               );
             }
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Row(children: <Widget>[Expanded(child: info), balance]),
+                Row(
+                  children: <Widget>[
+                    Expanded(child: info),
+                    balance,
+                  ],
+                ),
                 Align(
                   alignment: Alignment.centerRight,
                   child: Wrap(children: actions),
@@ -729,7 +737,10 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
                 child: Text(
                   _sameNameHint!,
                   key: const Key('party-same-name-hint'),
-                  style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
+                  style: const TextStyle(
+                    height: 1.6,
+                    color: AppColors.warningOrange,
+                  ),
                 ),
               ),
             const SizedBox(height: 8),

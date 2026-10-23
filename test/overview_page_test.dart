@@ -400,9 +400,7 @@ void main() {
   });
 
   // 同一批：「打开文件夹」+「不会上传」承诺（报告 §2.4-5）
-  testWidgets('数据位置卡：有「打开文件夹」，也有「不会上传」承诺', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('数据位置卡：有「打开文件夹」，也有「不会上传」承诺', (WidgetTester tester) async {
     await tester.pumpWidget(page(onNavigate: (_) {}));
     await tester.pumpAndSettle();
 
@@ -471,5 +469,4 @@ void main() {
       reason: '概览页在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
     );
   });
-
 }

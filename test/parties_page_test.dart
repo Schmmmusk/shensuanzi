@@ -308,9 +308,7 @@ void main() {
   // 用户选「超大 200%」进这三页会被静默打回 115%。
   // 判据分两条：① 字号**真的按 2.0 生效**（量高度比值，clamp 时约 1.15）
   //              ② 2.0 下**不溢出**（删 clamp 之后要守的那条）
-  testWidgets('#64① 流水页不许把用户的 2.0 静默夹到 1.15', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#64① 流水页不许把用户的 2.0 静默夹到 1.15', (WidgetTester tester) async {
     final Party customer = createCustomer('甲客户');
     creditSale(customer, 100);
 
@@ -344,9 +342,7 @@ void main() {
     );
   });
 
-  testWidgets('#64② 2.0 下流水页不溢出（删 clamp 之后要守的）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('#64② 2.0 下流水页不溢出（删 clamp 之后要守的）', (WidgetTester tester) async {
     final Party customer = createCustomer('甲客户');
     creditSale(customer, 100);
     tester.view.physicalSize = const Size(400, 900);
@@ -361,7 +357,9 @@ void main() {
           ).copyWith(textScaler: const TextScaler.linear(2.0)),
           child: child!,
         ),
-        home: Scaffold(body: PartyFlowPage(party: customer, service: service)),
+        home: Scaffold(
+          body: PartyFlowPage(party: customer, service: service),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -772,5 +770,4 @@ void main() {
       reason: '往来流水页在 2.0 档下溢出（附录 B 点名：固定宽度 / 顶部 Row）',
     );
   });
-
 }

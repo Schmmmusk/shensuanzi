@@ -5,7 +5,6 @@
 /// **经营数据一行都不会少**（这也是为什么路径恢复不依赖配置，见 `bootstrap.dart`）。
 library;
 
-
 import 'dart:convert';
 import 'dart:io' show Directory, File, Process, ProcessResult, sleep;
 
@@ -71,7 +70,9 @@ class AppConfig {
   }) => AppConfig(
     dataDirectory: dataDirectory ?? this.dataDirectory,
     uiScale: uiScale ?? this.uiScale,
-    backupDirectory: backupDirectory ?? this.backupDirectory, // ignore: unnecessary_this —— 与上下两行同形
+    backupDirectory:
+        backupDirectory ??
+        this.backupDirectory, // ignore: unnecessary_this —— 与上下两行同形
     // 上面三行的 this. 都是「不传就保留原值」—— 统一保留，删一处反而不一致
     shopName: clearShopName ? null : (shopName ?? this.shopName),
   );
@@ -125,11 +126,7 @@ void _sleep(Duration duration) => sleep(duration);
 
 /// 配置文件的读写。**读永不抛**。
 class AppConfigStore {
-  AppConfigStore(
-    this.file, {
-    this.sleep = _realSleep,
-    this.fallbackFile,
-  });
+  AppConfigStore(this.file, {this.sleep = _realSleep, this.fallbackFile});
 
   /// 重试之间的等待。生产 = 真睡；测试注入假睡以便**确定性地**造瞬时失败。
   final void Function(Duration) sleep;

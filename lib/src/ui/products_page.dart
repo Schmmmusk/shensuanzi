@@ -365,9 +365,7 @@ class _Empty extends StatelessWidget {
     return ListEmptyState(
       icon: searching ? Icons.search_off : Icons.inventory_2_outlined,
       title: searching ? '没有找到「$query」' : '还没有商品',
-      hint: searching
-          ? '换个词试试，或点搜索框右边的 × 清空，看全部商品。'
-          : '点上面的「新增商品」把店里卖的东西录进来。',
+      hint: searching ? '换个词试试，或点搜索框右边的 × 清空，看全部商品。' : '点上面的「新增商品」把店里卖的东西录进来。',
     );
   }
 }

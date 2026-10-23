@@ -508,7 +508,10 @@ class _ReturnPageState extends State<ReturnPage> {
               const SizedBox(height: 4),
               Text(
                 '超过可退数量：最多可退 ${quota.remainingQuantity}$baseSuffix',
-                style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
+                style: const TextStyle(
+                  height: 1.6,
+                  color: AppColors.warningOrange,
+                ),
               ),
             ],
           ],

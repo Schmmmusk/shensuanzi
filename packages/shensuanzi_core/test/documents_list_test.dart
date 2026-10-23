@@ -721,7 +721,6 @@ void main() {
     expect(documents.countDocuments(includeDerived: true), 2);
     expect(documents.listDocuments(includeDerived: true).length, 2);
   });
-
 }
 
 /// 把「逐行查」的两个入口改成抛错：列表路径一旦退化成 N+1 就立刻失败。

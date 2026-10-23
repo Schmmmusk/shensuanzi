@@ -88,7 +88,10 @@ class HelpPage extends StatelessWidget {
                     '你的账本一直在电脑主机上，手机丢了不影响账；'
                     '真正会丢的是还没传给电脑的那几张单 —— '
                     '在设置页「导出本机数据文件」可以把它们发给电脑。',
-                    style: TextStyle(height: 1.6, color: AppColors.warningOrange),
+                    style: TextStyle(
+                      height: 1.6,
+                      color: AppColors.warningOrange,
+                    ),
                   ),
                 ),
 
@@ -184,12 +187,7 @@ class HelpPage extends StatelessWidget {
                         '每个星期最早的那一份会一直留着。\n\n'
                         // §CV·八十 批 1 ⑤：与手册**同一份步骤**（模板在 app 包）
                         '要恢复的话，照着做：\n'
-                        '${<String>[
-                          for (int i = 0; i < backupRestoreStepTemplates.length; i++)
-                            '${i + 1}. ${backupRestoreStepTemplates[i]
-                                .replaceAll('{data}', _dataFolder)
-                                .replaceAll('{backup}', _backupFolder)}',
-                        ].join('\n')}\n\n'
+                        '${<String>[for (int i = 0; i < backupRestoreStepTemplates.length; i++) '${i + 1}. ${backupRestoreStepTemplates[i].replaceAll('{data}', _dataFolder).replaceAll('{backup}', _backupFolder)}'].join('\n')}\n\n'
                         '第 4 步「先改名再粘贴」别省 —— 万一贴错了，原来那份还在。',
                   ),
                   // §AE 遗漏 8：诚实地告诉用户边界，不假装「备份万能」

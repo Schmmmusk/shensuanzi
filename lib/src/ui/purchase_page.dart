@@ -27,7 +27,8 @@ import 'package:flutter/material.dart';
 import 'app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
-    show MasterDataPolicy,
+    show
+        MasterDataPolicy,
         MobileGuideTopic,
         mirrorEmptyMessage,
         partyMutationNotice,
@@ -1391,7 +1392,10 @@ class _PartyPickerSheetState extends State<_PartyPickerSheet> {
               child: Text(
                 _sameNameHint!,
                 key: const Key('party-same-name-hint'),
-                style: const TextStyle(height: 1.6, color: AppColors.warningOrange),
+                style: const TextStyle(
+                  height: 1.6,
+                  color: AppColors.warningOrange,
+                ),
               ),
             ),
           const SizedBox(height: 8),

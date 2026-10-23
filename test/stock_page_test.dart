@@ -559,9 +559,7 @@ void main() {
       expect(find.byType(StockFlowPage), findsOneWidget);
       expect(tester.takeException(), isNull, reason: '$scale× 下流水页溢出');
       // 量流水页里「单号 · 日期」那一行的字号效果
-      return tester
-          .getSize(find.textContaining(' · 2026').first)
-          .height;
+      return tester.getSize(find.textContaining(' · 2026').first).height;
     }
 
     final double h1 = await quantityHeight(1.0);
@@ -726,7 +724,6 @@ void main() {
     );
   });
 
-
   // 批 3 第 16 条：库存页原先有搜索，但**没有 × 清空、没有真实总数**。
   testWidgets('搜索：有真实总数、× 能清空', (WidgetTester tester) async {
     await tester.pumpWidget(page());
@@ -745,5 +742,4 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('共 1 个商品'), findsOneWidget);
   });
-
 }

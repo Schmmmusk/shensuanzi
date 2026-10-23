@@ -158,5 +158,4 @@ void main() {
       expect(find.text(group), findsOneWidget, reason: '分组标题「$group」必须在');
     }
   });
-
 }

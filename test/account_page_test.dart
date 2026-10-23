@@ -322,7 +322,9 @@ void main() {
     );
   });
 
-  testWidgets('#27：行尾操作不丢 —— 编辑 / 停用是**文字按钮**（不再是 ⋮ 菜单）', (WidgetTester tester) async {
+  testWidgets('#27：行尾操作不丢 —— 编辑 / 停用是**文字按钮**（不再是 ⋮ 菜单）', (
+    WidgetTester tester,
+  ) async {
     final Account account = service.create(
       AccountDraft(name: '现金', type: AccountType.cash),
       now: 1700000000000,
@@ -379,19 +381,28 @@ void main() {
 
     expect(find.text('这个账户里还有钱'), findsOneWidget);
     // 还没确认 ⇒ 账户仍然是启用的
-    expect(service.list(active: true).map((Account a) => a.id), contains(account.id));
+    expect(
+      service.list(active: true).map((Account a) => a.id),
+      contains(account.id),
+    );
 
     // 取消 ⇒ 不动
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
-    expect(service.list(active: true).map((Account a) => a.id), contains(account.id));
+    expect(
+      service.list(active: true).map((Account a) => a.id),
+      contains(account.id),
+    );
 
     // 再来一次，「还是停用」
     await tester.tap(find.byKey(Key('account-toggle-${account.id}')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('还是停用'));
     await tester.pumpAndSettle();
-    expect(service.list(active: true).map((Account a) => a.id), isNot(contains(account.id)));
+    expect(
+      service.list(active: true).map((Account a) => a.id),
+      isNot(contains(account.id)),
+    );
   });
 
   testWidgets('停用**无余额**的账户：不打扰，但有撤销', (WidgetTester tester) async {
@@ -405,17 +416,19 @@ void main() {
     await tester.tap(find.byKey(Key('account-toggle-${account.id}')));
     await tester.pumpAndSettle();
 
+    expect(find.text('这个账户里还有钱'), findsNothing, reason: '余额为 0 还问一句是骚扰');
     expect(
-      find.text('这个账户里还有钱'),
-      findsNothing,
-      reason: '余额为 0 还问一句是骚扰',
+      service.list(active: true).map((Account a) => a.id),
+      isNot(contains(account.id)),
     );
-    expect(service.list(active: true).map((Account a) => a.id), isNot(contains(account.id)));
     // 撤销 6 秒内可反悔
     expect(find.text('已停用「空账户」'), findsOneWidget);
     await tester.tap(find.text('撤销'));
     await tester.pumpAndSettle();
-    expect(service.list(active: true).map((Account a) => a.id), contains(account.id));
+    expect(
+      service.list(active: true).map((Account a) => a.id),
+      contains(account.id),
+    );
   });
 
   // 2026-10-19 用户实测（账户页截图，超大档，窗口与 VSCode 均分 960 宽）：
@@ -522,5 +535,4 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('现金'), findsOneWidget);
   });
-
 }

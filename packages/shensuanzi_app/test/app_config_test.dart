@@ -299,8 +299,11 @@ void main() {
     test('**永远不叠加**：最坏组合也不超过应用最大档', () {
       // 相乘会是 2.6 —— 界面必崩；取大值封在 2.0
       expect(effectiveTextScale(system: 1.3, app: 2.0), 2.0);
-      expect(effectiveTextScale(system: 3.0, app: 2.0), 3.0,
-          reason: '系统比应用上限还大时，尊重系统（应用不该压小用户的选择）');
+      expect(
+        effectiveTextScale(system: 3.0, app: 2.0),
+        3.0,
+        reason: '系统比应用上限还大时，尊重系统（应用不该压小用户的选择）',
+      );
     });
   });
 

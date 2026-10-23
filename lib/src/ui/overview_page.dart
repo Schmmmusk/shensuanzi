@@ -296,37 +296,37 @@ class _OverviewPageState extends State<OverviewPage> {
   Widget _entriesCard(ThemeData theme) {
     if (widget.onNavigate == null) return const SizedBox.shrink();
     return _bizCard(
-            theme,
-            key: 'overview-card-entries',
-            title: '要开工？',
-            lines: <Widget>[
-              // 裁定③：入口 = 高频动作（查询类导航已有，不重复）
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: <Widget>[
-                  OutlinedButton.icon(
-                    key: const Key('overview-go-sale'),
-                    onPressed: () => widget.onNavigate!('sale'),
-                    icon: const Icon(Icons.point_of_sale_outlined, size: 18),
-                    label: const Text('销售开单'),
-                  ),
-                  OutlinedButton.icon(
-                    key: const Key('overview-go-purchase'),
-                    onPressed: () => widget.onNavigate!('purchase'),
-                    icon: const Icon(Icons.inventory_outlined, size: 18),
-                    label: const Text('采购入库'),
-                  ),
-                  OutlinedButton.icon(
-                    key: const Key('overview-go-delivery'),
-                    onPressed: () => widget.onNavigate!('delivery'),
-                    icon: const Icon(Icons.local_shipping_outlined, size: 18),
-                    label: const Text('送货'),
-                  ),
-                ],
-              ),
-            ],
-          );
+      theme,
+      key: 'overview-card-entries',
+      title: '要开工？',
+      lines: <Widget>[
+        // 裁定③：入口 = 高频动作（查询类导航已有，不重复）
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            OutlinedButton.icon(
+              key: const Key('overview-go-sale'),
+              onPressed: () => widget.onNavigate!('sale'),
+              icon: const Icon(Icons.point_of_sale_outlined, size: 18),
+              label: const Text('销售开单'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('overview-go-purchase'),
+              onPressed: () => widget.onNavigate!('purchase'),
+              icon: const Icon(Icons.inventory_outlined, size: 18),
+              label: const Text('采购入库'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('overview-go-delivery'),
+              onPressed: () => widget.onNavigate!('delivery'),
+              icon: const Icon(Icons.local_shipping_outlined, size: 18),
+              label: const Text('送货'),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   /// **#32**：经营速览三卡。桌面横排（各 1/3，裁定⑥）；手机紧凑竖排
@@ -408,7 +408,6 @@ class _OverviewPageState extends State<OverviewPage> {
           const Text('目前没有要留心的事。', style: TextStyle(height: 1.7)),
       ],
     );
-
 
     if (widget.mobileShell) {
       // 手机：竖排紧凑（裁定⑥）

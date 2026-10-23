@@ -129,14 +129,10 @@ void main() {
 
   // 2026-10-21（§CV·八十，报告 §2.2 漂移 1）：搜不到 ≠ 空库。
   // 店里有商品、只是搜错了，不能说「还没有商品」—— 否则用户会去重复建档。
-  testWidgets('搜不到时说「没有找到」，不是「还没有商品」', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('搜不到时说「没有找到」，不是「还没有商品」', (WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: ProductsPage(service: service),
-        ),
+        home: Scaffold(body: ProductsPage(service: service)),
       ),
     );
     await tester.pumpAndSettle();
@@ -204,5 +200,4 @@ void main() {
       reason: '商品页在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
     );
   });
-
 }

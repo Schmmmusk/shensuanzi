@@ -92,11 +92,7 @@ void main() {
     await tester.tap(find.text('特大').last);
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining('没能存到磁盘'),
-      findsOneWidget,
-      reason: '必须说清楚没存上',
-    );
+    expect(find.textContaining('没能存到磁盘'), findsOneWidget, reason: '必须说清楚没存上');
     expect(find.textContaining('重启软件后会变回'), findsOneWidget);
     expect(
       received?.uiScale,
@@ -126,9 +122,7 @@ void main() {
     );
   });
 
-  testWidgets('P0-1：宿主换了配置（如迁移后）⇒ 改缩放不能把旧路径写回去', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('P0-1：宿主换了配置（如迁移后）⇒ 改缩放不能把旧路径写回去', (WidgetTester tester) async {
     current = const AppConfig(dataDirectory: r'D://旧位置');
     AppConfig? received;
     await tester.pumpWidget(page((AppConfig config) => received = config));
@@ -381,5 +375,4 @@ void main() {
       reason: '设置页在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
     );
   });
-
 }
