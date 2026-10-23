@@ -746,4 +746,31 @@ void main() {
 
     expect(find.text('待同步'), findsNothing);
   });
+  // 附录 B（`docs/ui-review-2026-10-21.md`）：**往来流水页**原先没有大字号断言。
+  testWidgets('大字号（2.0）：往来流水页不溢出', (WidgetTester tester) async {
+    final Party customer = createCustomer('甲客户');
+    creditSale(customer, 100);
+
+    tester.view.physicalSize = const Size(960, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PartyFlowPage(party: customer, service: service),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '往来流水页在 2.0 档下溢出（附录 B 点名：固定宽度 / 顶部 Row）',
+    );
+  });
+
 }

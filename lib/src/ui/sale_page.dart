@@ -28,6 +28,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart'
         partyMutationNotice,
         partySameNameHint;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'scaled.dart';
 
 import 'keyboard_reveal.dart';
 import 'mobile_guidance_dialog.dart';
@@ -1158,7 +1159,8 @@ class _SalePageState extends State<SalePage> {
         : '找零 ¥${Money.formatGrouped(Overpay(givenCents: given, dueCents: total).changeCents)}';
 
     final Widget givenField = SizedBox(
-      width: 120,
+      // 批 3 第 13 条：随缩放派生
+      width: scaledOf(context, wideAmountColumnBase),
       child: TextField(
         key: const Key('sale-given'),
         controller: _given,
@@ -1192,14 +1194,18 @@ class _SalePageState extends State<SalePage> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final List<Widget> content;
-        if (constraints.maxWidth < 480) {
+        // 批 3 第 13 条：断点随缩放派生
+        if (isNarrowOf(context, constraints.maxWidth)) {
           // 窄屏（手机）：chips 独立成行右对齐 —— 不再挤爆
           content = <Widget>[
             Row(
               children: <Widget>[
                 Text('顾客给了', style: theme.textTheme.bodySmall),
                 const SizedBox(width: 8),
-                givenField,
+                // 批 3 第 13 条：**窄屏里必须可收缩**。字段宽随缩放变大后
+                //（120→240），360px 窗口 + 2 倍字号直接溢出 38px。
+                // `SizedBox` 会服从父级约束 ⇒ 用 Flexible 让它在不够时缩。
+                Flexible(child: givenField),
                 const SizedBox(width: 12),
                 if (changeText != null)
                   Flexible(

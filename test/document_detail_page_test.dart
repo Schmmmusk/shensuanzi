@@ -538,4 +538,47 @@ void main() {
     );
     expect(find.textContaining('¥-'), findsNothing, reason: '界面不再出现负数金额');
   });
+
+  // 附录 B（`docs/ui-review-2026-10-21.md`）：单据详情页 原先**没有**大字号断言。
+  // 批 3 第 18 条：尺寸改造的机械护栏 —— 先立护栏再动尺寸。
+  testWidgets('大字号（2.0）：单据详情页不溢出', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(960, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    final Document doc = sellOnCredit();
+    await tester.pumpWidget(page(doc.id));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '单据详情页在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
+    );
+  });
+
+  // 附录 B（`docs/ui-review-2026-10-21.md`）：**核销弹窗**原先没有大字号断言。
+  // 走真实入口：详情页点「收款」→ 弹窗（不直接构造私有 _SettlementDialog）。
+  testWidgets('大字号（2.0）：核销弹窗不溢出', (WidgetTester tester) async {
+    final Document doc = sellOnCredit();
+
+    tester.view.physicalSize = const Size(960, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(page(doc.id));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('settle-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '核销弹窗在 2.0 档下溢出（附录 B 点名：顶部 Row / 固定宽度）',
+    );
+  });
 }

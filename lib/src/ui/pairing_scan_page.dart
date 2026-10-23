@@ -213,7 +213,9 @@ class _PairingScanPageState extends State<PairingScanPage> {
                 ),
               ],
             )
-          : Padding(
+          // 批 3 第 14 条：**引导态可滚**。2.0 档 + 小屏下说明文字会顶破屏幕，
+          // 「开始扫码」被挤出可视区 = 用户以为这页没按钮。
+          : SingleChildScrollView(
               padding: const EdgeInsets.all(24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

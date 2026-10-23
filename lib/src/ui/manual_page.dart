@@ -18,18 +18,42 @@ import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
 /// 完整手册页。从「帮助」页最上方进入。
-class ManualPage extends StatelessWidget {
+class ManualPage extends StatefulWidget {
   const ManualPage({super.key, required this.versionLine});
 
   /// 印在「反馈与版本」一章的版本行（宿主传 `AppVersion.display`）。
   final String versionLine;
 
   @override
+  State<ManualPage> createState() => _ManualPageState();
+}
+
+class _ManualPageState extends State<ManualPage> {
+  /// 每章一个 `GlobalKey`，供目录跳转用（批 3 第 17 条）。
+  final Map<int, GlobalKey> _sectionKeys = <int, GlobalKey>{};
+
+  GlobalKey _keyFor(int index) =>
+      _sectionKeys.putIfAbsent(index, () => GlobalKey());
+
+  /// 跳到第 [index] 章。**用 `ensureVisible` 而不是算偏移** ——
+  /// 章高随字号变化，算偏移必然在 200% 档跳错位置。
+  Future<void> _jumpTo(int index) async {
+    final BuildContext? target = _sectionKeys[index]?.currentContext;
+    if (target == null) return;
+    await Scrollable.ensureVisible(
+      target,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOut,
+      alignment: 0.0,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final Color secondary = theme.textTheme.bodySmall?.color ?? Colors.black54;
     final List<ManualSection> sections = buildManualSections(
-      versionLine: versionLine,
+      versionLine: widget.versionLine,
     );
 
     return Scaffold(
@@ -42,8 +66,18 @@ class ManualPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
+                // 批 3 第 17 条：**目录可跳转**。20 章的手册没有目录，
+                // 用户只能一路滚 —— 对中老年用户等于「找不到」。
+                _ManualToc(sections: sections, onTap: _jumpTo),
+                const SizedBox(height: 8),
                 for (int i = 0; i < sections.length; i++) ...<Widget>[
-                  _SectionHeader(index: i + 1, title: sections[i].title),
+                  KeyedSubtree(
+                    key: _keyFor(i),
+                    child: _SectionHeader(
+                      index: i + 1,
+                      title: sections[i].title,
+                    ),
+                  ),
                   for (final ManualBlock block in sections[i].blocks)
                     _Block(block: block, secondary: secondary),
                   const SizedBox(height: 28),
@@ -56,6 +90,55 @@ class ManualPage extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 手册目录（批 3 第 17 条）。
+///
+/// **默认收起**：20 章全展开会占掉半屏，反而把正文挤下去。
+/// 展开后每行一章，点一行跳过去 —— 比「一路滚 20 章」快得多。
+class _ManualToc extends StatelessWidget {
+  const _ManualToc({required this.sections, required this.onTap});
+
+  final List<ManualSection> sections;
+  final void Function(int index) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        // 去掉 ExpansionTile 展开时的那条分隔线（视觉噪音）
+        data: theme.copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: const Key('manual-toc'),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.only(bottom: 8),
+          title: Text(
+            '目录（共 ${sections.length} 章）',
+            style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+          ),
+          children: <Widget>[
+            for (int i = 0; i < sections.length; i++)
+              ListTile(
+                key: Key('manual-toc-$i'),
+                dense: true,
+                leading: Text('${i + 1}', style: const TextStyle(height: 1.6)),
+                title: Text(
+                  sections[i].title,
+                  style: const TextStyle(height: 1.6),
+                ),
+                onTap: () => onTap(i),
+              ),
+          ],
         ),
       ),
     );

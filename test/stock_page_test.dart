@@ -677,4 +677,73 @@ void main() {
 
     expect(find.textContaining('期初'), findsNothing);
   });
+  // 附录 B（`docs/ui-review-2026-10-21.md`）：库存页 原先**没有**大字号断言。
+  // 批 3 第 18 条：前 17 项「尺寸随缩放派生」改造的机械护栏 —— 先立护栏再动尺寸。
+  testWidgets('大字号（2.0）：库存页不溢出', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(960, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '库存页在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
+    );
+  });
+
+  // 附录 B（`docs/ui-review-2026-10-21.md`）：**商品流水页**原先没有大字号断言。
+  testWidgets('大字号（2.0）：商品流水页不溢出', (WidgetTester tester) async {
+    final Product product = products.list().first;
+
+    tester.view.physicalSize = const Size(960, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StockFlowPage(
+            product: product,
+            flowDao: StockLedgerDao(db),
+            mobileShell: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '商品流水页在 2.0 档下溢出（附录 B 点名：固定宽度 / 顶部 Row）',
+    );
+  });
+
+
+  // 批 3 第 16 条：库存页原先有搜索，但**没有 × 清空、没有真实总数**。
+  testWidgets('搜索：有真实总数、× 能清空', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('共 1 个商品'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('stock-search')), '不存在的商品');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    // **真实总数**：不是「找到 0 个」，而是「找到 0 个 / 共 1 个」
+    expect(find.textContaining('找到 0 个 / 共 1 个'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('list-search-clear')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('共 1 个商品'), findsOneWidget);
+  });
+
 }

@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
+import 'scaled.dart';
 
 import 'nav_icons.dart';
 import 'overview_page.dart';
@@ -672,7 +673,8 @@ class _NavItem extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        height: AppNavigation.itemHeight,
+        // 批 3 第 13 条：高度随缩放派生（字大了，点击区也得跟着大）
+        height: scaledOf(context, AppNavigation.itemHeight),
         color: background,
         child: Row(
           children: <Widget>[

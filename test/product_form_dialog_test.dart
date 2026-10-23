@@ -271,6 +271,25 @@ void main() {
     expect(sink.opening, isNull, reason: '没走到 sink');
     expect(find.text('保存'), findsOneWidget, reason: '表单还开着（草稿保留）');
   });
+  // 附录 B（`docs/ui-review-2026-10-21.md`）：商品建档表单 原先**没有**大字号断言。
+  // 批 3 第 18 条：尺寸改造的机械护栏 —— 先立护栏再动尺寸。
+  testWidgets('大字号（2.0）：商品建档表单不溢出', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(960, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(host());
+    await tester.tap(find.text('打开表单'));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '商品建档表单在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
+    );
+  });
 }
 
 /// #31 夹具（见 main 内说明）。

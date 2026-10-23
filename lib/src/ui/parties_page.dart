@@ -19,8 +19,10 @@ import 'package:flutter/material.dart';
 import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'scaled.dart';
 
 import 'disable_action.dart';
+import 'list_scaffold.dart';
 import 'export_button.dart';
 import 'mobile_guidance_dialog.dart';
 import 'party_flow_page.dart';
@@ -86,6 +88,16 @@ class _PartiesPageState extends State<PartiesPage> {
   /// 这个开关只决定「不欠钱的停用档要不要也占屏幕」。
   bool _showInactiveWithoutBalance = false;
 
+  /// 列表搜索（批 3 第 16 条：往来方页原先**完全没有**搜索）
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -105,6 +117,17 @@ class _PartiesPageState extends State<PartiesPage> {
         final int bb = (balances[b.id] ?? 0).abs();
         return bb.compareTo(ba);
       });
+
+    // 搜索：按姓名 / 电话包含（往来方数量有限，在已取回的列表上过一遍）
+    final List<Party> visible = _query.isEmpty
+        ? sorted
+        : sorted
+              .where(
+                (Party p) =>
+                    p.name.contains(_query) ||
+                    (p.phone ?? '').contains(_query),
+              )
+              .toList(growable: false);
 
     // 遗漏 3：总应收 / 总应付
     int totalReceivable = 0;
@@ -153,6 +176,17 @@ class _PartiesPageState extends State<PartiesPage> {
                 ],
               ),
               const SizedBox(height: 8),
+              // 批 3 第 16 条：常驻搜索 + 计数（原来往来方页没有搜索）
+              ListHeader(
+                searchKey: const Key('parties-search'),
+                controller: _search,
+                hintText: '搜姓名 / 电话',
+                onQueryChanged: (String q) => setState(() => _query = q.trim()),
+                countText: _query.isEmpty
+                    ? '共 ${visible.length} 个'
+                    : '找到 ${visible.length} 个',
+              ),
+              const SizedBox(height: 4),
               // #40②：照抄商品页的形态（Checkbox + **文字标签**，中老年不看纯图标）
               Row(
                 children: <Widget>[
@@ -211,7 +245,18 @@ class _PartiesPageState extends State<PartiesPage> {
                 ),
               ),
               const SizedBox(height: 8),
-              if (sorted.isEmpty)
+              if (visible.isEmpty && _query.isNotEmpty)
+                ListEmptyState(
+                  icon: Icons.search_off,
+                  title: '没有叫「$_query」的往来方',
+                  hint: '换个词试试，或点搜索框右边的 × 清空，看全部往来方。',
+                  actionLabel: '清空搜索',
+                  onAction: () {
+                    _search.clear();
+                    setState(() => _query = '');
+                  },
+                )
+              else if (sorted.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 40),
                   child: Text(
@@ -228,17 +273,17 @@ class _PartiesPageState extends State<PartiesPage> {
                   clipBehavior: Clip.antiAlias,
                   child: Column(
                     children: <Widget>[
-                      for (int i = 0; i < sorted.length; i++) ...<Widget>[
+                      for (int i = 0; i < visible.length; i++) ...<Widget>[
                         if (i > 0) const Divider(height: 1),
                         _PartyRow(
-                          key: Key('party-row-${sorted[i].id}'),
-                          party: sorted[i],
-                          isPending: pending.contains(sorted[i].id),
-                          balanceCents: balances[sorted[i].id] ?? 0,
-                          onOpen: () => _openFlow(context, sorted[i]),
+                          key: Key('party-row-${visible[i].id}'),
+                          party: visible[i],
+                          isPending: pending.contains(visible[i].id),
+                          balanceCents: balances[visible[i].id] ?? 0,
+                          onOpen: () => _openFlow(context, visible[i]),
                           onEdit: () =>
-                              _editParty(context, existing: sorted[i]),
-                          onToggleActive: () => _toggleActive(sorted[i]),
+                              _editParty(context, existing: visible[i]),
+                          onToggleActive: () => _toggleActive(visible[i]),
                         ),
                       ],
                     ],
@@ -408,8 +453,7 @@ class _PartyRow extends StatelessWidget {
         // （实测 280 宽 / 2.0 溢出），断点随字号放大，窄了换两行。
         child: LayoutBuilder(
           builder: (BuildContext context, BoxConstraints c) {
-            final double scale = MediaQuery.textScalerOf(context).scale(1.0);
-            final bool narrow = c.maxWidth < 480 * scale;
+            final bool narrow = isNarrowOf(context, c.maxWidth);
             final Widget info = Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[

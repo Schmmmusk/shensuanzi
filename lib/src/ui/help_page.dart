@@ -141,6 +141,7 @@ class HelpPage extends StatelessWidget {
               _Section(
                 title: '常见问题',
                 children: <Widget>[
+                  _FaqGroup('数据在哪、怎么搬'),
                   _Faq(
                     '我的数据存在哪里？',
                     '在「设置」页可以看到数据文件夹的位置，'
@@ -151,6 +152,7 @@ class HelpPage extends StatelessWidget {
                     '把数据文件夹整个复制到新电脑同样位置（或在「设置」页打开'
                         '文件夹后整体拷走），软件装好后数据原样回来。',
                   ),
+                  _FaqGroup('账怎么记对'),
                   _Faq(
                     '期初录入后，为什么成本显示 0？',
                     '期初录入只记数量、不记成本（开店时的货当时花了多少钱，'
@@ -174,6 +176,7 @@ class HelpPage extends StatelessWidget {
                         '系统按「个」记账，你心里按「箱」想就行。',
                   ),
                   // §AE-6：恢复写成**六步能照做**的形式（带真实路径）
+                  _FaqGroup('备份与恢复'),
                   _Faq(
                     '备份放在哪？数据弄丢了怎么找回来？',
                     '备份放在$_backupFolder，名字里带日期。'
@@ -197,6 +200,7 @@ class HelpPage extends StatelessWidget {
                         '重要的数据请自己再复制一份到 U 盘或另一台电脑上。',
                   ),
                   // §AF 遗漏 5：用户看到「导出」会以为能当备份用 —— 明说不能
+                  _FaqGroup('导出与交账'),
                   _Faq(
                     '「导出」和「备份」是一回事吗？',
                     '不是，两个都要用。\n'
@@ -229,6 +233,7 @@ class HelpPage extends StatelessWidget {
                   // §AG-3：不购买证书就会弹 SmartScreen —— 与其让用户自己猜
                   // （或吓得不敢用），不如把已知摩擦写清楚。**「只需要做一次」是关键**：
                   // 它回答的是「我每次打开都要这么麻烦吗」。
+                  _FaqGroup('系统提示'),
                   _Faq(
                     '为什么打开时弹出蓝色警告？',
                     '这是 Windows 对「没有购买数字证书的软件」的默认提示，'
@@ -338,6 +343,32 @@ class _Step extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// FAQ 分组标题（批 3 第 17 条）。
+///
+/// 12 条 FAQ 平铺时用户找不到 —— 分组后每段 2–3 条，扫一眼就知道去哪段找。
+/// **不重排原顺序**（顺序本身已经成组），只插标题。
+class _FaqGroup extends StatelessWidget {
+  const _FaqGroup(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Text(
+        label,
+        style: TextStyle(
+          height: 1.6,
+          fontWeight: FontWeight.w700,
+          color: theme.colorScheme.primary,
+        ),
       ),
     );
   }

@@ -15,8 +15,10 @@ import 'package:shensuanzi_app/shensuanzi_app.dart'
     show ExportSink, MasterDataPolicy, MobileGuideTopic,
         mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'scaled.dart';
 
 import 'disable_action.dart';
+import 'list_scaffold.dart';
 import 'account_flow_page.dart';
 import 'document_detail_page.dart';
 import 'mobile_guidance_dialog.dart';
@@ -78,6 +80,16 @@ class _AccountsPageState extends State<AccountsPage> {
   /// 钱不会因为停用消失，藏起来就是「幽灵账」。
   bool _showInactiveWithoutBalance = false;
 
+  /// 列表搜索（批 3 第 16 条：账户页原先**完全没有**搜索）
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -85,6 +97,12 @@ class _AccountsPageState extends State<AccountsPage> {
       includeInactiveWithoutBalance: _showInactiveWithoutBalance,
     );
     final Map<String, int> balances = widget.service.balances();
+    // 搜索：按名称包含（账户少，不查库 —— 在已取回的列表上过一遍即可）
+    final List<Account> visible = _query.isEmpty
+        ? accounts
+        : accounts
+              .where((Account a) => a.name.contains(_query))
+              .toList(growable: false);
     // ⚠️ 一次 build 取一次快照，再逐行 contains —— `ids` 每次访问都查库
     final Set<String> pending = widget.pendingMarks?.ids ?? const <String>{};
 
@@ -119,22 +137,40 @@ class _AccountsPageState extends State<AccountsPage> {
                   color: theme.textTheme.bodySmall?.color,
                 ),
               ),
-              const SizedBox(height: 4),
-              // #40②：照抄商品页（Checkbox + 文字标签）
-              Row(
-                children: <Widget>[
-                  Checkbox(
-                    key: const Key('accounts-show-inactive'),
-                    value: _showInactiveWithoutBalance,
-                    onChanged: (bool? value) => setState(
-                      () => _showInactiveWithoutBalance = value ?? false,
+              const SizedBox(height: 8),
+              // 批 3 第 16 条：常驻搜索 + 计数（原来账户页没有搜索）
+              ListHeader(
+                searchKey: const Key('account-search'),
+                controller: _search,
+                hintText: '搜账户名',
+                onQueryChanged: (String q) => setState(() => _query = q.trim()),
+                countText: _query.isEmpty ? '共 ${visible.length} 个' : '找到 ${visible.length} 个',
+                leading: Row(
+                  children: <Widget>[
+                    Checkbox(
+                      key: const Key('accounts-show-inactive'),
+                      value: _showInactiveWithoutBalance,
+                      onChanged: (bool? value) => setState(
+                        () => _showInactiveWithoutBalance = value ?? false,
+                      ),
                     ),
-                  ),
-                  const Text('显示已停用的账户'),
-                ],
+                    const Text('显示已停用的账户'),
+                  ],
+                ),
               ),
               const SizedBox(height: 12),
-              if (accounts.isEmpty)
+              if (visible.isEmpty && _query.isNotEmpty)
+                ListEmptyState(
+                  icon: Icons.search_off,
+                  title: '没有叫「$_query」的账户',
+                  hint: '换个词试试，或点搜索框右边的 × 清空，看全部账户。',
+                  actionLabel: '清空搜索',
+                  onAction: () {
+                    _search.clear();
+                    setState(() => _query = '');
+                  },
+                )
+              else if (accounts.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 40),
                   child: Text(
@@ -154,17 +190,17 @@ class _AccountsPageState extends State<AccountsPage> {
                   clipBehavior: Clip.antiAlias,
                   child: Column(
                     children: <Widget>[
-                      for (int i = 0; i < accounts.length; i++) ...<Widget>[
+                      for (int i = 0; i < visible.length; i++) ...<Widget>[
                         if (i > 0) const Divider(height: 1),
                         _AccountRow(
-                          account: accounts[i],
-                          isPending: pending.contains(accounts[i].id),
-                          balanceCents: balances[accounts[i].id] ?? 0,
+                          account: visible[i],
+                          isPending: pending.contains(visible[i].id),
+                          balanceCents: balances[visible[i].id] ?? 0,
                           onOpenFlow: () =>
-                              _openAccountFlow(context, accounts[i]),
+                              _openAccountFlow(context, visible[i]),
                           onEdit: () =>
-                              _editAccount(context, existing: accounts[i]),
-                          onToggleActive: () => _toggleActive(accounts[i]),
+                              _editAccount(context, existing: visible[i]),
+                          onToggleActive: () => _toggleActive(visible[i]),
                         ),
                       ],
                     ],
@@ -312,8 +348,7 @@ class _AccountRow extends StatelessWidget {
         // （报告 §三·A2：`480 * scale`），窄了就换成两行：金额与按钮各占一行。
         child: LayoutBuilder(
           builder: (BuildContext context, BoxConstraints c) {
-            final double scale = MediaQuery.textScalerOf(context).scale(1.0);
-            final bool narrow = c.maxWidth < 480 * scale;
+            final bool narrow = isNarrowOf(context, c.maxWidth);
             final Widget info = Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[

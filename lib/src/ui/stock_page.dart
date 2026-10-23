@@ -27,6 +27,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'document_detail_page.dart';
 import 'export_button.dart';
+import 'list_scaffold.dart';
 import 'opening_stock_page.dart';
 import 'product_form_dialog.dart';
 import 'stock_flow_page.dart';
@@ -318,17 +319,16 @@ class _StockPageState extends State<StockPage> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                key: const Key('stock-search'),
+              // 批 3 第 16 条：换成共用列表头（补 × 清空 + 真实总数 + 防抖）
+              ListHeader(
+                searchKey: const Key('stock-search'),
                 controller: _query,
-                onChanged: (String text) =>
-                    setState(() => _searchText = text.trim()),
-                decoration: const InputDecoration(
-                  labelText: '商品名 / 编码 / 条码（可扫码）',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                  prefixIcon: Icon(Icons.search),
-                ),
+                hintText: '商品名 / 编码 / 条码（可扫码）',
+                onQueryChanged: (String q) =>
+                    setState(() => _searchText = q.trim()),
+                countText: _searchText.isEmpty
+                    ? '共 ${all.length} 个商品'
+                    : '找到 ${matched.length} 个 / 共 ${all.length} 个',
               ),
               const SizedBox(height: 4),
               // 遗漏 5：默认隐藏零流水商品，开关让「建了还没进货」的也能看。
@@ -566,6 +566,10 @@ class _StockRow extends StatelessWidget {
                     ],
                   ),
                 ),
+                // 批 3 第 16 条（用户裁定 ③）：**只给「点了会跳走」的行**加箭头。
+                // 库存行 tap = 打开流水页；手机壳 / 缺流水查询时 `onOpen` 为 null
+                // ⇒ 那一态行不可点，也就不加箭头（箭头是承诺，不能撒谎）。
+                if (onOpen != null) const RowChevron(),
               ],
             ),
             const SizedBox(height: 4),

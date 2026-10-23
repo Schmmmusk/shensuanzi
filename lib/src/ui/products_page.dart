@@ -17,8 +17,10 @@ library;
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'scaled.dart';
 
 import 'export_button.dart';
+import 'list_scaffold.dart';
 import 'product_form_dialog.dart';
 
 class ProductsPage extends StatefulWidget {
@@ -196,6 +198,7 @@ class _ProductsPageState extends State<ProductsPage> {
               // 文字标签必须在（中老年用户不看纯图标）
               const Text('显示已停用的商品'),
               const Spacer(),
+              // 批 3 第 16 条：**真实总数**（商品页无分页，rows 就是全量）
               Text(
                 '共 ${rows.length} 种',
                 style: TextStyle(
@@ -308,9 +311,9 @@ class _ProductRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          _priceColumn(theme, '售价', product.sellPrice),
+          _priceColumn(context, theme, '售价', product.sellPrice),
           const SizedBox(width: 16),
-          _priceColumn(theme, '进价', product.costPrice),
+          _priceColumn(context, theme, '进价', product.costPrice),
           const SizedBox(width: 24),
           TextButton(onPressed: () => onEdit(product), child: const Text('编辑')),
           TextButton(
@@ -322,8 +325,14 @@ class _ProductRow extends StatelessWidget {
     );
   }
 
-  Widget _priceColumn(ThemeData theme, String label, int cents) => SizedBox(
-    width: 96,
+  Widget _priceColumn(
+    BuildContext context,
+    ThemeData theme,
+    String label,
+    int cents,
+  ) => SizedBox(
+    // 批 3 第 13 条：金额列宽随缩放派生，否则 2.0 下数字被挤到换行
+    width: scaledOf(context, amountColumnBase),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: <Widget>[
@@ -340,6 +349,10 @@ class _ProductRow extends StatelessWidget {
   );
 }
 
+/// 商品页空态 —— 换成共用 `ListEmptyState`（批 3 第 16 条）。
+///
+/// 「搜不到」与「空库」必须说两种话（§CV·八十，报告 §2.2 漂移 1）：
+/// 店里 80 种商品、只是搜错了，却提示「还没有商品」会让用户去重复建档。
 class _Empty extends StatelessWidget {
   const _Empty({this.query = ''});
 
@@ -348,37 +361,13 @@ class _Empty extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 2026-10-21（§CV·八十，报告 §2.2 漂移 1）：
-    // **「搜不到」与「空库」必须说两种话**。原来只要搜不到就说「还没有商品」——
-    // 店里有 80 种商品、只是搜错了，用户会去重复建档。
     final bool searching = query.isNotEmpty;
-    final Color secondary =
-        Theme.of(context).textTheme.bodySmall?.color ?? Colors.black54;
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(
-            searching ? Icons.search_off : Icons.inventory_2_outlined,
-            size: 40,
-            color: secondary,
-          ),
-          const SizedBox(height: 12),
-          Text(
-            searching ? '没有找到「$query」' : '还没有商品',
-            textAlign: TextAlign.center,
-            style: const TextStyle(height: 1.6),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            searching
-                ? '换个词试试，或点搜索框右边的 × 清空，看全部商品。'
-                : '点上面的「新增商品」把店里卖的东西录进来。',
-            textAlign: TextAlign.center,
-            style: TextStyle(height: 1.6, color: secondary),
-          ),
-        ],
-      ),
+    return ListEmptyState(
+      icon: searching ? Icons.search_off : Icons.inventory_2_outlined,
+      title: searching ? '没有找到「$query」' : '还没有商品',
+      hint: searching
+          ? '换个词试试，或点搜索框右边的 × 清空，看全部商品。'
+          : '点上面的「新增商品」把店里卖的东西录进来。',
     );
   }
 }

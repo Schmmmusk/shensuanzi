@@ -29,6 +29,7 @@ import 'app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'scaled.dart';
 
 import 'settlement_dialog.dart';
 import 'return_page.dart';
@@ -975,7 +976,8 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
         child: Row(
           children: <Widget>[
             SizedBox(
-              width: 72,
+              // 批 3 第 13 条：键名列宽随缩放派生
+              width: scaledOf(context, dateColumnBase),
               child: Text(
                 key,
                 style: TextStyle(

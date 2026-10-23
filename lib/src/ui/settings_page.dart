@@ -281,7 +281,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 title: '界面大小',
                 children: <Widget>[
                   Text(
-                    '觉得字小就调大。改完立即生效，全应用一起变。',
+                    '觉得字小就调大。改完立即生效，全应用一起变。\n系统字号调得比这里更大时，会跟着系统走（取两者中较大的）。',
                     style: TextStyle(
                       height: 1.6,
                       color: theme.textTheme.bodySmall?.color,

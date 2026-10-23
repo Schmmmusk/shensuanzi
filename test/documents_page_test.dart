@@ -601,7 +601,7 @@ void main() {
     );
 
     // 清空：说明行消失，但**范围仍是「全部」**（用户可能还想接着找）
-    await tester.tap(find.byKey(const Key('doc-search-clear')));
+    await tester.tap(find.byKey(const Key('list-search-clear')));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('已切到「全部」来找'), findsNothing);
@@ -853,4 +853,51 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('单据详情'), findsOneWidget);
   });
+
+  // 附录 B（`docs/ui-review-2026-10-21.md`）：单据列表页 原先**没有**大字号断言。
+  // 批 3 第 18 条：前 17 项「尺寸随缩放派生」改造的机械护栏 —— 先立护栏再动尺寸。
+  testWidgets('大字号（2.0）：单据列表页不溢出', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(960, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '单据列表页在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
+    );
+  });
+
+  // 批 3 第 16 条（用户裁定 ①③）：**真实总数** + **清空全部筛选**。
+  testWidgets('真实总数：说「共 N 条」，超过 200 也说「只显示 200 / 共 N」', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('共 '), findsOneWidget);
+    expect(find.textContaining('条'), findsOneWidget);
+  });
+
+  testWidgets('清空全部筛选：搜索文字 + 三排筛选一次清完', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 先搜一下（会自动把范围切到「全部」）
+    await tester.enterText(find.byKey(const Key('doc-search')), '李姐');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('已切到「全部」'), findsOneWidget);
+
+    // 一键清空：说明行消失 = 范围被切回来了
+    await tester.tap(find.byKey(const Key('list-clear-filters')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('已切到「全部」'), findsNothing);
+  });
+
 }

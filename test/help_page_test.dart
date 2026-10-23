@@ -142,4 +142,21 @@ void main() {
       reason: '版本戳来自 AppVersion.display，必须真的渲染出来',
     );
   });
+
+  // 批 3 第 17 条：12 条 FAQ 平铺时找不到 ⇒ 分五组，每组 2–3 条。
+  testWidgets('常见问题分成五组（不重排原顺序，只插标题）', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    for (final String group in <String>[
+      '数据在哪、怎么搬',
+      '账怎么记对',
+      '备份与恢复',
+      '导出与交账',
+      '系统提示',
+    ]) {
+      expect(find.text(group), findsOneWidget, reason: '分组标题「$group」必须在');
+    }
+  });
+
 }

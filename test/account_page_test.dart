@@ -473,4 +473,54 @@ void main() {
     );
     expect(find.textContaining('微信 · 期初'), findsOneWidget);
   });
+
+  // 批 3 第 16 条：账户页原先**完全没有**列表搜索。
+  testWidgets('列表搜索：能筛出来、计数跟着变、× 能清空', (WidgetTester tester) async {
+    service.create(
+      AccountDraft(name: '现金', type: AccountType.cash),
+      now: 1700000000000,
+    );
+    service.create(
+      AccountDraft(name: '微信收款', type: AccountType.wechat),
+      now: 1700000000001,
+    );
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(find.text('共 2 个'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('account-search')), '微信');
+    // 防抖 300ms（用户裁定：连打只查一次库）
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    expect(find.text('找到 1 个'), findsOneWidget);
+    expect(find.text('微信收款'), findsOneWidget);
+    expect(find.text('现金'), findsNothing);
+
+    // × 清空（组件负责清文字 + 立即回调，不等防抖）
+    await tester.tap(find.byKey(const Key('list-search-clear')));
+    await tester.pumpAndSettle();
+    expect(find.text('共 2 个'), findsOneWidget);
+    expect(find.text('现金'), findsOneWidget);
+  });
+
+  testWidgets('搜不到：空态给「清空搜索」的出路（不是死路）', (WidgetTester tester) async {
+    service.create(
+      AccountDraft(name: '现金', type: AccountType.cash),
+      now: 1700000000000,
+    );
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('account-search')), '不存在');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('没有叫「不存在」的账户'), findsOneWidget);
+    await tester.tap(find.text('清空搜索'));
+    await tester.pumpAndSettle();
+    expect(find.text('现金'), findsOneWidget);
+  });
+
 }

@@ -14,6 +14,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'scaled.dart';
 
 import 'export_button.dart';
 
@@ -44,7 +45,12 @@ class AccountFlowPage extends StatelessWidget {
     // 窄窗（< 600）限幅 + 行重排照抄 party_flow 模板（桌面窄窗不破版）。
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final bool narrow = constraints.maxWidth < 600;
+        // 批 3 第 13 条：断点随缩放派生（2.0 下 600 逻辑像素装不下 2 倍大的字）
+        final bool narrow = isNarrowOf(
+          context,
+          constraints.maxWidth,
+          base: flowNarrowBase,
+        );
         final Widget page = Scaffold(
           appBar: AppBar(
             title: Text('${account.name} 的流水'),

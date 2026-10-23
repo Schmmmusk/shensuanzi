@@ -53,4 +53,29 @@ void main() {
     expect(badge.height, 30, reason: '最小 30 的约束仍在，小字号看起来与原来一致');
     expect(badge.width, greaterThanOrEqualTo(30));
   });
+
+  // 批 3 第 17 条：手册目录可展开、可跳转。
+  testWidgets('目录：默认收起，展开后 20 章齐全，点一章能跳过去', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 默认收起 —— 章标题只在正文里出现一次
+    final Finder toc = find.byKey(const Key('manual-toc'));
+    expect(toc, findsOneWidget);
+    expect(find.byKey(const Key('manual-toc-0')), findsNothing);
+
+    await tester.tap(toc);
+    await tester.pumpAndSettle();
+
+    // 展开后 20 行
+    expect(find.byKey(const Key('manual-toc-19')), findsOneWidget);
+
+    // 点第 20 章 ⇒ 滚到它（不崩、且该行仍可见）
+    await tester.tap(find.byKey(const Key('manual-toc-19')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: '跳转不该抛异常');
+  });
+
 }

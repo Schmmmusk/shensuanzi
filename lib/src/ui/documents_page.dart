@@ -25,6 +25,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'document_detail_page.dart';
 import 'export_button.dart';
+import 'list_scaffold.dart';
 
 /// 时间范围档位
 enum _TimeRange {
@@ -115,11 +116,27 @@ class _DocumentsPageState extends State<DocumentsPage> {
     });
   }
 
-  void _clearQuery() {
-    _searchController.clear();
-    // ⚠️ 只清词，**不把范围切回去**：用户可能还想接着在「全部」里找
-    //（清空后说明行自然消失 —— 它是 `_query.isNotEmpty` 门控的）
-    _onQueryChanged('');
+  /// 计数行文案：**说真实总数**，不说「只显示这一屏」。
+  ///
+  /// `listDocuments` 有 `limit: 200` —— 原来页面没有任何提示，
+  /// 用户对着账会说「我这个月就 200 单」。现在把真实数说出来。
+  String _countText(int total, int shown) {
+    if (shown < total) return '只显示 $shown 条 / 共 $total 条';
+    return '共 $total 条';
+  }
+
+  /// **清空全部筛选**（用户裁定 ③ 的闭环）：搜索文字 + 三排筛选 + 自动切范围，一次清完。
+  ///
+  /// 搜索文字由 [ListHeader] 负责清（它顺便把 `_query` 置空），
+  /// 这里只管**筛选状态本身**。
+  void _clearAllFilters() {
+    setState(() {
+      _types.clear();
+      _statusViews.clear();
+      _range = _TimeRange.last30;
+      _customRange = null;
+      _autoSwitchedFrom = null;
+    });
   }
 
   /// 类型筛选 —— **多选**（空 = 全部）。可同时看「送货 + 退货」。
@@ -247,6 +264,17 @@ class _DocumentsPageState extends State<DocumentsPage> {
     final bool hasQuery = query.isNotEmpty;
     // §审查 2026-10-05：退货冲减额由 `_summaries` 一次 JOIN 带出（`returnedCents`）
     // —— 不再单独发一条批量查询
+    // 批 3 第 16 条：真实总数 —— 与列表**同一份过滤条件**（见 `_docFilter`）
+    final int total = widget.dao.countDocuments(
+      types: _types,
+      statusViews: _statusViews,
+      sinceMillis: since,
+      untilMillis: until,
+      includeDerived: _includeDerived,
+      query: hasQuery ? query : null,
+      rootsOnly: !_includeDerived,
+    );
+
     final List<DocumentSummary> rows = widget.dao.listDocuments(
       types: _types,
       statusViews: _statusViews,
@@ -310,25 +338,17 @@ class _DocumentsPageState extends State<DocumentsPage> {
               // 搜索（#26 批 2）：一个框，四路匹配（单号 / 对方 / 子单号 / 商品名）。
               // ⚠️ 不做防抖：本地 SQLite + 200 行上限，防抖只会制造
               // 「我打了字但列表没动」的错觉（中老年用户会重复输入）。
-              TextField(
-                key: const Key('doc-search'),
+              // 批 3 第 16 条：换成共用列表头 —— 补三样东西：
+              // ① **防抖 300ms**（四路 LIKE 逐键查库，低配机器会卡）
+              // ② **真实总数**（原来 `limit: 200` 静默截断，用户以为总共 200 单）
+              // ③ **清空全部筛选**（三排筛选能叠出一片空白，用户不知道是自己筛没了）
+              ListHeader(
+                searchKey: const Key('doc-search'),
                 controller: _searchController,
-                onChanged: _onQueryChanged,
-                textInputAction: TextInputAction.search,
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: '找单号、对方、商品名',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: hasQuery
-                      ? IconButton(
-                          key: const Key('doc-search-clear'),
-                          tooltip: '清空搜索',
-                          icon: const Icon(Icons.clear),
-                          onPressed: _clearQuery,
-                        )
-                      : null,
-                  border: const OutlineInputBorder(),
-                ),
+                hintText: '找单号、对方、商品名',
+                onQueryChanged: _onQueryChanged,
+                countText: _countText(total, rows.length),
+                onClearAll: _clearAllFilters,
               ),
               // 自动切范围的**说明**：不写这句就是静默跨范围（UI 撒谎）
               if (hasQuery && _autoSwitchedFrom != null)

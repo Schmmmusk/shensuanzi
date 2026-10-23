@@ -979,8 +979,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       newDataDirectory: target,
       // 用户指定过备份位置 ⇒ 迁移后仍用同一个（不跟着数据目录搬家）
       newBackupDirectory:
-          _config.backupDirectory ??
-          _service.policy.backupDirectoryFor(target),
+          _config.backupDirectory ?? _service.policy.backupDirectoryFor(target),
     );
     final MigrationPlan plan = migrator.plan();
     final DriveInfo? drive = _environment.driveOf(target);
@@ -1557,13 +1556,24 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 启动流程要在首帧之后弹对话框，用它的 context（见 `_navigatorKey`）
       navigatorKey: _navigatorKey,
       theme: _theme,
-      // SC-1：全局文字缩放（覆盖系统缩放；设置页五档 + 一键恢复默认）
-      builder: (BuildContext context, Widget? child) => MediaQuery(
-        data: MediaQuery.of(
-          context,
-        ).copyWith(textScaler: TextScaler.linear(_config.uiScale.factor)),
-        child: child!,
-      ),
+      // SC-1：全局文字缩放（设置页五档 + 一键恢复默认）。
+      //
+      // 批 3 第 15 条：**系统字号与应用档位取较大值**，不再「应用覆盖系统」。
+      // 原来那样会让「系统调大了、应用还是标准」的用户看到**更小**的字；
+      // 而相乘会 1.3×2.0=2.6 倍直接崩界面（见 `effectiveTextScale` 注释）。
+      builder: (BuildContext context, Widget? child) {
+        final double system = MediaQuery.of(context).textScaler.scale(1.0);
+        final double effective = effectiveTextScale(
+          system: system,
+          app: _config.uiScale.factor,
+        );
+        return MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(effective)),
+          child: child!,
+        );
+      },
       home: _buildHome(),
     );
   }
@@ -1902,30 +1912,46 @@ class _StartupPage extends StatelessWidget {
   final VoidCallback? onExtra;
 
   @override
+  // 批 3 第 14 条：**整页可滚**。2.0 档 + 小窗口下，`Column` 会顶破屏幕
+  // （按钮被推出可视区 = 用户点不到「重试」，等于卡死）。
+  // `Center` 换成 `SingleChildScrollView` + 居中约束，内容超出时可滚。
   Widget build(BuildContext context) => Scaffold(
-    body: Center(
+    body: SingleChildScrollView(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 24),
-            // 常驻可见的文字按钮，不用图标（`docs/ui_principles.md` §1.1）
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
+        // 高度不足时也要能滚：给一个「至少一屏高」的最小高度，内容超了自然滚
+        constraints: BoxConstraints(
+          minHeight: MediaQuery.sizeOf(context).height,
+        ),
+        // 外层负责**居中**（滚动容器里的 ConstrainedBox 会左对齐，得自己包 Center）
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                // 「重试」放前面：它是**代价最小**的那条路（不用重选目录）
-                if (retryLabel != null && onRetry != null)
-                  OutlinedButton(onPressed: onRetry, child: Text(retryLabel!)),
-                FilledButton(onPressed: onAction, child: Text(actionLabel)),
-                if (extraLabel != null && onExtra != null)
-                  TextButton(onPressed: onExtra, child: Text(extraLabel!)),
+                Text(message, textAlign: TextAlign.center),
+                const SizedBox(height: 24),
+                // 常驻可见的文字按钮，不用图标（`docs/ui_principles.md` §1.1）
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: <Widget>[
+                    // 「重试」放前面：它是**代价最小**的那条路（不用重选目录）
+                    if (retryLabel != null && onRetry != null)
+                      OutlinedButton(
+                        onPressed: onRetry,
+                        child: Text(retryLabel!),
+                      ),
+                    FilledButton(onPressed: onAction, child: Text(actionLabel)),
+                    if (extraLabel != null && onExtra != null)
+                      TextButton(onPressed: onExtra, child: Text(extraLabel!)),
+                  ],
+                ),
               ],
             ),
-          ],
+          ),
         ),
       ),
     ),
