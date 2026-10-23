@@ -13555,3 +13555,67 @@ C://Users//yzx//AppData//Local//神算子 不可写（Creation failed, errno = 5
 **剩余队列**（Q5 裁定挑出、尚未编号的两项 P2）：**对比度**
 （`overview_page.dart` 负库存告警 `Colors.red` ≈3.5:1 → `colorScheme.error`）
 与**点击区**（建档 chips ≈32px / 库存 ⓘ ≈22px → ≥44px）。其余 P2 留 0.7。
+
+## §CV·八十九 **Q5 最后两项 P2 落地：对比度 + 点击区**（2026-10-23，裁定 `docs/reply.md`）
+
+> 提案：`docs/proposals/P2两项-对比度与点击区-方案.md`（中英双语）。
+> 用户裁定：**①②③ 全按推荐**，另附两条工程警告 ——
+> ① ConstrainedBox 可能是「假大空」套壳；② 护栏断言别只信 `getSize(ActionChip)`。
+> 落地结果：**警告都收了，但②的走向和警告预期的相反**（见下）。
+
+### 一、① 对比度：`Colors.red` 归队（`overview_page.dart`）
+
+负库存告警改 `theme.colorScheme.error`（`const TextStyle` 的 `const` 随之移除）。
+
+- 探针实测（Flutter 3.11）：`ColorScheme.fromSeed(0xFF2F6FA8).error = #BA1A1A`，
+  对 scaffold 背景 `#FAFAFA` ≈ **6.19:1**；旧值 `Colors.red`（#F44336）≈ **3.53:1**，
+  低于 `ui_principles.md` §二「次要文字 ≥ 4.5:1」。
+- **值不写死** —— SDK 基线色将来若变自动跟随，不会漂。
+- `grep -rn "Colors.red" lib/` 现在 **0 命中**（这曾是最后一处）。
+
+### 二、② 单位 chips：**实测无需改动** —— 提案的前提被推翻（重点留痕）
+
+提案写「M3 ActionChip 默认高约 32px」（沿用报告 §2.5 的说法）。
+**在这版 SDK 上不成立**，实测 15 个 chip **全部 48.0 高**：
+
+- 机制（`chip.dart:1491-1498`）：`ThemeData` 默认 `materialTapTargetSize = padded`
+  ⇒ 整个 chip 上 `minWidth/minHeight: kMinInteractiveDimension(48)` 约束；
+  且 `_RenderChipRedirectingHitDetection` 把 padding 区的点击**重定向**给 chip 主体。
+  ⇒ 视觉 pill 仍紧凑，**点击区已是 48**。
+- 全仓 grep `materialTapTargetSize` / `ChipTheme` / `visualDensity` **零覆盖**
+  ⇒ app 内任何地方弹 chips 都吃这个默认值。
+
+⇒ **不加冗余 `ConstrainedBox`**（用户警告的「假大空」不会发生 —— 因为本来就没有壳，
+chip 的 render box 就是 48，`getSize` 量的就是点击区）。**护栏保留**：
+防的是将来有人设 `shrinkWrap` 或加 `ChipTheme` 把点击区缩回去。
+
+**教训**：报告的「32px」是**只读审查的代码推演**（报告附录 C 自己声明了没跑门禁），
+到落地轮必须**实测复核** —— 本轮若照提案直接包 ConstrainedBox，就是给一个
+本来就达标的控件加一层永远不生效的壳（还会在代码里留一句假描述）。
+
+### 三、③ ⓘ 点击区：`SizedBox(44) + Center`（`stock_page.dart`）
+
+「成本（均价）+ ⓘ」的 Tooltip（tap 触发）child 从裸 `Row`（≈22px 高）换成
+`SizedBox(height: 44, child: Center(child: Row(...)))` —— **视觉不变**（行仍居中），
+点击区达标；`Row` 外加 `Key('stock-cost-info')` 供护栏定位。
+
+### 四、护栏：先红后改 + 逐项反向灵敏度验证
+
+| 护栏 | 落点 | 先红原因 | 反向验证（临时回退） |
+|---|---|---|---|
+| 告警色 = 主题错误色 | `overview_page_test.dart` | 拿到 `Colors.red` | 改回 `Colors.red` ⇒ 红 |
+| 每个 chip ≥ 44×44 | `product_form_dialog_test.dart` | **本就绿**（48 已达标） | 宿主设 `shrinkWrap` ⇒ chip 38、红（reason 正中原委） |
+| ⓘ 行 ≥ 44 高 | `stock_page_test.dart` | key 不存在 | 拿掉 SizedBox/key ⇒ 红 |
+
+⚠️ **②的先红后改是「先绿」** —— 它证明的是**既有合规**，不是新修复；
+反向验证补上了「抓得住回归」那一环。三条 reason 文案都指向根因，不指向现象。
+
+### 五、验证
+
+根侧 **280**（+3）· core **642** · host **152** · app **336** ·
+`flutter analyze` **0 issues** · `dart format --set-exit-if-changed` **exit 0**。
+（中途 format 门禁抓到我新写的长 reason 行没换行，已按第 0 步直跑修掉 —— 门禁本牙。）
+
+**Q5 三项 P2（对比度 / 点击区 / 清空筛选）全部收口。**
+报告 §2.5 其余 P2 按裁定**留 0.7**（橙色提示三套外观统一、选择器弹层关闭入口、
+导航 60px 兜底、手机三态条等 —— 排队列，不在本轮）。
