@@ -46,6 +46,7 @@ class SettingsPage extends StatefulWidget {
     this.hostSyncNote,
     this.onExportBackup,
     this.onMigrateData,
+    this.onChangeBackupLocation,
     this.mobileSync,
     this.onScanPair,
     this.onSyncNow,
@@ -94,6 +95,10 @@ class SettingsPage extends StatefulWidget {
   /// 进度 → 迁移 → 重开库）都在宿主（`app.dart`）。`null` = 不显示按钮
   /// （Android 私有目录改不了 / 测试单跑）。
   final Future<void> Function()? onMigrateData;
+
+  /// **更改备份位置**（2026-10-22 用户实测：备份目录不可写时没有出路）。
+  /// `null` = 不显示「更改」（手机端 / 测试单跑）。
+  final VoidCallback? onChangeBackupLocation;
 
   /// 手机端同步服务（§BL·三）。非 `null` ⇒ 多设备区显示**移动面板**
   /// （扫码 / 已连接信息 / 立即同步），取代桌面端的 hostService 面板。
@@ -197,9 +202,38 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _apply(AppConfig newConfig) {
+    // 2026-10-22/23（用户实测三轮）：**保存失败必须说出来，而且不能让
+    // 「告知」本身再失败**。两个踩过的坑：
+    // ① 原来是「先 setState 再 save」—— save 抛异常时界面已经变了，
+    //    用户看到「选了没反应」；
+    // ② 第一版修法在 catch 里**先调 onChanged 再弹 SnackBar**，而
+    //    onChanged 内部还有一次 save，它再抛就把 SnackBar 吞了。
+    // 现在：先弹消息、再通知宿主，两步各自独立。
     setState(() => _current = newConfig);
-    widget.configStore.save(newConfig);
-    widget.onChanged(newConfig);
+    try {
+      widget.configStore.save(newConfig);
+      widget.onChanged(newConfig);
+    } catch (error) {
+      // 2026-10-23（用户复测：N=4、文件没写、**也没弹消息**）：
+      // 原来的顺序是「先 onChanged 再弹 SnackBar」—— 而 onChanged 内部
+      // 还有一次 `_configStore.save`，它再抛一次就把 SnackBar 吞了。
+      // ⇒ 用户看到「选了什么都没发生」，而我们什么都看不到。
+      // 现在：**先告诉用户，再通知宿主**，两步各自独立。
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '没能存到磁盘（$error）。\n'
+            '这次的改动**现在已生效**，但重启软件后会变回原来的设置。',
+          ),
+          duration: const Duration(seconds: 10),
+        ),
+      );
+      try {
+        widget.onChanged(newConfig);
+      } catch (_) {
+        // 宿主那边失败也不该把已经弹出来的消息收回去
+      }
+    }
   }
 
   void _updateShopName(String text) {
@@ -265,7 +299,11 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                     ],
                     onChanged: (UiScale? value) {
-                      if (value == null || value == _current.uiScale) return;
+                      // 2026-10-23（真机复测）：**去掉「选当前值就返回」的守卫**。
+                      // 它会把人卡死 —— 一旦 `_current` 与磁盘不一致（存盘失败过），
+                      // 用户重选同一个档位不会有任何反应，而他又看不出差别。
+                      // `_apply` 是幂等的，重选一遍没有代价。
+                      if (value == null) return;
                       _apply(
                         AppConfig(
                           dataDirectory: _current.dataDirectory,
@@ -279,6 +317,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       border: OutlineInputBorder(),
                     ),
                   ),
+                  const SizedBox(height: 8),
                   const SizedBox(height: 8),
                   // 遗漏 2：一键重置 —— 200% 下发现乱了的退路
                   TextButton.icon(
@@ -346,6 +385,8 @@ class _SettingsPageState extends State<SettingsPage> {
                         label: '备份位置',
                         path: widget.backupDirectory!,
                         onOpen: () => _openFolder(widget.backupDirectory!),
+                        // 2026-10-22：备份目录不可写时，用户**必须**有路可走
+                        onChange: widget.onChangeBackupLocation,
                       ),
                     ],
                     const SizedBox(height: 8),

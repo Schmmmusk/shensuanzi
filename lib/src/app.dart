@@ -657,7 +657,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   String _brokenDatabaseMessage(String directory) =>
       '$directory 里的数据文件打不开 —— 可能是文件损坏了，'
       '也可能是被别的程序占用着。\n'
-      '修好之后点「重试」；也可以点「换一个文件夹」换个位置。';
+      '修好之后点「重试」；也可以点「更改」换个位置。';
 
   /// 数据文件**不见了**时的说辞（2026-10-07，`docs/reply.md` §6 的 #1）。
   ///
@@ -812,7 +812,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       }
       final BackupService backup = BackupService(
         dataDirectory: location.directory,
-        backupDirectory: location.backupDirectory,
+        // 2026-10-22：用户可指定备份位置（默认仍 = 数据目录的兄弟目录）
+        backupDirectory: _config.backupDirectory ?? location.backupDirectory,
         schemaVersion: schemaVersion,
         // #43：备份失败的原始异常进日志（界面只显示分类文案 —— 与
         // ExportService.onFailure 同款）
@@ -976,7 +977,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       dataDirectory: current.directory,
       backupDirectory: current.backupDirectory,
       newDataDirectory: target,
-      newBackupDirectory: _service.policy.backupDirectoryFor(target),
+      // 用户指定过备份位置 ⇒ 迁移后仍用同一个（不跟着数据目录搬家）
+      newBackupDirectory:
+          _config.backupDirectory ??
+          _service.policy.backupDirectoryFor(target),
     );
     final MigrationPlan plan = migrator.plan();
     final DriveInfo? drive = _environment.driveOf(target);
@@ -1159,6 +1163,20 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       _openDatabase(current); // 旧位置原样 —— 立刻恢复可用
       _toast('没能搬过去（${result.error}）。数据还在原位置，软件已恢复。');
     }
+  }
+
+  /// **更改备份位置**（2026-10-22，用户实测反馈：备份目录不可写 ⇒ 死局）。
+  ///
+  /// 不搬数据、只改配置：备份是「数据目录的兄弟目录」的默认规则之外，
+  /// 用户显式指定一个位置（写进 `backup_directory`）。
+  Future<void> _changeBackupLocation() async {
+    final String? picked = await widget.pickDirectory();
+    if (picked == null || !mounted) return;
+    final String target = p.normalize(picked);
+    final AppConfig updated = _config.copyWith(backupDirectory: target);
+    _configStore.save(updated);
+    setState(() => _config = updated);
+    _toast('备份位置已改为 $target。下次备份就放在这里。');
   }
 
   Future<void> _migrationMessage(BuildContext context, String message) =>
@@ -1572,7 +1590,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       final String? missing = _missingDatabaseDirectory;
       return _StartupPage(
         message: _dbFailure!,
-        actionLabel: '换一个文件夹',
+        // 术语统一（§CV·八十 Q3）：按钮名与设置页/首启对话框一致，只叫「更改」
+        actionLabel: '更改',
         // §审查 BUG-03：**必须强制弹目录选择框** —— 原来重新走 `_prepare()`，
         // 而 `resolved()` 会再次解析出同一个坏位置 ⇒ 反复点、反复回到错误页
         onAction: _pickAndOpen,
@@ -1716,9 +1735,14 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       partySink = null;
     }
 
+    // 2026-10-23：知道数据目录了 ⇒ 给配置加一条**必然可写**的兜底
+    //（真机上 %APPDATA% 建不了文件，但数据目录能开库 ⇒ 一定写得进配置）
+    _configStore.useDataDirectoryFallback(location.directory);
+
     final AppShell shell = AppShell(
       dataDirectory: location.directory,
-      backupDirectory: location.backupDirectory,
+      // 2026-10-22：用户指定的备份位置优先；否则跟随数据目录
+      backupDirectory: _config.backupDirectory ?? location.backupDirectory,
       // 库打开成功后用真实数据格式版本；没打开时没有备份，回退标记版本
       schemaVersion: _schemaVersion > 0
           ? _schemaVersion
@@ -1816,6 +1840,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       onMigrateData: _shellKind == ShellKind.mobile
           ? null
           : _migrateDataLocation,
+      // 2026-10-22：备份位置可改（备份目录不可写时的出路）
+      onChangeBackupLocation: _changeBackupLocation,
       // §BL·三：手机端同步（桌面是主机，无客户端同步）
       mobileSync: _mobileSyncService,
       onScanPair: _mobileScanPair,
@@ -1823,6 +1849,15 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // §AI-1：传**解析后**的实例（生产里 widget.configStore 是 null）
       configStore: _configStore,
       onConfigChanged: (AppConfig config) {
+        // 一次设置变更一行（2026-10-23 真机排障总结）：这条是「用户到底改没改」
+        // 的唯一证据 —— 没有它，「改了没生效」和「根本没改」看起来一模一样。
+        // 写在 save 之前：save 抛异常也能留下痕迹。
+        _log.write(
+          '设置已变更：界面大小=${config.uiScale.label}'
+          '（原 ${_config.uiScale.label}），'
+          '店名=${config.shopName ?? '（空）'}',
+          level: '信息',
+        );
         _configStore.save(config);
         setState(() => _config = config);
       },

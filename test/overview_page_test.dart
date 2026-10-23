@@ -386,6 +386,30 @@ void main() {
     expect(find.byKey(const Key('overview-card-entries')), findsNothing);
   });
 
+  // 2026-10-22（§CV·八十三 批 2 第 12 条）：**空库也要有入口**。
+  // 原来「要开工？」卡长在经营三卡里，被 `hasAnyDocument()` 一起关掉 ——
+  // 空库（刚装好、什么都没录）恰恰是最需要指路的时候。
+  testWidgets('空库 ⇒ 「要开工？」入口仍然在，且带引导句', (WidgetTester tester) async {
+    // queries = null ⇒ 没有任何流水（空库）
+    await tester.pumpWidget(page(onNavigate: (_) {}));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('overview-go-sale')), findsOneWidget);
+    expect(find.byKey(const Key('overview-go-purchase')), findsOneWidget);
+    expect(find.byKey(const Key('overview-go-delivery')), findsOneWidget);
+  });
+
+  // 同一批：「打开文件夹」+「不会上传」承诺（报告 §2.4-5）
+  testWidgets('数据位置卡：有「打开文件夹」，也有「不会上传」承诺', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page(onNavigate: (_) {}));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('overview-open-folder')), findsOneWidget);
+    expect(find.text('数据只在这台电脑上，不会上传到任何地方。'), findsOneWidget);
+  });
+
   testWidgets('#32：手机未同步 ⇒ 「仅已同步 · 有 N 条未同步」；桌面不显示', (
     WidgetTester tester,
   ) async {

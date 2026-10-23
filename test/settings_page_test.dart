@@ -45,6 +45,7 @@ void main() {
     bool backupNeedsAttention = false,
     Future<BackupOutcome> Function()? onBackupNow,
     HostServiceController? hostService,
+    VoidCallback? onChangeBackupLocation,
   }) => MaterialApp(
     home: Scaffold(
       body: SettingsPage(
@@ -55,6 +56,7 @@ void main() {
         backupNeedsAttention: backupNeedsAttention,
         onBackupNow: onBackupNow,
         hostService: hostService,
+        onChangeBackupLocation: onChangeBackupLocation,
         onChanged: (AppConfig config) {
           current = config;
           onChanged(config);
@@ -67,6 +69,63 @@ void main() {
   // 原来 `late AppConfig _current = widget.config` 只在 State 首次创建时求值，
   // 没有 `didUpdateWidget` ⇒ 迁移后改任何设置都会把 `data_directory` 写回旧路径，
   // 用户下次启动打开旧目录，以为「单据丢了」。
+  // 2026-10-22（用户实测两轮）：
+  // 第一轮「回滚 + 告知」⇒ 用户看到「恢复按钮又变灰、界面还是没变」——
+  // 对一台写不进配置的机器，回滚等于「这个设置永久废了」。
+  // 现在：**改动照样生效**（通知宿主重建），只把「重启会变回去」说清楚。
+  testWidgets('保存失败 ⇒ 改动照样生效，并明说不会持久化', (WidgetTester tester) async {
+    // 把 config.json 占成**目录** ⇒ save 必抛（主位置与备用位置都指这里）
+    final Directory blocker = Directory(store.file.path);
+    blocker.createSync(recursive: true);
+    addTearDown(() {
+      try {
+        blocker.deleteSync(recursive: true);
+      } catch (_) {}
+    });
+
+    AppConfig? received;
+    await tester.pumpWidget(page((AppConfig config) => received = config));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('setting-scale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('特大').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('没能存到磁盘'),
+      findsOneWidget,
+      reason: '必须说清楚没存上',
+    );
+    expect(find.textContaining('重启软件后会变回'), findsOneWidget);
+    expect(
+      received?.uiScale,
+      UiScale.huge,
+      reason: '虽然没存上，本次改动仍要生效（否则设置永远用不了）',
+    );
+  });
+
+  // 同一批：备份位置要能改（用户实测：备份目录不可写时没有出路 = 死局）
+  testWidgets('备份位置行有「更改」（装配了 onChange 时）', (WidgetTester tester) async {
+    // 路径两行要 dataDirectory 非空才渲染
+    current = const AppConfig(dataDirectory: r'D://神算子数据');
+    await tester.pumpWidget(
+      page(
+        (AppConfig config) {},
+        backupDirectory: r'D://神算子备份',
+        onChangeBackupLocation: () {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('备份位置'), findsOneWidget);
+    expect(
+      find.widgetWithText(OutlinedButton, '更改'),
+      findsWidgets,
+      reason: '数据位置与备份位置都要能改',
+    );
+  });
+
   testWidgets('P0-1：宿主换了配置（如迁移后）⇒ 改缩放不能把旧路径写回去', (
     WidgetTester tester,
   ) async {
@@ -185,6 +244,9 @@ void main() {
     expect(find.textContaining('每天首次打开软件会自动备份一次'), findsOneWidget);
     expect(find.textContaining('任何 SQLite 工具打开'), findsOneWidget);
 
+    // 诊断行让页面变高 ⇒ 按钮可能落到视口外，先滚到它再点
+    await tester.ensureVisible(find.byKey(const Key('setting-backup-now')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('setting-backup-now')));
     await tester.pumpAndSettle();
 
@@ -250,6 +312,8 @@ void main() {
       ),
     );
 
+    await tester.ensureVisible(find.byKey(const Key('setting-backup-now')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('setting-backup-now')));
     await tester.pump();
 

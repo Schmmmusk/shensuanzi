@@ -114,6 +114,103 @@ void main() {
   });
 
   // ============================================================ 容错
+  // 2026-10-22（用户实测）：选「大」后界面不变，报
+  // `Cannot open file ... config.json (OS Error: 拒绝访问。, errno = 5)`。
+  // 根因是**瞬时锁**（杀毒软件实时扫描正在写的文件）—— ACL 与只读属性
+  // 都是好的。⇒ save 必须重试，不能一失败就放弃。
+  group('save() 的瞬时锁重试', () {
+    test('写一直失败 ⇒ 重试 3 次后才把异常抛给上层', () {
+      final Directory blocker = Directory(p.join(box.path, 'config.json'));
+      blocker.createSync();
+      addTearDown(() {
+        try {
+          blocker.deleteSync();
+        } catch (_) {}
+      });
+
+      final List<Duration> waits = <Duration>[];
+      final AppConfigStore store = AppConfigStore(
+        File(p.join(box.path, 'config.json')),
+        sleep: waits.add,
+      );
+
+      expect(() => store.save(const AppConfig()), throwsA(anything));
+      expect(
+        waits.length,
+        3,
+        reason: '共 4 次尝试：失败后睡 30/60/90ms，再失败才抛（总 180ms，别卡界面）',
+      );
+      expect(waits.first.inMilliseconds, 30);
+      expect(waits.last.inMilliseconds, 90);
+    });
+
+    test('主位置写不进去 ⇒ 落到备用位置（设置不能永远存不上）', () {
+      // 主位置占成目录 ⇒ 永远写不进去（模拟用户机器上的 errno 5）
+      final Directory blocked = Directory(p.join(box.path, 'config.json'));
+      blocked.createSync();
+      addTearDown(() {
+        try {
+          blocked.deleteSync();
+        } catch (_) {}
+      });
+
+      final File backup = File(p.join(box.path, 'local', 'config.json'));
+      final AppConfigStore store = AppConfigStore(
+        File(p.join(box.path, 'config.json')),
+        fallbackFile: backup,
+        sleep: (Duration _) {},
+      );
+
+      store.save(const AppConfig(uiScale: UiScale.giant));
+
+      expect(backup.existsSync(), isTrue, reason: '必须落到备用位置');
+      expect(store.load().uiScale, UiScale.giant, reason: '读也要认备用位置');
+    });
+
+    test('主位置与备用位置都写不进 ⇒ 落到**数据目录**（真机 2026-10-23）', () {
+      // 真机现象：%APPDATA% 和 %LOCALAPPDATA% 都建不了文件，但数据目录能开库
+      final Directory blocked = Directory(p.join(box.path, 'config.json'));
+      blocked.createSync();
+      addTearDown(() {
+        try {
+          blocked.deleteSync();
+        } catch (_) {}
+      });
+
+      final String dataDir = p.join(box.path, 'data');
+      Directory(dataDir).createSync(recursive: true);
+
+      final AppConfigStore store = AppConfigStore(
+        File(p.join(box.path, 'config.json')),
+        sleep: (Duration _) {},
+      )..useDataDirectoryFallback(dataDir);
+
+      store.save(const AppConfig(uiScale: UiScale.giant));
+
+      final File inData = File(p.join(dataDir, dataDirConfigFileName));
+      expect(inData.existsSync(), isTrue, reason: '必须落到数据目录');
+      expect(store.load().uiScale, UiScale.giant, reason: '读也要认它');
+    });
+
+    test('一直失败 ⇒ 把异常抛给上层（设置页靠它回滚并告知）', () {
+      // 把 config.json 占成**目录** ⇒ 写永远失败
+      final Directory blocker = Directory(p.join(box.path, 'config.json'));
+      blocker.createSync();
+      addTearDown(() {
+        try {
+          blocker.deleteSync();
+        } catch (_) {}
+      });
+
+      final AppConfigStore store = AppConfigStore(
+        File(p.join(box.path, 'config.json')),
+        sleep: (Duration _) {}, // 别真睡（测试要快）
+      );
+
+      expect(() => store.save(const AppConfig()), throwsA(anything));
+    });
+  });
+
   group('配置是外部输入 → 读永不抛', () {
     test('JSON 语法坏了 → 默认值，不抛', () {
       store.file.writeAsStringSync('{ 这不是 json');
