@@ -138,6 +138,35 @@ void main() {
     );
   });
 
+  // Q5 点击区（`docs/proposals/P2两项-对比度与点击区-方案.md`，用户裁定 ②甲）：
+  // 报告说 M3 ActionChip 约 32px —— **在这版 SDK 上不成立**（实测见下）。
+  // 机制（`chip.dart:1491-1498`）：ThemeData 默认 `materialTapTargetSize = padded`
+  // ⇒ 整个 chip 上 `minWidth/minHeight: kMinInteractiveDimension(48)` 约束，
+  // 且 `_RenderChipRedirectingHitDetection` 把 padding 区的点击重定向给 chip 主体。
+  // ⇒ 视觉 pill 仍紧凑，**点击区已是 48**（本用例实测 15 个 chip 全为 48.0 高）。
+  // 全仓 grep 无 `materialTapTargetSize` / `ChipTheme` / `visualDensity` 覆盖。
+  // 本护栏防的是**将来**有人设 shrinkWrap 或加 ChipTheme 把点击区缩回去。
+  testWidgets('Q5 点击区：每个单位 chip ≥ 44×44', (WidgetTester tester) async {
+    await openForm(tester);
+
+    final int chipCount = tester.widgetList(find.byType(ActionChip)).length;
+    expect(chipCount, greaterThan(0), reason: '常用单位 chips 必须在场');
+    for (int i = 0; i < chipCount; i++) {
+      final Size size = tester.getSize(find.byType(ActionChip).at(i));
+      expect(
+        size.height,
+        greaterThanOrEqualTo(44),
+        reason:
+            '第 $i 个 chip 高 ${size.height}px < 44 —— 谁把 materialTapTargetSize 改成 shrinkWrap 了？',
+      );
+      expect(
+        size.width,
+        greaterThanOrEqualTo(44),
+        reason: '第 $i 个 chip 宽 ${size.width}px < 44',
+      );
+    }
+  });
+
   // ============================================================ AI-5
   testWidgets('AI-5：单位说明小字 + 包装说明输入框在场', (WidgetTester tester) async {
     await openForm(tester);

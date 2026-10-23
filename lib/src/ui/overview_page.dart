@@ -398,10 +398,15 @@ class _OverviewPageState extends State<OverviewPage> {
         if (negativeStock > 0)
           Text(
             '负库存 $negativeStock 种 —— 可能是没录期初或超卖，点「库存」看看',
-            style: const TextStyle(
+            // Q5 对比度（用户裁定 ①甲）：主题错误色，不再是写死的 Colors.red。
+            // 实测（Flutter 3.11 探针）：colorScheme.error = #BA1A1A，对
+            // scaffold 背景 #FAFAFA ≈ 6.19:1；Colors.red（#F44336）只有 ≈3.53:1，
+            // 低于 `ui_principles.md` §二「次要文字 ≥ 4.5:1」。
+            // 值不写死 —— SDK 基线色将来若变，这里跟着变，不会漂。
+            style: TextStyle(
               height: 1.7,
               fontSize: 15,
-              color: Colors.red,
+              color: theme.colorScheme.error,
             ),
           ),
         if (receivables.totalCents <= 0 && negativeStock == 0)

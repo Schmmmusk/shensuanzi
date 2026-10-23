@@ -594,23 +594,33 @@ class _StockRow extends StatelessWidget {
                   message: '按历史加权平均成本计算。\n进价变化时可能与最近一次进价不同。',
                   triggerMode: TooltipTriggerMode.tap,
                   showDuration: const Duration(seconds: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(
-                        '成本（均价）',
-                        style: TextStyle(
-                          height: 1.6,
-                          color: theme.textTheme.bodySmall?.color,
-                        ),
+                  // Q5 点击区（用户裁定 ③甲）：Tooltip 的触发面 = child 的边界。
+                  // 原先裸 Row 只有约 22px 高（14px 图标 + 1.6 行高），点不中
+                  // 就等于「口径说明不存在」。SizedBox(44) + Center：
+                  // 视觉不变（行仍居中），点击区达标（`ui_principles.md` §二 44×44）。
+                  child: SizedBox(
+                    key: const Key('stock-cost-info'),
+                    height: 44,
+                    child: Center(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text(
+                            '成本（均价）',
+                            style: TextStyle(
+                              height: 1.6,
+                              color: theme.textTheme.bodySmall?.color,
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Icon(
+                            Icons.info_outline,
+                            size: 14,
+                            color: theme.textTheme.bodySmall?.color,
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 2),
-                      Icon(
-                        Icons.info_outline,
-                        size: 14,
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
-                    ],
+                    ),
                   ),
                 ),
                 const SizedBox(width: 4),

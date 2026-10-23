@@ -301,6 +301,23 @@ void main() {
     expect(find.text('¥ 35.00'), findsOneWidget);
   });
 
+  // Q5 点击区（`docs/proposals/P2两项-对比度与点击区-方案.md`，用户裁定 ③甲）：
+  // 「成本（均价）+ ⓘ」这一行原先只有约 22px 高（14px 图标 + 1.6 行高），
+  // 低于 `ui_principles.md` §二「按钮最小点击区 44×44」。Tooltip 是 tap 触发，
+  // 点不中就等于「口径说明不存在」。
+  testWidgets('Q5 点击区：成本口径 ⓘ 行 ≥ 44 高', (WidgetTester tester) async {
+    buy(10);
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    final Size size = tester.getSize(find.byKey(const Key('stock-cost-info')));
+    expect(
+      size.height,
+      greaterThanOrEqualTo(44),
+      reason: 'ⓘ 点击区高 ${size.height}px < 44',
+    );
+  });
+
   testWidgets('三档颜色：卖到低于安全库存 → 橙提示；超卖 → 红提示', (WidgetTester tester) async {
     buy(10); // 安全库存 5
     await tester.pumpWidget(page());

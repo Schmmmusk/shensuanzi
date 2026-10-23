@@ -451,6 +451,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('负库存 1 种'), findsOneWidget);
   });
+
+  // Q5 对比度（`docs/proposals/P2两项-对比度与点击区-方案.md`，用户裁定 ①甲）：
+  // 负库存告警必须用**主题错误色** —— 实测 colorScheme.error = #BA1A1A
+  // 对 #FAFAFA ≈6.19:1；旧值 Colors.red（#F44336）只有 ≈3.53:1，
+  // 低于 `ui_principles.md` §二「次要文字 ≥ 4.5:1」。
+  testWidgets('负库存告警色 = 主题错误色（Q5 对比度护栏）', (WidgetTester tester) async {
+    final int todayMs = DateTime.now().millisecondsSinceEpoch;
+    final QueryDao queries = await seedBiz(todayMs: todayMs, oversell: true);
+
+    await tester.pumpWidget(page(queries: queries));
+    await tester.pumpAndSettle();
+
+    final Text warning = tester.widget<Text>(find.textContaining('负库存 1 种'));
+    final ThemeData theme = Theme.of(tester.element(find.byType(OverviewPage)));
+    expect(
+      warning.style!.color,
+      theme.colorScheme.error,
+      reason: '必须用主题错误色（≈6.19:1）；Colors.red 只有 ≈3.53:1，不达标',
+    );
+    expect(
+      warning.style!.color,
+      isNot(Colors.red),
+      reason: 'Colors.red 是全仓 lib/ 最后一处，不许回来',
+    );
+  });
   // 附录 B（`docs/ui-review-2026-10-21.md`）：概览页 原先**没有**大字号断言。
   // 批 3 第 18 条：前 17 项「尺寸随缩放派生」改造的机械护栏 —— 先立护栏再动尺寸。
   testWidgets('大字号（2.0）：概览页不溢出', (WidgetTester tester) async {
