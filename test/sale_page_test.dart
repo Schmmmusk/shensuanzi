@@ -254,6 +254,56 @@ void main() {
   Future<void> tapSave(WidgetTester tester) =>
       tapFinder(tester, find.byKey(const Key('sale-save')));
 
+  // 2026-10-22（§CV·八十一 批 2 第 7 条 / 报告 §2.5 性能项）：
+  // 原来 `build()` 里直接 `stockSnapshot()`，而页内任何输入都 `setState`
+  // ⇒ **每敲一个键一次全表 GROUP BY**。现在一次会话只查一次（提交后失效）。
+  testWidgets('打字不再每键查一次全库（快照按需失效）', (WidgetTester tester) async {
+    int calls = 0;
+    final SaleService counting = _CountingSaleService(
+      engine: RuleEngine(db),
+      queries: QueryDao(db),
+      onSnapshot: () => calls++,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SalePage(
+            service: counting,
+            productService: products,
+            partyService: partyService,
+            sink: sink,
+            masterDataPolicy: const MasterDataPolicy.desktop(),
+            masterDataSink: ServiceMasterSink(products),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 选一个商品（走页面已有的 helper：弹层里要先搜索才列商品）
+    await pickFirstProduct(tester);
+
+    // 数量框：按 Key 找（`byType.first` 会命中别的输入框）
+    final Finder qty = find.byKey(const Key('sale-qty'));
+    await tester.enterText(qty, '1');
+    await tester.pump();
+    await tester.enterText(qty, '12');
+    await tester.pump();
+    await tester.enterText(qty, '123');
+    await tester.pump();
+    await tester.enterText(qty, '1234');
+    await tester.pump();
+    await tester.enterText(qty, '12345');
+    await tester.pump();
+
+    expect(
+      calls,
+      lessThanOrEqualTo(2),
+      reason: '快照应缓存（首次 + 可能一次重算），不能每键一次；实测 \$calls 次',
+    );
+  });
+
   testWidgets('空表单点保存 → 行级报「请选一个商品」', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -1072,4 +1122,21 @@ void main() {
           'Ctrl+S 静默失效；改成 `FocusScope` 后焦点留在页内 ⇒ 恒生效',
     );
   });
+}
+
+/// 只用来数 `stockSnapshot()` 被调了几次（性能回归的机械判据）
+class _CountingSaleService extends SaleService {
+  _CountingSaleService({
+    required super.engine,
+    required super.queries,
+    required this.onSnapshot,
+  });
+
+  final void Function() onSnapshot;
+
+  @override
+  Map<String, int> stockSnapshot() {
+    onSnapshot();
+    return super.stockSnapshot();
+  }
 }

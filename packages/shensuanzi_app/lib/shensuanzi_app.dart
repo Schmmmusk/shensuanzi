@@ -28,7 +28,12 @@
 library;
 
 export 'src/app_config.dart'
-    show AppConfig, AppConfigLoadStatus, AppConfigStore, UiScale;
+    show
+        AppConfig,
+        AppConfigLoadStatus,
+        AppConfigStore,
+        UiScale,
+        dataDirConfigFileName;
 export 'src/bootstrap.dart'
     show AppBootstrap, DataDirectoryRejected, DataLocation;
 export 'src/data_directory.dart'

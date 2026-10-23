@@ -155,6 +155,20 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
   });
 
+  // 2026-10-22（§CV·八十一 批 2 第 8 条 / 报告 §2.2 漂移 3）：
+  // 销售/送货的必填字段都带 `*`，采购页一颗都没有 —— 用户只能靠点保存才知道。
+  testWidgets('必填字段带 *（与销售/送货同款）', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(find.text('商品明细 *'), findsOneWidget);
+    final TextField qty = tester.widget<TextField>(
+      find.byKey(const Key('purchase-qty')),
+    );
+    expect(qty.decoration?.labelText, contains('*'), reason: '数量必填');
+    expect(find.text('账户 *'), findsOneWidget, reason: '付款账户必填');
+  });
+
   testWidgets('散采全款 → 保存成功，SnackBar 报单号与已结清', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -340,7 +354,7 @@ void main() {
         tester.widget<TextField>(find.byKey(const Key('purchase-price')));
     // 预填 = 瓶价 2.50，label 标注最小单位
     expect(priceField().controller!.text, '2.50');
-    expect(find.text('单价（元/瓶）'), findsOneWidget);
+    expect(find.text('单价（元/瓶）*'), findsOneWidget, reason: '2026-10-22 起必填带 *');
 
     // 切到「箱」⇒ 预填价 ×12 = 30.00（§BG 方案 A 的核心断言：
     // 否则瓶价被当成箱价 —— 真机踩过 1 箱 × ¥2.50 = ¥2.50）
@@ -349,14 +363,14 @@ void main() {
     await tester.tap(find.widgetWithText(ChoiceChip, '箱'));
     await tester.pumpAndSettle();
     expect(priceField().controller!.text, '30.00');
-    expect(find.text('单价（元/箱）'), findsOneWidget);
+    expect(find.text('单价（元/箱）*'), findsOneWidget, reason: '2026-10-22 起必填带 *');
     expect(find.text('1 箱 = 12 瓶，入库按 12 瓶记。'), findsOneWidget);
 
     // 切回「瓶」⇒ ÷12 还原；换算说明消失（只在切到包装时显示，裁定 ③）
     await tester.tap(find.widgetWithText(ChoiceChip, '瓶'));
     await tester.pumpAndSettle();
     expect(priceField().controller!.text, '2.50');
-    expect(find.text('单价（元/瓶）'), findsOneWidget);
+    expect(find.text('单价（元/瓶）*'), findsOneWidget, reason: '2026-10-22 起必填带 *');
     expect(find.text('1 箱 = 12 瓶，入库按 12 瓶记。'), findsNothing);
   });
 

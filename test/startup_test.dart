@@ -347,7 +347,7 @@ void main() {
       reason: '要说清**哪个目录**打不开 —— 用户才知道去哪修',
     );
     expect(find.text('重试'), findsOneWidget);
-    expect(find.text('换一个文件夹'), findsOneWidget);
+    expect(find.text('更改'), findsOneWidget);
     expect(picked, 0, reason: '没点按钮就不该调选择器');
 
     // 点「重试」：库还没修好 ⇒ 仍停在错误页（不越走越乱，也不弹向导）

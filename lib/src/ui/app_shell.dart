@@ -80,6 +80,7 @@ class AppShell extends StatefulWidget {
     this.hostService,
     required this.configStore,
     required this.onConfigChanged,
+    this.onChangeBackupLocation,
     this.initialDestinationId,
   });
 
@@ -267,6 +268,9 @@ class AppShell extends StatefulWidget {
   /// 设置页修改配置后的回调（宿主热应用缩放/店名）
   final void Function(AppConfig config) onConfigChanged;
 
+  /// **更改备份位置**（2026-10-22）；`null` = 不显示（手机端）
+  final VoidCallback? onChangeBackupLocation;
+
   /// 从哪个入口开始（不传 = 概览）
   final String? initialDestinationId;
 
@@ -438,6 +442,7 @@ Widget appShellPage(
       onExportBackup: shell.onExportBackup,
       onChanged: shell.onConfigChanged,
       onMigrateData: shell.onMigrateData,
+      onChangeBackupLocation: shell.onChangeBackupLocation,
       mobileSync: shell.mobileSync,
       onScanPair: shell.onScanPair,
       onSyncNow: shell.onSyncNow,
