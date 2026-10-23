@@ -678,6 +678,50 @@ void main() {
       expect(rows.every((DocumentSummary e) => e.settlementCount == 1), isTrue);
     });
   });
+
+  // 批 3 第 16 条（用户裁定 ①）：`countDocuments` 与 `listDocuments`
+  // **必须逐字一致** —— 它俩共用一个 `_docFilter` / `_docFrom`，这个测试
+  // 就是那条共用的机械保证：任何一边改了条件而另一边没跟上，这里立刻红。
+  test('countDocuments 与 listDocuments 的过滤条件逐字一致', () {
+    final int at = 1730412800000;
+    insertDocument(
+      db.raw,
+      'd-a',
+      docNo: 'XS-001',
+      docType: 'sale',
+      totalAmount: 100,
+      occurredAt: at,
+    );
+    insertDocument(
+      db.raw,
+      'd-b',
+      docNo: 'CG-001',
+      docType: 'purchase',
+      totalAmount: 200,
+      occurredAt: at,
+    );
+
+    // 默认（派生单据不进列表）
+    expect(documents.countDocuments(), 2);
+    expect(documents.listDocuments().length, 2);
+
+    // 按类型筛
+    expect(documents.countDocuments(types: <DocType>{DocType.sale}), 1);
+    expect(documents.listDocuments(types: <DocType>{DocType.sale}).length, 1);
+
+    // 按内容搜
+    expect(documents.countDocuments(query: 'XS'), 1);
+    expect(documents.listDocuments(query: 'XS').length, 1);
+
+    // 搜不到时也是 0，不是「查不出来」
+    expect(documents.countDocuments(query: '查无此单'), 0);
+    expect(documents.listDocuments(query: '查无此单').length, 0);
+
+    // includeDerived
+    expect(documents.countDocuments(includeDerived: true), 2);
+    expect(documents.listDocuments(includeDerived: true).length, 2);
+  });
+
 }
 
 /// 把「逐行查」的两个入口改成抛错：列表路径一旦退化成 N+1 就立刻失败。

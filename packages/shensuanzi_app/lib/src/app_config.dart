@@ -103,6 +103,20 @@ class AppConfig {
       'AppConfig(data=$dataDirectory, scale=${uiScale.factor}, shop=$shopName)';
 }
 
+/// **系统字号与应用档位怎么叠**（批 3 第 15 条）。
+///
+/// ## 为什么是「取较大值」而不是「相乘」
+///
+/// 相乘在极端情况会失控：系统 1.3 × 应用 2.0 = **2.6 倍**，
+/// 界面必崩（导航吃掉全部宽度、表格行高溢出）。
+///
+/// 取较大值则**有上界**：`max(1.3, 2.0) = 2.0` —— 应用档位就是天花板，
+/// 用户把系统字号调得再大也不会突破应用自己验证过的最大档。
+///
+/// 语义也对：用户要么在系统里调、要么在应用里调，**取他调得更大的那个**。
+double effectiveTextScale({required double system, required double app}) =>
+    system > app ? system : app;
+
 /// 数据目录里的兜底配置文件名（前面加点：不与用户看得见的数据混在一起）。
 const String dataDirConfigFileName = '.shensuanzi-config.json';
 

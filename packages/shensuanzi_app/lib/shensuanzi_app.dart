@@ -33,7 +33,8 @@ export 'src/app_config.dart'
         AppConfigLoadStatus,
         AppConfigStore,
         UiScale,
-        dataDirConfigFileName;
+        dataDirConfigFileName,
+        effectiveTextScale;
 export 'src/bootstrap.dart'
     show AppBootstrap, DataDirectoryRejected, DataLocation;
 export 'src/data_directory.dart'

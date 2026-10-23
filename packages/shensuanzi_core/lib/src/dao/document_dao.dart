@@ -159,6 +159,39 @@ class DocumentDao {
     rootsOnly: rootsOnly,
   );
 
+  /// **真实总数**（批 3 第 16 条，用户裁定 ①）。
+  ///
+  /// 为什么需要它：`listDocuments` 默认 `limit: 200` —— 页面上显示「200 条」
+  /// 而实际有 348 条时，**没人知道**。用户对着账会说「我这个月就 200 单」，
+  /// 这是数据可信度问题，不是美观问题。
+  ///
+  /// 过滤条件与 [listDocuments] **逐字共用**（`_docFilter` + `_docFrom`）——
+  /// 两处各写一遍，改一处漏一处，谎就回来了。
+  int countDocuments({
+    Set<DocType> types = const <DocType>{},
+    Set<DocumentStatusView> statusViews = const <DocumentStatusView>{},
+    int? sinceMillis,
+    int? untilMillis,
+    bool includeDerived = false,
+    String? query,
+    bool rootsOnly = false,
+  }) {
+    final _DocFilter filter = _docFilter(
+      types: types,
+      statusViews: statusViews,
+      sinceMillis: sinceMillis,
+      untilMillis: untilMillis,
+      includeDerived: includeDerived,
+      query: query,
+      rootsOnly: rootsOnly,
+    );
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT COUNT(*) AS c $_docFrom${filter.where}',
+      filter.args,
+    );
+    return (rows.first['c'] as int?) ?? 0;
+  }
+
   /// 该单产生的**库存流水差额**（商品 → 带符号数量）。
   ///
   /// 盘点单详情页用（§审查 OBS-09②）：**账面 = 实盘 − 差额**。
@@ -247,13 +280,21 @@ class DocumentDao {
     return found.isEmpty ? null : found.first;
   }
 
-  List<DocumentSummary> _summaries({
+  /// 列表 / 计数**共用的过滤条件**（批 3 第 16 条）。
+  ///
+  /// ## 为什么必须抽出来
+  ///
+  /// `countDocuments` 要用与 `listDocuments` **完全相同**的 WHERE。两处各写一遍，
+  /// 改一处漏一处 ⇒ 「显示 200 条、实际 348 条」的谎就回来了 —— 那正是本次要消灭的东西。
+  ///
+  /// 返回的 `args` **不含** ORDER BY 的本地偏移与 LIMIT：两者按出现顺序绑定，
+  /// 由调用方各自追加（偏移 → LIMIT 的顺序不能乱，见 `_summaries` 里的注释）。
+  static _DocFilter _docFilter({
     Set<DocType> types = const <DocType>{},
     Set<DocumentStatusView> statusViews = const <DocumentStatusView>{},
     int? sinceMillis,
     int? untilMillis,
     String? refDocId,
-    required int? limit,
     bool includeDerived = false,
     String? query,
     bool rootsOnly = false,
@@ -396,6 +437,44 @@ class DocumentDao {
     final String where = conditions.isEmpty
         ? ''
         : 'WHERE ${conditions.join(' AND ')} ';
+    return _DocFilter(where: where, args: args);
+  }
+
+  /// 共用的 FROM/JOIN（列表与计数**同一份**，否则计数会漏 JOIN 而报错或数错）。
+  static final String _docFrom =
+      'FROM ${Schema.documents} d '
+      'LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id '
+      'LEFT JOIN ('
+      'SELECT ref_doc_id AS ref, SUM(total_amount) AS rsum, COUNT(*) AS rcnt '
+      'FROM ${Schema.documents} '
+      'WHERE ref_doc_id IS NOT NULL AND '
+      "doc_type IN ('${DocType.saleReturn.wire}', "
+      "'${DocType.purchaseReturn.wire}') "
+      'GROUP BY ref_doc_id'
+      ') r ON r.ref = d.id ';
+
+  List<DocumentSummary> _summaries({
+    Set<DocType> types = const <DocType>{},
+    Set<DocumentStatusView> statusViews = const <DocumentStatusView>{},
+    int? sinceMillis,
+    int? untilMillis,
+    String? refDocId,
+    required int? limit,
+    bool includeDerived = false,
+    String? query,
+    bool rootsOnly = false,
+  }) {
+    final _DocFilter filter = _docFilter(
+      types: types,
+      statusViews: statusViews,
+      sinceMillis: sinceMillis,
+      untilMillis: untilMillis,
+      refDocId: refDocId,
+      includeDerived: includeDerived,
+      query: query,
+      rootsOnly: rootsOnly,
+    );
+    final List<Object?> args = filter.args.toList();
     // ⚠️ ORDER BY 里那个 `?` 的参数（本地时区偏移）—— **必须排在 LIMIT 之前**，
     // 占位符是按出现顺序绑定的。
     args.add(_localOffsetMillis);
@@ -408,17 +487,8 @@ class DocumentDao {
       'SELECT d.*, pa.name AS party_name, '
       'COALESCE(r.rsum, 0) AS returned_sum, '
       'COALESCE(r.rcnt, 0) AS returned_count '
-      'FROM ${Schema.documents} d '
-      'LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id '
-      'LEFT JOIN ('
-      'SELECT ref_doc_id AS ref, SUM(total_amount) AS rsum, COUNT(*) AS rcnt '
-      'FROM ${Schema.documents} '
-      'WHERE ref_doc_id IS NOT NULL AND '
-      "doc_type IN ('${DocType.saleReturn.wire}', "
-      "'${DocType.purchaseReturn.wire}') "
-      'GROUP BY ref_doc_id'
-      ') r ON r.ref = d.id '
-      '$where'
+      '$_docFrom'
+      '${filter.where}'
       // ⚠️ **按「日」分桶，日内按录入时刻倒序**（#26①，2026-10-18 裁定甲）。
       //
       // 为什么不能直接 `ORDER BY d.occurred_at DESC`：这一列**存着两套口径** ——
@@ -605,4 +675,12 @@ enum DocumentStatusView {
   const DocumentStatusView(this.label);
 
   final String label;
+}
+
+/// 列表 / 计数共用的过滤结果（见 `DocumentDao._docFilter`）。
+class _DocFilter {
+  const _DocFilter({required this.where, required this.args});
+
+  final String where;
+  final List<Object?> args;
 }
