@@ -92,23 +92,48 @@ def q_in_transit(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
     )
 
 
-def q_list_documents(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
-    # 与 DocumentDao.listDocuments 同形：LEFT JOIN 对方名 + 派生表算「已退额」+ 按日分桶排序
-    return (
-        "SELECT d.*, pa.name AS party_name, COALESCE(r.rsum, 0) AS returned_sum, "
-        "COALESCE(r.rcnt, 0) AS returned_count "
-        "FROM documents d "
-        "LEFT JOIN parties pa ON pa.id = d.party_id "
-        "LEFT JOIN ("
-        "  SELECT ref_doc_id AS ref, SUM(total_amount) AS rsum, COUNT(*) AS rcnt "
-        "  FROM documents WHERE ref_doc_id IS NOT NULL "
-        "    AND doc_type IN ('sale_return','purchase_return') GROUP BY ref_doc_id"
-        ") r ON r.ref = d.id "
-        "WHERE NOT (d.ref_doc_id IS NOT NULL AND d.doc_type IN ('receipt','payment')) "
-        "ORDER BY ((d.occurred_at + 28800000) / 86400000) DESC, d.created_at DESC "
-        "LIMIT ?",
-        (limit,),
-    )
+_STAGE1_LIST = (
+    "SELECT d.id FROM documents d "
+    "LEFT JOIN parties pa ON pa.id = d.party_id "
+    "WHERE d.ref_doc_id IS NULL AND NOT ("
+    "  d.doc_type IN ('receipt','payment') AND ("
+    "    SELECT COUNT(DISTINCT s.target_doc_id) FROM settlements s "
+    "    WHERE s.receipt_doc_id = d.id AND s.target_doc_id IS NOT NULL) = 1) "
+    "ORDER BY ((d.occurred_at + 28800000) / 86400000) DESC, d.created_at DESC "
+    "LIMIT ?"
+)
+
+_STAGE2_LIST = (
+    "SELECT d.*, pa.name AS party_name, COALESCE(r.rsum, 0) AS returned_sum, "
+    "COALESCE(r.rcnt, 0) AS returned_count, COALESCE(s.psum, 0) AS paid_sum "
+    "FROM documents d "
+    "LEFT JOIN parties pa ON pa.id = d.party_id "
+    "LEFT JOIN (SELECT ref_doc_id AS ref, SUM(total_amount) AS rsum, COUNT(*) AS rcnt "
+    "  FROM documents WHERE ref_doc_id IN (%s) "
+    "    AND doc_type IN ('sale_return','purchase_return') GROUP BY ref_doc_id"
+    ") r ON r.ref = d.id "
+    "LEFT JOIN (SELECT target_doc_id AS tgt, SUM(amount) AS psum FROM settlements "
+    "  WHERE target_doc_id IN (%s) GROUP BY target_doc_id) s ON s.tgt = d.id "
+    "WHERE d.id IN (%s)"
+)
+
+
+def q_list_documents(limit: int, window_ms: int):
+    """单据列表 —— **两段查询**（与 `DocumentDao._summaries` 同形，4c / §CV·九十九）。
+
+    单条 SQL 表示不了「第二段的参数来自第一段的结果」，所以这里用 callable
+    逐轮跑两次 —— 硬凑成 `IN (SELECT … LIMIT ?)` 会得到不同的计划，基线就不可信。
+    """
+
+    def measure(conn: sqlite3.Connection) -> int:
+        ids = [row[0] for row in conn.execute(_STAGE1_LIST, (limit,)).fetchall()]
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        sql = _STAGE2_LIST % (marks, marks, marks)
+        return len(conn.execute(sql, (*ids, *ids, *ids)).fetchall())
+
+    return measure, ()
 
 
 def _like_escape(term: str) -> str:
@@ -186,13 +211,19 @@ def q_today_summary(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
 
 
 def q_recent_products(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
+    # 4c：倒序走最近 2000 张单、凑满即停（与 `QueryDao.recentProducts` 同形）。
+    # `INDEXED BY` 必须写 —— 不写规划器会选 type_status 再排 11.2 万行。
     return (
-        "SELECT dl.product_id AS pid FROM document_lines dl "
-        "JOIN documents d ON d.id = dl.document_id "
+        "SELECT d.id AS did, dl.product_id AS pid "
+        "FROM (SELECT id, occurred_at FROM documents "
+        "      INDEXED BY idx_documents_occurred "
+        "      WHERE doc_type IN ('sale') "
+        "      ORDER BY occurred_at DESC LIMIT 2000) d "
+        "JOIN document_lines dl ON dl.document_id = d.id "
         "JOIN products p ON p.id = dl.product_id "
-        "WHERE d.doc_type IN ('sale') AND p.is_active = 1 "
-        "GROUP BY dl.product_id ORDER BY MAX(d.occurred_at) DESC LIMIT ?",
-        (20,),
+        "WHERE p.is_active = 1 "
+        "ORDER BY d.occurred_at DESC",
+        (),
     )
 
 
@@ -300,6 +331,25 @@ def run_one(
     samples: List[float] = []
     rows = 0
     error: Optional[str] = None
+    # 4c（2026-10-24）：**多步查询**（两段查询：先取 id、再按 id 取整行）用 callable
+    # 表达 —— 单条 SQL 无法表示「第二段的参数来自第一段的结果」，硬凑成子查询
+    # 会得到不同的执行计划，基线就不可信了。
+    if callable(sql):
+        fn = sql
+        for _ in range(max(0, warmup)):
+            try:
+                fn(conn)
+            except sqlite3.Error as exc:
+                return [], 0, str(exc)
+        for _ in range(max(1, rounds)):
+            t0 = time.perf_counter()
+            try:
+                rows = fn(conn)
+            except sqlite3.Error as exc:
+                error = str(exc)
+                break
+            samples.append((time.perf_counter() - t0) * 1000.0)
+        return samples, rows, error
     for _ in range(max(0, warmup)):
         try:
             conn.execute(sql, params).fetchall()
@@ -318,6 +368,8 @@ def run_one(
 
 
 def explain(conn: sqlite3.Connection, sql: str, params: Sequence[Any]) -> List[str]:
+    if callable(sql):
+        return ["（多步查询，逐段计划见下方 *_stage 键）"]
     try:
         rows = conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
     except sqlite3.Error as exc:

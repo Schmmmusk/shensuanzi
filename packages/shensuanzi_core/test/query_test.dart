@@ -602,6 +602,81 @@ void main() {
 
     // 4c-2（2026-10-24，§5.2 #3）：库存页一次取全 —— 三个视图必须与
     // 三个单查方法**逐个相等**（合并查询最容易在这里出岔：SUM 放大 / 漏行）。
+    // 4c（2026-10-24，§CV·九十九）：`recentProducts` 改成「从最新单据倒序走、
+    // 取前 N 个不同商品」—— 这在数学上**等价于**按 `MAX(occurred_at)` 倒序取 top N
+    // （一个商品的「最后一次卖出」必然就是它出现的最新那张单）。
+    // ⚠️ 这个方法此前**没有任何行为测试**（只有一条计划断言），本组是新补的。
+    group('recentProducts（4c 等价改写）', () {
+      int day(int d) => DateTime(2026, 10, d).millisecondsSinceEpoch;
+
+      void sale(String docId, int when, List<String> productIds) {
+        insertDocument(
+          db.raw,
+          docId,
+          docNo: 'XS-$docId',
+          docType: 'sale',
+          occurredAt: when,
+        );
+        for (int i = 0; i < productIds.length; i++) {
+          insertDocumentLine(
+            db.raw,
+            '$docId-l$i',
+            document: docId,
+            product: productIds[i],
+            quantity: 1,
+            unitPrice: 100,
+          );
+        }
+      }
+
+      test('按最后一次卖出倒序；同一商品取最新那次', () {
+        final String a = createProduct(code: 'P001');
+        final String b = createProduct(code: 'P002');
+        final String c = createProduct(code: 'P003');
+        sale('d1', day(10), <String>[a, b]); // a、b 都在 10-10
+        sale('d2', day(12), <String>[b]); // b 最近
+        sale('d3', day(11), <String>[c]); // c 居中
+
+        expect(
+          query
+              .recentProducts(docTypes: <DocType>[DocType.sale])
+              .map((Product e) => e.id)
+              .toList(),
+          <String>[b, c, a],
+          reason: '4c：快路径必须与「按 MAX(occurred_at) 倒序」完全一致',
+        );
+      });
+
+      test('商品数少于 limit ⇒ 兜底分支也返回正确结果', () {
+        final String a = createProduct(code: 'P001');
+        sale('d1', day(10), <String>[a]);
+        final List<Product> rows = query.recentProducts(
+          docTypes: <DocType>[DocType.sale],
+          limit: 20,
+        );
+        expect(rows, hasLength(1), reason: '4c：兜底（全量查询）不能返回空');
+        expect(rows.single.id, a);
+      });
+
+      test('docTypes 为空 ⇒ 空列表（不查库）', () {
+        expect(query.recentProducts(docTypes: const <DocType>[]), isEmpty);
+      });
+
+      test('停用的商品不出现', () {
+        final String a = createProduct(code: 'P001');
+        sale('d1', day(10), <String>[a]);
+        db.raw.execute(
+          'UPDATE products SET is_active = 0 WHERE id = ?',
+          <Object?>[a],
+        );
+        expect(
+          query.recentProducts(docTypes: <DocType>[DocType.sale]),
+          isEmpty,
+          reason: '选择器只列启用中的商品',
+        );
+      });
+    });
+
     test('4c-2：stockAggregates 与三个单查方法逐个相等', () {
       final String p = createProduct();
       final String party = createParty();

@@ -6,7 +6,6 @@ import '../db/schema.dart';
 import '../models/document.dart';
 import '../models/party.dart';
 import '../models/product.dart';
-import 'party_dao.dart';
 
 /// **RULE-006 库存 / 余额查询**（`docs/rules.md`）。
 ///
@@ -261,33 +260,101 @@ class QueryDao {
   /// 只含**启用中**的商品，按最近一次交易时间倒序；没有任何历史时返回空列表
   /// （界面退化为纯搜索）。个体工商户大部分单据是重复进货/出货 ——
   /// 打开选择器就能点到常买的货，不用每次敲搜索词。
+  /// 「最近使用」的扫描窗口（张单据）。见 [recentProducts] 的保底说明。
+  static const int _recentScanWindow = 2000;
+
+  /// 从「按最新单据倒序」的行里收集前 [limit] 个不同 key。
+  ///
+  /// 返回 `truncated = true` 表示**窗口被用完**（子查询撞到了 `LIMIT`），
+  /// 也就是「更早的单里可能还有别的 key」；`false` 表示已经扫到底、结果完整。
+  ///
+  /// ⚠️ 判据必须是「窗口是否被用完」，**不是**「key 数够不够」——
+  /// 商品 / 往来方总数本来就少时（只卖 3 种货）窗口永远凑不满 limit，
+  /// 那种情况退回全量只会更慢，而且结果一模一样。
+  static ({List<String> ids, bool truncated}) _collectRecent(
+    List<Map<String, Object?>> rows,
+    int limit,
+    int window,
+  ) {
+    final List<String> ids = <String>[];
+    final Set<String> seen = <String>{};
+    final Set<String> docs = <String>{};
+    for (final Map<String, Object?> row in rows) {
+      docs.add(row['did']! as String);
+      final String key = row['pid']! as String;
+      if (seen.add(key)) {
+        ids.add(key);
+        // 凑够了就停 —— 快路径的收益全在这个 break 上
+        if (ids.length >= limit) return (ids: ids, truncated: true);
+      }
+    }
+    return (ids: ids, truncated: docs.length >= window);
+  }
+
+  /// 最近使用过的商品（开单页商品选择器的默认列表）。
+  ///
+  /// ## 等价改写（4c，2026-10-24，§CV·九十九）
+  ///
+  /// 旧写法 `GROUP BY product_id ORDER BY MAX(occurred_at) DESC` 要**扫全部销售单**
+  /// 再分组 —— 26.4 万单实测 **429 ms**。
+  ///
+  /// 新写法：从**最新单据倒序**走，凑满 [limit] 个不同商品就停。这在数学上**等价**：
+  /// 一个商品的「最后一次卖出」必然就是它出现的**最新那张单**，所以「倒序遇到的
+  /// 前 N 个不同商品」= 按 `MAX(occurred_at)` 倒序的前 N 个。
+  /// 实测 429 ms → **7 ms**（同语义、逐项比对一致）。
+  ///
+  /// ## 两条不能省的细节
+  ///
+  /// 1. **必须 `INDEXED BY idx_documents_occurred`** —— 不写的话规划器会选
+  ///    `idx_documents_type_status` 再排 11.2 万行（实测 122 ms，白瞎了索引）。
+  /// 2. **保底**：窗口被用完仍不足 [limit] 个 ⇒ 退回全量查询（见 [_collectRecent]）。
   List<Product> recentProducts({
     required List<DocType> docTypes,
     int limit = 20,
   }) {
     if (docTypes.isEmpty) return const <Product>[];
-    final String placeholders = List<String>.filled(
-      docTypes.length,
-      '?',
-    ).join(',');
-    final List<Map<String, Object?>> rows = _raw.select(
-      'SELECT dl.product_id AS pid '
-      'FROM ${Schema.documentLines} dl '
-      'JOIN ${Schema.documents} d ON d.id = dl.document_id '
-      'JOIN ${Schema.products} p ON p.id = dl.product_id '
-      'WHERE d.doc_type IN ($placeholders) AND p.is_active = 1 '
-      'GROUP BY dl.product_id '
-      'ORDER BY MAX(d.occurred_at) DESC '
-      'LIMIT ?',
-      <Object?>[...docTypes.map((DocType t) => t.wire), limit],
-    );
-    if (rows.isEmpty) return const <Product>[];
-    // 4c-4（2026-10-24，业务审查 §5.2 #6）：**一次 `IN` 取回全部行** ——
-    // 从前逐条 `findById`（20 次主键查询的 N+1）。次数不多但形态难看，
-    // 且 `limit` 一改就会放大。顺序仍按「最近使用」：用 id → 下标重排。
-    final List<String> ids = <String>[
-      for (final Map<String, Object?> row in rows) row['pid']! as String,
+    final String marks = List<String>.filled(docTypes.length, '?').join(',');
+    final List<Object?> types = <Object?>[
+      for (final DocType t in docTypes) t.wire,
     ];
+
+    final ({List<String> ids, bool truncated}) picked = _collectRecent(
+      _raw.select(
+        'SELECT d.id AS did, dl.product_id AS pid '
+        'FROM (SELECT id, occurred_at FROM ${Schema.documents} '
+        '      INDEXED BY idx_documents_occurred '
+        '      WHERE doc_type IN ($marks) '
+        '      ORDER BY occurred_at DESC LIMIT ?) d '
+        'JOIN ${Schema.documentLines} dl ON dl.document_id = d.id '
+        'JOIN ${Schema.products} p ON p.id = dl.product_id '
+        'WHERE p.is_active = 1 '
+        'ORDER BY d.occurred_at DESC',
+        <Object?>[...types, _recentScanWindow],
+      ),
+      limit,
+      _recentScanWindow,
+    );
+    List<String> ids = picked.ids;
+    if (ids.length < limit && picked.truncated) {
+      // 保底：窗口被用完 ⇒ 用**全量语义**再算一次（慢就慢点，但数据必须对）
+      ids = <String>[
+        for (final Map<String, Object?> row in _raw.select(
+          'SELECT dl.product_id AS pid '
+          'FROM ${Schema.documentLines} dl '
+          'JOIN ${Schema.documents} d ON d.id = dl.document_id '
+          'JOIN ${Schema.products} p ON p.id = dl.product_id '
+          'WHERE d.doc_type IN ($marks) AND p.is_active = 1 '
+          'GROUP BY dl.product_id '
+          'ORDER BY MAX(d.occurred_at) DESC '
+          'LIMIT ?',
+          <Object?>[...types, limit],
+        ))
+          row['pid']! as String,
+      ];
+    }
+    if (ids.isEmpty) return const <Product>[];
+    // 4c-4（2026-10-24，业务审查 §5.2 #6）：**一次 `IN` 取回全部行** ——
+    // 从前逐条 `findById`（20 次主键查询的 N+1）。
     final String idMarks = List<String>.filled(ids.length, '?').join(',');
     final List<Product> found = decodeRows(
       _raw.select(
@@ -313,30 +380,67 @@ class QueryDao {
   /// 语义与 [recentProducts] 完全对称：[docTypes] 决定哪些单据算「交易过」，
   /// 只含**启用中**的往来方，按最近一次交易时间倒序；没有历史返回空列表。
   /// 无往来的单据（散客/散采）`party_id` 为空，天然被排除。
+  ///
+  /// 实现也对称（4c）：倒序走最近 [_recentScanWindow] 张单取前 [limit] 个不同往来方
+  /// —— 159 ms → **2.3 ms**。顺带修掉从前的 **N+1**（逐条 `parties.findById`）。
   List<Party> recentParties({required List<DocType> docTypes, int limit = 20}) {
     if (docTypes.isEmpty) return const <Party>[];
-    final String placeholders = List<String>.filled(
-      docTypes.length,
-      '?',
-    ).join(',');
-    final List<Map<String, Object?>> rows = _raw.select(
-      'SELECT d.party_id AS pid '
-      'FROM ${Schema.documents} d '
-      'JOIN ${Schema.parties} pa ON pa.id = d.party_id '
-      'WHERE d.doc_type IN ($placeholders) AND d.party_id IS NOT NULL '
-      '  AND pa.is_active = 1 '
-      'GROUP BY d.party_id '
-      'ORDER BY MAX(d.occurred_at) DESC '
-      'LIMIT ?',
-      <Object?>[...docTypes.map((DocType t) => t.wire), limit],
+    final String marks = List<String>.filled(docTypes.length, '?').join(',');
+    final List<Object?> types = <Object?>[
+      for (final DocType t in docTypes) t.wire,
+    ];
+
+    final ({List<String> ids, bool truncated}) picked = _collectRecent(
+      _raw.select(
+        'SELECT d.id AS did, d.party_id AS pid '
+        'FROM (SELECT id, party_id, occurred_at FROM ${Schema.documents} '
+        '      INDEXED BY idx_documents_occurred '
+        '      WHERE doc_type IN ($marks) AND party_id IS NOT NULL '
+        '      ORDER BY occurred_at DESC LIMIT ?) d '
+        'JOIN ${Schema.parties} pa ON pa.id = d.party_id '
+        'WHERE pa.is_active = 1 '
+        'ORDER BY d.occurred_at DESC',
+        <Object?>[...types, _recentScanWindow],
+      ),
+      limit,
+      _recentScanWindow,
     );
-    final PartyDao parties = PartyDao(db);
-    final List<Party> result = <Party>[];
-    for (final Map<String, Object?> row in rows) {
-      final Party? party = parties.findById(row['pid']! as String);
-      if (party != null) result.add(party);
+    List<String> ids = picked.ids;
+    if (ids.length < limit && picked.truncated) {
+      ids = <String>[
+        for (final Map<String, Object?> row in _raw.select(
+          'SELECT d.party_id AS pid '
+          'FROM ${Schema.documents} d '
+          'JOIN ${Schema.parties} pa ON pa.id = d.party_id '
+          'WHERE d.doc_type IN ($marks) AND d.party_id IS NOT NULL '
+          '  AND pa.is_active = 1 '
+          'GROUP BY d.party_id '
+          'ORDER BY MAX(d.occurred_at) DESC '
+          'LIMIT ?',
+          <Object?>[...types, limit],
+        ))
+          row['pid']! as String,
+      ];
     }
-    return result;
+    if (ids.isEmpty) return const <Party>[];
+    // 一次 `IN` 取回（从前逐条 `findById` = N+1）
+    final String idMarks = List<String>.filled(ids.length, '?').join(',');
+    final List<Party> found = decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.parties} WHERE id IN ($idMarks)',
+        ids,
+      ),
+      (Map<String, Object?> row) => Party.fromRow(row),
+      table: Schema.parties,
+      failures: db.readFailures,
+    );
+    final Map<String, Party> byId = <String, Party>{
+      for (final Party party in found) party.id: party,
+    };
+    return <Party>[
+      for (final String id in ids)
+        if (byId[id] != null) byId[id]!,
+    ];
   }
 }
 

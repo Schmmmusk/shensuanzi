@@ -484,6 +484,78 @@ class DocumentDao {
       'GROUP BY target_doc_id'
       ') s ON s.tgt = d.id ';
 
+  /// 列表行的 SELECT 列（两段查询与单段导出**共用**，避免两处漂移）。
+  static const String _summaryColumns =
+      'SELECT d.*, pa.name AS party_name, '
+      'COALESCE(r.rsum, 0) AS returned_sum, '
+      'COALESCE(r.rcnt, 0) AS returned_count, '
+      // 3a：已收/已付的**流水口径**（列表行显示与筛选同一来源）
+      'COALESCE(s.psum, 0) AS paid_sum ';
+
+  /// 退货汇总的派生表（`r`）。两段查询的第一段与第二段共用同一份定义。
+  static final String _returnsJoin =
+      'LEFT JOIN ('
+      'SELECT ref_doc_id AS ref, SUM(total_amount) AS rsum, COUNT(*) AS rcnt '
+      'FROM ${Schema.documents} '
+      'WHERE ref_doc_id IS NOT NULL AND '
+      "doc_type IN ('${DocType.saleReturn.wire}', "
+      "'${DocType.purchaseReturn.wire}') "
+      'GROUP BY ref_doc_id'
+      ') r ON r.ref = d.id ';
+
+  /// 已收/已付汇总的派生表（`s`）—— 3a：**流水口径**，不是 `paid_amount` 缓存。
+  static final String _settledJoin =
+      'LEFT JOIN ('
+      'SELECT target_doc_id AS tgt, SUM(amount) AS psum '
+      'FROM ${Schema.settlements} '
+      'WHERE target_doc_id IS NOT NULL '
+      'GROUP BY target_doc_id'
+      ') s ON s.tgt = d.id ';
+
+  /// 列表排序：**按「日」分桶，日内按录入时刻倒序**（#26①，2026-10-18 裁定甲）。
+  ///
+  /// 为什么不能直接 `ORDER BY d.occurred_at DESC`：这一列**存着两套口径** ——
+  /// 主单是**当天 00:00**（开单页只能选到日，`sale_draft.dart` 的 `occurredAt`），
+  /// 退货 / 手记收付款是**精确时刻**（`return_service` / `settlement_service`）。
+  /// 直接比大小 ⇒ 同一天的派生单全 > 主单的 00:00，`created_at` 那段兜底**永不生效**，
+  /// 21:11 录的主单会被排到 16:48 的退货单后面（用户实证，§CV·六十二）。
+  ///
+  /// 为什么是整数分桶而不是 `date(occurred_at/1000,'unixepoch','localtime')`：
+  /// **本仓打包的 SQLite 编译时带了 `SQLITE_OMIT_LOCALTIME`**，带 `'localtime'`
+  /// 修饰符会**返回 NULL**（2026-10-18 实测 `bucket=null`）⇒ 排序会静默退化。
+  /// 改成「加本地偏移后整除一天」：纯整数运算，不依赖 TZ 数据库，也不依赖修饰符。
+  ///
+  /// ⚠️ 前提是**单一时区**（个体户单机，`Agents.md` §一）。跨时区同步已在 #32 登记待办；
+  /// 有夏令时的时区里，「零点前 1 小时」的单可能被分到相邻一天 —— 中国无夏令时。
+  ///
+  /// ⚠️ **不要**试图给这个表达式加索引（4c 已评估并否掉）：索引里必须烘字面量偏移，
+  /// 而偏移来自 `DateTime.now().timeZoneOffset`（运行时可变）⇒ 索引绑死建库时区。
+  static const String _listOrder =
+      'ORDER BY ((d.occurred_at + ?) / 86400000) DESC, '
+      'd.created_at DESC ';
+
+  /// 单据列表（**两段查询**，4c / 2026-10-24 / §CV·九十九）。
+  ///
+  /// ## 为什么拆两段
+  ///
+  /// 单段写法在 26.4 万单上是 **456 ms**，拆开看是：
+  /// - 排序 **120 ms**（`ORDER BY` 是表达式，用不了索引）；
+  /// - 两个派生表被**全量物化 105 ms**（`r` 聚合 26 万行退货、`s` 聚合 10 万条核销）；
+  ///
+  /// 而页面真正要的只有 **200 行**。拆两段后：第一段只取 id（123 ms），
+  /// 第二段只对这 200 个 id 聚合（19.7 ms）⇒ 约 **143 ms（3.1×）**。
+  ///
+  /// ## 三条不能省的细节
+  ///
+  /// 1. **第二段的派生表必须加 `IN (ids)` 限制** —— 只「先取 id 再按 id 查」而不
+  ///    限制派生表，`s` 仍会全量物化 10 万条，实测只到 324 ms（省了排序没省聚合）。
+  /// 2. **第一段不能带 `r` / `s`** —— 实测带上是 316 ms、不带是 124 ms。
+  ///    只有「未结清」筛选会引用这两个别名，所以按需拼装。
+  /// 3. **必须按第一段的 id 顺序重排** —— `WHERE id IN (…)` 的返回顺序 SQLite
+  ///    **不保证**（实测按 rowid），直接用会打乱「日桶 + 录入时刻」的排序。
+  ///
+  /// 导出（`limit == null`）**保持单段**：两段对「全量」没有意义，且 `IN (…)`
+  /// 占位符会随行数膨胀（AF-12：导出要把数据带走）。
   List<DocumentSummary> _summaries({
     Set<DocType> types = const <DocType>{},
     Set<DocumentStatusView> statusViews = const <DocumentStatusView>{},
@@ -505,43 +577,76 @@ class DocumentDao {
       query: query,
       rootsOnly: rootsOnly,
     );
-    final List<Object?> args = filter.args.toList();
-    // ⚠️ ORDER BY 里那个 `?` 的参数（本地时区偏移）—— **必须排在 LIMIT 之前**，
-    // 占位符是按出现顺序绑定的。
-    args.add(_localOffsetMillis);
-    final String tail = limit == null ? '' : 'LIMIT ?';
-    if (limit != null) args.add(limit);
 
-    // `r` = 按原单汇总的退货额。列表行要显示「已退 ¥x」（§审查 BUG-04），
-    // 状态筛选「未结清」也要用它 —— 一起 JOIN 掉，**避免 N+1**。
-    final List<Map<String, Object?>> rows = _raw.select(
-      'SELECT d.*, pa.name AS party_name, '
-      'COALESCE(r.rsum, 0) AS returned_sum, '
-      'COALESCE(r.rcnt, 0) AS returned_count, '
-      // 3a：已收/已付的**流水口径**（列表行显示与筛选同一来源）
-      'COALESCE(s.psum, 0) AS paid_sum '
-      '$_docFrom'
-      '${filter.where}'
-      // ⚠️ **按「日」分桶，日内按录入时刻倒序**（#26①，2026-10-18 裁定甲）。
-      //
-      // 为什么不能直接 `ORDER BY d.occurred_at DESC`：这一列**存着两套口径** ——
-      // 主单是**当天 00:00**（开单页只能选到日，`sale_draft.dart` 的 `occurredAt`），
-      // 退货 / 手记收付款是**精确时刻**（`return_service` / `settlement_service`）。
-      // 直接比大小 ⇒ 同一天的派生单全 > 主单的 00:00，`created_at` 那段兜底**永不生效**，
-      // 21:11 录的主单会被排到 16:48 的退货单后面（用户实证，§CV·六十二）。
-      //
-      // 为什么是整数分桶而不是 `date(occurred_at/1000,'unixepoch','localtime')`：
-      // **本仓打包的 SQLite 编译时带了 `SQLITE_OMIT_LOCALTIME`**，带 `'localtime'`
-      // 修饰符会**返回 NULL**（2026-10-18 实测 `bucket=null`）⇒ 排序会静默退化。
-      // 改成「加本地偏移后整除一天」：纯整数运算，不依赖 TZ 数据库，也不依赖修饰符。
-      //
-      // ⚠️ 前提是**单一时区**（个体户单机，`Agents.md` §一）。跨时区同步已在 #32 登记待办；
-      // 有夏令时的时区里，「零点前 1 小时」的单可能被分到相邻一天 —— 中国无夏令时。
-      'ORDER BY ((d.occurred_at + ?) / 86400000) DESC, '
-      'd.created_at DESC '
-      '$tail',
-      args,
+    if (limit == null) {
+      // 导出：单段（无 LIMIT）。参数顺序：筛选 → 排序偏移。
+      return _summariesOfRows(
+        _raw.select(
+          '$_summaryColumns'
+          '$_docFrom'
+          '${filter.where}'
+          '$_listOrder',
+          <Object?>[...filter.args, _localOffsetMillis],
+        ),
+      );
+    }
+
+    // ---- 第一段：只取 id ----
+    // `unsettled` 是唯一引用 `r` / `s` 别名的筛选（见 `_docFilter`）。
+    final bool needsAggregates = statusViews.contains(
+      DocumentStatusView.unsettled,
     );
+    final List<String> ids = <String>[
+      for (final Map<String, Object?> row in _raw.select(
+        'SELECT d.id '
+        'FROM ${Schema.documents} d '
+        'LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id '
+        // 未结清筛选要用派生表；其余筛选不带（省 190 ms）
+        '${needsAggregates ? '$_returnsJoin$_settledJoin' : ''}'
+        '${filter.where}'
+        '$_listOrder'
+        'LIMIT ?',
+        <Object?>[...filter.args, _localOffsetMillis, limit],
+      ))
+        row['id']! as String,
+    ];
+    if (ids.isEmpty) return const <DocumentSummary>[];
+
+    // ---- 第二段：只对这 200 个 id 取整行 + 聚合 ----
+    final String marks = List<String>.filled(ids.length, '?').join(',');
+    final List<Map<String, Object?>> rows = _raw.select(
+      '$_summaryColumns'
+      'FROM ${Schema.documents} d '
+      'LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id '
+      'LEFT JOIN (SELECT ref_doc_id AS ref, SUM(total_amount) AS rsum, '
+      'COUNT(*) AS rcnt FROM ${Schema.documents} '
+      'WHERE ref_doc_id IN ($marks) AND '
+      "doc_type IN ('${DocType.saleReturn.wire}', "
+      "'${DocType.purchaseReturn.wire}') "
+      'GROUP BY ref_doc_id) r ON r.ref = d.id '
+      'LEFT JOIN (SELECT target_doc_id AS tgt, SUM(amount) AS psum '
+      'FROM ${Schema.settlements} WHERE target_doc_id IN ($marks) '
+      'GROUP BY target_doc_id) s ON s.tgt = d.id '
+      'WHERE d.id IN ($marks)',
+      <Object?>[...ids, ...ids, ...ids],
+    );
+    // ⚠️ 按第一段的顺序重排（`IN` 的返回顺序不保证）
+    final Map<String, Map<String, Object?>> byId =
+        <String, Map<String, Object?>>{
+          for (final Map<String, Object?> row in rows)
+            row['id']! as String: row,
+        };
+    return _summariesOfRows(<Map<String, Object?>>[
+      for (final String id in ids)
+        if (byId[id] != null) byId[id]!,
+    ]);
+  }
+
+  /// 把「整行 + 聚合列」映射成 `DocumentSummary`，并补核销笔数。
+  ///
+  /// 两段查询与单段导出**共用这一段**：行映射只写一次，否则「导出与列表同一口径」
+  /// （AF-5）会悄悄分叉。
+  List<DocumentSummary> _summariesOfRows(List<Map<String, Object?>> rows) {
     // #42 甲 · L1：逐行保护（单据列表 —— 一条坏行不再让整页打不开）
     final List<DocumentSummary> found = decodeRows(
       rows,

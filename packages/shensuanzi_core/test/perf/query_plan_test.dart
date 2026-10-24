@@ -173,48 +173,75 @@ void main() {
       expect(p, contains('idx_settle_target'), reason: p);
     });
 
-    test('单据列表排序：**允许** TEMP B-TREE（4c-3 前），但主表不许走无条件全扫', () {
+    // 4c（2026-10-24，§CV·九十九）：列表页改成**两段查询**。
+    // 第一段只取 id，**不许再出现 `MATERIALIZE`**（那两个派生表从前被全量物化
+    // 26 万 / 10 万行，占 105 ms；现在只对 200 个 id 聚合）。
+    //
+    // ⚠️ 排序仍然是 `TEMP B-TREE`，这是**已知且已裁定保留**的：日桶表达式用不了
+    // 索引，而「表达式索引」会绑死建库时区（提案 §1.3 已否掉）。
+    test('4c 单据列表第一段：不许 MATERIALIZE（派生表留给第二段）', () {
       final String p = plan(
-        // document_dao.dart: _summaries（_docFrom + 分桶排序）
-        'SELECT d.* FROM documents d '
+        // document_dao.dart: _summaries 第一段（常见路径：无「未结清」筛选）
+        'SELECT d.id FROM documents d '
         'LEFT JOIN parties pa ON pa.id = d.party_id '
-        'LEFT JOIN (SELECT ref_doc_id AS ref, SUM(total_amount) AS rsum, '
-        'COUNT(*) AS rcnt FROM documents WHERE ref_doc_id IS NOT NULL '
-        "AND doc_type IN ('sale_return', 'purchase_return') GROUP BY ref_doc_id) r "
-        'ON r.ref = d.id '
-        'LEFT JOIN (SELECT target_doc_id AS tgt, SUM(amount) AS psum '
-        'FROM settlements WHERE target_doc_id IS NOT NULL '
-        'GROUP BY target_doc_id) s ON s.tgt = d.id '
+        'WHERE d.ref_doc_id IS NULL AND NOT ('
+        "d.doc_type IN ('receipt', 'payment') AND ("
+        'SELECT COUNT(DISTINCT s.target_doc_id) FROM settlements s '
+        'WHERE s.receipt_doc_id = d.id AND s.target_doc_id IS NOT NULL) = 1) '
         'ORDER BY ((d.occurred_at + ?) / 86400000) DESC, d.created_at DESC LIMIT ?',
-        <Object?>[0, 200],
+        <Object?>[28800000, 200],
       );
-      // ⚠️ 现状：排序对**全表**做 TEMP B-TREE（`SCAN d` + ORDER BY）。
-      // 4c-3 改成「先取 200 个 id，再 IN 取整行」之后，这里要改成
-      // 「排序只作用于 200 行」的断言 —— 届时本断言会红，是**预期的**。
       expect(
         p,
-        contains('TEMP B-TREE FOR ORDER BY'),
-        reason: '现状记录（4c-3 前）：$p',
+        isNot(contains('MATERIALIZE')),
+        reason: '第一段只取 id，带上派生表会从 124 ms 变 316 ms：$p',
+      );
+      expect(
+        p,
+        contains('idx_documents_ref'),
+        reason: 'ref_doc_id IS NULL 走索引：$p',
       );
     });
 
-    test('recentProducts 现状记录：扫全部销售单（4c-4 改成先取 id）', () {
+    // 4c：`recentProducts` 改成「倒序走最近 N 张单，凑满即停」。
+    // **必须**走 `idx_documents_occurred`；不写 `INDEXED BY` 时规划器会选
+    // `idx_documents_type_status` 再排 11.2 万行（实测 122 ms，白瞎索引）。
+    test('4c recentProducts 走 idx_documents_occurred（不许退成 type_status 全扫）', () {
       final String p = plan(
         // query_dao.dart: recentProducts()
-        'SELECT dl.product_id AS pid FROM document_lines dl '
-        'JOIN documents d ON d.id = dl.document_id '
+        'SELECT d.id AS did, dl.product_id AS pid '
+        'FROM (SELECT id, occurred_at FROM documents '
+        '      INDEXED BY idx_documents_occurred '
+        "      WHERE doc_type IN ('sale') "
+        '      ORDER BY occurred_at DESC LIMIT ?) d '
+        'JOIN document_lines dl ON dl.document_id = d.id '
         'JOIN products p ON p.id = dl.product_id '
-        "WHERE d.doc_type IN ('sale') AND p.is_active = 1 "
-        'GROUP BY dl.product_id ORDER BY MAX(d.occurred_at) DESC LIMIT ?',
-        <Object?>[20],
+        'WHERE p.is_active = 1 '
+        'ORDER BY d.occurred_at DESC',
+        <Object?>[2000],
       );
-      // 现状：按 doc_type 索引**扫全部销售单**，再两个 TEMP B-TREE。
-      // 4c-4 之后这里应变成「先 LIMIT 取 id，再 IN」—— 断言随改动更新。
+      expect(p, contains('idx_documents_occurred'), reason: p);
       expect(
         p,
-        contains('idx_documents_type_status'),
-        reason: '现状记录（4c-4 前）：$p',
+        isNot(contains('idx_documents_type_status')),
+        reason: '退成 type_status 会把 11.2 万张销售单全扫一遍：$p',
       );
+    });
+
+    test('4c recentParties 同样走 idx_documents_occurred', () {
+      final String p = plan(
+        // query_dao.dart: recentParties()
+        'SELECT d.id AS did, d.party_id AS pid '
+        'FROM (SELECT id, party_id, occurred_at FROM documents '
+        '      INDEXED BY idx_documents_occurred '
+        "      WHERE doc_type IN ('sale') AND party_id IS NOT NULL "
+        '      ORDER BY occurred_at DESC LIMIT ?) d '
+        'JOIN parties pa ON pa.id = d.party_id '
+        'WHERE pa.is_active = 1 '
+        'ORDER BY d.occurred_at DESC',
+        <Object?>[2000],
+      );
+      expect(p, contains('idx_documents_occurred'), reason: p);
     });
   });
 }

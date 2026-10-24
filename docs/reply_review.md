@@ -14282,3 +14282,98 @@ freelist（实测 246 页 ≈ 1.0 MB）留给后续写入复用，**不会自动
 `list_documents` 291 ms（`SCAN d` + `TEMP B-TREE`）· `doc_search` 342 ms（四路 LIKE）·
 `recent_products` 429 ms（扫全部销售单）· `in_transit` 87 ms · `account_balances` 65 ms。
 这些**不吃覆盖索引**，要改 SQL 形态（两段查询 / 提前收窄），各自单独提交便于对照。
+
+## §CV·九十九 **第 4 批剩余：查询层收口（零 schema）**（2026-10-24，用户裁定「①甲 ②不加」）
+
+> 提案：`docs/proposals/第4批剩余-查询层收口-方案.md`（已随裁定更新为 ✅）。
+> 用户裁定：**①甲**（只做两段查询，不打日桶表达式索引）· **②不加**（`money_ledger` 覆盖索引不做）。
+> 三条落地提醒：内存重排 / `recent_products` 兜底 + `INDEXED BY` / 搜索框防抖。**第三条是现状**，见 §三。
+
+### 一、单据列表：两段查询
+
+`DocumentDao._summaries` 拆成「先取 200 个 id → 只对这 200 个 id 聚合」：
+
+| 片段 | 改前 | 改后 |
+|---|---|---|
+| 排序（表达式，用不了索引） | 120 ms | 120 ms（**保留**，已裁不做表达式索引） |
+| 两个派生表全量物化（26 万退货 / 10 万核销） | 105 ms | **19.7 ms**（加 `IN (ids)` 限制后） |
+| **整条列表（`perf_bench` 同基准）** | **291.9 ms** | **146.5 ms（2.0×）** |
+
+⚠️ **与提案估算的差异（如实记录）**：提案写「456 → 147 ms（3.1×）」，那是**同一进程内
+Python 直测**的数字；`perf_bench` 对同一条旧 SQL 报的是 291.9 ms。换成 `perf_bench`
+前后对比，真实收益是 **2.0×**。差异来源：旧 SQL 的 `SELECT d.*` 在 Python 里解码宽行
+有额外开销，而新的第一段只取 `id`（窄行）⇒ 那部分开销消失，收益被「摊薄」。
+**以 `perf_bench` 的 2.0× 为准**（同一基准、同一库、同一轮数）。
+
+三条不能省的实现细节（都写进了代码注释）：
+
+1. **第二段的派生表必须加 `IN (ids)`** —— 不加的话 `s` 仍全量物化，实测只到 324 ms。
+2. **第一段不能带 `r`/`s`**（316 ms vs 124 ms）—— 只有「未结清」筛选引用这两个别名，
+   所以 `needsAggregates = statusViews.contains(unsettled)` 时才拼。
+3. **必须按第一段的 id 顺序重排** —— `WHERE id IN (…)` 的返回顺序 SQLite 不保证。
+   **反向验证**：删掉重排 ⇒ 顺序用例 1 红；恢复 ⇒ 绿。
+
+导出路径（`limit == null`）**保持单段**（AF-12：导出要全量，两段无意义）。
+
+### 二、`recentProducts` / `recentParties`：等价改写
+
+| 方法 | 改前 | 改后 | 倍数 |
+|---|---|---|---|
+| `recentProducts`（`perf_bench`） | **429.4 ms** | **6.8 ms** | **63×** |
+| `recentParties`（Python 直测，不在 bench 里） | 159 ms | ~2.3 ms | ~70× |
+
+**这是等价改写，不是语义收窄**：从最新单据倒序走、凑满 N 个不同商品即停 ——
+一个商品的「最后一次卖出」必然就是它出现的最新那张单，所以「倒序遇到的前 N 个」
+= 按 `MAX(occurred_at)` 倒序的前 N 个。K=200/500/2000 三档在真实库上**逐个比对一致**。
+
+- **`INDEXED BY idx_documents_occurred` 必须写**：不写时规划器选 `idx_documents_type_status`
+  再排 11.2 万行（实测 122 ms）。
+- **兜底判据是「窗口是否被用完」，不是「商品数够不够」**：`_collectRecent` 返回
+  `truncated`；只有窗口撞满 `LIMIT` 且没凑够才退回全量查询。商品总数本来就少时
+  （只卖 3 种货）窗口永远凑不满，退回全量只会更慢且结果一样。
+- **顺带修掉 `recentParties` 的 N+1**：从前逐条 `parties.findById`（`recentProducts`
+  在 4c-4 已改，往来方那边漏了）。
+
+⚠️ `recentProducts` **此前没有任何行为测试**（只有一条计划断言）—— 本次新补 4 条。
+
+### 三、搜索框防抖：**已经是现状**，本批只补测试
+
+用户在审查意见里要求「既然底层不优化，必须在 UI 层加防抖」。核实后发现
+**防抖 2026-10-23 就已实现**（`list_scaffold.dart`，§CV·八十五）：`_onChanged` 里
+`_timer?.cancel()` + 300 ms `Timer`，`debounce` 可注入，点「×」走 `_clearSearch` 立即生效。
+**但当时没有测试**。
+
+⇒ 本批**不重复实现**（重复会叠成 600 ms），改为补护栏 `test/list_header_debounce_test.dart`：
+
+1. 连打 5 个字符（间隔 50 ms）⇒ 期间**零回调**，停手 300 ms 后**只回调一次**且是最终文字；
+2. 点「×」⇒ **立即**回调（不等防抖）；
+3. `debounce: Duration.zero` ⇒ 立即回调。
+
+**反向验证**：删掉 `_onChanged` 里的 `_timer?.cancel()` ⇒ 2 条红；恢复 ⇒ 绿。
+
+### 四、`doc_search`：按提案**不做**
+
+第 ④ 路（商品名）的 ~400 ms 硬底无法用 SQL 改法绕开（三种改法实测：拆子查询 388 ms /
+CTE 483 ms / 先筛商品再 `IN` **1665 ms**）。搜索是低频动作 + 200 行上限 + 已有 300 ms 防抖
+⇒ 维持现状，等 FTS5 或语义收窄另行裁定。
+
+### 五、`perf_bench` 同步（压测与生产同构）
+
+`q_list_documents` 改成**两段**（`run_one` 支持 callable 多步查询 —— 单条 SQL 表达不了
+「第二段参数来自第一段结果」，硬凑 `IN (SELECT … LIMIT ?)` 会得到不同计划）；
+`q_recent_products` 改成倒序取窗口的形态。基线：`docs/perf/2026-10-24-4c.csv`。
+
+### 六、测试与门禁
+
+新增 **11 条**：两段查询 3（顺序 / 三个聚合列 / limit 大于命中数）· `recentProducts` 4
+（等价性 / 兜底 / 空类型 / 停用商品）· 防抖 3 · 计划断言改写 3（第一段不许 `MATERIALIZE`、
+`recentProducts`/`recentParties` 走 `idx_documents_occurred`）。
+
+门禁：根 **284**（+3）· core **694**（+8）· host **159** · app **340** · `analyze` **0** ·
+`format` **0** · core 13 自检 + host 5 + app 5 + `typecheck` **全过**。
+
+### 七、剩余（第 4 批收尾）
+
+`doc_search` 331 ms（已裁不做）· `today_summary` 262 ms（**压测形态**：查全部历史；
+生产只查单日 0.23 ms）· `in_transit` 87 ms（种子数据 14563 张在途单放大，真实店铺个位数）。
+**第 4 批到此收口**，下一步是第 5 批（低配真机体验）。

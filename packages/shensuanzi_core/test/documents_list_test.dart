@@ -788,6 +788,115 @@ void main() {
   // 批 3 第 16 条（用户裁定 ①）：`countDocuments` 与 `listDocuments`
   // **必须逐字一致** —— 它俩共用一个 `_docFilter` / `_docFrom`，这个测试
   // 就是那条共用的机械保证：任何一边改了条件而另一边没跟上，这里立刻红。
+  // 4c（2026-10-24，§CV·九十九）：列表页从「一条大 SQL」拆成**两段**
+  // （先取 200 个 id → 只对这 200 个 id 聚合），456 → 143 ms（3.1×）。
+  //
+  // 拆两段引入两个**只有测试能抓**的风险：
+  //  ① `WHERE id IN (…)` 的返回顺序 SQLite **不保证** ⇒ 必须按第一段的 id
+  //     顺序在内存重排。下面第一条用例故意造「期望顺序 ≠ rowid 顺序」。
+  //  ② 第二段的派生表（已退 / 已收）若漏了 `IN (ids)` 限制或漏 JOIN，
+  //     聚合值会变成 0 —— 第二条用例钉住三个聚合列。
+  group('两段查询（4c）', () {
+    test('截断后顺序仍按「日桶 + 录入时刻」—— 不是 rowid 顺序', () {
+      // 插入顺序（= rowid 顺序）：A 最旧 → B 最新 → C 居中
+      // 期望顺序：[B, C, A] —— 与 rowid 顺序**完全不同**，
+      // 第二段若直接按返回顺序拼装，这条必红。
+      insertDocument(
+        db.raw,
+        'a',
+        docNo: 'XS-A',
+        docType: 'sale',
+        occurredAt: at(2026, 10, 10),
+        createdAt: at(2026, 10, 10, 9),
+      );
+      insertDocument(
+        db.raw,
+        'b',
+        docNo: 'XS-B',
+        docType: 'sale',
+        occurredAt: at(2026, 10, 12),
+        createdAt: at(2026, 10, 12, 9),
+      );
+      insertDocument(
+        db.raw,
+        'c',
+        docNo: 'XS-C',
+        docType: 'sale',
+        occurredAt: at(2026, 10, 11),
+        createdAt: at(2026, 10, 11, 9),
+      );
+
+      expect(
+        docNosOf(documents.listDocuments(limit: 3)),
+        <String>['XS-B', 'XS-C', 'XS-A'],
+        reason: '4c：第二段必须按第一段的 id 顺序重排',
+      );
+      expect(docNosOf(documents.listDocuments(limit: 2)), <String>[
+        'XS-B',
+        'XS-C',
+      ]);
+      expect(docNosOf(documents.listDocuments(limit: 1)), <String>['XS-B']);
+    });
+
+    test('三个聚合列（已退 / 已收 / 核销笔数）在两段路径下不漏', () {
+      insertParty(db.raw, 'y-1', name: '王老板');
+      insertDocument(
+        db.raw,
+        'd-1',
+        docNo: 'XS-1',
+        docType: 'sale',
+        partyId: 'y-1',
+        totalAmount: 1000,
+        occurredAt: at(2026, 10, 12),
+      );
+      // 部分退货 300（派生单，默认不进列表，但列表行要显示「已退 ¥3.00」）
+      insertDocument(
+        db.raw,
+        'd-ret',
+        docNo: 'XT-1',
+        docType: 'sale_return',
+        refDocId: 'd-1',
+        totalAmount: 300,
+        occurredAt: at(2026, 10, 12, 10),
+      );
+      // 收款核销 400
+      insertDocument(
+        db.raw,
+        'd-rec',
+        docNo: 'SK-1',
+        docType: 'receipt',
+        totalAmount: 400,
+        occurredAt: at(2026, 10, 12, 11),
+      );
+      db.raw.execute(
+        'INSERT INTO settlements '
+        '(id, receipt_doc_id, target_doc_id, amount, seq_no, created_at) '
+        "VALUES ('s-1', 'd-rec', 'd-1', 400, 1, 0)",
+      );
+
+      final DocumentSummary row = documents.listDocuments().firstWhere(
+        (DocumentSummary e) => e.document.id == 'd-1',
+      );
+      expect(row.returnedCents, 300, reason: '已退额来自派生表 r');
+      expect(row.returnedCount, 1);
+      expect(row.document.paidAmount, 400, reason: '已收来自派生表 s（流水口径）');
+      expect(row.settlementCount, 1, reason: '核销笔数不能因为拆两段而丢');
+    });
+
+    test('limit 大于命中数 ⇒ 全返回，不因 IN 列表少元素而丢行', () {
+      for (int i = 0; i < 5; i++) {
+        insertDocument(
+          db.raw,
+          'x$i',
+          docNo: 'XS-$i',
+          docType: 'sale',
+          occurredAt: at(2026, 10, 10 + i),
+        );
+      }
+      expect(documents.listDocuments(limit: 200), hasLength(5));
+    });
+  });
+
   test('countDocuments 与 listDocuments 的过滤条件逐字一致', () {
     final int at = 1730412800000;
     insertDocument(
