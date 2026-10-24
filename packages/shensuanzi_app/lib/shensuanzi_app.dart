@@ -112,6 +112,7 @@ export 'src/log.dart' show AppLog, formatLogLine, logFileName, logFolderName;
 
 // ---- §AF 数据导出 ----
 export 'src/csv.dart' show csvBom, csvBytes, csvEscape, csvLine;
+export 'src/drafts_store.dart';
 export 'src/export.dart'
     show
         ExportEmpty,

@@ -138,6 +138,7 @@ export 'src/documents/delivery_service.dart'
 export 'src/documents/discount_spread.dart' show spreadDiscount;
 export 'src/documents/overpay.dart' show Overpay;
 export 'src/dao/query_dao.dart' show QueryDao, StockAgg;
+export 'src/documents/draft_json.dart';
 export 'src/documents/outstanding.dart'
     show outstandingCentsOf, outstandingAmountSql;
 export 'src/documents/quantity_conversion.dart'
