@@ -18,11 +18,15 @@
 ///   （reply_review.md §AJ·AI-4） | `_cashChangeRow` |
 library;
 
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
     show
+        DraftsStore,
         MasterDataPolicy,
         MobileGuideTopic,
         mirrorEmptyMessage,
@@ -54,7 +58,21 @@ class SalePage extends StatefulWidget {
     this.partySink,
     required this.masterDataSink,
     this.mobileShell = false,
+    this.drafts,
   });
+
+  /// **草稿自动保存**（真实诉求批 ①，2026-10-24，§CV·一百零二）。
+  ///
+  /// `null` = **不启用** —— 现有 widget 测试都不传，行为与从前逐字相同。
+  /// 生产由 `app.dart` 传 `<数据目录>/drafts/` 的 [DraftsStore]。
+  ///
+  /// 语义（用户裁定 ①甲）：
+  /// - 输入变化 ⇒ **1.5 s 防抖**后写盘（`Timer` 异步）；
+  /// - 落盘是**同步**的（`dispose` 里不能 `await` —— 一 await widget 就没了，
+  ///   紧接着关 App 会中断写盘）；
+  /// - 进页发现草稿 ⇒ 顶部**橙条**「恢复 / 放弃」，**不自动填**；
+  /// - 保存成功 / 放弃 / 取消并确认 ⇒ 删草稿。
+  final DraftsStore? drafts;
 
   /// 开单页**查询**用（选择器 / 库存快照 —— 读）。
   final SaleService service;
@@ -315,10 +333,35 @@ class _SalePageState extends State<SalePage> {
 
   bool _saving = false;
 
+  // ---------------------------------------------------------------- 草稿（①）
+  //
+  // 真实诉求批 ①（2026-10-24，§CV·一百零二）。三条纪律：
+  //  ① 防抖用 `Timer`（异步），**落盘用 `*Sync`** —— `dispose` 里不能 `await`；
+  //  ② 空表单不写草稿（`saleDraftHasContent`），否则下次进页挂一个「空草稿」橙条；
+  //  ③ 进页发现草稿**只挂橙条、不自动填**（用户可能想开新单）。
+
+  /// 1.5 s 防抖定时器（用户裁定：1~2 s）
+  Timer? _draftTimer;
+
+  /// 上次调度时的草稿指纹 —— 用来避免「每次 build 都重置定时器」
+  String _lastDraftSig = '';
+
+  /// 进页读到的**待恢复**草稿（`null` = 没有 / 已处理）
+  Map<String, Object?>? _restoreRaw;
+
   @override
   void initState() {
     super.initState();
     _accounts = widget.service.activeAccounts();
+    // 进页先看有没有上次的草稿（读不懂的直接删掉，不打扰用户）
+    final Map<String, Object?>? raw = widget.drafts?.read(DraftKind.sale);
+    if (raw != null) {
+      if (saleDraftFromJson(raw) == null) {
+        widget.drafts!.delete(DraftKind.sale);
+      } else {
+        _restoreRaw = raw;
+      }
+    }
     // 默认账户：第一个启用中的（一般是现金）—— 用户不用每次都选
     if (_accounts.isNotEmpty) {
       _pays.add(_PayCtl(account: _accounts.first));
@@ -328,6 +371,10 @@ class _SalePageState extends State<SalePage> {
 
   @override
   void dispose() {
+    // ⚠️ **必须在 dispose 控制器之前**、且**必须同步**：
+    // 用户可能直接关窗口，这里 `await` 的话 widget 已销毁、写盘会被中断。
+    _draftTimer?.cancel();
+    _writeDraftNow();
     _scroll.dispose();
     _remark.dispose();
     _given.dispose();
@@ -339,6 +386,168 @@ class _SalePageState extends State<SalePage> {
       pay.dispose();
     }
     super.dispose();
+  }
+
+  // ------------------------------------------------------------ 草稿自动保存
+
+  /// 任何输入变化都会重建 ⇒ 在这里统一调度防抖。
+  ///
+  /// ⚠️ 为什么挂在 `build` 而不是逐个 `onChanged`：本页有 10+ 个输入点
+  ///（行数量 / 行单价 / 让价 / 备注 / 顾客给了 / 客户 / 日期 / 收付款…），
+  /// 漏接一个的后果是「那一项不进草稿，恢复出来是残缺的单」——
+  /// 而用户以为已经救回来了。用「内容指纹变了才重置定时器」来避免
+  /// 无关重建（缩放等）把定时器一直顶掉。
+  void _maybeScheduleDraft() {
+    if (widget.drafts == null) return;
+    final Map<String, Object?> json = saleDraftToJson(_draft);
+    json.remove('savedAt'); // 时间戳每次都变，不能进指纹
+    final String sig = jsonEncode(json);
+    if (sig == _lastDraftSig) return;
+    _lastDraftSig = sig;
+    _draftTimer?.cancel();
+    _draftTimer = Timer(const Duration(milliseconds: 1500), _writeDraftNow);
+  }
+
+  /// 立刻落盘（**同步**）。空表单 ⇒ 删草稿（不是写一份空的）。
+  void _writeDraftNow() {
+    final DraftsStore? store = widget.drafts;
+    if (store == null) return;
+    final SaleDraft draft = _draft;
+    if (!saleDraftHasContent(draft)) {
+      store.delete(DraftKind.sale);
+      return;
+    }
+    store.writeSync(DraftKind.sale, saleDraftToJson(draft));
+  }
+
+  /// 放弃草稿（橙条上的「放弃」）：删文件 + 收起橙条，**表单不动**。
+  void _discardDraft() {
+    widget.drafts?.delete(DraftKind.sale);
+    setState(() {
+      _restoreRaw = null;
+      // 用户还在填（表单有内容）⇒ 下一次 build 会重新调度保存，这是对的
+      _lastDraftSig = '';
+    });
+  }
+
+  /// 恢复草稿（橙条上的「恢复」）：把 JSON 摊回控制器。
+  void _restoreDraft() {
+    final SaleDraft? draft = saleDraftFromJson(_restoreRaw);
+    if (draft == null) {
+      _discardDraft();
+      return;
+    }
+    setState(() {
+      _partyId = draft.partyId;
+      _partyName = draft.partyName.isEmpty ? null : draft.partyName;
+      final DateTime? day = DateTime.tryParse(draft.date);
+      if (day != null) _date = day;
+      _remark.text = draft.remark;
+
+      for (final _RowCtl row in _rows) {
+        row.dispose();
+      }
+      _rows.clear();
+      for (final SaleLineDraft line in draft.lines) {
+        final _RowCtl row = _RowCtl(
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+        );
+        // 商品可能已被删 / 停用 ⇒ 保留「只有数量单价的行」（保存时会按现有校验报错，
+        // 不会静默丢行 —— 提案 §1.6 边界 1）
+        final Product? product = line.productId.isEmpty
+            ? null
+            : widget.productService.byId(line.productId);
+        row.product = product;
+        row.baseUnit = line.baseUnit ?? product?.unit;
+        row.packageUnit = line.packageUnit ?? product?.packageUnit;
+        row.packageSize = line.packageSize ?? product?.packageSize;
+        row.entryUnit = line.entryUnit;
+        _rows.add(row);
+      }
+      if (_rows.isEmpty) _rows.add(_RowCtl());
+
+      for (final _PayCtl pay in _pays) {
+        pay.dispose();
+      }
+      _pays.clear();
+      for (final SalePaymentDraft p in draft.payments) {
+        Account? account;
+        for (final Account a in _accounts) {
+          if (a.id == p.accountId) {
+            account = a;
+            break;
+          }
+        }
+        _pays.add(_PayCtl(account: account, amount: p.amount));
+      }
+      if (_pays.isEmpty && _accounts.isNotEmpty) {
+        _pays.add(_PayCtl(account: _accounts.first));
+      }
+
+      _restoreRaw = null;
+      _lastDraftSig = ''; // 恢复后内容变了，下一次 build 重新调度
+    });
+    _syncSpread();
+  }
+
+  /// 顶部橙条：发现草稿。**不自动填**，两个动作都摆在眼前。
+  Widget _draftBanner(ThemeData theme) {
+    final DateTime? at = draftSavedAt(_restoreRaw);
+    final String when = at == null
+        ? '上次'
+        : '${at.month}月${at.day}日 '
+              '${at.hour.toString().padLeft(2, '0')}:'
+              '${at.minute.toString().padLeft(2, '0')}';
+    final int lines = (_restoreRaw?['lines'] is List)
+        ? (_restoreRaw!['lines']! as List<Object?>).length
+        : 0;
+    return Container(
+      key: const Key('sale-draft-banner'),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            '发现 $when 未提交的草稿（$lines 行）',
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onTertiaryContainer,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '要不要接着上次的填？恢复会覆盖现在填的内容。',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.5,
+              color: theme.colorScheme.onTertiaryContainer,
+            ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: <Widget>[
+              TextButton(
+                key: const Key('sale-draft-discard'),
+                onPressed: _discardDraft,
+                child: const Text('放弃'),
+              ),
+              const SizedBox(width: 4),
+              FilledButton(
+                key: const Key('sale-draft-restore'),
+                onPressed: _restoreDraft,
+                child: const Text('恢复'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   // ------------------------------------------------------------ 草稿合成
@@ -599,6 +808,9 @@ class _SalePageState extends State<SalePage> {
   /// 只清明细与收款（§X 六 / P-3 同款）。
   /// ⚠️ v1 不显示利润（§Z 遗漏 6）—— SnackBar 只报单号与欠款。
   void _afterSaved(DocumentSubmitResult result) {
+    // ① 保存成功 ⇒ 草稿使命完成（清空表单后 `_writeDraftNow` 也会删，这里删得更快）
+    widget.drafts?.delete(DraftKind.sale);
+    _lastDraftSig = '';
     // 2026-10-22（§CV·八十一 批 2）：刚提交的单据已落账 ⇒ 快照作废，
     // 下一单看到的「当前库存」才是扣过的（否则该报负库存时不报）
     _stockSnapshot.invalidate();
@@ -702,6 +914,9 @@ class _SalePageState extends State<SalePage> {
       if (confirmed != true) return false;
     }
     if (!mounted) return false;
+    // ① 用户确认放弃 ⇒ 草稿一起删（否则下次进页还会问「要不要恢复」）
+    widget.drafts?.delete(DraftKind.sale);
+    _lastDraftSig = '';
     setState(() {
       _partyId = null;
       _partyName = null;
@@ -785,6 +1000,8 @@ class _SalePageState extends State<SalePage> {
     final Map<String, int> stockSnapshot = _stockSnapshot.value;
     final Map<String, int> unsyncedDelta =
         widget.stockDelta?.unsyncedDelta() ?? const <String, int>{};
+    // ① 草稿：任何输入变化都会走到这里（见 `_maybeScheduleDraft` 的注释）
+    _maybeScheduleDraft();
     // M09（2026-10-08）：**返回键也要走放弃确认** —— AppBar 返回箭头（手机壳的
     // 整屏开单页）与系统返回都绕过下面绑定的 Escape，以前填了数量点返回直接丢草稿。
     return PopScope(
@@ -823,6 +1040,8 @@ class _SalePageState extends State<SalePage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
+                      // ① 草稿橙条（在最上面：进页第一眼就该看到「上次的东西还在」）
+                      if (_restoreRaw != null) _draftBanner(theme),
                       // §CV·八十 批 1 ③：失败时把「哪几处要填」摆在页顶
                       SubmitErrorSummary(messages: _submitErrorMessages()),
                       _headerRow(theme),

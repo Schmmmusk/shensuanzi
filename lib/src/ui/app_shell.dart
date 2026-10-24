@@ -349,6 +349,11 @@ Widget appShellPage(
             masterDataSink: shell.masterDataSink!,
             // #37①：手机壳不显示快捷键后缀（判据与送货页同一处）
             mobileShell: shell.mobileShell,
+            // ① 草稿自动保存（2026-10-24，§CV·一百零二）：
+            // `<数据目录>/drafts/` —— 跟数据走、不进主库、不进备份。
+            // 手机壳同样启用（家人反馈的丢失风险两边都有；路径由
+            // `path_provider` 给的可写目录，见 `AppEnvironment`）。
+            drafts: DraftsStore(dataDirectory: shell.dataDirectory),
           );
   } else if (destination.id == 'delivery') {
     // 送货（批次 1b / RULE-003）：创建即扣库存、状态强制 in_transit，

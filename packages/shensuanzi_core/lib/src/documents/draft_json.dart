@@ -327,13 +327,18 @@ DeliveryDraft? deliveryDraftFromJson(Map<String, Object?>? json) {
 bool saleDraftHasContent(SaleDraft draft) =>
     draft.partyId != null ||
     draft.remark.trim().isNotEmpty ||
-    draft.payments.isNotEmpty ||
+    // ⚠️ 只数**填了金额**的收付款行：开单页默认就有一条「现金」空行
+    //（账户已选、金额空），拿 `payments.isNotEmpty` 判会把空表单当成有内容
+    draft.payments.any((SalePaymentDraft p) => p.amount.trim().isNotEmpty) ||
     draft.lines.any((SaleLineDraft l) => _lineHasContent(_saleLine(l)));
 
 bool purchaseDraftHasContent(PurchaseDraft draft) =>
     draft.partyId != null ||
     draft.remark.trim().isNotEmpty ||
-    draft.payments.isNotEmpty ||
+    // 同销售：默认空行不算内容
+    draft.payments.any(
+      (PurchasePaymentDraft p) => p.amount.trim().isNotEmpty,
+    ) ||
     draft.lines.any((PurchaseLineDraft l) => _lineHasContent(_purchaseLine(l)));
 
 bool deliveryDraftHasContent(DeliveryDraft draft) =>

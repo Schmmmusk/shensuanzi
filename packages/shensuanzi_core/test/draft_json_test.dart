@@ -174,6 +174,51 @@ void main() {
       expect(deliveryDraftHasContent(const DeliveryDraft()), isFalse);
     });
 
+    // 回归：开单页**默认就有一条「现金」空行**（账户已选、金额空）。
+    // 拿 `payments.isNotEmpty` 判会把空表单当成有内容 ⇒ 每次进页挂个空橙条。
+    test('只有一条**金额为空**的收付款行 ⇒ 仍算空', () {
+      expect(
+        saleDraftHasContent(
+          const SaleDraft(
+            payments: <SalePaymentDraft>[
+              SalePaymentDraft(accountId: 'a-1', accountName: '现金', amount: ''),
+            ],
+          ),
+        ),
+        isFalse,
+      );
+      expect(
+        saleDraftHasContent(
+          const SaleDraft(
+            payments: <SalePaymentDraft>[
+              SalePaymentDraft(
+                accountId: 'a-1',
+                accountName: '现金',
+                amount: '  ',
+              ),
+            ],
+          ),
+        ),
+        isFalse,
+        reason: '全是空格也算空',
+      );
+      expect(
+        saleDraftHasContent(
+          const SaleDraft(
+            payments: <SalePaymentDraft>[
+              SalePaymentDraft(
+                accountId: 'a-1',
+                accountName: '现金',
+                amount: '5',
+              ),
+            ],
+          ),
+        ),
+        isTrue,
+        reason: '填了金额才算',
+      );
+    });
+
     test('填了任意一项 ⇒ true', () {
       expect(
         saleDraftHasContent(const SaleDraft(lines: <SaleLineDraft>[lineA])),

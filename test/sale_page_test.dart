@@ -92,6 +92,7 @@ void main() {
     StockDelta? stockDelta,
     MasterDataPolicy? policy,
     bool mobileShell = false,
+    DraftsStore? drafts,
   }) => MaterialApp(
     home: Scaffold(
       body: SalePage(
@@ -104,6 +105,8 @@ void main() {
         masterDataPolicy: policy ?? const MasterDataPolicy.desktop(),
         masterDataSink: ServiceMasterSink(products),
         mobileShell: mobileShell,
+        // ① 草稿：不传 = 不启用（既有用例逐字不变）
+        drafts: drafts,
       ),
     ),
   );
@@ -1121,6 +1124,137 @@ void main() {
           '#37：页级是 `Focus` 时 `unfocus()` 会把焦点升到**路由的** scope ⇒ '
           'Ctrl+S 静默失效；改成 `FocusScope` 后焦点留在页内 ⇒ 恒生效',
     );
+  });
+
+  // ============================================================ 草稿自动保存（①）
+  //
+  // 真实诉求批 ①（2026-10-24，§CV·一百零二）。用户裁定：1.5 s 防抖、
+  // **不自动填**（挂橙条）、保存成功/放弃/取消即删。
+  //
+  // ⚠️ 这几条用例是**防止数据丢失**功能的护栏 —— 它们红了就是「用户填的东西
+  // 没被救回来」，比任何性能问题都严重。
+  group('草稿自动保存（①）', () {
+    late DraftsStore store;
+
+    setUp(() {
+      store = DraftsStore(dataDirectory: box.path);
+    });
+
+    /// 往盘里塞一份「上次的草稿」（3 瓶 × ¥5.00）
+    void seedDraft({String quantity = '3'}) {
+      store.writeSync(
+        DraftKind.sale,
+        saleDraftToJson(
+          SaleDraft(
+            date: '2026-10-24',
+            remark: '上次填的',
+            lines: <SaleLineDraft>[
+              SaleLineDraft(
+                productId: productId,
+                productName: '红富士',
+                quantity: quantity,
+                unitPrice: '5.00',
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    testWidgets('进页发现草稿 ⇒ 橙条出现，但**表单不自动填**', (WidgetTester tester) async {
+      seedDraft(quantity: '3');
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('sale-draft-banner')),
+        findsOneWidget,
+        reason: '① 有草稿就要说出来（不自动填，先问）',
+      );
+      final TextField qty = tester.widget<TextField>(
+        find.byKey(const Key('sale-qty')),
+      );
+      expect(
+        qty.controller!.text,
+        isEmpty,
+        reason: '① 用户可能想开新单 —— **绝不自动填**（裁定甲）',
+      );
+    });
+
+    testWidgets('点「恢复」⇒ 数量/备注被填回来，橙条收起', (WidgetTester tester) async {
+      seedDraft(quantity: '3');
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('sale-draft-restore')));
+      await tester.pumpAndSettle();
+
+      final TextField qty = tester.widget<TextField>(
+        find.byKey(const Key('sale-qty')),
+      );
+      expect(qty.controller!.text, '3', reason: '① 恢复后数量要一字不差');
+      expect(find.text('上次填的'), findsOneWidget, reason: '备注也要回来');
+      expect(
+        find.byKey(const Key('sale-draft-banner')),
+        findsNothing,
+        reason: '恢复完橙条该收起',
+      );
+    });
+
+    testWidgets('点「放弃」⇒ 草稿文件被删，表单仍是空的', (WidgetTester tester) async {
+      seedDraft();
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('sale-draft-discard')));
+      await tester.pumpAndSettle();
+
+      expect(store.exists(DraftKind.sale), isFalse, reason: '① 放弃了就别再问');
+      expect(find.byKey(const Key('sale-draft-banner')), findsNothing);
+      final TextField qty = tester.widget<TextField>(
+        find.byKey(const Key('sale-qty')),
+      );
+      expect(qty.controller!.text, isEmpty, reason: '放弃 ≠ 恢复');
+    });
+
+    testWidgets('输入后 1.5 s 落盘（防抖）', (WidgetTester tester) async {
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+      expect(store.exists(DraftKind.sale), isFalse, reason: '前置：还没有草稿');
+
+      await tester.enterText(find.byKey(const Key('sale-qty')), '7');
+      await tester.pump(); // 让 onChanged 生效
+      expect(
+        store.exists(DraftKind.sale),
+        isFalse,
+        reason: '① 防抖期内不该落盘（否则每敲一键一次写盘）',
+      );
+
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(store.exists(DraftKind.sale), isTrue, reason: '① 停手 1.5 s 后落盘');
+
+      final SaleDraft? back = saleDraftFromJson(store.read(DraftKind.sale));
+      expect(back, isNotNull);
+      expect(back!.lines.first.quantity, '7', reason: '① 存的是用户输入原文');
+    });
+
+    testWidgets('空表单不写草稿（否则下次进页挂个空橙条）', (WidgetTester tester) async {
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 2000));
+      expect(store.exists(DraftKind.sale), isFalse);
+    });
+
+    testWidgets('读不懂的草稿 ⇒ 进页不挂橙条，且坏文件被删掉', (WidgetTester tester) async {
+      final String path = store.pathOf(DraftKind.sale);
+      Directory(p.dirname(path)).createSync(recursive: true);
+      File(path).writeAsStringSync('{ 坏 JSON');
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('sale-draft-banner')), findsNothing);
+      expect(File(path).existsSync(), isFalse, reason: '读不了就删，别再打扰');
+    });
   });
 }
 
