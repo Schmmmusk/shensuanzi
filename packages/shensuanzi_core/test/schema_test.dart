@@ -54,13 +54,13 @@ void main() {
       'idx_documents_created',
       'idx_lines_document',
       'idx_lines_product',
-      'idx_stock_product_seq',
+      'idx_stock_covering',
       'idx_stock_document',
       'idx_stock_seq',
       'idx_money_account_seq',
       'idx_money_document',
       'idx_money_seq',
-      'idx_party_ledger_party_seq',
+      'idx_party_covering',
       'idx_party_ledger_document',
       'idx_party_ledger_seq',
       'idx_settle_receipt',
@@ -284,34 +284,67 @@ void main() {
       );
     });
 
-    test('v4 真实迁移：v3 库开库后索引存在且 user_version = 4', () {
-      final Directory box = Directory.systemTemp.createTempSync('sz_v4_');
+    test('v5 真实迁移：v3 库开库后 v4/v5 索引到齐、旧窄索引被换掉', () {
+      final Directory box = Directory.systemTemp.createTempSync('sz_v5_');
       addTearDown(() => deleteQuietly(box));
       final String path = '${box.path}/v3.db';
-      // 造一个**真的 v3 库**：全量建表语句去掉 v4 新索引，user_version 钉 3
+      // 造一个**真的 v3 库**：全量建表语句去掉 v4/v5 的新索引，**再补回 v3 当时
+      // 那两个窄索引**，user_version 钉 3。
+      // ⚠️ 「补回」不能省：不补的话 v5 那一步的 `DROP INDEX IF EXISTS` 是空转，
+      // 「换掉」这件事**根本没被测到**（只剩 CREATE 被执行）。
       final Database raw = sqlite3.open(path);
       for (final String statement in Schema.createStatements) {
-        if (statement.contains('idx_documents_updated')) continue;
+        if (statement.contains('idx_documents_updated') ||
+            statement.contains('idx_stock_covering') ||
+            statement.contains('idx_party_covering')) {
+          continue;
+        }
         raw.execute(statement);
       }
+      raw.execute(
+        'CREATE INDEX idx_stock_product_seq ON stock_ledger(product_id, seq_no)',
+      );
+      raw.execute(
+        'CREATE INDEX idx_party_ledger_party_seq '
+        'ON party_ledger(party_id, seq_no)',
+      );
       raw.execute('PRAGMA user_version = 3');
       raw.dispose();
 
-      // 开库即迁移（Db.open 跑迁移链）
+      // 开库即迁移（Db.open 跑迁移链：v3→v4→v5）
       final Db migrated = Db.open(path);
-      final List<Map<String, Object?>> indexes = migrated.raw.select(
-        'PRAGMA index_list(documents)',
+      List<String> indexesOf(String table) => migrated.raw
+          .select('PRAGMA index_list($table)')
+          .map((Map<String, Object?> r) => r['name']! as String)
+          .toList();
+
+      expect(
+        indexesOf(Schema.documents),
+        contains('idx_documents_updated'),
+        reason: 'v4 环：迁移必须把索引建出来，否则窗口查询照旧全表扫',
+      );
+      // v5 环：**换掉**，不是并存
+      expect(
+        indexesOf(Schema.stockLedger),
+        contains('idx_stock_covering'),
+        reason: 'v5 环：库存覆盖索引必须在',
       );
       expect(
-        indexes.map((Map<String, Object?> r) => r['name']),
-        contains('idx_documents_updated'),
-        reason: '迁移必须把索引建出来，否则窗口查询照旧全表扫',
+        indexesOf(Schema.stockLedger),
+        isNot(contains('idx_stock_product_seq')),
+        reason: 'v5 环：旧窄索引必须被 DROP（并存会白占 20 MB、写入多维护一份）',
       );
+      expect(indexesOf(Schema.partyLedger), contains('idx_party_covering'));
+      expect(
+        indexesOf(Schema.partyLedger),
+        isNot(contains('idx_party_ledger_party_seq')),
+      );
+
       final List<Map<String, Object?>> version = migrated.raw.select(
         'PRAGMA user_version',
       );
       expect(version.single.values.single, Schema.version);
-      expect(Schema.version, 4, reason: '本测试就是为 v4 写的');
+      expect(Schema.version, 5, reason: '本测试就是为 v5 写的');
       migrated.close();
     });
 
@@ -502,16 +535,16 @@ void main() {
     // 审查意见 §五：「迁移链是**链**，写完一环就该验证一环」——
     // 于是这里不只测「最终到了 v3」，还测「**中间的 v2 那一环真的跑了**」
     // 与「某一环失败时，链停在哪、有没有半个结构」。
-    test('化石升至 v4：**三环都跑**（v1→v2→v3→v4），五列 + 索引到齐', () {
+    test('化石升至 v5：**四环都跑**（v1→v2→v3→v4→v5），列 + 索引到齐', () {
       final File fixture = File('test/fixtures/v1_empty.db');
       final Directory box = Directory.systemTemp.createTempSync('sz_ring_ok_');
       addTearDown(() => deleteQuietly(box));
-      final String path = '${box.path}/v4.db';
+      final String path = '${box.path}/v5.db';
       fixture.copySync(path); // ⚠️ 先拷贝再打开（直接开会把化石改坏）
 
       final Db migrated = Db.open(path);
       addTearDown(migrated.close);
-      expect(migrated.schemaVersion, 4);
+      expect(migrated.schemaVersion, 5);
 
       Set<Object?> columnsOf(String table) => migrated.raw
           .select('PRAGMA table_info($table)')
@@ -542,6 +575,22 @@ void main() {
         indexes.map((Map<String, Object?> r) => r['name']),
         contains('idx_documents_updated'),
         reason: 'v4 环建出的索引要在（同步窗口查询就靠它）',
+      );
+      // 环级：v4→v5 那一环的产物 —— 化石的 v1 索引是窄的，v5 必须把它们换宽
+      // （v1 化石里根本没有覆盖索引，所以这一环**只能**由迁移产生）
+      final List<String> stockIdx = migrated.raw
+          .select('PRAGMA index_list(${Schema.stockLedger})')
+          .map((Map<String, Object?> r) => r['name']! as String)
+          .toList();
+      expect(
+        stockIdx,
+        contains('idx_stock_covering'),
+        reason: 'v5 环：覆盖索引要建出来（库存页 1336 → 37.6 ms 就靠它）',
+      );
+      expect(
+        stockIdx,
+        isNot(contains('idx_stock_product_seq')),
+        reason: 'v5 环：窄索引要被换掉',
       );
 
       // 迁移后的库里新列是**活的**（不是只有结构）
@@ -629,9 +678,9 @@ void main() {
       addTearDown(retry.close);
       expect(
         retry.schemaVersion,
-        4,
+        Schema.version,
         reason:
-            '重试从 v2 断点继续，跑完 v2→v3→v4 —— 能成功本身就证明 v1→v2 '
+            '重试从 v2 断点继续，跑完 v2→v3→v4→v5 —— 能成功本身就证明 v1→v2 '
             '没有重跑（package_note 已在，重跑会 duplicate column）。'
             '「断点续跑」的可观测证据（§BE：失败不停在起点、也不自动回滚）',
       );
@@ -840,9 +889,28 @@ void main() {
 /// ⚠️ 前提：迁移**只加列 / 加索引**（`Agents.md` 纪律 14/15：只增不删、
 /// 语义变更视作新字段）。哪天真的出现「改类型 / 重建表」，这个助手就不够用 ——
 /// 那时应当**加新化石**，而不是继续手搓形状。
+/// v1 就有、后来被迁移**换掉**（DROP + 换个更宽的建回来）的索引。
+///
+/// v5 是第一次出现这种形态：两个窄索引被加宽成覆盖索引，迁移里是
+/// `DROP INDEX idx_stock_product_seq` + `CREATE INDEX idx_stock_covering`。
+/// 降级回 v1 形状时**必须把被删的那个按原样建回来** —— 只处理 CREATE 的话，
+/// 降级形状会少两个索引，而「降级 == 化石」那条前提校验会红（它红了就说明
+/// 上面几条迁移用例测的是臆造形状）。
+const Map<String, String> _v1IndexesReplacedLater = <String, String>{
+  'idx_stock_product_seq':
+      'CREATE INDEX idx_stock_product_seq ON stock_ledger(product_id, seq_no)',
+  'idx_party_ledger_party_seq':
+      'CREATE INDEX idx_party_ledger_party_seq '
+      'ON party_ledger(party_id, seq_no)',
+};
+
 void downgradeToV1(Database raw) {
   final RegExp addColumn = RegExp(r'^ALTER TABLE (\w+) ADD COLUMN (\w+) ');
   final RegExp createIndex = RegExp(r'^CREATE INDEX(?: IF NOT EXISTS)? (\w+) ');
+  final RegExp dropIndex = RegExp(r'^DROP INDEX(?: IF EXISTS)? (\w+)');
+  // 被迁移 DROP 掉的 v1 索引，**最后统一建回来**：v5 那一步是
+  // 「DROP 旧的 → CREATE 新的」交替四条，边删边建会在中间态里打架。
+  final List<String> restoreAtEnd = <String>[];
   // ⚠️ `v` 只到 `version - 1`：`migrationStep(version)` 本身会抛
   //    `MissingMigrationException`（"没有下一步"），不能拿去循环。
   for (int v = 1; v < Schema.version; v++) {
@@ -859,8 +927,20 @@ void downgradeToV1(Database raw) {
       final RegExpMatch? indexMatch = createIndex.firstMatch(statement);
       if (indexMatch != null) {
         raw.execute('DROP INDEX IF EXISTS ${indexMatch.group(1)}');
+        continue;
+      }
+      // v5 起迁移还会**删**索引（窄索引加宽成覆盖索引）
+      final RegExpMatch? dropMatch = dropIndex.firstMatch(statement);
+      if (dropMatch != null) {
+        final String name = dropMatch.group(1)!;
+        raw.execute('DROP INDEX IF EXISTS $name');
+        final String? v1Sql = _v1IndexesReplacedLater[name];
+        if (v1Sql != null) restoreAtEnd.add(v1Sql);
       }
     }
+  }
+  for (final String sql in restoreAtEnd) {
+    raw.execute(sql);
   }
 }
 

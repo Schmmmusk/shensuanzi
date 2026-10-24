@@ -34,7 +34,7 @@ class Schema {
   /// ⚠️ **本步（段 1a）只动 schema 与迁移**：`document_lines.quantity` 仍
   /// **永远是最小单位**、`amount` 仍是这一行**实际发生金额的真相**；
   /// 引擎 / 草稿 / UI 的口径改动分别在 2a / 2b / 3 段。
-  static const int version = 4;
+  static const int version = 5;
 
   // ---------------------------------------------------------------- 表名
 
@@ -253,7 +253,14 @@ class Schema {
       FOREIGN KEY (document_id) REFERENCES $documents(id)
     )
     ''',
-    'CREATE INDEX idx_stock_product_seq ON $stockLedger(product_id, seq_no)',
+    // v5（2026-10-24，§CV·九十八）：**加宽成覆盖索引**，不是新增。
+    // 从前 `(product_id, seq_no)` 是非 covering 的 ⇒ 37 万行聚合时每行回表
+    // （实测 1336 ms）；加上 `quantity` / `total_cost` 后 **37.6 ms（35×）**。
+    // ⚠️ `seq_no` 必须排在聚合列**之前**：聚合不在乎组内顺序，但
+    // 「按商品看流水」`WHERE product_id=? ORDER BY seq_no` 依赖它 ——
+    // 反过来排会多一步 `TEMP B-TREE FOR ORDER BY`（实测 6.24 → 7.07 ms）。
+    'CREATE INDEX idx_stock_covering ON $stockLedger('
+        'product_id, seq_no, quantity, total_cost)',
     'CREATE INDEX idx_stock_document    ON $stockLedger(document_id)',
     'CREATE UNIQUE INDEX idx_stock_seq  ON $stockLedger(seq_no)',
 
@@ -290,7 +297,8 @@ class Schema {
       FOREIGN KEY (document_id) REFERENCES $documents(id)
     )
     ''',
-    'CREATE INDEX idx_party_ledger_party_seq ON $partyLedger(party_id, seq_no)',
+    // v5：同理加宽（26 万行余额聚合 648 → 27.7 ms，23×）；`seq_no` 同样在前。
+    'CREATE INDEX idx_party_covering ON $partyLedger(party_id, seq_no, amount)',
     'CREATE INDEX idx_party_ledger_document  ON $partyLedger(document_id)',
     'CREATE UNIQUE INDEX idx_party_ledger_seq ON $partyLedger(seq_no)',
 
@@ -404,6 +412,19 @@ class Schema {
   /// 窗口排序同批从 `ORDER BY updated_at, id`（升序）改为
   /// `DESC` + 内存反转：升序 + LIMIT 取的是窗口里**最旧**的 N 条，
   /// 忙店窗口被撑满时，最新的收款 / 签收状态**永远排在队尾**补不进来。
+  ///
+  /// ## v4 → v5（2026-10-24，第 4 批基线 / §CV·九十八）
+  ///
+  /// 两个窄索引**加宽**成覆盖索引（`DROP` + `CREATE`，索引个数不变）：
+  ///
+  /// | 表 | 旧 | 新 | 收益 |
+  /// |---|---|---|---|
+  /// | `stock_ledger` | `(product_id, seq_no)` | `(product_id, seq_no, quantity, total_cost)` | 库存页聚合 **1336 → 37.6 ms（35×）** |
+  /// | `party_ledger` | `(party_id, seq_no)` | `(party_id, seq_no, amount)` | 往来余额 **648 → 27.7 ms（23×）** |
+  ///
+  /// 只动索引、**不触碰任何行**；480 MB 库实测重建 1.0 s（真实库瞬时）。
+  /// `documents` 的覆盖索引**故意不加** —— `todaySummary` 真实用法是单日
+  /// 0.23 ms，压测里的 270 ms 来自「查全部历史」这种生产不存在的形态。
   static List<String> migrationStep(int from) => switch (from) {
     1 => <String>['ALTER TABLE $products ADD COLUMN package_note TEXT NULL'],
     2 => <String>[
@@ -416,6 +437,23 @@ class Schema {
     3 => <String>[
       'CREATE INDEX IF NOT EXISTS idx_documents_updated '
           'ON $documents(updated_at, id)',
+    ],
+    // v4 → v5（2026-10-24，第 4 批基线 / §CV·九十八）：两个窄索引**加宽**成覆盖索引。
+    //
+    // 为什么是「换掉」不是「新增」：两个表都已有一个前缀相同的窄索引，
+    // 宽索引是它的严格超集（前缀查询照样命中）⇒ 索引**个数不变**，
+    // 写入不变慢、磁盘还少 1 MB（实测 20.6+14.7 → 20.3+14.1）。
+    //
+    // ⚠️ `IF EXISTS` 是保命符：`DROP INDEX` 遇到不存在的索引会直接抛错，
+    // 让整个迁移事务回滚 —— 手工清理过索引的旧库会**开不了机**。
+    // ⚠️ `seq_no` 必须排在聚合列之前（理由见建库 DDL 处）。
+    4 => <String>[
+      'DROP INDEX IF EXISTS idx_stock_product_seq',
+      'CREATE INDEX idx_stock_covering ON $stockLedger('
+          'product_id, seq_no, quantity, total_cost)',
+      'DROP INDEX IF EXISTS idx_party_ledger_party_seq',
+      'CREATE INDEX idx_party_covering ON $partyLedger('
+          'party_id, seq_no, amount)',
     ],
     _ => throw MissingMigrationException(from),
   };

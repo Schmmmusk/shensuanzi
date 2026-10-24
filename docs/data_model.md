@@ -380,9 +380,13 @@ CREATE INDEX idx_documents_updated     ON documents(updated_at, id);
 **索引**：
 
 ```sql
-CREATE INDEX idx_stock_product_seq ON stock_ledger(product_id, seq_no);
-CREATE INDEX idx_stock_document    ON stock_ledger(document_id);
-CREATE UNIQUE INDEX idx_stock_seq  ON stock_ledger(seq_no);
+-- v5（2026-10-24，§CV·九十八）：**覆盖索引**。`quantity` / `total_cost` 也进索引，
+-- 库存页的 `GROUP BY product_id` 聚合不再逐行回表（37 万行：1336 → 35 ms，38×）。
+-- ⚠️ `seq_no` 必须排在聚合列**之前**：「按商品看流水」`WHERE product_id=? ORDER BY seq_no`
+--    依赖它；反过来排会多一步 `TEMP B-TREE FOR ORDER BY`（实测 6.24 → 7.07 ms）。
+CREATE INDEX idx_stock_covering ON stock_ledger(product_id, seq_no, quantity, total_cost);
+CREATE INDEX idx_stock_document ON stock_ledger(document_id);
+CREATE UNIQUE INDEX idx_stock_seq ON stock_ledger(seq_no);
 ```
 
 ### 3.4 `money_ledger`（资金流水）
@@ -414,7 +418,7 @@ CREATE UNIQUE INDEX idx_stock_seq  ON stock_ledger(seq_no);
 | `time_estimated` | INTEGER | |
 | `created_at` | INTEGER | |
 
-索引：`idx_party_ledger_party_seq(party_id, seq_no)`、`idx_party_ledger_document(document_id)`、UNIQUE `idx_party_ledger_seq(seq_no)`
+索引：`idx_party_covering(party_id, seq_no, amount)`（v5 起的覆盖索引 —— 往来余额聚合 648 → 27 ms，23×）、`idx_party_ledger_document(document_id)`、UNIQUE `idx_party_ledger_seq(seq_no)`
 
 ### 3.6 `settlements`（核销关系）
 

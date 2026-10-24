@@ -14183,3 +14183,102 @@ CREATE INDEX idx_documents_today  ON documents(occurred_at, status, doc_type, to
 收益：库存页 1.4 s → 30 ms、往来页 620 → 21 ms。
 
 **没裁之前不落**（第 3 批刚确认「零 schema」，这条要单独拍）。
+
+## §CV·九十八 **schema v5：两个窄索引加宽成覆盖索引**（2026-10-24，用户裁定「加宽两个」）
+
+> 提案：`docs/proposals/v5-覆盖索引-方案.md`（已随裁定更新为 ✅）。
+> 用户裁定：**加宽两个**，并给了三条落地提醒（`IF EXISTS` 保命 / `make_fixture` 同步 /
+> 迁移耗时）。其中第二条**基于我提案里的错误判断**，落地时纠正，见 §一。
+
+### 一、⚠️ 落地时发现提案写错一处（已撤销，重要）
+
+提案 §五-4 写「`tool/make_fixture.dart` 是 DDL 的第二份副本，必须同步改」——
+**这是错的**，我按它改了之后立刻发现该文件的常量叫 `_v1CreateStatements`，
+文件头明写：
+
+> 化石必须是**当时真正跑过的结构**。用当前的 `Schema.createStatements` 生成 =
+> **循环验证**：造出来的「v1 库」带着今天的定义，迁移测试永远是绿的，而真用户的库
+> 不是那样。……**不得「顺手同步」成当前版本**。
+
+它产出的是 `test/fixtures/v1_empty.db`（`user_version = 1` 的**冻结化石**）。
+同步它 = 让「v1 库」带上 v5 的索引定义 = **迁移测试永远绿、真用户升级时才炸**。
+⇒ 两处改动**全部撤销**（`git diff tool/make_fixture.dart` 为空，化石文件未动）。
+
+**正确的护栏本来就在**：`schema_test` 的「降级构造出来的形状 == 化石的 v1 形状
+（逐表逐列 + 索引）」会在化石被污染时立刻红。而且化石里**本来就该是窄索引** ——
+v5 的 `DROP` 才有事可做（见 §三 的迁移用例）。
+
+> 教训：**「有两份 DDL」不等于「两份都要改」**。判断依据是这份 DDL 的**用途**，
+> 不是它的内容像不像。冻结快照的唯一正确动作是「不动」。
+
+### 二、改动
+
+| 文件 | 改动 |
+|---|---|
+| `core/lib/src/db/schema.dart` | `version = 5`；建库 DDL 两条换成 `idx_stock_covering(product_id, seq_no, quantity, total_cost)` / `idx_party_covering(party_id, seq_no, amount)`；`migrationStep(4)` 四条（2 `DROP INDEX IF EXISTS` + 2 `CREATE INDEX`）；迁移链文档补 v4→v5 一段 |
+| `core/test/perf/query_plan_test.dart` | 4 条断言从「用这条索引」收紧成「用 **COVERING** 这条索引」（`stockByProduct` / `costByProduct` / `stockAggregates` / `partyBalances`）；头注释表同步 |
+| `core/test/schema_test.dart` | 索引清单两个名字；`expect(Schema.version, 5)`；4 条迁移框架用例按 v5 重写（见 §三）；`downgradeToV1` 支持 `DROP INDEX`（见 §四） |
+| `docs/data_model.md` | 两处索引定义 |
+| `docs/perf_test_guide.md` | 「前两条 1.3 秒是真实缺陷」→「已于 v5 修掉 + 复核口径」 |
+
+### 三、测试怎么改的（v5 是第一次「换掉」索引）
+
+| 用例 | 改法 |
+|---|---|
+| `v4 真实迁移…` → `v5 真实迁移…` | 造 v3 库时**补回两个窄索引**再迁移 —— 不补的话 `DROP IF EXISTS` 是空转，「换掉」这件事根本没被测到；迁移后断言**宽索引在、窄索引不在**（换掉而非并存） |
+| `化石升至 v4：三环` → `化石升至 v5：四环` | 加 v5 环断言。化石是 v1，本来没有覆盖索引 ⇒ 这一环**只能**由迁移产生 |
+| 环级重试 `schemaVersion == 4` | 改成 `Schema.version`（不再写死数字） |
+| `downgradeToV1` | 新增 `DROP INDEX` 处理 + `_v1IndexesReplacedLater` 表：被迁移删掉的 v1 索引**最后统一建回来**（v5 是「DROP 旧的 → CREATE 新的」交替四条，边删边建会在中间态打架） |
+
+**先红后绿**：改断言后 5 条红（3 stock + party + 索引清单）→ 上迁移 → 45 条全绿。
+**反向验证**：把 `idx_stock_covering` 临时改回两列 ⇒ **3 条红**（正是三条 stock 断言）；
+恢复 ⇒ 绿。
+
+### 四、真实迁移 + 重跑基线（不是手工 DDL）
+
+用 `Db.open` 走**真实迁移链**把 480 MB 基线库升到 v5：
+
+```
+迁移后 schemaVersion = 5（耗时 935 ms）
+  stock_ledger: [idx_stock_covering, idx_stock_seq, idx_stock_document]   ← 窄索引已被 DROP
+  party_ledger: [idx_party_covering, idx_party_ledger_seq, idx_party_ledger_document]
+  documents:    [idx_documents_updated, idx_documents_created, idx_documents_ref,
+                 idx_documents_occurred, idx_documents_party, idx_documents_type_status]  ← 未动
+```
+
+`perf_bench --rounds 20`（CSV：`docs/perf/2026-10-24-v5-migrated.csv`）对比 v4 基线：
+
+| 查询 | v4 p50 | v5 p50 | 倍数 |
+|---|---|---|---|
+| `stock_group` | 1369.4 | **35.3** | **38.8×** |
+| `stock_cost` | 1371.6 | **37.1** | **37.0×** |
+| `party_balances` | 619.6 | **27.0** | **23.0×** |
+| 其余 12 条 | — | — | **0.9–1.5×（噪声内，无退化）** |
+
+> `today_summary` 仍是 269 ms —— 那是 `perf_bench` 查「全部历史」的形状，
+> **生产代码只查单日**（实测 0.23 ms）。本批**故意不给 documents 加索引**，
+> 理由见提案 §三。
+
+**磁盘**（`dbstat` 实测，非估算）：
+
+| | v4 | v5 | Δ |
+|---|---|---|---|
+| `idx_stock_*` | 20.55 MB | **20.15 MB** | −0.40 |
+| `idx_party_ledger_party_seq` → `idx_party_covering` | 14.61 MB | **14.00 MB** | −0.61 |
+| **活跃数据合计** | 503.9 MB | **502.9 MB** | **−1.01 MB** |
+
+⚠️ **文件本身没变小**（`perf_bench` 报 480.5 → 480.5）：SQLite 把释放的页放进
+freelist（实测 246 页 ≈ 1.0 MB）留给后续写入复用，**不会自动缩文件**。
+要缩得 `VACUUM`，那会重写整库（480 MB）—— 不值得，也没做。
+
+### 五、门禁（全绿）
+
+根 **281** · core **686** · host **159** · app **340** · `flutter analyze` **0** ·
+`dart format --set-exit-if-changed` **exit 0** · core 13 自检 + host 5 + app 5 +
+`typecheck` **全过**。
+
+### 六、剩余（第 4 批 4c 的查询层优化，与本批独立）
+
+`list_documents` 291 ms（`SCAN d` + `TEMP B-TREE`）· `doc_search` 342 ms（四路 LIKE）·
+`recent_products` 429 ms（扫全部销售单）· `in_transit` 87 ms · `account_balances` 65 ms。
+这些**不吃覆盖索引**，要改 SQL 形态（两段查询 / 提前收窄），各自单独提交便于对照。

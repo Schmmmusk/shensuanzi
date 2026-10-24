@@ -258,11 +258,13 @@ D:\perf-run1\
 | `pull_stock` / `pull_documents` / `pull_window` | **< 1 ms** | 同步分页与窗口（索引对得上） |
 | `lines_of_page` / `settled_counts` | < 1 ms | 本页明细、本页核销笔数（批量形状正确） |
 
-> ⚠️ **前两条 1.3 秒不是脚本坏了，是真实的性能缺陷**：`stock_ledger` 的聚合走的是
-> `idx_stock_product_seq` 但**不覆盖** `quantity` / `total_cost`，每行都要回表。
-> 症状就是你会在界面上看到：**库存页进页要几秒**、**开单页每敲一个字符卡一下**
-> （那里每次重建都重跑这个聚合）、往来方页等一下才出余额。
-> 本轮实测的目的之一就是**量出这个数字**；把它记进报告，别当成「测试环境问题」。
+> ✅ **前两条 1.3 秒已于 2026-10-24 修掉（schema v5，§CV·九十八）**：`stock_ledger` 的聚合
+> 当时走 `idx_stock_product_seq` 但**不覆盖** `quantity` / `total_cost`，每行都要回表。
+> v5 把它加宽成 `idx_stock_covering(product_id, seq_no, quantity, total_cost)`、
+> `party_ledger` 同理加宽成 `idx_party_covering` ⇒ **1336 → 35 ms（38×）**、
+> **648 → 27 ms（23×）**，索引个数不变（换掉不是新增）。
+> 在新库上重跑本脚本，`stock_group` / `stock_cost` 应在 **30–40 ms** 量级；
+> 若又回到几百毫秒，先查 `--explain` 是不是**退化成了非 covering**（`query_plan_test` 会拦）。
 >
 > 反过来：如果你的 `pull_*` 也到了几十毫秒、`lines_of_page` 到了秒级，那说明**索引没被用上** ——
 > 把 `--explain` 的输出一起交回。

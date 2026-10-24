@@ -17,10 +17,10 @@
 //
 // | 查询 | 现状 | 目标 |
 // |---|---|---|
-// | stockByProduct / costByProduct | 走 `idx_stock_product_seq`（非 covering） | 保持 |
+// | stockByProduct / costByProduct / stockAggregates | **`COVERING INDEX idx_stock_covering`**（v5 起，从前是窄索引 `idx_stock_product_seq` ⇒ 每行回表） | **保持 covering** |
 // | inTransitByProduct | 走两个索引 | 保持 |
 // | todaySummary | 走 `idx_documents_occurred`（4c-5 修上界后） | **保持**（防退回到 type_status 全扫） |
-// | partyBalances | 走 `idx_party_ledger_party_seq` | 保持 |
+// | partyBalances | **`COVERING INDEX idx_party_covering`**（v5 起） | **保持 covering** |
 // | pull 窗口 | 走 `idx_documents_updated`（P0-3） | 保持 |
 // | 未结清筛选 | 派生表 `MATERIALIZE` 一次 + `idx_settle_target` | 保持（防退化成逐行子查询） |
 // | 单据列表 | `SCAN d` + `TEMP B-TREE FOR ORDER BY` | **4c-3 两段查询后收紧**（只排 200 行） |
@@ -44,13 +44,22 @@ void main() {
       .join('\n');
 
   group('4a 热查询执行计划', () {
-    test('stockByProduct 走 idx_stock_product_seq（不是全表扫）', () {
+    // v5（2026-10-24，§CV·九十八）：索引从 `idx_stock_product_seq(product_id, seq_no)`
+    // **加宽**成 `idx_stock_covering(product_id, seq_no, quantity, total_cost)`。
+    // 断言从「用这条索引」收紧成「用 **COVERING** 这条索引」—— 非 covering 时
+    // 37 万行每行都要回表（实测 1336 ms vs 37.6 ms，35×），只断言索引名**抓不到**
+    // 「有人把索引改回两列」这种退化。
+    test('stockByProduct 走 COVERING idx_stock_covering（不是全表扫）', () {
       final String p = plan(
         // query_dao.dart: stockByProduct()
         'SELECT product_id AS k, COALESCE(SUM(quantity), 0) AS v '
         'FROM stock_ledger GROUP BY product_id',
       );
-      expect(p, contains('idx_stock_product_seq'), reason: p);
+      expect(
+        p,
+        contains('COVERING INDEX idx_stock_covering'),
+        reason: '必须是覆盖索引（`quantity` 不能回表）：$p',
+      );
       expect(
         p,
         isNot(contains('SCAN stock_ledger\n')),
@@ -58,13 +67,17 @@ void main() {
       );
     });
 
-    test('costByProduct 与账面同一条索引（同一张表同一分组键）', () {
+    test('costByProduct 与账面同一条覆盖索引（同一张表同一分组键）', () {
       final String p = plan(
         // query_dao.dart: costByProduct()
         'SELECT product_id AS k, COALESCE(SUM(total_cost), 0) AS v '
         'FROM stock_ledger GROUP BY product_id',
       );
-      expect(p, contains('idx_stock_product_seq'), reason: p);
+      expect(
+        p,
+        contains('COVERING INDEX idx_stock_covering'),
+        reason: '`total_cost` 也必须在索引里：$p',
+      );
     });
 
     test('4c-2 stockAggregates 一条 SQL 扫一次（不是三次聚合）', () {
@@ -75,7 +88,11 @@ void main() {
         'MAX(CASE WHEN quantity > 0 THEN 1 ELSE 0 END) AS inb '
         'FROM stock_ledger GROUP BY product_id',
       );
-      expect(p, contains('idx_stock_product_seq'), reason: p);
+      expect(
+        p,
+        contains('COVERING INDEX idx_stock_covering'),
+        reason: '4c-2 合并后的三列都要覆盖（否则省下的两次全扫白省）：$p',
+      );
       expect(
         p.split('\n').where((String l) => l.contains('stock_ledger')).length,
         1,
@@ -110,13 +127,17 @@ void main() {
       );
     });
 
-    test('partyBalances 走 idx_party_ledger_party_seq', () {
+    test('partyBalances 走 COVERING idx_party_covering', () {
       final String p = plan(
         // query_dao.dart: partyBalances()
         'SELECT party_id AS k, COALESCE(SUM(amount), 0) AS v '
         'FROM party_ledger GROUP BY party_id',
       );
-      expect(p, contains('idx_party_ledger_party_seq'), reason: p);
+      expect(
+        p,
+        contains('COVERING INDEX idx_party_covering'),
+        reason: 'v5：`amount` 在索引里，26 万行不再逐行回表（648 → 27.7 ms）：$p',
+      );
     });
 
     test('pull 窗口走 idx_documents_updated（P0-3 的索引必须在）', () {
