@@ -7,7 +7,11 @@
 ///   **0 ≤ x ≤ safety_stock（safety > 0）橙色**（该补货）；
 ///   正常无色。`safety_stock = 0` 就是「不需要告警」，不触发
 /// - **AA-4**：「成本（均价）」列 + ⓘ tooltip 说明口径（历史加权平均，
-///   进价变过时与最近一次进价不同）；**负值红色**（与负库存联动）
+///   进价变过时与最近一次进价不同）；**负值红色**（与负库存联动）。
+///   **业务审查 §4.2（用户裁定 ③乙）**：主数字是**均价**（余值 ÷ 在店可售，
+///   round-half-up），总额「共 ¥X」作小字 —— 旧显示把余值（总额）当均价，
+///   10 件 × ¥3.50 显示「¥35.00」，用户会以为一件 35 元而**错定价**。
+///   没货 / 负库存时均价无意义，只显示总额
 /// - **遗漏 4**：默认按在店可售降序（库存页是浏览不是查找）
 /// - **遗漏 5**：默认只显示**有流水**的商品；「显示全部」开关查没进过货的
 /// - **遗漏 7**：盘点入口 v1 不放（§AA 七：不放比放禁用按钮好）
@@ -649,7 +653,39 @@ class _StockRow extends StatelessWidget {
                       ),
                     ),
                   )
+                else if (book > 0)
+                  // 业务审查 §4.2（用户裁定 ③乙）：主数字是**均价**。
+                  // 旧显示把「成本余值」（总额）当均价 —— 10 件 × ¥3.50 的货
+                  // 显示「¥35.00」，用户会以为一件成本 35 元，**直接误导定价**。
+                  // 均价 = 余值 ÷ 在店可售（round-half-up，与成本分摊同口径）；
+                  // 总额不丢，降为小字补充。
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        '¥ ${Money.format(Money.divideRoundHalfUp(costCents, book))}',
+                        style: TextStyle(
+                          height: 1.6,
+                          fontWeight: FontWeight.w600,
+                          color: costCents < 0
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      Text(
+                        '共 ¥ ${Money.format(costCents)}',
+                        style: TextStyle(
+                          height: 1.6,
+                          fontSize: 11,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                    ],
+                  )
                 else
+                  // 没货 / 负库存：均价无意义（除不动），只显示总额
+                  // （下方 costNotice 会解释「已无货仍有成本」）
                   Text(
                     '¥ ${Money.format(costCents)}',
                     style: TextStyle(

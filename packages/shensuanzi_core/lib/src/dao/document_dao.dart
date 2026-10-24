@@ -592,10 +592,17 @@ class DocumentDao {
 
   /// 同前缀下已存在的最大单号（供 `DocNoGenerator` 解析序号）。
   /// [prefixWithDate] 形如 `XS20260925-`。
+  /// 同日同前缀的**最大单号**（单号生成器的输入）。
+  ///
+  /// ⚠️ 排序必须 `LENGTH(doc_no) DESC, doc_no DESC`，不能只按 `doc_no DESC`
+  /// （P0-1，业务审查 §3.1）：序号补零到 3 位，第 1000 单起是 4 位，
+  /// 字典序里 `'XS…-999' > 'XS…-1000'` ⇒ 纯字典序会取到 -999，
+  /// 生成器再 +1 得到 -1000，**撞上已存在的那条**（UNIQUE，当天无法开单）。
+  /// 与 `ProductDao.latestCode` 同一写法（那边早就修过，这边漏了）。
   String? latestDocNo(String prefixWithDate) {
     final ResultSet rows = _raw.select(
       'SELECT doc_no FROM ${Schema.documents} WHERE doc_no LIKE ? '
-      'ORDER BY doc_no DESC LIMIT 1',
+      'ORDER BY LENGTH(doc_no) DESC, doc_no DESC LIMIT 1',
       <Object?>['$prefixWithDate%'],
     );
     if (rows.isEmpty) return null;

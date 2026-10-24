@@ -75,6 +75,7 @@ void main() {
   Document pendingDoc({
     required DocType type,
     String? partyId,
+    String? accountId,
     bool noParty = false,
     int totalAmount = 0,
     DocStatus status = DocStatus.confirmed,
@@ -84,6 +85,7 @@ void main() {
     docType: type,
     status: status,
     partyId: noParty ? null : (partyId ?? supplierId),
+    accountId: accountId,
     totalAmount: totalAmount,
     occurredAt: now(),
     createdAt: now(),
@@ -630,6 +632,74 @@ void main() {
     });
   });
 
+  // ============================================================ B-2 创建态归一
+
+  // B-2（业务审查 §3.6，用户裁定）：**主机永远赢** —— 客户端 payload 里的
+  // `status` 不可信。主单（销售 / 送货 / 采购 / **退货** / 盘点）落库必须
+  // 是 `confirmed`（退货不一定马上退款，不能是 settled）；收付款单必须
+  // 是 `settled`（它一生下来就是核销凭据）。从前 `_prepare` 原样透传
+  // payload 的 status ⇒ 一个造假 payload 就能把销售单写成「已结清」。
+  group('B-2 创建态 status 归一', () {
+    test('销售单 payload 写 settled ⇒ 落库 confirmed', () {
+      final String productId = createProduct();
+      final String partyId = createParty();
+      final Document doc = pendingDoc(
+        type: DocType.sale,
+        partyId: partyId,
+        totalAmount: 100,
+        status: DocStatus.settled, // 客户端撒谎
+      );
+      engine.dispatch(
+        document: doc,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: doc.id,
+            productId: productId,
+            quantity: 1,
+            unitPrice: 100,
+          ),
+        ],
+        now: now(),
+      );
+      expect(
+        documents.findById(doc.id)!.status,
+        DocStatus.confirmed,
+        reason: 'B-2：主单创建态只能是 confirmed —— settled 要等真收款',
+      );
+    });
+
+    test('收款单 payload 写 confirmed ⇒ 落库 settled', () {
+      final String partyId = createParty();
+      final int t = now();
+      final Account account = Account(
+        id: newId(),
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      );
+      AccountDao(db).insert(account);
+
+      final Document doc = pendingDoc(
+        type: DocType.receipt,
+        partyId: partyId,
+        accountId: account.id,
+        totalAmount: 100,
+        status: DocStatus.confirmed, // 客户端少写一档
+      );
+      engine.dispatch(document: doc, now: now());
+      // ⚠️ 反向验证实录（2026-10-23）：本条**单独摘掉归一层仍然绿** ——
+      // 核销流程末尾的状态派生（`paid >= total ⇒ settled`）本来就把它
+      // 兜成 settled。它是**不变量护栏**（哪层坏了都红），不是归一层的
+      // 唯一证据；归一层的直接证据是上面那条销售单用例。
+      expect(
+        documents.findById(doc.id)!.status,
+        DocStatus.settled,
+        reason: 'B-2：收付款单创建态只能是 settled（它本身就是核销凭据）',
+      );
+    });
+  });
+
   // ============================================================ 不变量
 
   group('不变量（docs/data_model.md §五）', () {
@@ -709,6 +779,55 @@ void main() {
       expect(
         () => DocNoGenerator(db).next(DocType.purchase, occurredAtMs: now()),
         throwsA(isA<StateError>()),
+      );
+    });
+
+    // P0-1（业务审查 §3.1）：同日单号撞号。用户裁定：**真造存量**，不只测边界。
+    //
+    // 为什么造 1000 条而不是 999 条：存量 999 条（-001~-999）时，字典序最大的
+    // 恰好是 -999，+1 得 -1000 —— **有 bug 也碰巧正确**。真正的撞号发生在第
+    // 1001 次：存量含 -1000 时字典序最大仍是 -999（'9' > '1'）⇒ 旧实现再生成
+    // -1000，撞上已存在的那条（documents.doc_no 是 UNIQUE，插库即炸）。
+    test('P0-1：同日第 1001 单不撞号（1000 条存量 → next 得 -1001）', () {
+      // 2030-01-01：远离测试时钟（1700000000000 起），避免与其它用例的同日单号撞
+      const int t = 1893456000000;
+      final DateTime local = DateTime.fromMillisecondsSinceEpoch(t).toLocal();
+      final String prefix =
+          'XS${local.year}'
+          '${local.month.toString().padLeft(2, '0')}'
+          '${local.day.toString().padLeft(2, '0')}-';
+      for (int i = 1; i <= 1000; i++) {
+        db.raw.execute(
+          'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+          'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+          'VALUES (?, ?, ?, ?, 0, 0, ?, 0, ?, ?)',
+          <Object?>[
+            'p0-1-doc-$i',
+            '$prefix${i.toString().padLeft(3, '0')}',
+            'sale',
+            'confirmed',
+            t,
+            t,
+            t,
+          ],
+        );
+      }
+      late String generated;
+      db.transaction(() {
+        generated = DocNoGenerator(db).next(DocType.sale, occurredAtMs: t);
+      });
+      expect(
+        generated,
+        '${prefix}1001',
+        reason: '字典序把 -1000 排成「小于 -999」⇒ 旧实现返回已存在的 -1000（撞号）',
+      );
+      expect(
+        db.raw.select(
+          'SELECT 1 FROM ${Schema.documents} WHERE doc_no = ? LIMIT 1',
+          <Object?>[generated],
+        ).isEmpty,
+        isTrue,
+        reason: '生成的单号不允许与存量撞 —— 撞了插库时 UNIQUE 会炸，当天无法开单',
       );
     });
 

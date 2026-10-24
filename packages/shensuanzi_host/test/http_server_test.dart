@@ -379,9 +379,11 @@ void main() {
           'next_cursors',
           // 2026-10-07（docs/reply.md §1）：分页「还有没有下一页」的显式信号
           'has_more',
+          // 2026-10-23（P0-3）：窗口取满 ⇒ 最新状态没带全 ⇒ 客户端推迟清队列
+          'doc_window_truncated',
         }),
         isEmpty,
-        reason: '响应体只允许 9 个实体 + next_cursors + has_more',
+        reason: '响应体只允许 9 个实体 + next_cursors + has_more + doc_window_truncated',
       );
       // 空库 ⇒ 每路都空 ⇒ 不可能还有下一页
       expect(json['has_more'], isFalse);

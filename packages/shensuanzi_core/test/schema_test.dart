@@ -269,6 +269,52 @@ void main() {
       expect(Schema.migrationStep(1).single, contains('package_note'));
     });
 
+    // v3 → v4（P0-3，业务审查 §3.1）：documents 补 (updated_at, id) 索引 ——
+    // 同步「最近更新窗口」与主数据游标同款复合索引；没有它窗口查询
+    // 是全表扫 + 临时 B 树（EXPLAIN 实测，报告 §5.4）。
+    test('migrationStep(3) 恰好一条 CREATE INDEX，点名 documents(updated_at, id)', () {
+      final List<String> statements = Schema.migrationStep(3);
+      expect(statements, hasLength(1));
+      expect(
+        statements.single,
+        contains(
+          'CREATE INDEX IF NOT EXISTS idx_documents_updated '
+          'ON documents(updated_at, id)',
+        ),
+      );
+    });
+
+    test('v4 真实迁移：v3 库开库后索引存在且 user_version = 4', () {
+      final Directory box = Directory.systemTemp.createTempSync('sz_v4_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/v3.db';
+      // 造一个**真的 v3 库**：全量建表语句去掉 v4 新索引，user_version 钉 3
+      final Database raw = sqlite3.open(path);
+      for (final String statement in Schema.createStatements) {
+        if (statement.contains('idx_documents_updated')) continue;
+        raw.execute(statement);
+      }
+      raw.execute('PRAGMA user_version = 3');
+      raw.dispose();
+
+      // 开库即迁移（Db.open 跑迁移链）
+      final Db migrated = Db.open(path);
+      final List<Map<String, Object?>> indexes = migrated.raw.select(
+        'PRAGMA index_list(documents)',
+      );
+      expect(
+        indexes.map((Map<String, Object?> r) => r['name']),
+        contains('idx_documents_updated'),
+        reason: '迁移必须把索引建出来，否则窗口查询照旧全表扫',
+      );
+      final List<Map<String, Object?>> version = migrated.raw.select(
+        'PRAGMA user_version',
+      );
+      expect(version.single.values.single, Schema.version);
+      expect(Schema.version, 4, reason: '本测试就是为 v4 写的');
+      migrated.close();
+    });
+
     test('migrationStep(当前版) → MissingMigrationException（当前没有下一步）', () {
       expect(
         () => Schema.migrationStep(Schema.version),
@@ -456,16 +502,16 @@ void main() {
     // 审查意见 §五：「迁移链是**链**，写完一环就该验证一环」——
     // 于是这里不只测「最终到了 v3」，还测「**中间的 v2 那一环真的跑了**」
     // 与「某一环失败时，链停在哪、有没有半个结构」。
-    test('化石升至 v3：**两环都跑**（v1→v2→v3），五列到齐', () {
+    test('化石升至 v4：**三环都跑**（v1→v2→v3→v4），五列 + 索引到齐', () {
       final File fixture = File('test/fixtures/v1_empty.db');
       final Directory box = Directory.systemTemp.createTempSync('sz_ring_ok_');
       addTearDown(() => deleteQuietly(box));
-      final String path = '${box.path}/v3.db';
+      final String path = '${box.path}/v4.db';
       fixture.copySync(path); // ⚠️ 先拷贝再打开（直接开会把化石改坏）
 
       final Db migrated = Db.open(path);
       addTearDown(migrated.close);
-      expect(migrated.schemaVersion, 3);
+      expect(migrated.schemaVersion, 4);
 
       Set<Object?> columnsOf(String table) => migrated.raw
           .select('PRAGMA table_info($table)')
@@ -487,6 +533,15 @@ void main() {
           'entry_quantity',
           'entry_unit',
         ]),
+      );
+      // 环级：v3→v4 那一环的产物（P0-3 的索引）
+      final List<Map<String, Object?>> indexes = migrated.raw.select(
+        'PRAGMA index_list(documents)',
+      );
+      expect(
+        indexes.map((Map<String, Object?> r) => r['name']),
+        contains('idx_documents_updated'),
+        reason: 'v4 环建出的索引要在（同步窗口查询就靠它）',
       );
 
       // 迁移后的库里新列是**活的**（不是只有结构）
@@ -574,11 +629,11 @@ void main() {
       addTearDown(retry.close);
       expect(
         retry.schemaVersion,
-        3,
+        4,
         reason:
-            '重试**能成功**本身就证明 v1→v2 **没有重跑** —— '
-            'package_note 已在（上一步提交的），若重跑 v1→v2 会报 duplicate column。'
-            '这正是「断点续跑」的可观测证据（§BE：失败不停在起点、也不自动回滚）',
+            '重试从 v2 断点继续，跑完 v2→v3→v4 —— 能成功本身就证明 v1→v2 '
+            '没有重跑（package_note 已在，重跑会 duplicate column）。'
+            '「断点续跑」的可观测证据（§BE：失败不停在起点、也不自动回滚）',
       );
       expect(
         File('$path.before-v2').existsSync(),
@@ -782,20 +837,28 @@ void main() {
 /// （v3 那次正是因为手写了一个 `DROP COLUMN`，测试报
 /// `duplicate column name: package_unit`）。
 ///
-/// ⚠️ 前提：迁移**只加列**（`Agents.md` 纪律 14/15：只增不删、语义变更视作新字段）。
-/// 哪天真的出现「改类型 / 重建表」，这个助手就不够用 —— 那时应当**加新化石**，
-/// 而不是继续手搓形状。
+/// ⚠️ 前提：迁移**只加列 / 加索引**（`Agents.md` 纪律 14/15：只增不删、
+/// 语义变更视作新字段）。哪天真的出现「改类型 / 重建表」，这个助手就不够用 ——
+/// 那时应当**加新化石**，而不是继续手搓形状。
 void downgradeToV1(Database raw) {
   final RegExp addColumn = RegExp(r'^ALTER TABLE (\w+) ADD COLUMN (\w+) ');
+  final RegExp createIndex = RegExp(r'^CREATE INDEX(?: IF NOT EXISTS)? (\w+) ');
   // ⚠️ `v` 只到 `version - 1`：`migrationStep(version)` 本身会抛
   //    `MissingMigrationException`（"没有下一步"），不能拿去循环。
   for (int v = 1; v < Schema.version; v++) {
     for (final String sql in Schema.migrationStep(v)) {
-      final RegExpMatch? match = addColumn.firstMatch(sql.trim());
-      if (match != null) {
+      final String statement = sql.trim();
+      final RegExpMatch? columnMatch = addColumn.firstMatch(statement);
+      if (columnMatch != null) {
         raw.execute(
-          'ALTER TABLE ${match.group(1)} DROP COLUMN ${match.group(2)}',
+          'ALTER TABLE ${columnMatch.group(1)} DROP COLUMN ${columnMatch.group(2)}',
         );
+        continue;
+      }
+      // v4 起迁移也会建索引（P0-3）—— 降级要一并摘掉，否则形状对不上化石
+      final RegExpMatch? indexMatch = createIndex.firstMatch(statement);
+      if (indexMatch != null) {
+        raw.execute('DROP INDEX IF EXISTS ${indexMatch.group(1)}');
       }
     }
   }

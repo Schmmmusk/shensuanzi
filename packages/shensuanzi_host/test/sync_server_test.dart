@@ -1794,6 +1794,60 @@ void main() {
         reason: '窗口取满**不置** has_more —— 它只是补齐，下一次同步会重新覆盖窗口',
       );
     });
+
+    // P0-3（业务审查 §3.1）：窗口按 updated_at **升序** + LIMIT 取的是窗口里
+    // **最旧**的 N 条 ⇒ 忙店（一周动过 ≥limit 张单）最新的收款 / 签收状态
+    // **永远排在队尾**补不进来 —— 手机显示旧欠款态，用户重复催款 / 重复收款。
+    test('P0-3：窗口取满 ⇒ 返回**最新**的 N 条 + doc_window_truncated', () {
+      final String p = syncProduct(code: 'P954');
+      final String party = syncParty();
+      syncPurchase(p, party, 1, 100);
+      syncPurchase(p, party, 1, 200);
+      syncPurchase(p, party, 1, 300);
+
+      final SyncPullResult first = server.pull();
+      final List<Map<String, Object?>> docs = first.entities['documents']!;
+      expect(docs, hasLength(3));
+      // 三张单各自改一个**递增**的 updated_at（模拟先后发生的状态变化）
+      final List<String> ids = <String>[
+        for (final Map<String, Object?> d in docs) d['id']! as String,
+      ];
+      final int base = docs.first['updated_at']! as int;
+      for (int i = 0; i < ids.length; i++) {
+        db.raw.execute(
+          'UPDATE documents SET updated_at = ? WHERE id = ?',
+          <Object?>[base + 1000 * (i + 1), ids[i]],
+        );
+      }
+
+      // 主分页已到底（docSince 推进）⇒ 这一页只有窗口行；limit = 2
+      final SyncPullResult page = server.pull(
+        stockSince: first.nextCursors[SyncCursorKeys.stock]!,
+        moneySince: first.nextCursors[SyncCursorKeys.money]!,
+        partySince: first.nextCursors[SyncCursorKeys.party]!,
+        settleSince: first.nextCursors[SyncCursorKeys.settle]!,
+        docSince: first.nextCursors[SyncCursorKeys.doc]!,
+        productsSince: first.nextCursors[SyncCursorKeys.products]!,
+        partiesSince: first.nextCursors[SyncCursorKeys.parties]!,
+        accountsSince: first.nextCursors[SyncCursorKeys.accounts]!,
+        docUpdatedSince: 0,
+        limit: 2,
+      );
+
+      final List<Map<String, Object?>> windowed = page.entities['documents']!;
+      expect(windowed, hasLength(2), reason: '窗口 + limit = 2 ⇒ 只带回 2 条');
+      final Set<String> got = <String>{
+        for (final Map<String, Object?> d in windowed) d['id']! as String,
+      };
+      expect(got, contains(ids[2]), reason: 'P0-3：最新动过的那张单必须在 —— 升序取法会把它挤掉');
+      expect(got, contains(ids[1]), reason: '次新的补上（最新的两条进窗口）');
+      expect(got, isNot(contains(ids[0])), reason: '最旧的那条本轮让位（下一次同步窗口会覆盖它）');
+      expect(
+        page.docWindowTruncated,
+        isTrue,
+        reason: '窗口取满一页 ⇒ 还有更新没带上 ⇒ 客户端不许清队列',
+      );
+    });
   });
 
   // ============================================================ JSON 契约

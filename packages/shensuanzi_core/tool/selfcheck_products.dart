@@ -41,6 +41,9 @@ void main() {
     String costPrice = '3.20',
     String barcode = '6901234567890',
     String safetyStock = '10',
+    String packageNote = '',
+    String packageUnit = '',
+    String packageSize = '',
   }) => ProductDraft(
     name: name,
     unit: unit,
@@ -48,6 +51,9 @@ void main() {
     costPrice: costPrice,
     barcode: barcode,
     safetyStock: safetyStock,
+    packageNote: packageNote,
+    packageUnit: packageUnit,
+    packageSize: packageSize,
   );
 
   // ============================================================ 金额解析
@@ -481,6 +487,104 @@ void main() {
       s4.barcodeOwners('6901234567890').single.id == before.id,
     );
     db4.close();
+
+    // ---- P0-2（业务审查 §3.1）：包装换算 UPDATE 丢列 + 三表护栏 ----
+    // ⚠️ **独立开库**：本节前面的 db4 列表段断言「默认只看启用 / 按建档顺序」，
+    // 共用 db4 会污染它的商品集合（实测撞过：barcodeOwners .single 抛
+    // Too many elements、列表计数挂）—— 与 sync_client 自检同款教训。
+    section('P0-2 包装换算 UPDATE（读库验证）');
+    final Db db6 = Db.openInMemory();
+    final ProductService s6 = ProductService(db6);
+    final Product pkg = s6.create(
+      goodDraft(barcode: '6909990000111', packageUnit: '箱', packageSize: '12'),
+      now: 1000,
+    );
+    s6.update(
+      pkg.id,
+      goodDraft(
+        name: '包装测试',
+        barcode: '6909990000111',
+        packageUnit: '袋',
+        packageSize: '5',
+      ),
+      now: 2000,
+    );
+    final Product pkgReloaded = ProductDao(db6).findById(pkg.id)!;
+    check(
+      'P0-2：包装换算 update 能改（读库）',
+      pkgReloaded.packageUnit == '袋' && pkgReloaded.packageSize == 5,
+      '实际 ${pkgReloaded.packageUnit} / ${pkgReloaded.packageSize}',
+    );
+    s6.update(
+      pkg.id,
+      goodDraft(name: '包装测试', barcode: '6909990000111'),
+      now: 3000,
+    );
+    final Product pkgCleared = ProductDao(db6).findById(pkg.id)!;
+    check(
+      'P0-2：包装换算 update 能清（读库）',
+      pkgCleared.packageUnit == null && pkgCleared.packageSize == null,
+      '实际 ${pkgCleared.packageUnit} / ${pkgCleared.packageSize}',
+    );
+
+    // P0-2 护栏（纪律 18）：三张主数据表 UPDATE 覆盖 toRow 全部可写列。
+    Map<String, Object?> comparable(Object? model) {
+      final Map<String, Object?> row =
+          (model as dynamic).toRow() as Map<String, Object?>;
+      row.remove('updated_at');
+      row.remove('sync_version');
+      return row;
+    }
+
+    final ProductDao guardProducts = ProductDao(db6);
+    final Product guardPa = Product(
+      id: 'guard-p',
+      code: 'P9999',
+      name: '甲',
+      barcode: '69000001',
+      unit: '瓶',
+      costPrice: 100,
+      sellPrice: 200,
+      safetyStock: 3,
+      category: '饮料',
+      isActive: true,
+      remark: '备注甲',
+      packageNote: '1 箱 = 24 瓶',
+      packageUnit: '箱',
+      packageSize: 24,
+      createdAt: 1000,
+      updatedAt: 1000,
+      syncVersion: 1,
+    );
+    guardProducts.insert(guardPa);
+    final Product guardPb = guardPa.copyWith(
+      name: '乙',
+      barcode: '69000002',
+      unit: '个',
+      costPrice: 111,
+      sellPrice: 222,
+      safetyStock: 9,
+      category: '水果',
+      isActive: false,
+      remark: '备注乙',
+      packageNote: '1 袋 = 5 个',
+      packageUnit: '袋',
+      packageSize: 5,
+      updatedAt: 2000,
+      syncVersion: 2,
+    );
+    guardProducts.update(guardPb);
+    check(
+      'P0-2 护栏：products UPDATE 覆盖 toRow 全部可写列',
+      '${comparable(guardProducts.findById('guard-p'))}' ==
+          '${comparable(guardPb)}',
+    );
+    check(
+      'P0-2 护栏：UPDATE 只读列钉死 id / created_at',
+      ProductDao.updateReadOnlyColumns.contains('id') &&
+          ProductDao.updateReadOnlyColumns.contains('created_at'),
+    );
+    db6.close();
 
     // ---- 条码重复（R-15 裁定）----
     // 单独开一个库：自检是一个长脚本，对象跨段复用会让断言莫名其妙地互相影响

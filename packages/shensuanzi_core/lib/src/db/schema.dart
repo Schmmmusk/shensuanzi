@@ -34,7 +34,7 @@ class Schema {
   /// ⚠️ **本步（段 1a）只动 schema 与迁移**：`document_lines.quantity` 仍
   /// **永远是最小单位**、`amount` 仍是这一行**实际发生金额的真相**；
   /// 引擎 / 草稿 / UI 的口径改动分别在 2a / 2b / 3 段。
-  static const int version = 3;
+  static const int version = 4;
 
   // ---------------------------------------------------------------- 表名
 
@@ -206,6 +206,10 @@ class Schema {
     // 同步拉取游标：`documents` 没有 seq_no，用 (created_at, id) 复合游标
     // （见 docs/sync_protocol.md §8.2 / R-4 处置）
     'CREATE INDEX idx_documents_created     ON $documents(created_at, id)',
+    // v4（P0-3）：同步「最近更新窗口」按 (updated_at, id) 取；主数据游标
+    // 同款复合索引（idx_products_updated 等）—— 没有它窗口查询是全表扫
+    // + 临时 B 树（EXPLAIN 实测，业务审查 §5.4）。
+    'CREATE INDEX idx_documents_updated     ON $documents(updated_at, id)',
 
     // v3（§BD）：`discount_amount` = 这一行的**让价**（分、正数、默认 0）；
     // `entry_quantity` / `entry_unit` = **录入原文**（用户当时输的数字与单位）——
@@ -392,6 +396,14 @@ class Schema {
   /// ⚠️ **本步（段 1a）只加列，不改口径**：`quantity` 仍**永远是最小单位**，
   /// `amount` 仍是这一行**实际发生金额的真相**（§AY·一 已解除严格等式）。
   /// 引擎 / 草稿 / 白名单 / UI 分别在 2a / 2b / 2c / 3 段改。
+  /// ## v3 → v4（2026-10-23，P0-3 / 业务审查 §3.1）
+  ///
+  /// `documents` 补复合索引 `idx_documents_updated ON documents(updated_at, id)`
+  /// —— 同步「最近更新窗口」（`doc_updated_since`）与主数据游标同款形状。
+  /// `CREATE INDEX` 不锁表、不回填，旧库旧数据直接可用。
+  /// 窗口排序同批从 `ORDER BY updated_at, id`（升序）改为
+  /// `DESC` + 内存反转：升序 + LIMIT 取的是窗口里**最旧**的 N 条，
+  /// 忙店窗口被撑满时，最新的收款 / 签收状态**永远排在队尾**补不进来。
   static List<String> migrationStep(int from) => switch (from) {
     1 => <String>['ALTER TABLE $products ADD COLUMN package_note TEXT NULL'],
     2 => <String>[
@@ -400,6 +412,10 @@ class Schema {
       'ALTER TABLE $documentLines ADD COLUMN discount_amount INTEGER NOT NULL DEFAULT 0',
       'ALTER TABLE $documentLines ADD COLUMN entry_quantity INTEGER NULL',
       'ALTER TABLE $documentLines ADD COLUMN entry_unit TEXT NULL',
+    ],
+    3 => <String>[
+      'CREATE INDEX IF NOT EXISTS idx_documents_updated '
+          'ON $documents(updated_at, id)',
     ],
     _ => throw MissingMigrationException(from),
   };

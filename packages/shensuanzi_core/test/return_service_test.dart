@@ -557,6 +557,133 @@ void main() {
       //（此前断言「回到送货后的 −12」是符号搞反 —— 拒收的货是**回来**了）
       expect(bookQuantity(), 0);
     });
+
+    // B-1（业务审查 §3.6，用户裁定）：拒收收口必须**逐商品 Map 全量比对**，
+    // 不是比总数。原单有 A、B 两个商品时，只退掉 A（哪怕 A 是全量）
+    // 也不是拒收 —— 旧实现只看「原单是 in_transit 的送货单」就收口，
+    // 半拒收的把原单误置 cancelled，在途视图直接少算 B 的货。
+    test('B-1：多商品只退其一 ⇒ **不**收口（原单留在途）', () {
+      final Product cola = Product(
+        id: newId(),
+        code: 'P002',
+        name: '可口可乐',
+        unit: '瓶',
+        costPrice: 200,
+        sellPrice: 300,
+        createdAt: now(),
+        updatedAt: now(),
+      );
+      products.insert(cola);
+
+      final DeliverySaved signed = deliveries.create(
+        DeliveryDraft(
+          partyId: customerId,
+          partyName: '客户甲',
+          date: '2026-10-04',
+          lines: <DeliveryLineDraft>[
+            DeliveryLineDraft.fromProduct(
+              products.findById(productId)!,
+              quantity: '10',
+            ),
+            DeliveryLineDraft.fromProduct(cola, quantity: '5'),
+          ],
+        ),
+      );
+      final String deliveryId = idOf(signed.docNo);
+      expect(documents.findById(deliveryId)!.status, DocStatus.inTransit);
+
+      // 只退 A（蒙牛）全部 10 件 —— B（可乐）5 件还没退
+      returns.create(
+        ReturnDraft(
+          refDocId: deliveryId,
+          originalDocType: DocType.delivery,
+          partyId: customerId,
+          partyName: '客户甲',
+          lines: <ReturnLineDraft>[
+            ReturnLineDraft(
+              productId: productId,
+              productName: '蒙牛纯牛奶',
+              quantity: '10',
+              amount: '25.00',
+              baseUnit: '瓶',
+              originalQuantity: 10,
+              originalAmountCents: 2500,
+            ),
+          ],
+        ),
+      );
+
+      expect(
+        documents.findById(deliveryId)!.status,
+        DocStatus.inTransit,
+        reason: 'B-1：可乐还没退 ⇒ 不是全量拒收；收口了在途视图就少算 5 瓶',
+      );
+    });
+
+    test('B-1：多商品全部退完才收口（逐商品 Map 相等）', () {
+      final Product cola = Product(
+        id: newId(),
+        code: 'P002',
+        name: '可口可乐',
+        unit: '瓶',
+        costPrice: 200,
+        sellPrice: 300,
+        createdAt: now(),
+        updatedAt: now(),
+      );
+      products.insert(cola);
+
+      final DeliverySaved signed = deliveries.create(
+        DeliveryDraft(
+          partyId: customerId,
+          partyName: '客户甲',
+          date: '2026-10-04',
+          lines: <DeliveryLineDraft>[
+            DeliveryLineDraft.fromProduct(
+              products.findById(productId)!,
+              quantity: '10',
+            ),
+            DeliveryLineDraft.fromProduct(cola, quantity: '5'),
+          ],
+        ),
+      );
+      final String deliveryId = idOf(signed.docNo);
+
+      returns.create(
+        ReturnDraft(
+          refDocId: deliveryId,
+          originalDocType: DocType.delivery,
+          partyId: customerId,
+          partyName: '客户甲',
+          lines: <ReturnLineDraft>[
+            ReturnLineDraft(
+              productId: productId,
+              productName: '蒙牛纯牛奶',
+              quantity: '10',
+              amount: '25.00',
+              baseUnit: '瓶',
+              originalQuantity: 10,
+              originalAmountCents: 2500,
+            ),
+            ReturnLineDraft(
+              productId: cola.id,
+              productName: '可口可乐',
+              quantity: '5',
+              amount: '15.00',
+              baseUnit: '瓶',
+              originalQuantity: 5,
+              originalAmountCents: 1500,
+            ),
+          ],
+        ),
+      );
+
+      expect(
+        documents.findById(deliveryId)!.status,
+        DocStatus.cancelled,
+        reason: 'B-1：两个商品都退满了 ⇒ 拒收成立，收口',
+      );
+    });
   });
 
   group('create（校验失败 ⇒ ReturnDraftInvalid）', () {

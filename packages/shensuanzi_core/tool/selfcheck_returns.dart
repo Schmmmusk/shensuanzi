@@ -759,6 +759,66 @@ void main() {
     db.close();
   }
 
+  // B-1（2026-10-23，业务审查 §3.6 / 用户裁定）：拒收收口必须**逐商品
+  // 全量比对**，不是比总数。原单有 A、B 两个商品时，只退 A（哪怕 A 全退）
+  // 也不是拒收 —— 旧实现照样收口，在途视图直接少算 B 的货。
+  {
+    freshDb();
+    final String pa = createProduct(code: 'P901');
+    final String pb = createProduct(code: 'P902');
+    final String supplier = createParty();
+    final String customer = createParty();
+    seedPurchase(pa, supplier, 10, 100);
+    seedPurchase(pb, supplier, 5, 200);
+
+    final Document delivery = mkDoc(
+      type: DocType.delivery,
+      partyId: customer,
+      totalAmount: 2000,
+    );
+    run(delivery, <DocumentLine>[
+      ...oneLine(delivery.id, pa, 10, 100),
+      ...oneLine(delivery.id, pb, 5, 200),
+    ]);
+    check(
+      'B-1 前置：多商品送货在途',
+      documents.findById(delivery.id)!.status == DocStatus.inTransit,
+    );
+
+    // 只退 A 全部（10/10）—— B 还没退
+    final Document partial = mkDoc(
+      type: DocType.saleReturn,
+      partyId: customer,
+      totalAmount: 1000,
+      refDocId: delivery.id,
+    );
+    final RuleOutcome partialOutcome = run(
+      partial,
+      oneLine(partial.id, pa, 10, 100),
+    );
+    check('B-1：部分拒收 applied', applied(partialOutcome));
+    check(
+      'B-1：只退其一 ⇒ 不**收口**（原单留在途）',
+      documents.findById(delivery.id)!.status == DocStatus.inTransit,
+      '${documents.findById(delivery.id)!.status}',
+    );
+
+    // 再退 B 全部（5/5）⇒ 累计逐商品相等 ⇒ 收口
+    final Document rest = mkDoc(
+      type: DocType.saleReturn,
+      partyId: customer,
+      totalAmount: 1000,
+      refDocId: delivery.id,
+    );
+    run(rest, oneLine(rest.id, pb, 5, 200));
+    check(
+      'B-1：两商品都退满 ⇒ 收口 cancelled',
+      documents.findById(delivery.id)!.status == DocStatus.cancelled,
+      '${documents.findById(delivery.id)!.status}',
+    );
+    db.close();
+  }
+
   // ============================================================ RULE-008 结算
   section('RULE-008 立即收退款 → 自动生成 receipt 单');
   {

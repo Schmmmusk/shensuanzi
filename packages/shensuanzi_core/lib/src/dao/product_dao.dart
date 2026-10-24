@@ -153,32 +153,33 @@ class ProductDao {
   }
 
   /// 主数据允许 UPDATE。`sync_version` 由调用方（`SyncServer`）决定新值。
+  ///
+  /// ## SET 清单的单一来源（P0-2，业务审查 §3.1）
+  ///
+  /// 手写 SET 清单漏过 `package_unit` / `package_size` ⇒ 包装换算
+  /// **改不动、清不掉**，而这是「已宣称的能力」—— 描述与实现不一致
+  /// 挂了四个月（纪律 17 的反面教材）。现在 SET 列 = `toRow().keys`
+  /// 减 [updateReadOnlyColumns]：**加列时自动跟上**。
+  ///
+  /// ⚠️ `id` 与 `created_at` 绝不能进 SET（用户裁定）：`SET id = ?` 是自杀，
+  /// 建档时间是事实。护栏见 `product_service_test.dart` 的
+  /// 「P0-2 护栏：主数据 UPDATE 覆盖 toRow 全部可写列（三表读回）」。
+  static const Set<String> updateReadOnlyColumns = <String>{'id', 'created_at'};
+
   void update(Product product) {
+    final Map<String, Object?> row = product.toRow();
+    final List<String> columns = row.keys
+        .where((String column) => !updateReadOnlyColumns.contains(column))
+        .toList();
+    if (columns.isEmpty) {
+      throw StateError('products UPDATE 列不能为空（toRow 只剩只读列？）');
+    }
+    final String setters = columns
+        .map((String column) => '$column = ?')
+        .join(', ');
     _raw.execute(
-      '''
-      UPDATE ${Schema.products} SET
-        code = ?, name = ?, barcode = ?, unit = ?,
-        cost_price = ?, sell_price = ?, safety_stock = ?,
-        category = ?, is_active = ?, remark = ?, package_note = ?,
-        updated_at = ?, sync_version = ?
-      WHERE id = ?
-      ''',
-      <Object?>[
-        product.code,
-        product.name,
-        product.barcode,
-        product.unit,
-        product.costPrice,
-        product.sellPrice,
-        product.safetyStock,
-        product.category,
-        product.isActive ? 1 : 0,
-        product.remark,
-        product.packageNote,
-        product.updatedAt,
-        product.syncVersion,
-        product.id,
-      ],
+      'UPDATE ${Schema.products} SET $setters WHERE id = ?',
+      <Object?>[...columns.map((String column) => row[column]), product.id],
     );
   }
 

@@ -1,7 +1,10 @@
+import 'package:sqlite3/sqlite3.dart';
+
 import '../dao/document_dao.dart';
 import '../dao/ledger_dao.dart';
 import '../dao/settlement_dao.dart';
 import '../db/database.dart';
+import '../db/schema.dart';
 import '../models/document.dart';
 import '../models/document_line.dart';
 import '../models/money_ledger.dart';
@@ -552,8 +555,13 @@ class RuleEngine {
     // （规则内部的状态转变，不走 `documentAction` —— R-3 只定义了
     // mark_delivered）；已签收（delivered）的原单不在此列 —— 货确实送到过，
     // 之后的退货不改变「送过货」这个事实（状态机不允许 delivered → cancelled）。
+    //
+    // B-1（2026-10-23，业务审查 §3.6 / 用户裁定）：收口加一道**全量闸** ——
+    // 必须逐商品「累计退货量 == 原单量」都成立才算拒收。只比总数会漏
+    // 「退了 A 全部 + B 一半」：旧实现照样收口，在途视图直接少算 B 的货。
     if (original.docType == DocType.delivery &&
-        original.status == DocStatus.inTransit) {
+        original.status == DocStatus.inTransit &&
+        _isFullRefusal(refDocId)) {
       _docs.updateStatusAndPaid(
         id: refDocId,
         status: DocStatus.cancelled,
@@ -562,6 +570,49 @@ class RuleEngine {
     }
 
     return RuleOutcome(RuleStatus.applied, document: doc);
+  }
+
+  /// 拒收收口的**全量判定**（B-1，2026-10-23 用户裁定）：
+  /// 原单可能有多个商品 ⇒ 逐商品「累计退货量（含本单，行已落库）== 原单量」
+  /// 全部成立才返回 `true`。
+  ///
+  /// - 累计口径走 `document_lines`：本单的行在 [_return] 的前半段已经落库，
+  ///   所以这里 SUM 出来的是**含本单**的累计值；
+  /// - 退回了原单里**没有**的商品 ⇒ 键集合不等 ⇒ 不算全量（那种数据本身有问题，
+  ///   更不能拿来收口）；
+  /// - 原单没有行（空单）⇒ `false`（没东西可拒收）。
+  bool _isFullRefusal(String refDocId) {
+    final Map<String, int> originalQty = <String, int>{};
+    for (final Row row in db.raw.select(
+      'SELECT product_id, quantity FROM ${Schema.documentLines} '
+      'WHERE document_id = ?',
+      <Object?>[refDocId],
+    )) {
+      originalQty['${row['product_id']}'] = row['quantity']! as int;
+    }
+    if (originalQty.isEmpty) return false;
+
+    final Map<String, int> returned = <String, int>{};
+    for (final Row row in db.raw.select(
+      'SELECT dl.product_id AS product_id, SUM(dl.quantity) AS q '
+      'FROM ${Schema.documentLines} dl '
+      'JOIN ${Schema.documents} d ON d.id = dl.document_id '
+      "WHERE d.ref_doc_id = ? AND d.doc_type = ? "
+      'GROUP BY dl.product_id',
+      <Object?>[refDocId, DocType.saleReturn.wire],
+    )) {
+      returned['${row['product_id']}'] = (row['q']! as num).toInt();
+    }
+
+    // ⚠️ 别用 `setA != setB` 比键集合：**Dart 的 Set == 是引用相等**，
+    // 内容相同也是「不等」（2026-10-23 实测踩过，表现为「map 打印一样
+    // 却判定不等」）。用长度 + 逐键包含。
+    if (originalQty.length != returned.length) return false;
+    if (!originalQty.keys.every(returned.containsKey)) return false;
+    for (final MapEntry<String, int> entry in originalQty.entries) {
+      if (returned[entry.key] != entry.value) return false;
+    }
+    return true;
   }
 
   // ------------------------------------------------------------ RULE-004/005
@@ -1047,6 +1098,15 @@ class RuleEngine {
   // ------------------------------------------------------------ 内部
 
   /// 主机落库前的字段重写：分配正式单号、用主机时钟写 `created_at` / `updated_at`
+  /// 主机侧预处理：单号（占位号 → 正式号）+ 时间戳 + **创建态归一**。
+  ///
+  /// B-2（2026-10-23，业务审查 §3.6 / 用户裁定）：**主机永远赢** ——
+  /// 客户端 payload 里的 `status` 不可信。从前原样透传 ⇒ 一个造假 payload
+  /// 就能把销售单写成「已结清」（`settled`），而 `paid_amount` 还是 0。
+  /// 现在按 `doc_type` 归一：
+  /// - 主单（销售 / 送货 / 采购 / **退货** / 盘点）⇒ `confirmed`
+  ///   （退货不一定马上退款，不能是 settled；结清要靠真收款刷新）
+  /// - 收付款单 ⇒ `settled`（它一生下来就是核销凭据）
   Document _prepare(Document document, {required int now}) {
     final String docNo = Document.isPendingDocNo(document.docNo)
         ? _docNo.next(document.docType, occurredAtMs: document.occurredAt)
@@ -1055,8 +1115,16 @@ class RuleEngine {
       docNo: docNo,
       createdAt: now,
       updatedAt: now,
+      status: initialStatusOf(document.docType),
     );
   }
+
+  /// 创建态归一表（B-2）。**转移单不在此列** —— 它在 dispatch 里直接被拒
+  /// （v1 未实现），走不到 [_prepare] 之后的落库。
+  static DocStatus initialStatusOf(DocType type) =>
+      type == DocType.receipt || type == DocType.payment
+      ? DocStatus.settled
+      : DocStatus.confirmed;
 
   void _insertStock({
     required String productId,

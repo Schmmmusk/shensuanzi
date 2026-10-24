@@ -96,6 +96,7 @@ class SyncPullResult {
     required this.entities,
     required this.nextCursors,
     this.hasMore = false,
+    this.docWindowTruncated = false,
   });
 
   /// 解析 §8.2 的响应体。
@@ -140,10 +141,12 @@ class SyncPullResult {
       ];
     }
     final Object? rawHasMore = json['has_more'];
+    final Object? rawTruncated = json['doc_window_truncated'];
     return SyncPullResult(
       entities: entities,
       nextCursors: cursors,
       hasMore: rawHasMore is bool && rawHasMore,
+      docWindowTruncated: rawTruncated is bool && rawTruncated,
     );
   }
 
@@ -184,11 +187,24 @@ class SyncPullResult {
   /// 现在客户端据此**循环拉到 `false`**，过程中不许报「完成」。
   final bool hasMore;
 
+  /// 「最近更新窗口」本页**取满了**（P0-3，2026-10-23）—— 窗口里动过的单
+  /// 比一页能带的多，**最新的更新没带全**。
+  ///
+  /// 与 [hasMore] 故意分开：窗口是「尽力而为的补齐」，不是协议分页
+  /// （取满不置 `has_more`，否则忙店每次同步都「拉不完」）。但这个信号
+  /// 客户端**必须**看到：它意味着本轮**还没见到主机的最新状态**，
+  /// ⇒ 同步队列的清理要**推迟**到某一轮窗口没截断时再做
+  /// （否则「未同步影响」提前归零，库存 / 往来按旧态少计）。
+  ///
+  /// 旧主机不带这个字段 ⇒ `false`（与 [hasMore] 的缺省处理对称）。
+  final bool docWindowTruncated;
+
   int countOf(String entity) => entities[entity]?.length ?? 0;
 
   Map<String, Object?> toJson() => <String, Object?>{
     ...entities,
     'next_cursors': nextCursors,
     'has_more': hasMore,
+    'doc_window_truncated': docWindowTruncated,
   };
 }

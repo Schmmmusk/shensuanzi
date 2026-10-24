@@ -80,13 +80,16 @@ String createParty() {
 Document pendingDoc({
   required DocType type,
   String? partyId,
+  String? accountId,
   int totalAmount = 0,
+  DocStatus status = DocStatus.confirmed,
 }) => Document(
   id: newId(),
   docNo: '${Document.pendingDocNoPrefix}abc123',
   docType: type,
-  status: DocStatus.confirmed,
+  status: status,
   partyId: partyId,
+  accountId: accountId,
   totalAmount: totalAmount,
   occurredAt: now(),
   createdAt: now(),
@@ -486,6 +489,109 @@ void main() {
       () => DocNoGenerator(db).next(DocType.purchase, occurredAtMs: now()),
     ),
   );
+
+  // B-2（2026-10-23，业务审查 §3.6 / 用户裁定）：创建态 status 归一 ——
+  // 客户端 payload 里的 status 不可信，主机按 doc_type 说了算。
+  section('B-2 创建态 status 归一');
+  {
+    final String p = createProduct(code: 'P950');
+    final String party = createParty();
+    final int t = now();
+    final Account account = Account(
+      id: newId(),
+      name: '现金',
+      type: AccountType.cash,
+      createdAt: t,
+      updatedAt: t,
+    );
+    AccountDao(db).insert(account);
+
+    // 销售单 payload 撒谎写 settled ⇒ 落库 confirmed
+    final Document liedSale = pendingDoc(
+      type: DocType.sale,
+      partyId: party,
+      accountId: account.id,
+      totalAmount: 100,
+      status: DocStatus.settled,
+    );
+    engine.dispatch(
+      document: liedSale,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: liedSale.id,
+          productId: p,
+          quantity: 1,
+          unitPrice: 100,
+        ),
+      ],
+      now: now(),
+    );
+    check(
+      'B-2：销售单 payload 写 settled ⇒ 落库 confirmed',
+      documents.findById(liedSale.id)!.status == DocStatus.confirmed,
+      '${documents.findById(liedSale.id)!.status}',
+    );
+
+    // 收款单 payload 少写一档（confirmed）⇒ 落库 settled
+    // ⚠️ 反向验证实录：本条单独摘掉归一层仍绿（核销流程末尾的状态派生
+    // 本来就兜成 settled）—— 它是不变量护栏，不是归一层的唯一证据。
+    final Document shyReceipt = pendingDoc(
+      type: DocType.receipt,
+      partyId: party,
+      accountId: account.id,
+      totalAmount: 100,
+      status: DocStatus.confirmed,
+    );
+    engine.dispatch(document: shyReceipt, now: now());
+    check(
+      'B-2：收款单 payload 写 confirmed ⇒ 落库 settled',
+      documents.findById(shyReceipt.id)!.status == DocStatus.settled,
+      '${documents.findById(shyReceipt.id)!.status}',
+    );
+  }
+
+  // P0-1（业务审查 §3.1）：同日单号撞号。与 rule_engine_test 同场景同理由：
+  // 造 1000 条存量（-001~-1000）——999 条时旧实现碰巧正确，第 1001 次才撞。
+  {
+    const int t = 1893456000000; // 2030-01-01，远离本脚本时钟
+    final DateTime local = DateTime.fromMillisecondsSinceEpoch(t).toLocal();
+    final String prefix =
+        'XS${local.year}'
+        '${local.month.toString().padLeft(2, '0')}'
+        '${local.day.toString().padLeft(2, '0')}-';
+    for (int i = 1; i <= 1000; i++) {
+      db.raw.execute(
+        'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+        'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+        'VALUES (?, ?, ?, ?, 0, 0, ?, 0, ?, ?)',
+        <Object?>[
+          'p0-1-doc-$i',
+          '$prefix${i.toString().padLeft(3, '0')}',
+          'sale',
+          'confirmed',
+          t,
+          t,
+          t,
+        ],
+      );
+    }
+    String generated = '';
+    db.transaction(() {
+      generated = DocNoGenerator(db).next(DocType.sale, occurredAtMs: t);
+    });
+    check(
+      'P0-1：同日第 1001 单不撞号（1000 条存量 → -1001）',
+      generated == '${prefix}1001',
+      '实际 $generated',
+    );
+    check(
+      'P0-1：生成的单号不与存量撞',
+      db.raw.select(
+        'SELECT 1 FROM ${Schema.documents} WHERE doc_no = ? LIMIT 1',
+        <Object?>[generated],
+      ).isEmpty,
+    );
+  }
   check('dispatch 结束后不残留事务', !db.inTransaction);
 
   db.close();

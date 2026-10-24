@@ -49,6 +49,7 @@ Map<String, Object?> pullBody({
   List<Map<String, Object?>> products = const <Map<String, Object?>>[],
   Map<String, String> cursors = const <String, String>{},
   bool hasMore = false,
+  bool docWindowTruncated = false,
 }) => <String, Object?>{
   'documents': documents,
   'document_lines': lines,
@@ -62,6 +63,7 @@ Map<String, Object?> pullBody({
   'next_cursors': cursors,
   // 旧主机不带这个字段（客户端按 false 处理）；新主机一定带
   'has_more': hasMore,
+  'doc_window_truncated': docWindowTruncated,
 };
 
 Map<String, Object?> docRow(
@@ -551,6 +553,31 @@ void main() {
       expect(queue.all(), isEmpty, reason: '拉到底且确实见到了该单据 ⇒ 才允许清掉 sent 条目');
     });
 
+    // P0-3：DTO 解析。旧主机不带 `doc_window_truncated` ⇒ false（对称
+    // `has_more` 的缺省处理）；带了就按布尔收。
+    test('SyncPullResult.fromJson：doc_window_truncated 三态', () {
+      Map<String, Object?> bodyWith(bool? truncated) {
+        final Map<String, Object?> body = pullBody();
+        if (truncated != null) body['doc_window_truncated'] = truncated;
+        return body;
+      }
+
+      expect(
+        SyncPullResult.fromJson(bodyWith(true)).docWindowTruncated,
+        isTrue,
+        reason: '主机说截断了，客户端必须认',
+      );
+      expect(
+        SyncPullResult.fromJson(bodyWith(false)).docWindowTruncated,
+        isFalse,
+      );
+      expect(
+        SyncPullResult.fromJson(bodyWith(null)).docWindowTruncated,
+        isFalse,
+        reason: '旧主机不带这个字段 ⇒ 按「没截断」处理（与 has_more 对称）',
+      );
+    });
+
     test('重复拉同一页 → 幂等（不产生重复行）', () async {
       final Map<String, Object?> body = pullBody(
         documents: <Map<String, Object?>>[docRow('d1')],
@@ -677,6 +704,45 @@ void main() {
         client.queue.findById(notSeen.id),
         isNotNull,
         reason: '分页之外的单据还没确认 —— 一刀切会提前归零未同步影响',
+      );
+    });
+
+    // P0-3（用户裁定）：窗口截断 ⇒ **拉到底也不清队列**。
+    // 窗口取满 = 主机最新的状态变更没带全；此刻清掉已 sent 的条目，
+    // 「未同步影响」提前归零，库存 / 往来按旧态少计。必须等某一轮
+    // 窗口没截断（最新状态确实到了）才清。
+    test('P0-3：doc_window_truncated ⇒ 拉到底也不清队列', () async {
+      final SyncQueueEntry seen = client.queue.enqueue(
+        SyncQueueEntry.create(
+          SyncOperation(
+            entity: Schema.documents,
+            entityId: 'd1',
+            operation: SyncOpType.createDocument,
+          ),
+          now: now(),
+        ),
+      );
+      client.queue.markSent(seen.id);
+
+      transport.replyJson(
+        pullBody(
+          documents: <Map<String, Object?>>[docRow('d1')],
+          docWindowTruncated: true,
+        ),
+      );
+      final SyncPullReport report = await client.pull();
+
+      expect(report.hasMore, isFalse, reason: '主分页拉到底了 —— 但窗口没有');
+      expect(
+        report.docWindowTruncated,
+        isTrue,
+        reason: '报告要把这个信号带出来（UI / 调用方要看）',
+      );
+      expect(report.confirmedQueueEntries, 0, reason: 'P0-3：窗口截断 ⇒ 本轮不许清队列');
+      expect(
+        client.queue.findById(seen.id),
+        isNotNull,
+        reason: '条目照留 —— 主机最新状态还没见到，清了就是谎报「已同步」',
       );
     });
 

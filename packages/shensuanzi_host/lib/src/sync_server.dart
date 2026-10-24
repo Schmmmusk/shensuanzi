@@ -862,15 +862,28 @@ class SyncServer {
     // 拉一段「最近动过的单」，与主分页**并进同一个 `documents` 数组**
     // （客户端按 id 幂等 upsert，两条路径都对同一行说同一件事）。
     final List<Map<String, Object?>> pageDocs = entities[Schema.documents]!;
+    bool windowTruncated = false;
     if (docUpdatedSince != null) {
       final Set<String> mainIds = <String>{
         for (final Map<String, Object?> doc in pageDocs) doc['id']! as String,
       };
-      final List<Map<String, Object?>> window = _select(
+      // P0-3（业务审查 §3.1）：**降序取 + 内存反转**。
+      // 升序 + LIMIT 取的是窗口里**最旧**的 N 条 —— 忙店（一周动过
+      // ≥ limit 张单）最新的收款 / 签收状态**永远排在队尾**补不进来，
+      // 手机显示旧欠款态 ⇒ 重复催款 / 重复收款。降序保证「最新的先带上」，
+      // 反转回来只是维持数组的升序旧约（客户端按 id 幂等 upsert，
+      // 顺序本来不影响正确性，保持一致少意外）。
+      final List<Map<String, Object?>> windowDesc = _select(
         'SELECT * FROM ${Schema.documents} WHERE updated_at > ? '
-        'ORDER BY updated_at, id LIMIT ?',
+        'ORDER BY updated_at DESC, id DESC LIMIT ?',
         <Object?>[docUpdatedSince, limit],
       );
+      final List<Map<String, Object?>> window = windowDesc.reversed.toList();
+      // P0-3：窗口原始行数取满一页 ⇒ 窗口里动过的单比一页能带的多，
+      // **最新的更新没带全**。置 `doc_window_truncated` 让客户端**推迟清队列**
+      // （整轮拉到 `has_more == false` 也不清 —— 还没见到主机最新状态）。
+      // ⚠️ 取满**不置** `has_more`：窗口是补齐不是分页（见下）。
+      windowTruncated = window.length >= limit;
       // ⚠️ **窗口取满不置 `has_more`**：它是「尽力而为的补齐」，不是协议分页。
       // 客户端每轮同步都重算窗口（`现在 − 窗口长度`），这次没带上的下一次会带上；
       // 若在这里置 `has_more`，一周内动过「≥ limit 张单」的店会**每次同步都
@@ -913,6 +926,7 @@ class SyncServer {
       entities: entities,
       nextCursors: next,
       hasMore: hasMore,
+      docWindowTruncated: windowTruncated,
     );
   }
 

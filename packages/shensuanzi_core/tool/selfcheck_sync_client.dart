@@ -68,6 +68,7 @@ Map<String, Object?> pullBody({
   List<Map<String, Object?>> products = const <Map<String, Object?>>[],
   Map<String, String> cursors = const <String, String>{},
   bool hasMore = false,
+  bool docWindowTruncated = false,
 }) => <String, Object?>{
   'documents': documents,
   'document_lines': lines,
@@ -81,6 +82,7 @@ Map<String, Object?> pullBody({
   'next_cursors': cursors,
   // 旧主机不带这个字段（客户端按 false 处理）
   'has_more': hasMore,
+  'doc_window_truncated': docWindowTruncated,
 };
 
 Map<String, Object?> docRow(String id, {String docNo = 'CG20260926-001'}) =>
@@ -461,6 +463,57 @@ Future<void> main() async {
       _mapEquals(c2.cursors.getAll(), cursors),
       '${c2.cursors.getAll()}',
     );
+
+    // P0-3（2026-10-23）：窗口截断 ⇒ 拉到底也不清队列（主机最新状态没带全）。
+    // ⚠️ 用**独立的 db/client**：后面的「幂等与覆盖」断言 documents 绝对计数，
+    // 共用 db2 会污染它们。
+    section('pull · 窗口截断不清队列');
+    final Db db3 = Db.openInMemory(foreignKeys: false);
+    final FakeTransport t3 = FakeTransport();
+    final SyncClient c3 = SyncClient(
+      db: db3,
+      transport: t3,
+      baseUri: Uri.parse('http://127.0.0.1:17890'),
+      token: 'tok-abc',
+      clock: () => 1700000000000,
+    );
+    final SyncQueueDao q3 = SyncQueueDao(db3);
+    q3.enqueue(
+      SyncQueueEntry.create(docOp('d-trunc', 'purchase', <int>[1]), now: now()),
+    );
+    q3.markSent(q3.all().single.id);
+    t3.replyJson(
+      pullBody(
+        documents: <Map<String, Object?>>[
+          docRow('d-trunc', docNo: 'CG-trunc-1'),
+        ],
+        cursors: cursors,
+        docWindowTruncated: true,
+      ),
+    );
+    final SyncPullReport truncated = await c3.pull();
+    check('P0-3：doc_window_truncated ⇒ 报告带出信号', truncated.docWindowTruncated);
+    check(
+      'P0-3：窗口截断 ⇒ 拉到底也不清队列',
+      truncated.confirmedQueueEntries == 0 && q3.all().isNotEmpty,
+      'cleared=${truncated.confirmedQueueEntries}',
+    );
+    // 对照组：不截断 ⇒ 照旧清（旧行为不能被新闸带坏）
+    t3.replyJson(
+      pullBody(
+        documents: <Map<String, Object?>>[
+          docRow('d-trunc', docNo: 'CG-trunc-1'),
+        ],
+        cursors: cursors,
+      ),
+    );
+    final SyncPullReport normal = await c3.pull();
+    check(
+      'P0-3：不截断 ⇒ 照旧清（对照组）',
+      normal.confirmedQueueEntries == 1 && q3.all().isEmpty,
+      'cleared=${normal.confirmedQueueEntries}',
+    );
+    db3.close();
 
     section('pull · 幂等与覆盖');
     final Map<String, Object?> samePage = pullBody(

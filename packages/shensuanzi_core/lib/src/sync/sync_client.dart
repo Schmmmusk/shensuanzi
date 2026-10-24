@@ -390,15 +390,21 @@ class SyncClient {
     int pages = 0;
     int cleared = 0;
     bool hasMore = true;
+    // P0-3（2026-10-23）：**整轮累计**「窗口截断」。只有第一页带窗口，
+    // 所以它只可能在第一页为真； 一旦为真，本轮（哪怕后面的页把
+    // `has_more` 拉成 false）也**不许清队列** —— 主机最新状态还没带全。
+    bool windowTruncated = false;
     while (hasMore) {
       final SyncPullReport page = await _pullPage(
         limit: limit,
         firstPage: pages == 0,
         appliedAll: appliedAll,
         docUpdatedSinceFloor: docUpdatedSinceFloor,
+        suppressQueueClear: windowTruncated,
       );
       pages++;
       hasMore = page.hasMore;
+      windowTruncated |= page.docWindowTruncated;
       cleared += page.confirmedQueueEntries;
       page.entities.forEach((String entity, int count) {
         totals[entity] = (totals[entity] ?? 0) + count;
@@ -417,6 +423,7 @@ class SyncClient {
       confirmedQueueEntries: cleared,
       pages: pages,
       hasMore: hasMore,
+      docWindowTruncated: windowTruncated,
     );
   }
 
@@ -441,6 +448,7 @@ class SyncClient {
     bool firstPage = true,
     required Set<String> appliedAll,
     int? docUpdatedSinceFloor,
+    bool suppressQueueClear = false,
   }) async {
     final int now = _clock();
     final Map<String, String> since = cursors.getAll();
@@ -504,7 +512,14 @@ class SyncClient {
       // 而且清早了会让「未同步影响」的叠加提前消失 ⇒ 库存显示**少计**
       // （Android 测试报告 ⑤）。`appliedAll` 是**本轮全部已落镜像**的 id 集合
       // （#49 整轮累计），`clearConfirmed` 只删「已 sent 且确实见到」的条目，其余照留。
-      if (!result.hasMore) {
+      //
+      // P0-3（2026-10-23，用户裁定）：再加一道闸 —— **窗口截断时不清**。
+      // `doc_window_truncated` = 主机最新的状态变更没带全；此刻清掉已 sent
+      // 的条目等于谎报「已同步」。`suppressQueueClear` 管多页轮次：第一页
+      // 截断 ⇒ 后面每页都知道（只有第一页带窗口，截断只可能在第一页发生）。
+      if (!result.hasMore &&
+          !result.docWindowTruncated &&
+          !suppressQueueClear) {
         cleared = queue.clearConfirmed(appliedAll);
       }
     });
@@ -518,6 +533,7 @@ class SyncClient {
       confirmedQueueEntries: cleared,
       pages: 1,
       hasMore: result.hasMore,
+      docWindowTruncated: result.docWindowTruncated,
     );
   }
 
@@ -627,6 +643,7 @@ class SyncPullReport {
     this.confirmedQueueEntries = 0,
     this.pages = 1,
     this.hasMore = false,
+    this.docWindowTruncated = false,
   });
 
   /// 每个实体本次落库的行数（**本次 `pull` 全部页的合计**）
@@ -646,6 +663,11 @@ class SyncPullReport {
   /// 调用方**不许**在它为 `true` 时说「同步完成」—— 镜像只是部分权威，
   /// 库存 / 往来都是残缺的（2026-10-07 裁定，`docs/reply.md` §1）。
   final bool hasMore;
+
+  /// 「最近更新窗口」取满了（P0-3，2026-10-23）—— 主机**最新**的状态变更
+  /// （收款 / 签收 / 拒收）没带全。为 `true` 时本轮**没有清理同步队列**：
+  /// 已 sent 的条目要留到某一轮窗口不截断（最新状态确实到了）才清。
+  final bool docWindowTruncated;
 
   int get totalRows => entities.values.fold<int>(0, (int a, int b) => a + b);
 }

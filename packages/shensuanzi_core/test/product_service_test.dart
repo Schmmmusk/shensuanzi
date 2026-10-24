@@ -569,6 +569,210 @@ void main() {
       expect(cleared.packageNote, isNull);
     });
 
+    // P0-2（业务审查 §3.1）：`ProductDao.update` 的手写 SET 清单漏了
+    // `package_unit` / `package_size` ⇒ 包装换算**改不动、清不掉**，
+    // 而这是「已宣称的能力」（schema v3 起建档 UI 完整接线）——
+    // 描述与实现不一致挂了四个月（纪律 17 的反面教材）。
+    //
+    // ⚠️ 断言必须**读库**：`service.update` 返回的是内存对象，
+    // 列丢了它也照样是新值 —— 上面「包装说明」那条断言返回值的用例
+    // 对丢列是瞎的（testing.md：「断言在、但它瞎」）。
+    test('P0-2：包装换算归表单管 —— update 能改、能清（读库验证）', () {
+      final Product created = service.create(
+        goodDraft(packageUnit: '箱', packageSize: '12'),
+        now: 1000,
+      );
+      expect(created.packageUnit, '箱');
+      expect(created.packageSize, 12);
+
+      final ProductDao dao = ProductDao(db);
+      Product reload() => dao.findById(created.id)!;
+
+      service.update(
+        created.id,
+        goodDraft(name: '矿泉水（新批次）', packageUnit: '袋', packageSize: '5'),
+        now: 2000,
+      );
+      expect(
+        reload().packageUnit,
+        '袋',
+        reason: 'P0-2：UPDATE 曾漏 package_unit ⇒ 库里还是「箱」',
+      );
+      expect(reload().packageSize, 5, reason: 'P0-2：UPDATE 曾漏 package_size');
+
+      service.update(created.id, goodDraft(name: '矿泉水（新批次）'), now: 3000);
+      expect(
+        reload().packageUnit,
+        isNull,
+        reason: 'P0-2：曾漏列 ⇒ 旧的「箱」永远清不掉，用户会以为软件坏了',
+      );
+      expect(reload().packageSize, isNull);
+    });
+
+    // P0-2 护栏（纪律 18：同款模式全仓收，不是只修报告点的那一个）：
+    // 三张主数据表的 UPDATE 必须覆盖 `toRow()` 全部可写列。
+    // **行为式**断言 —— 不解析 SQL 文本；每张表全字段改一遍再读回，
+    // 任何从 SET 清单漏掉的列都会在 map 比对里现形。
+    test('P0-2 护栏：主数据 UPDATE 覆盖 toRow 全部可写列（三表读回）', () {
+      Map<String, Object?> comparable(Object? model) {
+        final Map<String, Object?> row =
+            (model as dynamic).toRow() as Map<String, Object?>;
+        row.remove('updated_at');
+        row.remove('sync_version');
+        return row;
+      }
+
+      // ---- products（P0-2 出事的那张）
+      final ProductDao productDao = ProductDao(db);
+      final Product pa = Product(
+        id: 'guard-p',
+        code: 'P9999',
+        name: '甲',
+        barcode: '69000001',
+        unit: '瓶',
+        costPrice: 100,
+        sellPrice: 200,
+        safetyStock: 3,
+        category: '饮料',
+        isActive: true,
+        remark: '备注甲',
+        packageNote: '1 箱 = 24 瓶',
+        packageUnit: '箱',
+        packageSize: 24,
+        createdAt: 1000,
+        updatedAt: 1000,
+        syncVersion: 1,
+      );
+      productDao.insert(pa);
+      final Product pb = pa.copyWith(
+        name: '乙',
+        barcode: '69000002',
+        unit: '个',
+        costPrice: 111,
+        sellPrice: 222,
+        safetyStock: 9,
+        category: '水果',
+        isActive: false,
+        remark: '备注乙',
+        packageNote: '1 袋 = 5 个',
+        packageUnit: '袋',
+        packageSize: 5,
+        updatedAt: 2000,
+        syncVersion: 2,
+      );
+      productDao.update(pb);
+      expect(
+        comparable(productDao.findById('guard-p')),
+        comparable(pb),
+        reason: 'products：有列没写进 UPDATE（对照 toRow 逐列查）',
+      );
+
+      // ---- parties（同款手写清单，当前无漂移 —— 护栏保将来）
+      final PartyDao partyDao = PartyDao(db);
+      partyDao.insert(
+        Party(
+          id: 'guard-r',
+          name: '甲方',
+          phone: '13800000001',
+          address: '地址甲',
+          roles: const <PartyRole>[PartyRole.customer],
+          creditLimit: 1000,
+          isActive: true,
+          remark: '备注甲',
+          createdAt: 1000,
+          updatedAt: 1000,
+          syncVersion: 1,
+        ),
+      );
+      partyDao.update(
+        Party(
+          id: 'guard-r',
+          name: '乙方',
+          phone: '13800000002',
+          address: '地址乙',
+          roles: const <PartyRole>[PartyRole.supplier],
+          creditLimit: 2000,
+          isActive: false,
+          remark: '备注乙',
+          createdAt: 1000,
+          updatedAt: 2000,
+          syncVersion: 2,
+        ),
+      );
+      expect(
+        comparable(partyDao.findById('guard-r')),
+        comparable(
+          Party(
+            id: 'guard-r',
+            name: '乙方',
+            phone: '13800000002',
+            address: '地址乙',
+            roles: const <PartyRole>[PartyRole.supplier],
+            creditLimit: 2000,
+            isActive: false,
+            remark: '备注乙',
+            createdAt: 1000,
+            updatedAt: 2000,
+            syncVersion: 2,
+          ),
+        ),
+        reason: 'parties：有列没写进 UPDATE',
+      );
+
+      // ---- accounts（initial_balance 也在可写列里 —— 现状如此，护栏钉住）
+      final AccountDao accountDao = AccountDao(db);
+      accountDao.insert(
+        Account(
+          id: 'guard-a',
+          name: '现金',
+          type: AccountType.cash,
+          initialBalance: 100,
+          isActive: true,
+          createdAt: 1000,
+          updatedAt: 1000,
+          syncVersion: 1,
+        ),
+      );
+      accountDao.update(
+        Account(
+          id: 'guard-a',
+          name: '微信',
+          type: AccountType.wechat,
+          initialBalance: 200,
+          isActive: false,
+          createdAt: 1000,
+          updatedAt: 2000,
+          syncVersion: 2,
+        ),
+      );
+      expect(
+        comparable(accountDao.findById('guard-a')),
+        comparable(
+          Account(
+            id: 'guard-a',
+            name: '微信',
+            type: AccountType.wechat,
+            initialBalance: 200,
+            isActive: false,
+            createdAt: 1000,
+            updatedAt: 2000,
+            syncVersion: 2,
+          ),
+        ),
+        reason: 'accounts：有列没写进 UPDATE',
+      );
+    });
+
+    // P0-2 护栏（用户裁定）：动态 SET 必须显式排除主键与只读列 ——
+    // `SET id = ?` 是自杀，`created_at` 是事实。
+    test('P0-2 护栏：UPDATE 只读列钉死 id / created_at', () {
+      expect(
+        ProductDao.updateReadOnlyColumns,
+        containsAll(<String>{'id', 'created_at'}),
+        reason: '用户裁定：SET 子句里绝不能出现 id / created_at',
+      );
+    });
+
     test('校验不过 → 抛，且库里原值不变', () {
       final Product before = service.create(goodDraft(), now: 1000);
 

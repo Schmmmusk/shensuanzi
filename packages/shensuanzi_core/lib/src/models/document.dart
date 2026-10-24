@@ -231,11 +231,12 @@ class Document extends ImmutableEntity {
     required int createdAt,
     required int updatedAt,
     int? occurredAt,
+    DocStatus? status,
   }) => Document(
     id: id,
     docNo: docNo,
     docType: docType,
-    status: status,
+    status: status ?? this.status,
     partyId: partyId,
     accountId: accountId,
     totalAmount: totalAmount,

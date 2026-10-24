@@ -284,7 +284,9 @@ void main() {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
     expect(find.text('待校准'), findsNothing);
-    expect(find.text('¥ 10.50'), findsOneWidget);
+    // ③乙：主数字是**均价**（10.50 ÷ 11 件 ≈ 0.95），总额降为小字
+    expect(find.text('¥ 0.95'), findsOneWidget);
+    expect(find.text('共 ¥ 10.50'), findsOneWidget);
   });
 
   testWidgets('采购 10 件 → 在店可售 10（主列）；账面 10；成本（均价）出现', (
@@ -297,8 +299,15 @@ void main() {
     expect(find.text('10'), findsOneWidget, reason: '在店可售主列');
     expect(find.text('账面 10 · 在途 0'), findsOneWidget);
     expect(find.textContaining('成本（均价）'), findsOneWidget);
-    // 成本 = 10 × 3.50 = ¥35.00
-    expect(find.text('¥ 35.00'), findsOneWidget);
+    // ③乙（用户裁定，业务审查 §4.2）：主数字是**均价**（35.00 ÷ 10 = 3.50）——
+    // 旧显示把**总额** ¥35.00 当均价，用户会以为「一件成本 35 元」而错定价；
+    // 总额不丢，降为小字补充。
+    expect(
+      find.text('¥ 3.50'),
+      findsOneWidget,
+      reason: '主数字必须是均价 —— 用户关心「一件多少钱」',
+    );
+    expect(find.text('共 ¥ 35.00'), findsOneWidget, reason: '总额作小字补充，不丢信息');
   });
 
   // Q5 点击区（`docs/proposals/P2两项-对比度与点击区-方案.md`，用户裁定 ③甲）：
