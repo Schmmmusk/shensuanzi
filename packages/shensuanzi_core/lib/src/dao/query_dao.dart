@@ -1,12 +1,12 @@
 import 'package:sqlite3/sqlite3.dart';
 
 import '../db/database.dart';
+import '../db/read_failures.dart';
 import '../db/schema.dart';
 import '../models/document.dart';
 import '../models/party.dart';
 import '../models/product.dart';
 import 'party_dao.dart';
-import 'product_dao.dart';
 
 /// **RULE-006 库存 / 余额查询**（`docs/rules.md`）。
 ///
@@ -206,6 +206,30 @@ class QueryDao {
   bool hasAnyStockLedger() =>
       _raw.select('SELECT 1 FROM ${Schema.stockLedger} LIMIT 1').isNotEmpty;
 
+  /// **库存页一次取全**（4c-2，2026-10-24，业务审查 §5.2 #3）：
+  /// 账面 + 成本余值 + 是否进过货 —— **一条 SQL 扫一次 `stock_ledger`**。
+  ///
+  /// 从前库存页每次 rebuild 跑三次全表聚合（`stockByProduct` /
+  /// `costByProduct` / `inboundProductIds`），30 万行 × 3。三者同表同分组键，
+  /// 合成一次即可（`MAX(CASE WHEN quantity > 0 ...)` 顺手算出「进过货」）。
+  ///
+  /// ⚠️ 三个单查方法**保留**（别处仍在用：开单页只用账面、成本页只用成本）；
+  /// 页面级合并只在需要多项时用这个。
+  Map<String, StockAgg> stockAggregates() => <String, StockAgg>{
+    for (final Map<String, Object?> row in _raw.select(
+      'SELECT product_id AS k, '
+      'COALESCE(SUM(quantity), 0) AS q, '
+      'COALESCE(SUM(total_cost), 0) AS c, '
+      'MAX(CASE WHEN quantity > 0 THEN 1 ELSE 0 END) AS inb '
+      'FROM ${Schema.stockLedger} GROUP BY product_id',
+    ))
+      row['k']! as String: StockAgg(
+        quantity: row['q']! as int,
+        cost: row['c']! as int,
+        hasInbound: (row['inb']! as int) != 0,
+      ),
+  };
+
   /// 发生过**正数量入库**（数量 > 0 的流水）的商品集合（§AD 遗漏 1）。
   ///
   /// 库存页成本列的三态判断：
@@ -257,13 +281,30 @@ class QueryDao {
       'LIMIT ?',
       <Object?>[...docTypes.map((DocType t) => t.wire), limit],
     );
-    final ProductDao products = ProductDao(db);
-    final List<Product> result = <Product>[];
-    for (final Map<String, Object?> row in rows) {
-      final Product? product = products.findById(row['pid']! as String);
-      if (product != null) result.add(product);
-    }
-    return result;
+    if (rows.isEmpty) return const <Product>[];
+    // 4c-4（2026-10-24，业务审查 §5.2 #6）：**一次 `IN` 取回全部行** ——
+    // 从前逐条 `findById`（20 次主键查询的 N+1）。次数不多但形态难看，
+    // 且 `limit` 一改就会放大。顺序仍按「最近使用」：用 id → 下标重排。
+    final List<String> ids = <String>[
+      for (final Map<String, Object?> row in rows) row['pid']! as String,
+    ];
+    final String idMarks = List<String>.filled(ids.length, '?').join(',');
+    final List<Product> found = decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.products} WHERE id IN ($idMarks)',
+        ids,
+      ),
+      (Map<String, Object?> row) => Product.fromRow(row),
+      table: Schema.products,
+      failures: db.readFailures,
+    );
+    final Map<String, Product> byId = <String, Product>{
+      for (final Product product in found) product.id: product,
+    };
+    return <Product>[
+      for (final String id in ids)
+        if (byId[id] != null) byId[id]!,
+    ];
   }
 
   /// 最近**交易过**的往来方（客户/供应商选择器空查询时显示的「最近往来」，
@@ -337,4 +378,22 @@ class ReceivablesSummary {
   final String? topName;
   final bool topActive;
   final int topCents;
+}
+
+/// 一个商品的库存聚合（[QueryDao.stockAggregates] 的返回元素）。
+class StockAgg {
+  const StockAgg({
+    required this.quantity,
+    required this.cost,
+    required this.hasInbound,
+  });
+
+  /// 账面库存（`SUM(quantity)`）
+  final int quantity;
+
+  /// 成本余值（`SUM(total_cost)`，可为负 —— 超卖）
+  final int cost;
+
+  /// 是否发生过正数量入库（成本列的「未进货 / 待校准」三态判断用）
+  final bool hasInbound;
 }

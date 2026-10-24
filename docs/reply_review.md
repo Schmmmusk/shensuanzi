@@ -14113,3 +14113,73 @@ app 5 自检（155）· typecheck 全过。
 ### 六、剩余
 
 第 4 批（性能：先度量）· 第 5 批（低配体验）。另：3d 的商品/往来方导出接线（3 行 × 2 处）。
+
+## §CV·九十七 **第 4 批（性能）：4a 计划断言 + 4c 两项 + 4b 真实基线**（2026-10-24）
+
+> 提案：`docs/proposals/第4批-性能度量与热路径-方案.md`（用户裁定 `①甲 ②甲`，
+> 并给了三条落地提醒：压测 SQL 要与生产同构 / 合并聚合要防笛卡尔积 / 两段查询要容错）。
+
+### 一、4a 执行计划断言（新增 `core/test/perf/query_plan_test.dart`，10 条）
+
+确定性门禁：时间会抖，**计划形态不抖**。锁住 9 条热查询 + 1 条本批新增：
+
+| 断言 | 锁住什么 |
+|---|---|
+| `stockByProduct` / `costByProduct` | `idx_stock_product_seq`（不许退化成无索引全扫） |
+| `stockAggregates`（4c-2 新增） | 同上，且**只扫一次** `stock_ledger` |
+| `inTransitByProduct` | `idx_documents_type_status` + `idx_lines_document` |
+| `todaySummary` | **`idx_documents_occurred`**（3c-5 修上界后规划器改用它 —— 防退回 type_status 全扫） |
+| `partyBalances` | `idx_party_ledger_party_seq` |
+| `pull` 窗口 | `idx_documents_updated`（P0-3 防回归） |
+| 未结清筛选 | 派生表 `MATERIALIZE s` 一次 + `idx_settle_target`（防退化成逐行子查询） |
+| 单据列表 / `recentProducts` | **现状记录**（`TEMP B-TREE` / 按类型扫），4c 修完再收紧 |
+
+### 二、4c 已落两项
+
+- **4c-2 库存页三次全表聚合 → 一次**：新增 `QueryDao.stockAggregates()`
+  （`SUM(quantity)` + `SUM(total_cost)` + `MAX(CASE WHEN quantity>0 …)` 一条 SQL），
+  `stock_page` 改用它；三个单查方法保留（别处仍在用）。等价性测试逐项对拍。
+- **#6 `recentProducts` 的 N+1**：20 次 `findById` → 一次 `IN` + 按原顺序重排。
+- **4c-1 早已完成**：`StockSnapshotCache`（2026-10-22，§CV·八十一）就是「页面级缓存 +
+  保存成功失效」—— 报告 #1 已失效，本批只核对未改。
+
+### 三、4b 真实基线（`docs/perf/`，seed 到 26.4 万单 / 37 万流水 / 480 MB）
+
+| 查询 | p50 | p95 | 备注 |
+|---|---|---|---|
+| `stock_group` | **1369 ms** | 1406 ms | 37 万行非 covering 索引扫（**每行回表**） |
+| `stock_cost` | **1372 ms** | 1476 ms | 同上（两次独立扫） |
+| `party_balances` | **620 ms** | 638 ms | 26 万行非 covering |
+| `recent_products` | 428 ms | 442 ms | 扫全部销售单 |
+| `doc_search` | 336 ms | 344 ms | 四路 LIKE |
+| `list_documents` | 291 ms | 306 ms | `SCAN d` + TEMP B-TREE |
+| `today_summary` | 270 ms | 284 ms | 索引范围 + 回表 |
+| `pull_*` / `lines_of_page` / `settled_counts` | < 1 ms | < 1.1 ms | 索引设计正确 |
+
+> 实测比报告的量级推演**严重一个数量级**（报告估 10–50 ns/行 ⇒ 单次约 15 ms；
+> 实测 1369 ms ⇒ **约 3.7 µs/行**）。原因不是算法，是**非 covering 索引扫**：
+> 每行都要回表取 `quantity` / `total_cost`（37 万次随机读）。
+
+### 四、covering 索引的实测收益（在**副本**上验证，未改 schema）
+
+| 查询 | 现状 | 加 covering 索引 | 倍数 |
+|---|---|---|---|
+| `stock_group` | 1369 ms | **30.6 ms** | **45×** |
+| `stockAggregates`（合并后） | ≈ 2×1369 | **43.6 ms** | **~60×** |
+| `party_balances` | 620 ms | **20.9 ms** | **30×** |
+| `today_summary`（宽区间） | 156 ms | **86 ms** | 1.8× |
+
+索引定义（待裁）：
+```sql
+CREATE INDEX idx_stock_covering   ON stock_ledger(product_id, quantity, total_cost);
+CREATE INDEX idx_party_covering   ON party_ledger(party_id, amount);
+CREATE INDEX idx_documents_today  ON documents(occurred_at, status, doc_type, total_amount);
+```
+
+### 五、⚠️ 待裁：这需要 schema v5
+
+索引是**加列之外唯一动 schema 的方式**（`Schema.version` 5 + `migrationStep(4)`）。
+代价：库文件约 +20–30 MB、写入略慢（每次插入多维护 3 个索引）。
+收益：库存页 1.4 s → 30 ms、往来页 620 → 21 ms。
+
+**没裁之前不落**（第 3 批刚确认「零 schema」，这条要单独拍）。

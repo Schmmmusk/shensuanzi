@@ -600,6 +600,37 @@ void main() {
       expect(s.saleCents, 300, reason: '3c-5：明天的 500 不许算进今日');
     });
 
+    // 4c-2（2026-10-24，§5.2 #3）：库存页一次取全 —— 三个视图必须与
+    // 三个单查方法**逐个相等**（合并查询最容易在这里出岔：SUM 放大 / 漏行）。
+    test('4c-2：stockAggregates 与三个单查方法逐个相等', () {
+      final String p = createProduct();
+      final String party = createParty();
+      seedPurchase(p, party, 10, 100); // 入库 10 @ 100
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 300,
+      );
+      run(sale, oneLine(sale.id, p, 3, 100)); // 出库 3
+
+      final Map<String, StockAgg> agg = query.stockAggregates();
+      final Map<String, int> book = query.stockByProduct();
+      final Map<String, int> cost = query.costByProduct();
+      final Set<String> inbound = query.inboundProductIds();
+
+      expect(agg.keys.toSet(), book.keys.toSet(), reason: '行集合必须一致');
+      for (final MapEntry<String, StockAgg> e in agg.entries) {
+        expect(e.value.quantity, book[e.key], reason: '账面 ${e.key}');
+        expect(e.value.cost, cost[e.key], reason: '成本 ${e.key}');
+        expect(
+          e.value.hasInbound,
+          inbound.contains(e.key),
+          reason: '入库 ${e.key}',
+        );
+      }
+      expect(agg[p]!.quantity, 7, reason: '10 − 3');
+    });
+
     test('todaySummary：sale / delivery 分列；金额 = total_amount 合计', () {
       final String p = createProduct();
       final String party = createParty();

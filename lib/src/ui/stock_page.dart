@@ -171,12 +171,24 @@ class _StockPageState extends State<StockPage> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
 
-    // 聚合读一次（RULE-006：没有余额表，每次从流水算）
-    final Map<String, int> book = widget.queries.stockByProduct();
+    // 聚合读一次（RULE-006：没有余额表，每次从流水算）。
+    // 4c-2（2026-10-24，§5.2 #3）：账面 / 成本 / 是否进过货 **一次扫完**
+    // （从前是三次全表聚合：30 万行 × 3）。
+    final Map<String, StockAgg> agg = widget.queries.stockAggregates();
+    final Map<String, int> book = <String, int>{
+      for (final MapEntry<String, StockAgg> e in agg.entries)
+        e.key: e.value.quantity,
+    };
+    final Map<String, int> cost = <String, int>{
+      for (final MapEntry<String, StockAgg> e in agg.entries)
+        e.key: e.value.cost,
+    };
+    final Set<String> inbound = <String>{
+      for (final MapEntry<String, StockAgg> e in agg.entries)
+        if (e.value.hasInbound) e.key,
+    };
     final Map<String, int> inTransit = widget.queries.inTransitByProduct();
-    final Map<String, int> cost = widget.queries.costByProduct();
-    final Set<String> inbound = widget.queries.inboundProductIds();
-    final bool hasAnyLedger = widget.queries.hasAnyStockLedger();
+    final bool hasAnyLedger = agg.isNotEmpty;
 
     // §AD 遗漏 2：期初录入入口（就地打开，完成后 setState 刷新数字）
     if (_showOpening) {

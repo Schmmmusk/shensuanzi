@@ -111,17 +111,32 @@ def q_list_documents(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
     )
 
 
+def _like_escape(term: str) -> str:
+    """与生产同构的转义（`DocumentDao` 的 `likeEscape`）：`\\` / `%` / `_` 前置反斜杠。
+
+    压测不转义会**低估**成本（少了转义分支）也**测不出**用户搜「50%」的真实形态 ——
+    用户 2026-10-24 审查意见：压测 SQL 必须与生产同构。
+    """
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def q_doc_search(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
     # 四路：单号 / 对方名 / 商品名 / 条码（形状同 documents_page 的搜索）
+    # ⚠️ `ESCAPE '\\'` 必须显式写（SQLite 没有默认转义符）—— 与
+    # `document_dao.dart` 的搜索 SQL 逐字同形。
+    pat = f"%{_like_escape('1')}%"
     return (
         "SELECT d.*, pa.name AS party_name "
         "FROM documents d LEFT JOIN parties pa ON pa.id = d.party_id "
-        "WHERE d.doc_no LIKE ? OR IFNULL(pa.name, '') LIKE ? "
+        "WHERE d.doc_no LIKE ? ESCAPE '\\' "
+        "   OR IFNULL(pa.name, '') LIKE ? ESCAPE '\\' "
         "   OR EXISTS (SELECT 1 FROM document_lines l JOIN products p ON p.id = l.product_id "
-        "              WHERE l.document_id = d.id AND (p.name LIKE ? OR IFNULL(p.barcode,'') LIKE ?)) "
+        "              WHERE l.document_id = d.id "
+        "                AND (p.name LIKE ? ESCAPE '\\' "
+        "                     OR IFNULL(p.barcode,'') LIKE ? ESCAPE '\\')) "
         "ORDER BY ((d.occurred_at + 28800000) / 86400000) DESC, d.created_at DESC "
         "LIMIT ?",
-        ("%1%", "%1%", "%1%", "%1%", limit),
+        (pat, pat, pat, pat, limit),
     )
 
 
