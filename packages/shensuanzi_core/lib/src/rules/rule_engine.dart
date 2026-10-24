@@ -106,7 +106,7 @@ class RuleOutcome {
 /// |---|---|
 /// | RULE-001 采购入库（含立即付款） | ✅ |
 /// | RULE-002 店内销售（含立即收款） | ✅ |
-/// | RULE-003 送货 | ✅ 创建路径 + 主机本地签收 [markDelivered]（离线签收待 R-3） |
+/// | RULE-003 送货 | ✅ 创建路径 + 签收（[markDelivered]，主机 UI 与同步 `documentAction` 两条路径） |
 /// | RULE-004 收款核销 | ✅ |
 /// | RULE-005 付款核销 | ✅ |
 /// | RULE-007 销售退货 | ✅ |
@@ -114,11 +114,10 @@ class RuleOutcome {
 /// | RULE-009 盘点 | ✅ |
 /// | `transfer` 调拨 | v1 一律 `rejected` |
 ///
-/// ## 未实现（有意）
-///
-/// **离线签收**（`documentAction: mark_delivered`）需要「动作」这一抽象的
-/// **幂等判定与存储**，属待裁定项 **R-3**，随 `SyncServer` 落地（见 `docs/reply.md`）。
-/// v1 的替代路径是主机本地的 [markDelivered]（司机回店后手动改状态）。
+/// > **历史**：R-3（离线签收）曾属待裁定项，**2026-09-29 已裁定并落地**
+/// > —— 同步通道的 `documentAction: mark_delivered` 与主机 UI 共用
+/// > [markDelivered]（见 `docs/reply.md` §H / `Agents.md` §4.2「动作归约」）。
+/// > 本节原先写的「未实现（有意）」是旧状态（业务审查 §3.3）。
 class RuleEngine {
   RuleEngine(this.db, {this.onInternalError})
     : _docs = DocumentDao(db),
@@ -678,6 +677,16 @@ class RuleEngine {
           detail: '${target.docType.wire} 不可作为核销目标',
         );
       }
+      // P2 #15（2026-10-24，业务审查 §3.7）：**第 6 道门槛 —— 目标未作废**。
+      // 从前全程不看 `target.status`：一张作废的送货单照样能被收款核销 ——
+      // 钱进了账、`paid_amount` 被刷、单据永远挂在「已收一半」上。
+      if (target.status == DocStatus.cancelled) {
+        throw const RuleRejection(
+          '这张单已经作废了，不能再收款或付款。'
+          '请换一张单；如果它是误作废的，先把它恢复再收。',
+          code: RejectCode.actionNotApplicable,
+        );
+      }
 
       // ---- 方向校验（2026-10-07 裁定，`docs/reply.md` §3）----
       // 用收付款单**自己**的方向（`_settle` 的 `moneyOut` 由 doc_type 决定），
@@ -1196,9 +1205,24 @@ class RuleEngine {
   }
 
   /// 从盘点的 lines 取出 `productId → 实际数量`
-  Map<String, int> _actualFromLines(List<DocumentLine> lines) => <String, int>{
-    for (final DocumentLine line in lines) line.productId: line.quantity,
-  };
+  /// 盘点 payload → `商品 → 实际数量`。
+  ///
+  /// P2 #17（2026-10-24，业务审查 §3.7）：同商品**重复行**必须拒绝 ——
+  /// 从前直接建 Map，后者**静默覆盖**前者（草稿层有拦截，但同步 payload
+  /// 绕过草稿直达引擎）。重复行的语义本身就不确定，静默取一个等于猜。
+  Map<String, int> _actualFromLines(List<DocumentLine> lines) {
+    final Map<String, int> actual = <String, int>{};
+    for (final DocumentLine line in lines) {
+      if (actual.containsKey(line.productId)) {
+        throw RuleRejection.protocol(
+          RejectCode.fieldTypeMismatch,
+          detail: '盘点 payload 同商品出现重复行：${line.productId}',
+        );
+      }
+      actual[line.productId] = line.quantity;
+    }
+    return actual;
+  }
 
   /// 不变量 B5：`SUM(document_lines.amount) = document.total_amount`
   /// （`stocktake` / `receipt` / `payment` 除外，见 `docs/data_model.md` §五）

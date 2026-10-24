@@ -131,6 +131,8 @@ class _ReturnPageState extends State<ReturnPage> {
             quantity: _qty[pid]!.text,
             amount: _amount[pid]!.text,
             entryUnit: _quotas[pid]!.entryUnit,
+            // B-4：原单行录入量 —— 退货换算按原单比例（档案改包装不影响）
+            originalEntryQuantity: _quotas[pid]!.originalEntryQuantity,
             baseUnit: _quotas[pid]!.baseUnit,
             packageUnit: _quotas[pid]!.packageUnit,
             packageSize: _quotas[pid]!.packageSize,
@@ -173,6 +175,7 @@ class _ReturnPageState extends State<ReturnPage> {
       quantity: text,
       amount: _amount[pid]!.text,
       entryUnit: quota.entryUnit,
+      originalEntryQuantity: quota.originalEntryQuantity,
       baseUnit: quota.baseUnit,
       packageUnit: quota.packageUnit,
       packageSize: quota.packageSize,

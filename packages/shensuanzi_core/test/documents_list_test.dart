@@ -174,6 +174,46 @@ void main() {
       );
     });
 
+    // P2 #14（2026-10-24，业务审查 §3.7）：默认只看根 —— 退货单不进默认
+    // 列表；`includeDerived: true` 才进；导出恒全量（AF-12）。
+    // 从前 DAO 默认 `rootsOnly: false`、UI 显式传 `true`，两套默认值。
+    test('P2 #14：默认只看根（退货单不进）；includeDerived 才进；导出恒全量', () {
+      insertDocument(
+        db.raw,
+        'd-sale',
+        docNo: 'XS20261012-008',
+        docType: 'sale',
+        occurredAt: at(2026, 10, 12),
+        createdAt: at(2026, 10, 12, 21, 11),
+      );
+      insertDocument(
+        db.raw,
+        'd-ret',
+        docNo: 'XT20261012-001',
+        docType: 'sale_return',
+        totalAmount: 100,
+        refDocId: 'd-sale',
+        occurredAt: at(2026, 10, 12, 16, 48),
+      );
+
+      expect(
+        docNosOf(documents.listDocuments()),
+        <String>['XS20261012-008'],
+        reason: 'P2 #14：默认视图只看根 —— 退货单从原单详情进，不混在列表里',
+      );
+      expect(
+        docNosOf(documents.listDocuments(includeDerived: true)),
+        contains('XT20261012-001'),
+        reason: '显式要派生单才进',
+      );
+      expect(
+        docNosOf(documents.listDocumentsForExport()),
+        contains('XT20261012-001'),
+        reason: '导出必须全量（AF-12：把数据带走，不许偷偷少东西）',
+      );
+      expect(documents.countDocuments(), 1, reason: '计数与列表同一口径');
+    });
+
     test('导出与列表同一口径（共用 `_summaries`，顺序也必须一致）', () {
       insertDocument(
         db.raw,
@@ -286,12 +326,20 @@ void main() {
       );
     });
 
-    test('按对方名搜（部分退货单仍在列表里 —— 折叠是批 3 的事）', () {
+    test('按对方名搜（默认只看根：退货单不进；显式 includeDerived 才进）', () {
       seedSearchFixture();
+      // P2 #14（2026-10-24）：默认只看根。⚠️ 2026-10-05「部分退货单独立
+      // 显示」已被 2026-10-18 甲案**废止**（`docs/reply.md`，§CV·六十三~六十七），
+      // 本用例旧断言按过时裁定写，已改。
       expect(
         docNosOf(documents.listDocuments(query: '王老板')),
+        <String>['XS20261012-008'],
+        reason: 'P2 #14：默认视图只看根 —— 退货单从原单详情进',
+      );
+      expect(
+        docNosOf(documents.listDocuments(query: '王老板', includeDerived: true)),
         <String>['XT20261012-002', 'XS20261012-008'],
-        reason: '2026-10-05 裁定：正常部分退货单是独立交易，默认显示',
+        reason: '显式要派生单时照常出现（退货单仍是独立交易）',
       );
       expect(
         documents.listDocuments(query: '李姐').single.document.docNo,
@@ -381,11 +429,21 @@ void main() {
         reason: '明确筛退货类目 + 搜索 ⇒ 只留退货单本身',
       );
 
-      final List<String> list = docNosOf(documents.listDocuments(query: '王老板'));
+      // P2 #14：列表默认只看根、导出恒全量 —— AF-5 的「同口径」指
+      // **同一份筛选条件**（搜索词/类型/状态/时间），不是同一份可见集合；
+      // 比较时列表要显式 `includeDerived: true`（AF-12：导出把数据带走）。
+      final List<String> list = docNosOf(
+        documents.listDocuments(query: '王老板', includeDerived: true),
+      );
       final List<String> export = docNosOf(
         documents.listDocumentsForExport(query: '王老板'),
       );
-      expect(export, list, reason: 'AF-5：导出必须与列表同一份筛选（含搜索词）');
+      expect(export, list, reason: 'AF-5：导出 = 列表（显式含派生）的同一份筛选（含搜索词）');
+      expect(
+        docNosOf(documents.listDocuments(query: '王老板')),
+        isNot(contains('XT20261012-002')),
+        reason: 'P2 #14：默认列表不含派生单',
+      );
     });
   });
 

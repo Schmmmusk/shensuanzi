@@ -262,7 +262,9 @@ void main() {
   });
 
   group('令牌生命周期', () {
-    test('resetToken：换令牌 + 换 host_id + 旧令牌立刻失效', () async {
+    // C-3（2026-10-24，用户裁定 ⑦甲）：resetToken 只换令牌，**host_id 不变**
+    // —— 手机重扫后是「同一台主机重新配对」，不清镜像、不挂起队列。
+    test('resetToken：换令牌、host_id 不变（C-3）、旧令牌立刻失效', () async {
       await controller.start();
       final String oldToken = controller.pairingPayload!.token;
       final String oldHostId = controller.pairingPayload!.hostId;
@@ -273,7 +275,7 @@ void main() {
 
       final PairingPayload fresh = controller.pairingPayload!;
       expect(fresh.token, isNot(oldToken));
-      expect(fresh.hostId, isNot(oldHostId), reason: '§9.3：所有设备重新配对');
+      expect(fresh.hostId, oldHostId, reason: 'C-3：主机身份持久化 —— 重生成配对码 ≠ 换主机');
 
       final int port = after.port!;
       expect(await get(port, '/api/sync/pull', token: fresh.token), 200);

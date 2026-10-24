@@ -167,8 +167,11 @@ void main() {
       );
       run(ret, lines: <DocumentLine>[line(ret, p, 1, 500)]);
 
+      // P2 #14（2026-10-24）：这条测的是**平铺视图**的「自动单过滤」——
+      // 默认视图已改为 rootsOnly（只列根，单目标手记收款单折进原单），
+      // 所以这里显式 `rootsOnly: false` 才测得到 includeDerived 那道闸。
       final Set<String> shown = documents
-          .listDocuments()
+          .listDocuments(rootsOnly: false)
           .map((DocumentSummary e) => e.document.id)
           .toSet();
       final Set<String> all = documents
@@ -189,6 +192,9 @@ void main() {
       expect(all, contains(autoReceiptId), reason: '要全量时能看到（参数有效）');
 
       expect(shown, contains(receipt.id), reason: '手动收款单要显示');
+      // 平铺视图（`rootsOnly: false`）里退货单必须出现 —— 自动单过滤器
+      // 只认「receipt/payment 且 ref 非空」，**不能**把 ref 非空的退货单误伤
+      // （P2 #14 只改了**默认值**，这道闸本身没动）。
       expect(
         shown,
         contains(ret.id),
@@ -449,8 +455,23 @@ void main() {
           .listDocuments()
           .map((DocumentSummary e) => e.document.id)
           .toSet();
-      expect(shown, contains(ret.id), reason: '⚠️ 折叠条件只认「原单已作废」—— 正常退货必须显示');
+      // P2 #14（2026-10-24）：默认只看根 —— 正常部分退货也折进原单。
+      // ⚠️ 2026-10-05「部分退货单独立显示」已被 2026-10-18 甲案废止；
+      // 平铺（显式要派生单）时它仍然出现，见下一条断言。
+      expect(
+        shown,
+        isNot(contains(ret.id)),
+        reason: 'P2 #14：默认视图只看根（退货折进原单，列表行有「已退 ¥」线索）',
+      );
       expect(shown, contains(sale.id));
+      expect(
+        documents
+            .listDocuments(includeDerived: true)
+            .map((DocumentSummary e) => e.document.id)
+            .toSet(),
+        contains(ret.id),
+        reason: '平铺视图里退货单照常显示（独立交易）',
+      );
       // 行上的退货额也要有（列表显示「已退 ¥15.00」）
       expect(
         documents

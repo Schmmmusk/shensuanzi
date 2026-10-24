@@ -1215,7 +1215,18 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     );
     if (!mounted) return;
     setState(() {}); // 裁定 ⑦：镜像可能变了，全部页面重查
-    if (message != null) _toast(message);
+    if (message != null) {
+      // C-2（2026-10-24）：换主机时队列条目会被挂起（含此前 `sent` 的）——
+      // 必须**多说一句**（注释承诺过、从前没接线）：那几条是用户刚开的单，
+      // 不说清楚他会以为还在自动补传。
+      final int held = service.lastHostSwitchHeldEntries;
+      _toast(
+        held > 0
+            ? '已连上新的电脑。有 $held 条单还没同步给旧电脑，'
+                  '已暂停自动上传 —— 去「同步队列」确认要发到这台。'
+            : message,
+      );
+    }
   }
 
   /// 「立即同步」（§BL·三，裁定 ③：B2 手动触发）。

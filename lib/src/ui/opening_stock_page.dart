@@ -376,6 +376,7 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
       Text(
         '下面填的是「实际有多少」，不是新进了多少；'
         '同一个商品再录一遍，就是把库存改成后来那个数。'
+        '卖光了就填 0。'
         '期初成本按 0 记，库存金额会偏低；下次采购时进价会校准成本。',
         style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
       ),
@@ -480,7 +481,8 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
     );
 
     final Widget diff;
-    if (qty == null || qty <= 0) {
+    // B-3（④甲）：0 合法（卖光了）—— 也要显示差额，不能当「没填」
+    if (qty == null || qty < 0) {
       diff = Text('当前账面 $book', style: grey);
     } else {
       final int delta = qty - book;

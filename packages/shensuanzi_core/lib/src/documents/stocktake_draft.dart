@@ -62,20 +62,24 @@ class StocktakeLineDraft {
   /// 行内校验。`null` = 通过（含空行）；非 `null` = 给用户看的一句话。
   ///
   /// 同商品重复是**跨行**约束，在 [StocktakeDraft.validate] 里查。
+  ///
+  /// **0 合法**（B-3，2026-10-24 用户裁定 ④甲）：「卖光了就填 0」是真实业务 ——
+  /// 盘点后一件不剩必须能录（引擎按 `差额 = 0 − 账面` 正常出库）。旧实现把 0
+  /// 与负数一起拒，用户只能开一张金额 0 的销售单绕过。
   String? validate() {
     if (isEmpty) return null;
     if (productId.isEmpty) return '请选一个商品';
     final String qtyText = quantity.trim();
     if (qtyText.isEmpty) return '请填数量，填店里实际有多少';
     final int? qty = int.tryParse(qtyText);
-    if (qty == null || qty <= 0) return '数量要填正整数，比如 10';
+    if (qty == null || qty < 0) return '数量要填 0 或正整数（卖光了就填 0）';
     return null;
   }
 
   /// 数量取值；非法或未填时 `null`（调用方应先 [StocktakeDraft.validate]）
   int? get quantityValue {
     final int? qty = int.tryParse(quantity.trim());
-    return (qty == null || qty <= 0) ? null : qty;
+    return (qty == null || qty < 0) ? null : qty;
   }
 
   @override

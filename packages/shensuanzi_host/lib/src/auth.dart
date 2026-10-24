@@ -132,12 +132,20 @@ class HostIdentityStore {
   HostIdentity loadOrCreate({required int now, Random? random}) =>
       load() ?? reset(now: now, random: random);
 
-  /// 生成 / 重置令牌（§9.3「一键重置」）。**`host_id` 一并更换** ——
-  /// 所有已配对设备都作废，必须重新扫码。
+  /// 生成 / 重置令牌（§9.3「一键重置」）。
+  ///
+  /// **`host_id` 持久化不变**（C-3，2026-10-24 用户裁定 ⑦甲）：只轮换令牌 ——
+  /// 所有已配对设备仍需重新扫码（旧令牌失效），但主机身份还是同一台。
+  /// 从前 `host_id` 一并更换 ⇒「重启电脑想再看二维码 ⇒ 重新生成 ⇒ 手机重扫
+  /// ⇒ 全量重建镜像 + 离线队列全部挂起」，而 `Agents.md` §4.2 承诺的
+  /// 「同主机重新配对（`host_id` 不变）不清」**几乎永远走不到**。
+  ///
+  /// 真正的换主机（换电脑 / 换数据目录）走的是另一条路：新数据目录没有
+  /// 身份记录 ⇒ [loadOrCreate] 自然生成新的 `host_id`。
   HostIdentity reset({required int now, Random? random}) {
     final String plaintext = HostToken.generate(random: random);
     final HostIdentity next = HostIdentity(
-      hostId: newId(),
+      hostId: load()?.hostId ?? newId(),
       tokenHash: HostToken.hashOf(plaintext),
       createdAt: now,
       plaintextToken: plaintext,

@@ -89,7 +89,9 @@ class HostServiceSnapshot {
   /// 用「**掉线**」而不只是「需要重新扫码」：用户要先意识到**手机会连不上**，
   /// 才会去重扫；只说「重新扫码」容易被读成「可选的一次操作」
   /// （`docs/reply_review.md` §BB 审查意见 · 八）。
-  static const String resetWarning = '重新生成后，已经连过的手机全都掉线，要重新扫一次码';
+  static const String resetWarning =
+      '重新生成后，已经连过的手机全都掉线，要重新扫一次码'
+      '（重新扫后数据不用重拉 —— 还是这台电脑）';
 
   /// 状态行主文案
   String get headline {

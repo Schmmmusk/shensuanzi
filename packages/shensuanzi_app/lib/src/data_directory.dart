@@ -232,7 +232,9 @@ class DataDirectoryPolicy {
     if (_looksSynced(target)) {
       return const DirectoryAdvice(
         DirectoryVerdict.warn,
-        '这个位置看起来在网盘同步文件夹里，同步过程中数据库有可能损坏',
+        // P2 #13（业务审查 §3.7）：用户可见文案禁用「数据库」——
+        // 用户不需要知道实现（user_text.dart:52 的禁用名单）
+        '这个位置看起来在网盘同步文件夹里，同步过程中数据文件有可能损坏',
         advice: '建议换一个不同步的文件夹',
       );
     }

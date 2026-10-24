@@ -73,13 +73,17 @@ void main() {
       );
     });
 
-    test('reset 换新 host_id 与新令牌，旧令牌立刻失效', () {
+    // C-3（业务审查 §3.7，用户裁定 ⑦甲，2026-10-24）：**主机身份与令牌拆开**。
+    // `reset` 只轮换令牌，`host_id` 持久化不变 —— 从前一并更换，导致
+    // 「重启电脑想再看二维码 ⇒ 重新生成 ⇒ 手机重扫 ⇒ 全量重建镜像 + 队列全挂起」，
+    // 而 `Agents.md` §4.2 的「同主机重配对不清」几乎永远走不到。
+    test('reset 只换令牌，host_id 不变（C-3），旧令牌立刻失效', () {
       final HostIdentityStore store = HostIdentityStore.inMemory();
       final HostIdentity before = store.loadOrCreate(now: 1000);
 
       final HostIdentity after = store.reset(now: 2000);
 
-      expect(after.hostId, isNot(before.hostId));
+      expect(after.hostId, before.hostId, reason: 'C-3：主机身份持久化，重生成配对码 ≠ 换主机');
       expect(after.canShowQr, isTrue);
       expect(
         after.authorizes(before.plaintextToken),

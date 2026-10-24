@@ -68,7 +68,7 @@
    - `document_lines`：逐条插入
 
 2. **库存与往来**
-   - `StockLedger`：每 line `quantity = +qty`，`total_cost = qty × unit_price`
+   - `StockLedger`：每 line `quantity = +qty`，`total_cost = line.amount`（**这一行真正发生多少钱** —— v3 起 = `entry_quantity × entry_unit_price − discount_amount`；**别写成 `qty × unit_price`**，`unit_price` 是派生值，用它反算会有舍入差，见 `data_model.md` §零·乙）
    - `PartyLedger`：`document_id = purchase.id`，`amount = -total_amount`（我欠供应商）
 
 3. **立即付款**（若 `immediate_payments` 非空）
@@ -313,8 +313,8 @@ GROUP BY dl.product_id
 | 一收款核一单（全额） | 1 条，`amount = 销售单总额` |
 | 一收款核多单 | N 条，各指向不同 `target_doc_id` |
 | 一单多次收款 | N 条，各来自不同 `receipt_doc_id` |
-| 超收/预收 | N 条指向具体单 + 1 条 `target_doc_id = null` |
-| 用预收核新单 | 新建 1 条 settlement，`receipt_doc_id` 指向原收款单 |
+| 超收/预收 | **找零，不落库**：UI 按未收额**封顶**（差额作找零只在界面提示），规则层对 `requested > total` 直接**拒绝**（§AJ·AI-4：落库永远是应收，找零是现金箱内部流动，不进账、不持久化）|
+| 用预收核新单 | **v1.1 候选**（数据层 `settlements` 支持，v1 无入口；`target_doc_id = null` 的预收记录在 v1 不生成）|
 
 > **数据层已支持「一收核多单」的多对多**（`settlements` 表设计如此，两个索引齐备）。
 > v1 的 UI 只做**从单据详情发起的单笔核销**；**批量收款 / 预收入口是 v1.1 候选**

@@ -668,16 +668,33 @@ void main() {
       expectNoDevTerms('${json['error']}');
     });
 
-    test('limit 可传', () async {
+    // P2 #6（业务审查 §3.7）：`limit` 必须校验 —— 从前 `limit=0` 被接受，
+    // 每个分页实体都「取满」（`rows.length == 0 == limit`）⇒ `has_more` 恒 true
+    // ⇒ 客户端死循环；超大 limit 则一次拉全库（内存峰值不可控）。
+    test('P2 #6：limit 越界（0 / 超大）⇒ 400，不再静默接受', () async {
       await createProduct('H004');
-      final (int status, Map<String, Object?> json) = await call(
+      for (final String bad in <String>['0', '99999', '-5']) {
+        final (int status, Map<String, Object?> json) = await call(
+          'GET',
+          '/api/sync/pull?limit=$bad',
+          bearer: token(),
+        );
+        expect(
+          status,
+          400,
+          reason: 'limit=$bad 必须拒绝 —— 0 会让 has_more 恒 true（死循环）',
+        );
+        expect(json['error'], '请求格式有误，请重试。');
+      }
+
+      // 合法边界照常工作
+      final (int ok, Map<String, Object?> json) = await call(
         'GET',
-        '/api/sync/pull?limit=0',
+        '/api/sync/pull?limit=1',
         bearer: token(),
       );
-
-      expect(status, 200);
-      expect(json['documents'], isEmpty, reason: 'limit=0 → 空页');
+      expect(ok, 200);
+      expect(json['products'], isNotEmpty, reason: 'limit=1 合法，取 1 条主数据');
     });
   });
 }

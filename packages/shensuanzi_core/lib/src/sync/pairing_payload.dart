@@ -67,12 +67,24 @@ class PairingPayload {
     if (port == null || port <= 0 || port > 65535) {
       throw FormatException('配对码的 port 非法：${q['port']}');
     }
+    // P2 #12（2026-10-24，业务审查 §3.7）：`v` 必须校验 —— 从前未知版本被
+    // 静默接受，新旧两端协议不一致时用户只会看到「连不上」。
+    // 不带 `v`（旧电脑端）⇒ 按当前版本处理（向后兼容）。
+    final int version = int.tryParse(q['v'] ?? '') ?? currentVersion;
+    if (version != currentVersion) {
+      throw FormatException(
+        version > currentVersion
+            ? '这个配对码来自更新版本的电脑端，请先把手机端升级到最新版再扫码。'
+            : '这个配对码来自旧版本的电脑端，请先在电脑上把软件升级到最新版，'
+                  '再用它重新生成配对码。',
+      );
+    }
     return PairingPayload(
       hostId: q['host_id']!,
       ip: q['ip']!,
       port: port,
       token: q['token']!,
-      version: int.tryParse(q['v'] ?? '') ?? currentVersion,
+      version: version,
     );
   }
 }

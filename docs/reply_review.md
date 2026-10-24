@@ -13802,3 +13802,137 @@ core 全部 **14 个自检 + typecheck** 全过。（format 门禁当场抓到 1
 §3.2/附录A 的 8 处改文档（`rules.md` / `data_model.md` 等规格文件）·
 `rule_engine.dart` 头注释删旧状态 · B-3 盘点 0 件（④甲：合法域改非负整数 + 文案 + 改测试）·
 B-4 退货按原单行比例反算（⑤甲）· §3.7 P2 #3/#6/#10/#12/#13/#14/#15/#17 聚类。
+
+## §CV·九十二 **业务审查第 1 批（文档对齐 + 规则边界 + P2 聚类）落地**（2026-10-24）
+
+> 裁定：`docs/reply.md` ①–⑧ 全按推荐（①甲 批次 0+1 先做 / ⑧甲 8 处改文档）。
+> ⚠️ **承接说明**：第 1 批-a 的 5 个文档改动（`rules.md` / `testing.md` /
+> `data_model.md` / `schema_migration.md` / `cost_policy.dart`）由**另一位 agent
+> 完成、工作被客户端打断**，遗留为未提交改动。本批**逐条核验后全部保留**
+> （内容正确），并在其上补齐余下 5 处（data_model §七 排序口径 / seq_no 措辞 /
+> sync_protocol 收敛收窄 / `rule_engine` 头注释 / Agents.md 纪律 5）。
+
+### 一、文档与实现对齐（12 处，纪律 17 反向用法：改文档不改实现）
+
+| # | 位置 | 旧 | 新 |
+|---|---|---|---|
+| 1 | `rules.md` RULE-004 场景表 | 超收/预收 = N 条 + 1 条 `target_doc_id = null` | **找零，不落库**（§AJ·AI-4 / §AX·一） |
+| 2 | 同上 | 用预收核新单 = 常规路径 | **v1.1 候选**（数据层支持、v1 无入口） |
+| 3 | `testing.md` D. 核销场景 | 超收 → 预收余额正确 | 超收 ⇒ 找零封顶；null allocation 是**独立路径** |
+| 4 | `cost_policy.dart` R-8 注释 | 待裁定 | 已裁定（按加权均价实现） |
+| 5 | `rules.md:71` | `total_cost = qty × unit_price` | `line.amount`（附「别反算」警告） |
+| 6 | `data_model.md:309` | `quantity × unit_price`（精确） | `line.amount`（同 §零·乙） |
+| 7 | `data_model.md` §六 | 旧 `WHERE seq_no < … AND quantity > 0` | **净额**口径 `Σtotal_cost / Σquantity` |
+| 8 | `data_model.md` §七 | 「排序一律用 seq_no」 | 流水用 seq_no；**单据列表按日桶 + created_at**（2026-10-18 起，附行号） |
+| 9 | `schema_migration.md` | `version = 2` | `version = 4`（与 Schema.version 一致） |
+| 10 | `Agents.md` 纪律 5 | 客户端不持久化、不引用 `seq_no` | 客户端**不分配**（只读排序可以 —— 与镜像 upsert 全列的现实一致） |
+| 11 | `sync_protocol.md` §8.1 | 「主机收到什么顺序都收敛」 | **收窄**：create↔update 收敛；update↔update **不保证**（C-1 已知缺口，第 2 批） |
+| 12 | `rule_engine.dart` 头注释 | 「离线签收未实现、R-3 待裁定」 | 删旧段，留一句历史（2026-09-29 已裁定落地） |
+
+> **附带发现**：`rules.md:316` / `testing.md:263` 等**报告快照之后已被修正** ——
+> 文档项必须逐条对**现状**核验，不能照报告行号盲改（本批 12 处里 7 处已是新口径）。
+
+### 二、B-3 盘点允许录 0 件（④甲）
+
+- `StocktakeLineDraft.validate()` / `quantityValue`：`qty <= 0` → **`qty < 0`**；
+  文案改「数量要填 0 或正整数（卖光了就填 0）」。
+- 引擎本来就接受 0（`_stocktake` 只拒负数、差额 0 不产流水）—— 卡点纯在草稿层。
+- UI：`opening_stock_page` 的差额预览 `qty <= 0` → `qty < 0`；页首提示加「卖光了就填 0」。
+- 测试：`stocktake_service_test` 的「数量 0/负数/非数字 → 正整数」拆成
+  「0 合法且进 stocktakeActual」+「负数/非数字仍拒」；镜像 `selfcheck_stocktake` 同步。
+
+### 三、B-4 退货按原单行比例反算（⑤甲）
+
+- `ReturnLineDraft` 新增 `originalEntryQuantity`（原单行 `entry_quantity`）；
+  `quantityValue` 改为 **`entry × 原单数量 / 原单录入量`**（round-half-up），
+  不再用当前档案的 `packageSize`；旧数据无 `entry_*` 快照 ⇒ 退回档案换算（行为不变）。
+- `ReturnQuota` 带上 `originalEntryQuantity`（`quotasFor` 从原单行取）；
+  `return_page` 两处构造透传。
+- 测试：原单 3 箱 × 12 = 36 瓶、档案改成 24 ⇒ 退 1 箱 = **12 瓶**（旧实现 24）。
+  镜像 `selfcheck_returns` 加「旧数据回退档案换算」对照。
+
+### 四、§3.7 P2 八条
+
+| # | 修法 | 护栏 |
+|---|---|---|
+| 3 | `data_model.md` 写明三列不建 FK 的三条理由（软删恒可满足 / 重建表代价 / 规则层已保证） | 文档 |
+| 6 | `limit` 校验 `1..maxPullLimit(1000)`，越界 400（`limit=0` 会让 `has_more` 恒 true ⇒ 死循环） | http_server_test + selfcheck_host |
+| 10 | documentAction 的 conflict 判据 = `reason_code == actionNotApplicable` **且** 是 delivery —— 内部错误码（ruleInternalError）不再被判 conflict（客户端会删队列条目） | 既有 cancelled→conflict / purchase→rejected 双绿 |
+| 12 | `PairingPayload.parse` 校验 `v`：更新 ⇒ 提示升级手机端；更旧 ⇒ 提示升级电脑端；不带 v ⇒ 当前版本 | pairing_payload_test + selfcheck_host |
+| 13 | 用户可见文案「数据库」→「数据文件」；`expectNoDevTerms` 覆盖 `DirectoryAdvice`（reject/warn 全档） | data_directory_test + selfcheck_app（反向验证：改回「数据库」⇒ 红） |
+| 14 | `rootsOnly` 默认 **`null` = 跟随 `includeDerived`**（默认只看根）；导出**恒全量**（AF-12） | documents_list_test + 三条旧断言按**已废止**的 2026-10-05 裁定更新 |
+| 15 | 核销**第 6 道门槛**：目标 `cancelled` ⇒ 业务拒绝（文案说作废、说怎么办） | rule_engine_test + selfcheck_rules（四表零落库） |
+| 17 | 盘点 payload 同商品重复行 ⇒ 协议拒绝（从前 Map 静默后者覆盖） | rule_engine_test + selfcheck_rules |
+
+**#14 的连带发现**：`documents_list_test` / `settlement_view_test` 里有三条断言
+按 **2026-10-05「部分退货单独立显示」** 写 —— 该裁定**已于 2026-10-18 废止**
+（台账 §CV·六十三~六十七 甲案），断言与注释一并更新；「不误伤退货单」的语义
+保留在**平铺视图**（`rootsOnly: false`）路径上。
+
+### 五、顺手修掉的两处旧漂移（非本批引入，门禁暴露）
+
+1. **`selfcheck_host`** 仍按「11 个顶层键」数 pull 响应 —— batch 0 加
+   `doc_window_truncated` 时漏更（与 2026-10-08 加 `has_more` 时同一类漂移）；
+   已改 12 键 + 白名单加字段。
+2. **`selfcheck_app`** 断言「手机只开商品，往来/账户仍禁建」—— 手机**往来方建档
+   已于 2026-10-20 开通**（§CV·七十七，`QueuePartySink`），`MasterDataPolicy` 的
+   字段注释也还写着 `false`；两处一并改正。
+
+### 六、门禁（全绿）
+
+根侧 **280** · core **659**（+2）· host **153** · app **337**（+1）·
+`flutter analyze` **0 issues** · `dart format --set-exit-if-changed` **exit 0** ·
+core 14 个自检 + host 3 个 + app 自检 + 全部 typecheck **全过**
+（selfcheck_host 121→**124** 项、selfcheck_app 新增 P2 #13 项）。
+
+### 七、下一步（第 2 批，需裁定后做）
+
+C-1 主数据 update↔update 收敛（协议措辞已在第 1 批收窄，实现待裁）· C-2 换主机
+`sent` 降级 + 接上 `lastHostSwitchHeldEntries` · C-3 `host_id` 与令牌拆分（⑦甲已裁，
+协议级）· P2 #7/#8/#9/#11（reason_code 分类 / 401 集中处置 / 手表偏移 / 窗口补明细）。
+
+## §CV·九十三 **C-3 主机身份持久化 + C-2 `sent` 条目降级**（2026-10-24，用户裁定 ⑦甲）
+
+> 业务审查 §3.7 C-2 / C-3。用户指令：「先做 C-3 + C-2」（C-1 需另裁）。
+
+### 一、C-3：`host_id` 与令牌拆开（`auth.dart`）
+
+- **旧行为**：`HostIdentityStore.reset`（「重新生成配对码」）**连 `host_id` 一起换**
+  ⇒ 用户重启电脑想再看二维码（明文不落盘）→ 重生成 → 手机重扫 → `host_id` 变了
+  → **全量重建镜像 + 离线队列全部挂起**。`Agents.md` §4.2 承诺的「同主机重新配对
+  （`host_id` 不变）不清」**几乎永远走不到**。
+- **新行为**：`reset` 只轮换令牌，`host_id = load()?.hostId ?? newId()` —— 有身份记录
+  就沿用；**真换主机**（换电脑 / 换数据目录）走 `loadOrCreate` 的新建分支，自然生成新 id。
+- 用户可见：`resetWarning` 补一句「重新扫后数据不用重拉 —— 还是这台电脑」。
+- 测试：`auth_test` 的「reset 换新 host_id」改「只换令牌、host_id 不变」；
+  `service_controller_test` 的 resetToken 用例同步；镜像 `selfcheck_host` /
+  `selfcheck_service` 各一处旧断言改正（selfcheck_service 76/76）。
+- 文档：`Agents.md` §4.2「换主机 = 重置」一行补 C-2/C-3 的现状。
+
+### 二、C-2：换主机时 `sent` 条目也要降级（`sync_dao` + `mobile_sync_service`）
+
+- **旧行为**：`resetForNewHost` 只挂起 `queue.unsent()`（`status != sent`）。
+  `sent` 的语义是「**主机已收下、本机还没确认**」—— 换主机后新主机并没有这条，
+  而 `unsent()` 又排除它 ⇒ **两头落空**：既不会被挂起，也永远不会再推。
+  场景：离线开单 → push 成功转 `sent` → pull 还没跑 → 扫另一台电脑 ⇒
+  用户刚开的单凭空消失、队列里留一条永远清不掉的 `sent`。
+- **新行为**：`SyncQueueDao.allForHostSwitch()`（全量，含 `sent`）；
+  `resetForNewHost` 用它，`sent` 条目给**专用文案**（「已经发给上一台主机了，
+  但本机还没确认收下…」），其余沿用原文案。两者都转 `failed` + `retry_count = 99`（挂起）。
+- **接上承诺**：`lastHostSwitchHeldEntries` 此前**全仓无 UI 读取**（注释承诺「多说一句」
+  没接线）—— 现接进 `app.dart` 的扫码回来路径：`held > 0` 时 toast 改成
+  「已连上新的电脑。有 N 条单还没同步给旧电脑，已暂停自动上传 —— 去「同步队列」确认」。
+- 测试：`mobile_sync_service_test` 新增「`sent` 条目换主机 ⇒ 降级为 failed + 专用文案」；
+  镜像 `selfcheck_sync_client` 加「`allForHostSwitch` 含 sent、`unsent` 不含」。
+
+### 三、门禁（全绿）
+
+根 **280** · core **659** · host **153** · app **338**（+1）· analyze **0** · format **0** ·
+全部自检 + typecheck 过（selfcheck_host 124 · selfcheck_service 76 · selfcheck_sync_client 116）。
+
+### 四、下一步
+
+**C-1（update↔update 乱序不收敛）仍需你拍一次**：报告给了两个方向 ——
+甲「行不存在时把 `base_version == 0` 视为无版本要求、建档后置 `sync_version = 1`」；
+乙「同 id 的 update 做版本单调判断（后到不覆盖更高版本）」。二者可叠加。
+其余第 2 批：P2 #7（reason_code 分类）/ #8（401 集中处置）/ #9（手表偏移）/ #11（窗口补明细）。

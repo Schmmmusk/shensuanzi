@@ -550,6 +550,117 @@ void main() {
     );
   }
 
+  // P2 #15（2026-10-24，业务审查 §3.7）：核销第 6 道门槛 —— 目标已作废。
+  section('P2 #15 核销门槛：目标已作废');
+  {
+    final String p = createProduct(code: 'P960');
+    final String party = createParty();
+    // 备货 → 送货（in_transit）→ 主机作废
+    final Document purchase = pendingDoc(
+      type: DocType.purchase,
+      partyId: party,
+      totalAmount: 1000,
+    );
+    engine.dispatch(
+      document: purchase,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: purchase.id,
+          productId: p,
+          quantity: 10,
+          unitPrice: 100,
+        ),
+      ],
+      now: now(),
+    );
+    final Document delivery = pendingDoc(
+      type: DocType.delivery,
+      partyId: party,
+      totalAmount: 1000,
+    );
+    engine.dispatch(
+      document: delivery,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: delivery.id,
+          productId: p,
+          quantity: 10,
+          unitPrice: 100,
+        ),
+      ],
+      now: now(),
+    );
+    documents.updateStatusAndPaid(
+      id: delivery.id,
+      status: DocStatus.cancelled,
+      updatedAt: now(),
+    );
+    final int t = now();
+    final Account cash = Account(
+      id: newId(),
+      name: '现金',
+      type: AccountType.cash,
+      createdAt: t,
+      updatedAt: t,
+    );
+    AccountDao(db).insert(cash);
+    final Document receipt = pendingDoc(
+      type: DocType.receipt,
+      partyId: party,
+      accountId: cash.id,
+      totalAmount: 1000,
+    );
+    final RuleOutcome outcome = engine.dispatch(
+      document: receipt,
+      allocations: <Allocation>[
+        Allocation(targetDocId: delivery.id, amount: 1000),
+      ],
+      now: now(),
+    );
+    check(
+      'P2 #15：作废单不可核销 ⇒ rejected（文案说作废）',
+      outcome.status != RuleStatus.applied &&
+          (outcome.reason ?? '').contains('作废'),
+      '${outcome.status} / ${outcome.reason}',
+    );
+    check('P2 #15：拒绝 ⇒ 收款单零落库', documents.findById(receipt.id) == null);
+  }
+
+  // P2 #17（2026-10-24，业务审查 §3.7）：盘点同商品重复行 ⇒ 拒绝。
+  section('P2 #17 盘点重复行');
+  {
+    final String p = createProduct(code: 'P961');
+    final Document doc = pendingDoc(type: DocType.stocktake, totalAmount: 0);
+    final RuleOutcome outcome = engine.dispatch(
+      document: doc,
+      lines: <DocumentLine>[
+        DocumentLine(
+          id: newId(),
+          documentId: doc.id,
+          productId: p,
+          quantity: 5,
+          unitPrice: 0,
+          amount: 0,
+        ),
+        DocumentLine(
+          id: newId(),
+          documentId: doc.id,
+          productId: p,
+          quantity: 3,
+          unitPrice: 0,
+          amount: 0,
+        ),
+      ],
+      now: now(),
+    );
+    check(
+      'P2 #17：同商品重复行 ⇒ rejected（不静默取后者）',
+      outcome.status != RuleStatus.applied,
+      '${outcome.status}',
+    );
+    check('P2 #17：拒绝 ⇒ 库存零变化', stock.stockOf(p) == 0);
+  }
+
   // P0-1（业务审查 §3.1）：同日单号撞号。与 rule_engine_test 同场景同理由：
   // 造 1000 条存量（-001~-1000）——999 条时旧实现碰巧正确，第 1001 次才撞。
   {

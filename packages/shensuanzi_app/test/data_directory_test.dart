@@ -1,6 +1,7 @@
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:test/test.dart';
 
+import 'support/dev_terms.dart';
 import 'support/fixtures.dart';
 
 void main() {
@@ -143,6 +144,29 @@ void main() {
       expect(inspect(r'D:\坚果云\神算子').verdict, DirectoryVerdict.warn);
       expect(inspect(r'D:\Dropbox\神算子').verdict, DirectoryVerdict.warn);
       expect(inspect(r'D:\百度网盘\神算子').verdict, DirectoryVerdict.warn);
+    });
+
+    // P2 #13（业务审查 §3.7）：DirectoryAdvice 的**用户可见文案**也必须在
+    // 禁用词护栏内 —— 从前 `expectNoDevTerms` 只覆盖手册/引导/扫码/HTTP，
+    // 「数据库」在网盘警告里活了下来（data_directory.dart:235）。
+    test('P2 #13：DirectoryAdvice 文案不含开发术语（含 reject / warn 全档）', () {
+      for (final String path in <String>[
+        '   ',
+        '神算子数据',
+        r'C://',
+        r'C://Windows',
+        'D:/坚果云/神算子',
+        'D:/Dropbox/神算子',
+        'D:/百度网盘/神算子',
+        r'E://神算子数据',
+        r'D://神算子数据',
+      ]) {
+        final DirectoryAdvice advice = inspect(path);
+        expectNoDevTerms(advice.reason, extra: <String>['database']);
+        if (advice.advice != null) {
+          expectNoDevTerms(advice.advice!);
+        }
+      }
     });
 
     test('U 盘 → 警告（拔掉就打不开）', () {

@@ -60,6 +60,10 @@ class SyncServer {
   /// 一次拉取每个实体的最大行数
   static const int defaultPullLimit = 500;
 
+  /// `limit` 上限（P2 #6，2026-10-24）：超过即 400 —— 一次拉全库的内存峰值
+  /// 不可控，且客户端每页都按 `limit` 循环，超大值等于绕过分页。
+  static const int maxPullLimit = 1000;
+
   /// `createDocument` 的 payload 允许出现的顶层字段（`sync_protocol.md` §8.1）
   static const Set<String> documentPayloadKeys = <String>{
     'document',
@@ -252,13 +256,20 @@ class SyncServer {
         // R-3.4 分类：引擎拒绝有两种，回执语义不同 ——
         // **状态不匹配**（单据存在、类型也对，但前提不成立）→ `conflict`，
         // 让客户端用 server_state 对齐；**规则不允许**（类型不符 / 不存在）→ `rejected`。
-        // 已是 delivered / settled 的情形到不了这里（引擎返回 alreadyExists）。
-        // 注：in_transit 上的执行异常（「已回滚」）状态仍是 in_transit，
-        // 不会误入 conflict 分支。
+        //
+        // P2 #10（2026-10-24，业务审查 §3.7）：判据必须**先看 `reason_code`** ——
+        // 从前只看「存在且是 delivery」，主机内部错误（`rule_internal_error`）
+        // 也会被判成 conflict，客户端据此用 server_state 覆盖本地并**删掉队列
+        // 条目** ⇒ 那次改动静默丢失。
+        // `actionNotApplicable` 同时覆盖「类型不适用」和「状态不适用」，
+        // 所以还要 doc_type 是 delivery 才判 conflict（非 delivery ⇒ rejected，
+        // 与「规则不允许」一致）；内部错误码不是 actionNotApplicable，天然走 rejected。
         final Row? row = _findRow(Schema.documents, op.entityId);
-        final bool statusMismatch =
-            row != null && row['doc_type'] == DocType.delivery.wire;
-        if (statusMismatch) {
+        final bool stateMismatch =
+            outcome.code == RejectCode.actionNotApplicable &&
+            row != null &&
+            row['doc_type'] == DocType.delivery.wire;
+        if (stateMismatch) {
           return SyncResponse(
             entityId: op.entityId,
             status: SyncStatus.conflict,

@@ -23,11 +23,12 @@
 ## 二、迁移链：逐版本、不许跳跃
 
 ```dart
-static const int version = 2;
+static const int version = 4;
 
 static List<String> migrationStep(int from) => switch (from) {
   1 => <String>['ALTER TABLE products ADD COLUMN package_note TEXT NULL'],
-  // 2 => <String>[...],   ← 将来 v2 → v3：加一行即可，不要动上面那步
+  // …v2→v3 五列、v3→v4 idx_documents_updated 见 schema.dart（当前版 4，
+  // 与 Schema.version / PRAGMA user_version 一致 —— 本示例只演示形状）
   _ => throw MissingMigrationException(from),
 };
 ```

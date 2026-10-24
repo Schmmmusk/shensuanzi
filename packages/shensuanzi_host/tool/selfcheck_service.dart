@@ -276,7 +276,8 @@ Future<void> main() async {
   check('qrAvailable = true', reset.qrAvailable);
   final PairingPayload fresh = controller.pairingPayload!;
   check('令牌换了', fresh.token != oldToken);
-  check('host_id 换了（§9.3：所有设备重新配对）', fresh.hostId != oldHostId);
+  // C-3（2026-10-24，⑦甲）：只轮换令牌，主机身份持久化不变
+  check('C-3：host_id 不变（重生成配对码 ≠ 换主机）', fresh.hostId == oldHostId);
   check(
     '新令牌可用',
     await get(reset.port!, '/api/sync/pull', token: fresh.token) == 200,

@@ -40,6 +40,7 @@ class ReturnQuota {
     required this.returnedQuantity,
     required this.returnedAmountCents,
     this.entryUnit,
+    this.originalEntryQuantity,
     this.baseUnit,
     this.packageUnit,
     this.packageSize,
@@ -55,6 +56,9 @@ class ReturnQuota {
 
   /// 原单行的录入单位（`null` = 原单按最小单位录的）
   final String? entryUnit;
+
+  /// 原单行的录入数量（B-4：退货换算按原单行比例，不用当前档案的 packageSize）
+  final int? originalEntryQuantity;
   final String? baseUnit;
   final String? packageUnit;
   final int? packageSize;
@@ -191,6 +195,8 @@ class ReturnService {
       returnedQuantity: returned.quantity.abs(),
       returnedAmountCents: returnedAmountCents,
       entryUnit: line.entryUnit,
+      // B-4：原单行的录入数量随额度一起交给 UI —— 退货换算按它反算
+      originalEntryQuantity: line.entryQuantity,
       baseUnit: product?.unit,
       packageUnit: product?.packageUnit,
       packageSize: product?.packageSize,

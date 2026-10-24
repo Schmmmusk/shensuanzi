@@ -147,7 +147,7 @@ class DocumentDao {
     int limit = 200,
     bool includeDerived = false,
     String? query,
-    bool rootsOnly = false,
+    bool? rootsOnly,
   }) => _summaries(
     types: types,
     statusViews: statusViews,
@@ -156,7 +156,11 @@ class DocumentDao {
     limit: limit,
     includeDerived: includeDerived,
     query: query,
-    rootsOnly: rootsOnly,
+    // P2 #14（2026-10-24，业务审查 §3.7）：`rootsOnly` 缺省 = **跟随
+    // `includeDerived`**（默认只看根 ⇒ 退货 / 自动收付款单不进默认列表，
+    // 与列表页口径一致）。从前 DAO 默认 false、UI 显式传 true，两套默认值
+    // 让「普通退货单进不进列表」取决于调用方记不记得传参。
+    rootsOnly: rootsOnly ?? !includeDerived,
   );
 
   /// **真实总数**（批 3 第 16 条，用户裁定 ①）。
@@ -174,7 +178,7 @@ class DocumentDao {
     int? untilMillis,
     bool includeDerived = false,
     String? query,
-    bool rootsOnly = false,
+    bool? rootsOnly,
   }) {
     final _DocFilter filter = _docFilter(
       types: types,
@@ -183,7 +187,8 @@ class DocumentDao {
       untilMillis: untilMillis,
       includeDerived: includeDerived,
       query: query,
-      rootsOnly: rootsOnly,
+      // 与 [listDocuments] 同一口径（P2 #14）
+      rootsOnly: rootsOnly ?? !includeDerived,
     );
     final List<Map<String, Object?>> rows = _raw.select(
       'SELECT COUNT(*) AS c $_docFrom${filter.where}',
@@ -247,6 +252,8 @@ class DocumentDao {
     limit: null,
     includeDerived: includeDerived,
     query: query,
+    // ⚠️ 导出是「把数据带走」（AF-12）⇒ **恒全量**，不跟随 includeDerived
+    rootsOnly: false,
   );
 
   /// 详情页用：按 id 取一行（含对方名）。不存在 → `null`。

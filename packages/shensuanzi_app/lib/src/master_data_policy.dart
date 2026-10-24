@@ -46,7 +46,8 @@ class MasterDataPolicy {
   /// 商品建档（手机 v1 = `true`）。
   final bool canCreateProducts;
 
-  /// 往来方建档（手机 v1 = `false` ⇒ 点击给引导）。
+  /// 往来方建档（手机 = `true`，2026-10-20 §CV·七十七 已补 `QueuePartySink`；
+  /// 更早的「手机 v1 = false ⇒ 点击给引导」已过时）。
   final bool canCreateParties;
 
   /// 资金账户建档（手机 v1 = `false` ⇒ 点击给引导）。

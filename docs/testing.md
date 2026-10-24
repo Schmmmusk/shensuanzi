@@ -265,7 +265,9 @@ dart run tool/import_guard.dart        # §AF 复跑返工新增：只查「用�
 - 一收款核一单（部分 / 全额）
 - 一收款核多单
 - 一单多次收款
-- 超收 → 预收余额（`target_doc_id = null`）正确
+- 超收 → **找零，不落库**（UI 封顶 + 规则层拒绝 `requested > total`，§AJ·AI-4 / §AX·一；
+  `target_doc_id = null` 的预收路径 v1 不生成 —— `immediate_payment_test.dart` 测的是
+  **直接传 null allocation**，不是「超收」）
 - 用预收核新单
 - **约束违反被拒**：`amount ≤ 0`、超过收款单总额、超过被核销单总额、
   `receipt.doc_type` 或 `target.doc_type` 不在允许集合内

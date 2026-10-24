@@ -48,7 +48,7 @@ class CostPolicy {
   /// **盘盈成本**（同入库口径，用当前加权均价）。[quantity] 为**正数**。
   ///
   /// ⚠️ 账面数量 ≤ 0 且无入库历史时，加权均价无定义，按 0 处理 ——
-  /// 这是 `docs/data_model.md` 未覆盖的边界，已在 `docs/reply_review.md` R-8 记录待裁定。
+  /// 该边界已于 `docs/reply_review.md` R-8 裁定：**按加权均价实现**（现行为即裁定结果）。
   int surplusCost({required String productId, required int quantity}) {
     if (quantity == 0) return 0;
     final StockCostSnapshot snapshot = _stock.costSnapshotOf(productId);

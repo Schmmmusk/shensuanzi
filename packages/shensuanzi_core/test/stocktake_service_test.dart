@@ -51,14 +51,33 @@ void main() {
       expect(draft.validate().lineErrors[0], contains('请选一个商品'));
     });
 
-    test('数量 0 / 负数 / 非数字 → 「正整数」', () {
-      for (final String bad in const <String>['0', '-3', 'abc', '1.5']) {
+    // B-3（业务审查 §3.6，用户裁定 ④甲）：「卖光了就填 0」—— 0 是真实业务
+    // （盘点后一件不剩），必须能录、能参与盘点。旧实现把 0 与负数一起拒，
+    // 用户只能开一张金额 0 的销售单绕过，操作反人类。
+    test('数量 0 合法（卖光了）；负数 / 非数字 → 「0 或正整数」', () {
+      final StocktakeDraft zero = const StocktakeDraft(
+        lines: <StocktakeLineDraft>[
+          StocktakeLineDraft(productId: 'p1', productName: '可乐', quantity: '0'),
+        ],
+      );
+      expect(zero.validate().lineErrors, isEmpty, reason: 'B-3：0 = 卖光了，是合法输入');
+      expect(
+        zero.toActualQuantities(),
+        <String, int>{'p1': 0},
+        reason: 'B-3：0 必须进 stocktakeActual（引擎据此算差额 = 0 − 账面）',
+      );
+
+      for (final String bad in const <String>['-3', 'abc', '1.5']) {
         final StocktakeValidation v = StocktakeDraft(
           lines: <StocktakeLineDraft>[
             StocktakeLineDraft(productId: 'p1', quantity: bad),
           ],
         ).validate();
-        expect(v.lineErrors[0], contains('正整数'), reason: '原文 "$bad"');
+        expect(
+          v.lineErrors[0],
+          contains('0 或正整数'),
+          reason: '原文 "$bad" —— 负数和乱填仍然拒',
+        );
       }
     });
 

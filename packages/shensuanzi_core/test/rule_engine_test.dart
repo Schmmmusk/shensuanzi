@@ -392,6 +392,42 @@ void main() {
   // ============================================================ RULE-009
 
   group('RULE-009 盘点', () {
+    // P2 #17（业务审查 §3.7）：同商品重复行不能**静默后者覆盖前者** ——
+    // 草稿层已拦（`stocktake_draft.dart`），但同步 payload 绕过草稿直达
+    // 引擎 ⇒ 这里必须自己拒绝（从前 Map 收集，后者悄悄覆盖）。
+    test('P2 #17：同商品重复行 ⇒ rejected，库存零变化', () {
+      final String productId = createProduct();
+      final Document doc = pendingDoc(type: DocType.stocktake, totalAmount: 0);
+      final RuleOutcome outcome = engine.dispatch(
+        document: doc,
+        lines: <DocumentLine>[
+          DocumentLine(
+            id: newId(),
+            documentId: doc.id,
+            productId: productId,
+            quantity: 5,
+            unitPrice: 0,
+            amount: 0,
+          ),
+          DocumentLine(
+            id: newId(),
+            documentId: doc.id,
+            productId: productId,
+            quantity: 3, // 同商品第二行
+            unitPrice: 0,
+            amount: 0,
+          ),
+        ],
+        now: now(),
+      );
+      expect(
+        outcome.status,
+        RuleStatus.rejected,
+        reason: 'P2 #17：同商品重复行是协议违反，不许静默取后者',
+      );
+      expect(stock.stockOf(productId), 0, reason: '拒绝 ⇒ 不落任何流水');
+    });
+
     Future<void> seedPurchase(
       String productId,
       int quantity,
@@ -696,6 +732,101 @@ void main() {
         documents.findById(doc.id)!.status,
         DocStatus.settled,
         reason: 'B-2：收付款单创建态只能是 settled（它本身就是核销凭据）',
+      );
+    });
+  });
+
+  // ============================================================ P2 #15 核销门槛
+
+  // P2 #15（业务审查 §3.7）：核销五道门槛之外补**第 6 道** —— 目标已作废
+  // （`cancelled`）不能当核销目标。从前全程不看 `target.status`，一张作废
+  // 的送货单照样能被收款核销：钱进了账、`paid_amount` 被刷、单据永远挂着。
+  group('P2 #15 核销第 6 道门槛（目标已作废）', () {
+    test('用 receipt 核销 cancelled delivery ⇒ rejected，且零落库', () {
+      final String productId = createProduct();
+      final String partyId = createParty();
+
+      // 备货 → 送货（in_transit）
+      final Document purchase = pendingDoc(
+        type: DocType.purchase,
+        totalAmount: 1000,
+      );
+      engine.dispatch(
+        document: purchase,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: purchase.id,
+            productId: productId,
+            quantity: 10,
+            unitPrice: 100,
+          ),
+        ],
+        now: now(),
+      );
+      final Document delivery = pendingDoc(
+        type: DocType.delivery,
+        partyId: partyId,
+        totalAmount: 1000,
+      );
+      engine.dispatch(
+        document: delivery,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: delivery.id,
+            productId: productId,
+            quantity: 10,
+            unitPrice: 100,
+          ),
+        ],
+        now: now(),
+      );
+      // 主机把它作废（拒收 / 本地取消）
+      documents.updateStatusAndPaid(
+        id: delivery.id,
+        status: DocStatus.cancelled,
+        updatedAt: now(),
+      );
+
+      final int t = now();
+      final Account account = Account(
+        id: newId(),
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      );
+      AccountDao(db).insert(account);
+
+      final Document receipt = pendingDoc(
+        type: DocType.receipt,
+        partyId: partyId,
+        accountId: account.id,
+        totalAmount: 1000,
+      );
+      final RuleOutcome outcome = engine.dispatch(
+        document: receipt,
+        allocations: <Allocation>[
+          Allocation(targetDocId: delivery.id, amount: 1000),
+        ],
+        now: now(),
+      );
+
+      expect(
+        outcome.status,
+        RuleStatus.rejected,
+        reason: 'P2 #15：作废单不能再被核销 —— 否则钱进了账、单永远挂着',
+      );
+      expect(outcome.reason, contains('作废'), reason: outcome.reason);
+      expect(documents.findById(receipt.id), isNull, reason: '拒绝 ⇒ 收款单不落库');
+      expect(
+        db.raw.select('SELECT COUNT(*) AS c FROM settlements').first['c'],
+        0,
+        reason: '拒绝 ⇒ 零核销行',
+      );
+      expect(
+        documents.findById(delivery.id)!.paidAmount,
+        0,
+        reason: '拒绝 ⇒ 目标单的 paid_amount 不许被刷',
       );
     });
   });

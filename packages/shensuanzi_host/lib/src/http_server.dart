@@ -206,6 +206,16 @@ class _HostRoutes {
   Response _pull(Request request) {
     final Map<String, String> q = request.url.queryParameters;
     try {
+      // P2 #6（业务审查 §3.7）：`limit` 必须校验 —— `limit = 0` 时每个分页
+      // 实体都「取满」（`rows.length == 0 == limit`）⇒ `has_more` 恒 true ⇒
+      // 客户端死循环；超大 limit 一次拉全库。越界按参数不合法拒绝（400）。
+      final int limit =
+          int.tryParse(q['limit'] ?? '') ?? SyncServer.defaultPullLimit;
+      if (limit < 1 || limit > SyncServer.maxPullLimit) {
+        throw FormatException(
+          'limit 越界：$limit（允许 1..${SyncServer.maxPullLimit}）',
+        );
+      }
       return _json(
         sync
             .pull(
@@ -217,8 +227,7 @@ class _HostRoutes {
               productsSince: q[SyncCursorKeys.products] ?? '',
               partiesSince: q[SyncCursorKeys.parties] ?? '',
               accountsSince: q[SyncCursorKeys.accounts] ?? '',
-              limit:
-                  int.tryParse(q['limit'] ?? '') ?? SyncServer.defaultPullLimit,
+              limit: limit,
               // 最近更新窗口（2026-10-07，`docs/reply.md` §1 甲方案）：
               // 客户端传「现在 − 窗口天数」，拿了之后按 updated_at 再取一遍
               // 动过的主单（签收 / 拒收 / 收款的状态变化）。缺省不传 = 旧行为。

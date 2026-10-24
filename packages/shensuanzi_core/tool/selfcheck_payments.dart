@@ -633,8 +633,11 @@ void main() {
     now: now(),
   );
 
+  // P2 #14（2026-10-24）：这条测的是**平铺视图**的「自动单过滤」——
+  // 默认视图已改为 rootsOnly（只列根），所以显式 `rootsOnly: false`
+  // 才测得到 includeDerived 那道闸（与 settlement_view_test 同步）。
   final Set<String> shown = documents
-      .listDocuments()
+      .listDocuments(rootsOnly: false)
       .map((DocumentSummary e) => e.document.id)
       .toSet();
   final Set<String> allShown = documents

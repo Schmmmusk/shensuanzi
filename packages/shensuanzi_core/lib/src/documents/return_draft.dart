@@ -48,6 +48,7 @@ class ReturnLineDraft {
     this.packageSize,
     required this.originalQuantity,
     required this.originalAmountCents,
+    this.originalEntryQuantity,
     this.priorReturnedQuantity = 0,
     this.priorReturnedAmountCents = 0,
   });
@@ -71,6 +72,14 @@ class ReturnLineDraft {
 
   /// 原单行数量（最小单位）
   final int originalQuantity;
+
+  /// 原单行的**录入数量**（`document_lines.entry_quantity`；旧数据可能为 null）
+  ///
+  /// B-4（2026-10-24，业务审查 §3.6 / 用户裁定 ⑤甲）：退货换算必须用
+  /// **原单行**的比例（`originalQuantity / originalEntryQuantity`），
+  /// 不能用当前档案的 `packageSize` —— 档案改了包装大小后，历史单据的
+  /// 单位含义不得被重新解释（`data_model.md` §3.2 第 7 条）。
+  final int? originalEntryQuantity;
 
   /// 原单行金额（分；**含让价** —— 比例按它算，天然回退让价部分）
   final int originalAmountCents;
@@ -100,13 +109,29 @@ class ReturnLineDraft {
 
   /// **换算后的最小单位数量**（`document_lines.quantity` 要落的值）；
   /// 换算失败 ⇒ `null`（validate 会带文案拦住）
-  int? get quantityValue => toBaseQuantity(
-    entryQuantity: entryQuantityValue ?? 0,
-    entryUnit: entryUnit,
-    baseUnit: baseUnit ?? '',
-    packageUnit: packageUnit,
-    packageSize: packageSize,
-  ).baseQuantityOrNull;
+  ///
+  /// B-4（2026-10-24，用户裁定 ⑤甲）：**按原单行比例反算** ——
+  /// `本次录入量 × 原单行数量 / 原单行录入量`。不用当前档案的 `packageSize`：
+  /// 原单按 1 箱=12 录了 3 箱（36 瓶），档案改成 24 后退 1 箱必须仍是 12 瓶
+  /// （否则库存多回 12、可退额度判断错、默认金额也错）。
+  /// 原单行没有 `entry_*` 快照（旧数据）⇒ 退回当前档案换算（与从前一致）。
+  int? get quantityValue {
+    final int? entry = entryQuantityValue;
+    if (entry == null) return null;
+    final String? unit = entryUnit;
+    if (unit == null || unit == baseUnit) return entry;
+    final int? originalEntry = originalEntryQuantity;
+    if (originalEntry != null && originalEntry > 0 && originalQuantity > 0) {
+      return Money.divideRoundHalfUp(entry * originalQuantity, originalEntry);
+    }
+    return toBaseQuantity(
+      entryQuantity: entry,
+      entryUnit: unit,
+      baseUnit: baseUnit ?? '',
+      packageUnit: packageUnit,
+      packageSize: packageSize,
+    ).baseQuantityOrNull;
+  }
 
   /// **累计比例法的默认金额**（分）—— UI 预填依据（裁定 3：不用派生单价）。
   ///

@@ -819,6 +819,50 @@ void main() {
     db.close();
   }
 
+  // B-4（2026-10-24，业务审查 §3.6 / 用户裁定 ⑤甲）：退货换算按**原单行**
+  // 比例反算，不用当前档案的 packageSize —— 档案改了包装大小后，历史单据的
+  // 单位含义不得被重新解释（data_model.md §3.2 第 7 条）。
+  section('B-4 退货按原单比例换算');
+  {
+    // 原单：3 箱 × 12 = 36 瓶；当前档案已改成 1 箱 = 24
+    final ReturnLineDraft line = ReturnLineDraft(
+      productId: 'p1',
+      productName: '蒙牛纯牛奶',
+      quantity: '1',
+      amount: '10.00',
+      entryUnit: '箱',
+      baseUnit: '瓶',
+      packageUnit: '箱',
+      packageSize: 24,
+      originalQuantity: 36,
+      originalAmountCents: 3600,
+      originalEntryQuantity: 3,
+    );
+    check(
+      'B-4：退 1 箱按原单比例（36/3=12），不用当前档案的 24',
+      line.quantityValue == 12,
+      '实际 ${line.quantityValue}',
+    );
+    // 旧数据没有 entry_* 快照 ⇒ 退回当前档案换算（行为与从前一致）
+    final ReturnLineDraft legacy = ReturnLineDraft(
+      productId: 'p1',
+      productName: '蒙牛纯牛奶',
+      quantity: '1',
+      amount: '10.00',
+      entryUnit: '箱',
+      baseUnit: '瓶',
+      packageUnit: '箱',
+      packageSize: 24,
+      originalQuantity: 36,
+      originalAmountCents: 3600,
+    );
+    check(
+      'B-4：旧数据无 entry 快照 ⇒ 退回档案换算（24）',
+      legacy.quantityValue == 24,
+      '实际 ${legacy.quantityValue}',
+    );
+  }
+
   // ============================================================ RULE-008 结算
   section('RULE-008 立即收退款 → 自动生成 receipt 单');
   {

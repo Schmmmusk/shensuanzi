@@ -38,6 +38,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart'
         SyncPushReport,
         SyncQueueDao,
         SyncQueueEntry,
+        SyncQueueStatus,
         SyncQueueTriage,
         Transport,
         TransportRequest,
@@ -153,14 +154,22 @@ class MobileSyncService {
     // 但「先挂起」保证任何中途失败都不会留下"仍会自动推给新主机"的条目
     final SyncQueueDao queue = SyncQueueDao(mirror);
     int held = 0;
-    for (final SyncQueueEntry entry in queue.unsent()) {
+    // C-2（2026-10-24，业务审查 §3.7）：用**全量**口径 —— `sent` 条目
+    // （主机已收下、本机没确认）换主机后两头落空：新主机没有它、
+    // `unsent()` 又排除它 ⇒ 永远停在 `sent`、永远不会再推。必须一并降级。
+    for (final SyncQueueEntry entry in queue.allForHostSwitch()) {
+      final bool wasSent = entry.status == SyncQueueStatus.sent;
       queue.markHeld(
         entry.id,
-        reason:
-            '这条单是在连接上一台主机时开的'
-            '${previousHostId == null ? '' : '（主机 $previousHostId）'}'
-            '，还没有同步给它。为避免记到别的店里，已暂停自动上传 —— '
-            '确认要发给现在这台主机，就在「同步队列」里点重试。',
+        reason: wasSent
+            ? '这条单已经发给上一台主机'
+                  '${previousHostId == null ? '' : '（主机 $previousHostId）'}'
+                  '了，但本机还没确认收下。换主机后新主机没有它 —— '
+                  '确认要发给现在这台主机，就在「同步队列」里点重试。'
+            : '这条单是在连接上一台主机时开的'
+                  '${previousHostId == null ? '' : '（主机 $previousHostId）'}'
+                  '，还没有同步给它。为避免记到别的店里，已暂停自动上传 —— '
+                  '确认要发给现在这台主机，就在「同步队列」里点重试。',
       );
       held++;
     }

@@ -193,7 +193,22 @@ CREATE INDEX idx_documents_ref         ON documents(ref_doc_id);
 -- 同步拉取游标。documents 没有 seq_no，(created_at, id) 是它的复合游标，
 -- 见 sync_protocol.md §8.2 / R-4 处置
 CREATE INDEX idx_documents_created     ON documents(created_at, id);
+-- v4（P0-3）：同步「最近更新窗口」按 (updated_at, id) 取
+CREATE INDEX idx_documents_updated     ON documents(updated_at, id);
 ```
+
+> **为什么 `party_id` / `account_id` / `ref_doc_id` 三列不建外键**
+> （P2 #3，2026-10-24 业务审查 §3.7）：
+>
+> 1. **业务上不需要**：往来方 / 账户是**软删**（`is_active = 0`，行永不删），
+>    单据行也永不删 ⇒ 外键**恒可满足**，加它只是多一层校验；
+> 2. **代价大**：SQLite 不能给已有表补外键 —— 要**重建整张 `documents` 表 +
+>    数据搬迁**（纪律 14），而 `documents` 被五张表引用，重建风险与收益不成比例；
+> 3. **引用完整性已由规则层保证**：`RuleEngine` 落库前校验 `party_id` /
+>    `account_id` 存在（核销五道门槛、往来方必填），`ref_doc_id` 由退货 / 核销
+>    流程写入且指向**已存在**的原单。
+>
+> ⇒ **v1 刻意不建**；将来若要加，随一次大版本的表重建一起做。
 
 ### 3.2 `document_lines`（单据明细）
 
@@ -306,7 +321,7 @@ CREATE INDEX idx_documents_created     ON documents(created_at, id);
 
 | 类型 | `total_cost` |
 |---|---|
-| 入库（采购） | `quantity × unit_price`（精确） |
+| 入库（采购） | `line.amount`（这一行真正发生的金额；**不是** `quantity × unit_price` —— `unit_price` 是派生值，反算有舍入差，见 §零·乙与 §AY·一） |
 | 出库（销售） | `round_half_up(库存总成本 × 出库数量 / 库存数量)` |
 | 盘盈 | 同入库（用当前加权均价） |
 | 盘亏 | 同出库 |
@@ -660,15 +675,21 @@ CREATE UNIQUE INDEX idx_stock_seq  ON stock_ledger(seq_no);
 ## 六、成本口径边界
 
 - `unit_cost` / `total_cost` **不含运费、折扣、税费**。这些通过其他单据体现。
-- 成本采用"出库时点加权平均"：`WHERE seq_no < 出库 seq_no AND quantity > 0`
+- 成本采用"出库时点加权平均"：`Σtotal_cost / Σquantity`（**净额**口径 ——
+  含此前的负行；出库那一行还没插进来，算出来的就是"出库前时点"的库存总成本 ÷ 库存数量）
 - 舍入策略：**round-half-up**。成本总额 ≠ 出库数量 × 出库均价，这是正常现象。
 - **负库存出库成本**：取最近一次入库的 `unit_cost`。
 
 ## 七、排序与时钟
 
-- 排序一律用 `seq_no`（表内单调），**不用** `occurred_at`
-- `occurred_at` 仅用于展示与筛选
-- Android 端本地排序用 `(created_at, id)`。`seq_no` 是主机内部概念，**客户端不持久化、不引用**
+- **流水表**（`stock_ledger` / `money_ledger` / `party_ledger`）排序一律用 `seq_no`（表内单调），**不用** `occurred_at`
+- **单据列表**（`DocumentDao.list`）按「**日桶 + `created_at`**」排：
+  `((occurred_at + 本地偏移) / 86400000) DESC, created_at DESC` —— `occurred_at` 存着**两套口径**
+  （主单是当天 00:00、退货 / 手记收付款是精确时刻），直接比大小会把同日的派生单全排到主单前面
+  （2026-10-18 起，`document_dao.dart:507`）
+- `occurred_at` 仅用于展示与筛选（以及上面的日桶分桶），不参与金额 / 成本计算
+- Android 端本地排序用 `(created_at, id)`。`seq_no` 是主机内部概念，**客户端不分配**
+  （可只读用于排序，见 `Agents.md` 纪律 5 的措辞修正）
 - Android 端离线产生的记录 `time_estimated = 1`。主机保留该标记，用于审计
 
 **客户端不跑业务规则**（R-14 附带问题 3 的裁定，2026-09-26）：

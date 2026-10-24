@@ -274,6 +274,17 @@ Future<void> main() async {
       client.queue.withStatus(SyncQueueStatus.sent).length == 1,
     );
 
+    // C-2（2026-10-24，业务审查 §3.7）：换主机必须用**全量**口径 ——
+    // `unsent()` 排除 `sent`，换主机时 `sent` 会两头落空（新主机没有它、
+    // 也永远不会再推）。`allForHostSwitch()` 必须把 `sent` 也算进来。
+    check(
+      'C-2：allForHostSwitch 含 sent（unsent 不含）',
+      client.queue.allForHostSwitch().length == 1 &&
+          client.queue.unsent().isEmpty,
+      '${client.queue.allForHostSwitch().length} / '
+          '${client.queue.unsent().length}',
+    );
+
     client.queue.markFailed(
       entry.id,
       error: '规则拒绝',

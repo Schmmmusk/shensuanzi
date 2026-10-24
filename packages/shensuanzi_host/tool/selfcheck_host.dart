@@ -99,7 +99,8 @@ Future<void> main() async {
     check('重启后仍能校验旧令牌（只需哈希）', loaded.authorizes(first.plaintextToken));
 
     final HostIdentity after = store.reset(now: _fixedNow + 2);
-    check('reset 换 host_id', after.hostId != first.hostId);
+    // C-3（2026-10-24，⑦甲）：主机身份持久化 —— reset 只换令牌
+    check('C-3：reset 只换令牌，host_id 不变', after.hostId == first.hostId);
     check('reset 后旧令牌失效', !after.authorizes(first.plaintextToken));
     check('reset 后新令牌可用', after.authorizes(after.plaintextToken));
     check('reset 后能重新画二维码', after.canShowQr);
@@ -144,6 +145,39 @@ Future<void> main() async {
     check(
       'URL 不安全字符也能往返',
       PairingPayload.parse(tricky.uri).token == tricky.token,
+    );
+
+    // P2 #12（2026-10-24，业务审查 §3.7）：`v` 必须校验 —— 未知版本
+    // 从前被静默接受，新旧协议不一致时用户只看到「连不上」。
+    bool rejectedVersion(String uri, String mustMention) {
+      try {
+        PairingPayload.parse(uri);
+        return false;
+      } on FormatException catch (e) {
+        return e.message.contains(mustMention);
+      }
+    }
+
+    check(
+      'P2 #12：v 更新（9）⇒ 拒绝并说「手机端」',
+      rejectedVersion(
+        'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=17890&token=t&v=9',
+        '手机端',
+      ),
+    );
+    check(
+      'P2 #12：v 更旧（0）⇒ 拒绝并说「电脑端」',
+      rejectedVersion(
+        'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=17890&token=t&v=0',
+        '电脑端',
+      ),
+    );
+    check(
+      'P2 #12：不带 v ⇒ 按当前版本（向后兼容）',
+      PairingPayload.parse(
+            'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=17890&token=t',
+          ).version ==
+          PairingPayload.currentVersion,
     );
 
     for (final String bad in <String>[
@@ -398,9 +432,29 @@ Future<void> main() async {
     // ⚠️ 2026-10-08 修：`has_more` 上线时这里漏更 ⇒ 断言陈旧（2 项常红，
     // 与本次改动无关）—— 凡是数「响应体顶层键个数」的断言，加键就必须改这里。
     check('pull 含主数据（products 在响应里）', pullJson.containsKey('products'));
+
+    // P2 #6（2026-10-24，业务审查 §3.7）：limit 越界必须 400 ——
+    // 从前 `limit=0` 被接受：每个分页实体都「取满」⇒ has_more 恒 true（死循环）。
+    for (final String bad in <String>['0', '99999', '-5']) {
+      final (int badStatus, Map<String, Object?> _) = await call(
+        'GET',
+        '/api/sync/pull?limit=$bad',
+        bearer: token,
+      );
+      check('P2 #6：limit=$bad ⇒ 400', badStatus == 400, '$badStatus');
+    }
+    final (int oneStatus, Map<String, Object?> _) = await call(
+      'GET',
+      '/api/sync/pull?limit=1',
+      bearer: token,
+    );
+    check('P2 #6：limit=1 合法 ⇒ 200', oneStatus == 200, '$oneStatus');
+    // 12 个键：9 实体 + next_cursors + has_more + doc_window_truncated（P0-3）。
+    // ⚠️ 2026-10-24：batch 0 加 `doc_window_truncated` 时这里漏更（与 2026-10-08
+    // 的 `has_more` 同一类漂移）—— 凡数「顶层键个数」的断言，加键必须改这里。
     check(
-      'pull 恰好 9 个实体 + next_cursors + has_more',
-      pullJson.keys.length == 11,
+      'pull 恰好 9 个实体 + next_cursors + has_more + doc_window_truncated',
+      pullJson.keys.length == 12,
       '${pullJson.keys.toList()}',
     );
     check(
@@ -409,6 +463,7 @@ Future<void> main() async {
         ...SyncPullResult.entityNames,
         'next_cursors',
         'has_more',
+        'doc_window_truncated',
       }).isEmpty,
     );
     check('恰好 8 个游标', cursors.length == 8, '${cursors.length}');
@@ -426,15 +481,14 @@ Future<void> main() async {
       '${badCursorJson['error']}',
     );
 
-    final (int zeroLimit, Map<String, Object?> zeroLimitJson) = await call(
+    // P2 #6（2026-10-24）：limit=0 从「200 空页」改为 **400** ——
+    // 空页会让每个分页实体都「取满」⇒ has_more 恒 true ⇒ 客户端死循环。
+    final (int zeroLimit, Map<String, Object?> _) = await call(
       'GET',
       '/api/sync/pull?limit=0',
       bearer: token,
     );
-    check(
-      'limit=0 → 200 且空页',
-      zeroLimit == 200 && (zeroLimitJson['documents']! as List).isEmpty,
-    );
+    check('P2 #6：limit=0 → 400（不再静默空页）', zeroLimit == 400, '$zeroLimit');
 
     // ---------------------------------------------- createDocument 全链路
     // ⚠️ 主单与明细**都用模型的 toRow()** 生成，不手写 JSON：

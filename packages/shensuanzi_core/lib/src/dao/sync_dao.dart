@@ -119,6 +119,20 @@ class SyncQueueDao {
     <Object?>[SyncQueueStatus.failed.wire, reason, id],
   );
 
+  /// **换主机时要处置的全部条目**（`pending` + `failed` + **`sent`**）。
+  ///
+  /// C-2（2026-10-24，业务审查 §3.7）：`sent` 的语义是「**主机已收下、本机
+  /// 还没确认**」—— 换主机后**新主机并没有这条**（旧主机收的），而 [unsent]
+  /// 明确排除 `sent` ⇒ 它会两头落空：既不会被挂起，也永远不会再推，
+  /// 用户刚开的单凭空消失、队列里留一条永远清不掉的 `sent`。
+  /// ⇒ 换主机必须用这个全量口径，把 `sent` 一并降级为可处置（`failed`）。
+  List<SyncQueueEntry> allForHostSwitch() => decodeRows(
+    _raw.select('SELECT * FROM ${Schema.syncQueue} ORDER BY created_at, id'),
+    SyncQueueEntry.fromRow,
+    table: Schema.syncQueue,
+    failures: db.readFailures,
+  );
+
   /// 全部**还没被主机收下**的条目（`pending` + `failed`）—— 换主机时要逐个挂起。
   /// #42 甲 · L1：逐行保护。
   List<SyncQueueEntry> unsent() => decodeRows(

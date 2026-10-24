@@ -93,14 +93,25 @@ void main() {
       return v.lineErrors[0]!.contains('请选一个商品');
     }());
 
-    check('数量 0 / 负数 / 非数字 / 小数 → 「正整数」', () {
-      for (final String bad in const <String>['0', '-3', 'abc', '1.5']) {
+    // B-3（2026-10-24 用户裁定 ④甲）：0 合法（卖光了）——
+    // 旧实现把 0 与负数一起拒，用户只能开金额 0 的销售单绕过。
+    check('B-3：数量 0 合法（卖光了），且进 stocktakeActual', () {
+      final StocktakeDraft zero = const StocktakeDraft(
+        lines: <StocktakeLineDraft>[
+          StocktakeLineDraft(productId: 'p1', quantity: '0'),
+        ],
+      );
+      return zero.validate().lineErrors.isEmpty &&
+          zero.toActualQuantities()['p1'] == 0;
+    }());
+    check('数量 负数 / 非数字 / 小数 → 「0 或正整数」', () {
+      for (final String bad in const <String>['-3', 'abc', '1.5']) {
         final StocktakeValidation v = StocktakeDraft(
           lines: <StocktakeLineDraft>[
             StocktakeLineDraft(productId: 'p1', quantity: bad),
           ],
         ).validate();
-        if (!v.lineErrors[0]!.contains('正整数')) return false;
+        if (!v.lineErrors[0]!.contains('0 或正整数')) return false;
       }
       return true;
     }());

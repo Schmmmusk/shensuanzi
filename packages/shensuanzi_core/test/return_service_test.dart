@@ -453,6 +453,32 @@ void main() {
   });
 
   group('create（purchase_return / 拒收）', () {
+    // B-4（业务审查 §3.6，用户裁定 ⑤甲）：退货必须按**原单行**的比例反算。
+    // 原单按「1 箱 = 12」录了 3 箱（36 瓶），之后档案改成「1 箱 = 24」——
+    // 退 1 箱仍必须是 **12 瓶**（`data_model.md` §3.2 第 7 条：`entry_*`
+    // 不因档案变化而重解释）。旧实现用当前 `packageSize` 换算 ⇒ 落库 24 瓶：
+    // 库存多回 12、可退额度判断错、默认金额也错。
+    test('B-4：退 1 箱按原单比例（36/3=12）换算，不用当前档案的 24', () {
+      final ReturnLineDraft line = ReturnLineDraft(
+        productId: productId,
+        productName: '蒙牛纯牛奶',
+        quantity: '1',
+        amount: '10.00',
+        entryUnit: '箱',
+        baseUnit: '瓶',
+        packageUnit: '箱',
+        packageSize: 24, // 当前档案已改成 24
+        originalQuantity: 36, // 原单行：36 瓶
+        originalAmountCents: 3600,
+        originalEntryQuantity: 3, // 原单行：3 箱
+      );
+      expect(
+        line.quantityValue,
+        12,
+        reason: 'B-4：原单 36 瓶 / 3 箱 ⇒ 退 1 箱 = 12 瓶，与当前档案 24 无关',
+      );
+    });
+
     test('采购退货 ⇒ 库存出库、应付减少、立即收款生成 receipt', () {
       // 进 10 瓶 × ¥2.00（全款）
       final PurchaseSaved bought = purchases.create(

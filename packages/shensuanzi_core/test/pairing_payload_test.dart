@@ -79,4 +79,42 @@ void main() {
       );
     }
   });
+
+  // P2 #12（业务审查 §3.7）：`v` 必须校验 —— 从前未知版本被静默接受，
+  // 新旧两端协议不一致时用户只会看到「连不上」。
+  test('P2 #12：未知版本 → FormatException（文案说清升级哪端）', () {
+    // 电脑端更新（v 更大）⇒ 手机端要升级
+    expect(
+      () => PairingPayload.parse(
+        'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=17890&token=t&v=9',
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (FormatException e) => e.message,
+          'message',
+          contains('手机端'),
+        ),
+      ),
+    );
+    // 电脑端更旧（v 更小）⇒ 电脑端要升级
+    expect(
+      () => PairingPayload.parse(
+        'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=17890&token=t&v=0',
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (FormatException e) => e.message,
+          'message',
+          contains('电脑端'),
+        ),
+      ),
+    );
+    // 不带 v（旧电脑端）⇒ 按当前版本处理（向后兼容）
+    expect(
+      PairingPayload.parse(
+        'shensuanzi://pair?host_id=h&ip=1.1.1.1&port=17890&token=t',
+      ).version,
+      PairingPayload.currentVersion,
+    );
+  });
 }

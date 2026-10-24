@@ -406,6 +406,44 @@ void main() {
     expect(service.lastHostSwitchHeldEntries, 1);
   });
 
+  // C-2（业务审查 §3.7，2026-10-24）：`sent` 条目换主机后**两头落空** ——
+  // 旧主机收下了但本机没确认（pull 还没跑）；换主机后新主机没有这条，
+  // 而 `unsent()` 明确排除 `sent` ⇒ 它既不会被挂起、也永远不会再推。
+  // 用户刚开的单**凭空消失**，队列里还留一条永远清不掉的 `sent`。
+  test('C-2：换主机时 `sent` 条目也要降级为挂起（不能留成永远清不掉的 sent）', () async {
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
+    );
+    await service.syncNow();
+    final Db mirror = service.openMirror();
+
+    // 离线开一单，然后**模拟已推成功**（主机收下了、pull 还没确认）
+    enqueueOne('q-sent');
+    SyncQueueDao(mirror).markSent('q-sent');
+    expect(
+      SyncQueueDao(mirror).findById('q-sent')!.status,
+      SyncQueueStatus.sent,
+      reason: '前置：这条已推给 h-1',
+    );
+
+    // 换主机
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-2&ip=127.0.0.1&port=${host.baseUri.port}&token=tok2&v=1',
+    );
+
+    final SyncQueueEntry? after = SyncQueueDao(mirror).findById('q-sent');
+    expect(after, isNotNull, reason: '条目不能删（那是用户刚开的单）');
+    expect(
+      after!.status,
+      SyncQueueStatus.failed,
+      reason:
+          'C-2：新主机没有这条 ⇒ 必须降级为可处置（挂起），'
+          '否则它永远停在 sent、永远不会再推',
+    );
+    expect(after.lastError, contains('已经发给上一台主机'));
+    expect(service.lastHostSwitchHeldEntries, 1);
+  });
+
   test('同一台主机重新扫码（host_id 不变）⇒ **不清镜像**（只换令牌）', () async {
     service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',

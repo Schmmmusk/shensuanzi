@@ -195,6 +195,38 @@ void main() {
     '相对路径 → reject',
     policy.inspect(r'神算子数据').verdict == DirectoryVerdict.reject,
   );
+
+  // P2 #13（2026-10-24，业务审查 §3.7）：DirectoryAdvice 的**用户可见文案**
+  // 必须在禁用词名单内 —— 从前「数据库」在网盘警告里活了下来
+  //（data_directory.dart:235，`expectNoDevTerms` 只覆盖手册/引导/扫码/HTTP）。
+  {
+    bool noDevTerms(String text) => forbiddenDevTermsInUserText.every(
+      (String term) => !text.contains(term),
+    );
+    final List<String> samples = <String>[
+      '   ',
+      r'神算子数据',
+      r'C://',
+      r'C://Windows',
+      'D:/坚果云/神算子',
+      'D:/Dropbox/神算子',
+      'D:/百度网盘/神算子',
+      r'E://神算子数据',
+    ];
+    final List<String> leaked = <String>[];
+    for (final String path in samples) {
+      final DirectoryAdvice advice = policy.inspect(path);
+      if (!noDevTerms(advice.reason)) leaked.add(advice.reason);
+      if (advice.advice != null && !noDevTerms(advice.advice!)) {
+        leaked.add(advice.advice!);
+      }
+    }
+    check(
+      'P2 #13：DirectoryAdvice 文案不含开发术语',
+      leaked.isEmpty,
+      leaked.join(' | '),
+    );
+  }
   check(
     '系统盘根 → reject 且提到「根目录」',
     policy.inspect(r'C:\').verdict == DirectoryVerdict.reject &&
@@ -1103,10 +1135,13 @@ void main() {
           desktop.canCreateAccounts,
     );
     const MasterDataPolicy mobile = MasterDataPolicy.mobile();
+    // 2026-10-24 修漂移：手机**往来方建档已于 2026-10-20 开通**
+    //（§CV·七十七，`QueuePartySink` 已补）—— 旧断言按「只开商品」写，
+    // 与 `MasterDataPolicy.mobile()` 现状相反。账户仍禁建（无 sink）。
     check(
-      '手机 v1：只开商品，往来 / 账户仍禁建',
+      '手机：开商品 + 往来方（2026-10-20），账户仍禁建',
       mobile.canCreateProducts &&
-          !mobile.canCreateParties &&
+          mobile.canCreateParties &&
           !mobile.canCreateAccounts,
     );
     check(
