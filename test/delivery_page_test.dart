@@ -100,21 +100,68 @@ void main() {
   });
 
   /// [stockDelta] 缺省 `null`（桌面）⇒ 既有用例**零变化**；#44 的「未同步」组显式传入。
-  Widget page({StockDelta? stockDelta, bool mobileShell = false}) =>
-      MaterialApp(
-        home: Scaffold(
-          body: DeliveryPage(
-            service: service,
-            productService: products,
-            partyService: parties,
-            sink: sink,
-            stockDelta: stockDelta,
-            masterDataPolicy: const MasterDataPolicy.desktop(),
-            masterDataSink: ServiceMasterSink(products),
-            mobileShell: mobileShell,
+  Widget page({
+    StockDelta? stockDelta,
+    bool mobileShell = false,
+    DraftsStore? drafts,
+  }) => MaterialApp(
+    home: Scaffold(
+      body: DeliveryPage(
+        service: service,
+        productService: products,
+        partyService: parties,
+        sink: sink,
+        stockDelta: stockDelta,
+        masterDataPolicy: const MasterDataPolicy.desktop(),
+        masterDataSink: ServiceMasterSink(products),
+        mobileShell: mobileShell,
+        // ① 草稿：不传 = 不启用（既有用例逐字不变）
+        drafts: drafts,
+      ),
+    ),
+  );
+
+  // 草稿自动保存（①，2026-10-24，§CV·一百零三）—— 送货单没有收付款。
+  group('草稿自动保存（①）', () {
+    late DraftsStore store;
+    setUp(() => store = DraftsStore(dataDirectory: box.path));
+
+    testWidgets('进页发现草稿 ⇒ 橙条出现，表单不自动填', (WidgetTester tester) async {
+      store.writeSync(
+        DraftKind.delivery,
+        deliveryDraftToJson(
+          const DeliveryDraft(
+            date: '2026-10-24',
+            lines: <DeliveryLineDraft>[
+              DeliveryLineDraft(quantity: '12', unitPrice: '1.00'),
+            ],
           ),
         ),
       );
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('delivery-draft-banner')), findsOneWidget);
+      final TextField qty = tester.widget<TextField>(
+        find.byKey(const Key('delivery-qty')),
+      );
+      expect(qty.controller!.text, isEmpty, reason: '① 不自动填');
+    });
+
+    testWidgets('输入后 1.5 s 落盘', (WidgetTester tester) async {
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('delivery-qty')), '6');
+      await tester.pump();
+      expect(store.exists(DraftKind.delivery), isFalse, reason: '① 防抖期内不落盘');
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(store.exists(DraftKind.delivery), isTrue);
+      final DeliveryDraft? back = deliveryDraftFromJson(
+        store.read(DraftKind.delivery),
+      );
+      expect(back!.lines.first.quantity, '6');
+    });
+  });
 
   /// 选第一行的商品。
   ///

@@ -81,7 +81,7 @@ void main() {
     }
   });
 
-  Widget page() => MaterialApp(
+  Widget page({DraftsStore? drafts}) => MaterialApp(
     home: Scaffold(
       body: PurchasePage(
         service: service,
@@ -89,9 +89,53 @@ void main() {
         sink: sink,
         masterDataPolicy: const MasterDataPolicy.desktop(),
         masterDataSink: ServiceMasterSink(products),
+        // ① 草稿：不传 = 不启用（既有用例逐字不变）
+        drafts: drafts,
       ),
     ),
   );
+
+  // 草稿自动保存（①，2026-10-24，§CV·一百零三）—— 与销售页同构。
+  group('草稿自动保存（①）', () {
+    late DraftsStore store;
+    setUp(() => store = DraftsStore(dataDirectory: box.path));
+
+    testWidgets('进页发现草稿 ⇒ 橙条出现，表单不自动填', (WidgetTester tester) async {
+      store.writeSync(
+        DraftKind.purchase,
+        purchaseDraftToJson(
+          const PurchaseDraft(
+            date: '2026-10-24',
+            lines: <PurchaseLineDraft>[
+              PurchaseLineDraft(quantity: '9', unitPrice: '2.00'),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('purchase-draft-banner')), findsOneWidget);
+      final TextField qty = tester.widget<TextField>(
+        find.byKey(const Key('purchase-qty')),
+      );
+      expect(qty.controller!.text, isEmpty, reason: '① 不自动填');
+    });
+
+    testWidgets('输入后 1.5 s 落盘', (WidgetTester tester) async {
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('purchase-qty')), '4');
+      await tester.pump();
+      expect(store.exists(DraftKind.purchase), isFalse, reason: '① 防抖期内不落盘');
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(store.exists(DraftKind.purchase), isTrue);
+      final PurchaseDraft? back = purchaseDraftFromJson(
+        store.read(DraftKind.purchase),
+      );
+      expect(back!.lines.first.quantity, '4');
+    });
+  });
 
   /// 选中第一行的商品。
   ///

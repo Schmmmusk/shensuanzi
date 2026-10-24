@@ -23,11 +23,15 @@
 /// 规则本体在 core（`RuleEngine._delivery`），本页只摆放。
 library;
 
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
     show
+        DraftsStore,
         MasterDataPolicy,
         MobileGuideTopic,
         mirrorEmptyMessage,
@@ -40,6 +44,7 @@ import 'mobile_guidance_dialog.dart';
 import 'entry_unit_hints.dart';
 import 'entry_fields_row.dart';
 import 'stock_snapshot_cache.dart';
+import 'draft_banner.dart';
 import 'submit_error_summary.dart';
 import 'product_form_dialog.dart';
 
@@ -58,6 +63,7 @@ class DeliveryPage extends StatefulWidget {
     this.partySink,
     required this.masterDataSink,
     this.mobileShell = false,
+    this.drafts,
   });
 
   /// 开单页**查询**用（选择器 / 库存快照 —— 读）。
@@ -100,6 +106,11 @@ class DeliveryPage extends StatefulWidget {
   /// 手机壳**没有单据详情页**，也没有退货入口 —— 对它说「到「单据」详情页点
   /// 收款」是一条走不通的路。桌面才给本机路径。
   final bool mobileShell;
+
+  /// **草稿自动保存**（真实诉求批 ①，2026-10-24，§CV·一百零三）。
+  ///
+  /// 语义与销售 / 采购页逐字相同，**唯一差别：送货单没有收付款**。
+  final DraftsStore? drafts;
 
   /// 商品搜索与「＋新建商品」复用商品建档。
   final ProductService productService;
@@ -282,20 +293,118 @@ class _DeliveryPageState extends State<DeliveryPage> {
 
   bool _saving = false;
 
+  // ---- 草稿（①）----
+  Timer? _draftTimer;
+  String _lastDraftSig = '';
+  Map<String, Object?>? _restoreRaw;
+
   @override
   void initState() {
     super.initState();
     _addRow();
+    final Map<String, Object?>? raw = widget.drafts?.read(DraftKind.delivery);
+    if (raw != null) {
+      if (deliveryDraftFromJson(raw) == null) {
+        widget.drafts!.delete(DraftKind.delivery);
+      } else {
+        _restoreRaw = raw;
+      }
+    }
   }
 
   @override
   void dispose() {
+    // ① 先同步落盘再 dispose 控制器（顺序反了就读不到用户输入）
+    _draftTimer?.cancel();
+    _writeDraftNow();
     _scroll.dispose();
     _remark.dispose();
     for (final _RowCtl row in _rows) {
       row.dispose();
     }
     super.dispose();
+  }
+
+  // ------------------------------------------------------------ 草稿自动保存（①）
+
+  void _maybeScheduleDraft() {
+    if (widget.drafts == null) return;
+    final Map<String, Object?> json = deliveryDraftToJson(_draft);
+    json.remove('savedAt');
+    final String sig = jsonEncode(json);
+    if (sig == _lastDraftSig) return;
+    _lastDraftSig = sig;
+    _draftTimer?.cancel();
+    _draftTimer = Timer(const Duration(milliseconds: 1500), _writeDraftNow);
+  }
+
+  void _writeDraftNow() {
+    final DraftsStore? store = widget.drafts;
+    if (store == null) return;
+    final DeliveryDraft draft = _draft;
+    if (!deliveryDraftHasContent(draft)) {
+      store.delete(DraftKind.delivery);
+      return;
+    }
+    store.writeSync(DraftKind.delivery, deliveryDraftToJson(draft));
+  }
+
+  void _discardDraft() {
+    widget.drafts?.delete(DraftKind.delivery);
+    setState(() {
+      _restoreRaw = null;
+      _lastDraftSig = '';
+    });
+  }
+
+  void _restoreDraft() {
+    final DeliveryDraft? draft = deliveryDraftFromJson(_restoreRaw);
+    if (draft == null) {
+      _discardDraft();
+      return;
+    }
+    setState(() {
+      _partyId = draft.partyId;
+      _partyName = draft.partyName.isEmpty ? null : draft.partyName;
+      final DateTime? day = DateTime.tryParse(draft.date);
+      if (day != null) _date = day;
+      _remark.text = draft.remark;
+
+      for (final _RowCtl row in _rows) {
+        row.dispose();
+      }
+      _rows.clear();
+      for (final DeliveryLineDraft line in draft.lines) {
+        final _RowCtl row = _RowCtl(
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+        );
+        final Product? product = line.productId.isEmpty
+            ? null
+            : widget.productService.byId(line.productId);
+        row.product = product;
+        row.baseUnit = line.baseUnit ?? product?.unit;
+        row.packageUnit = line.packageUnit ?? product?.packageUnit;
+        row.packageSize = line.packageSize ?? product?.packageSize;
+        row.entryUnit = line.entryUnit;
+        _rows.add(row);
+      }
+      if (_rows.isEmpty) _rows.add(_RowCtl());
+
+      _restoreRaw = null;
+      _lastDraftSig = '';
+    });
+  }
+
+  Widget _draftBanner(ThemeData theme) {
+    final Object? rawLines = _restoreRaw?['lines'];
+    return DraftBanner(
+      prefix: 'delivery',
+      savedAt: draftSavedAt(_restoreRaw),
+      lineCount: rawLines is List ? rawLines.length : 0,
+      onRestore: _restoreDraft,
+      onDiscard: _discardDraft,
+    );
   }
 
   // ------------------------------------------------------------ 草稿合成
@@ -506,6 +615,9 @@ class _DeliveryPageState extends State<DeliveryPage> {
       if (confirmed != true) return false;
     }
     if (!mounted) return false;
+    // ① 用户确认放弃 ⇒ 草稿一起删
+    widget.drafts?.delete(DraftKind.delivery);
+    _lastDraftSig = '';
     setState(() {
       _partyId = null;
       _partyName = null;
@@ -572,6 +684,8 @@ class _DeliveryPageState extends State<DeliveryPage> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    // ① 草稿：任何输入变化都会重建 ⇒ 在这里统一调度防抖
+    _maybeScheduleDraft();
     // M09（2026-10-08）：**返回键也要走放弃确认** —— AppBar 返回箭头（手机壳的
     // 整屏开单页）与系统返回都绕过下面绑定的 Escape，以前填了数量点返回直接丢草稿。
     return PopScope(
@@ -610,6 +724,8 @@ class _DeliveryPageState extends State<DeliveryPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
+                      // ① 草稿橙条（最上面）
+                      if (_restoreRaw != null) _draftBanner(theme),
                       // §CV·八十 批 1 ③：失败时把「哪几处要填」摆在页顶
                       SubmitErrorSummary(messages: _submitErrorMessages()),
                       _headerRow(theme),

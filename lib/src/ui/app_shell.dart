@@ -378,6 +378,7 @@ Widget appShellPage(
             partySink: shell.partySink,
             masterDataSink: shell.masterDataSink!,
             mobileShell: shell.mobileShell,
+            drafts: DraftsStore(dataDirectory: shell.dataDirectory),
           );
   } else if (destination.id == 'stock') {
     // 库存查询是 RULE-006 的纯聚合读；期初录入入口（§AD）还要引擎
@@ -491,6 +492,7 @@ Widget appShellPage(
             masterDataSink: shell.masterDataSink!,
             // #37①：手机壳不显示快捷键后缀（判据与送货页同一处）
             mobileShell: shell.mobileShell,
+            drafts: DraftsStore(dataDirectory: shell.dataDirectory),
           );
   } else {
     page = _PendingPage(destination: destination);

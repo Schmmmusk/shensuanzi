@@ -40,6 +40,7 @@ import 'mobile_guidance_dialog.dart';
 import 'entry_unit_hints.dart';
 import 'entry_fields_row.dart';
 import 'stock_snapshot_cache.dart';
+import 'draft_banner.dart';
 import 'submit_error_summary.dart';
 import 'product_form_dialog.dart';
 
@@ -492,61 +493,16 @@ class _SalePageState extends State<SalePage> {
   }
 
   /// 顶部橙条：发现草稿。**不自动填**，两个动作都摆在眼前。
+  ///
+  /// 组件在 `draft_banner.dart` —— 三个开单页共用（措辞只有一处）。
   Widget _draftBanner(ThemeData theme) {
-    final DateTime? at = draftSavedAt(_restoreRaw);
-    final String when = at == null
-        ? '上次'
-        : '${at.month}月${at.day}日 '
-              '${at.hour.toString().padLeft(2, '0')}:'
-              '${at.minute.toString().padLeft(2, '0')}';
-    final int lines = (_restoreRaw?['lines'] is List)
-        ? (_restoreRaw!['lines']! as List<Object?>).length
-        : 0;
-    return Container(
-      key: const Key('sale-draft-banner'),
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.tertiaryContainer,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Text(
-            '发现 $when 未提交的草稿（$lines 行）',
-            style: TextStyle(
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onTertiaryContainer,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '要不要接着上次的填？恢复会覆盖现在填的内容。',
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.5,
-              color: theme.colorScheme.onTertiaryContainer,
-            ),
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: <Widget>[
-              TextButton(
-                key: const Key('sale-draft-discard'),
-                onPressed: _discardDraft,
-                child: const Text('放弃'),
-              ),
-              const SizedBox(width: 4),
-              FilledButton(
-                key: const Key('sale-draft-restore'),
-                onPressed: _restoreDraft,
-                child: const Text('恢复'),
-              ),
-            ],
-          ),
-        ],
-      ),
+    final Object? rawLines = _restoreRaw?['lines'];
+    return DraftBanner(
+      prefix: 'sale',
+      savedAt: draftSavedAt(_restoreRaw),
+      lineCount: rawLines is List ? rawLines.length : 0,
+      onRestore: _restoreDraft,
+      onDiscard: _discardDraft,
     );
   }
 

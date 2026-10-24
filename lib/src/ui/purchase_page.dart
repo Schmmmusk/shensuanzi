@@ -23,11 +23,15 @@
 /// | 遗漏 6 预填依据 = `cost_price` | `PurchaseLineDraft.fromProduct` |
 library;
 
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
     show
+        DraftsStore,
         MasterDataPolicy,
         MobileGuideTopic,
         mirrorEmptyMessage,
@@ -40,6 +44,7 @@ import 'mobile_guidance_dialog.dart';
 import 'product_form_dialog.dart';
 import 'entry_unit_hints.dart';
 import 'entry_fields_row.dart';
+import 'draft_banner.dart';
 import 'submit_error_summary.dart';
 
 /// 采购入库开单页。
@@ -57,6 +62,7 @@ class PurchasePage extends StatefulWidget {
     this.partySink,
     required this.masterDataSink,
     this.mobileShell = false,
+    this.drafts,
   });
 
   /// 开单页**查询**用（选择器 / 库存快照 —— 读）。
@@ -94,6 +100,13 @@ class PurchasePage extends StatefulWidget {
   /// **壳类型**（#37①，2026-10-14）：手机壳**没有键盘** ⇒ 按钮文案不带
   /// `(Esc)` / `(Ctrl+S)` 后缀。判据沿用 `AppShell.mobileShell`（**不新造 flag**）。
   final bool mobileShell;
+
+  /// **草稿自动保存**（真实诉求批 ①，2026-10-24，§CV·一百零三）。
+  ///
+  /// `null` = 不启用（现有测试都不传）。语义与销售页**逐字相同**：
+  /// 1.5 s 防抖写盘、进页挂橙条不自动填、保存/放弃/取消即删。
+  /// ⚠️ 三个开单页同构 —— 改这里必须扫另外两页。
+  final DraftsStore? drafts;
 
   /// 商品搜索与「＋新建商品」复用商品建档。
   final ProductService productService;
@@ -246,10 +259,23 @@ class _PurchasePageState extends State<PurchasePage> {
 
   bool _saving = false;
 
+  // ---- 草稿（①）----
+  Timer? _draftTimer;
+  String _lastDraftSig = '';
+  Map<String, Object?>? _restoreRaw;
+
   @override
   void initState() {
     super.initState();
     _accounts = widget.service.activeAccounts();
+    final Map<String, Object?>? raw = widget.drafts?.read(DraftKind.purchase);
+    if (raw != null) {
+      if (purchaseDraftFromJson(raw) == null) {
+        widget.drafts!.delete(DraftKind.purchase);
+      } else {
+        _restoreRaw = raw;
+      }
+    }
     // 默认账户：第一个启用中的（一般是现金）—— 用户不用每次都选
     if (_accounts.isNotEmpty) {
       _pays.add(_PayCtl(account: _accounts.first));
@@ -259,6 +285,9 @@ class _PurchasePageState extends State<PurchasePage> {
 
   @override
   void dispose() {
+    // ① 先同步落盘再 dispose 控制器（顺序反了就读不到用户输入）
+    _draftTimer?.cancel();
+    _writeDraftNow();
     _scroll.dispose();
     _remark.dispose();
     for (final _RowCtl row in _rows) {
@@ -268,6 +297,106 @@ class _PurchasePageState extends State<PurchasePage> {
       pay.dispose();
     }
     super.dispose();
+  }
+
+  // ------------------------------------------------------------ 草稿自动保存（①）
+
+  void _maybeScheduleDraft() {
+    if (widget.drafts == null) return;
+    final Map<String, Object?> json = purchaseDraftToJson(_draft);
+    json.remove('savedAt');
+    final String sig = jsonEncode(json);
+    if (sig == _lastDraftSig) return;
+    _lastDraftSig = sig;
+    _draftTimer?.cancel();
+    _draftTimer = Timer(const Duration(milliseconds: 1500), _writeDraftNow);
+  }
+
+  void _writeDraftNow() {
+    final DraftsStore? store = widget.drafts;
+    if (store == null) return;
+    final PurchaseDraft draft = _draft;
+    if (!purchaseDraftHasContent(draft)) {
+      store.delete(DraftKind.purchase);
+      return;
+    }
+    store.writeSync(DraftKind.purchase, purchaseDraftToJson(draft));
+  }
+
+  void _discardDraft() {
+    widget.drafts?.delete(DraftKind.purchase);
+    setState(() {
+      _restoreRaw = null;
+      _lastDraftSig = '';
+    });
+  }
+
+  void _restoreDraft() {
+    final PurchaseDraft? draft = purchaseDraftFromJson(_restoreRaw);
+    if (draft == null) {
+      _discardDraft();
+      return;
+    }
+    setState(() {
+      _partyId = draft.partyId;
+      _partyName = draft.partyName.isEmpty ? null : draft.partyName;
+      final DateTime? day = DateTime.tryParse(draft.date);
+      if (day != null) _date = day;
+      _remark.text = draft.remark;
+
+      for (final _RowCtl row in _rows) {
+        row.dispose();
+      }
+      _rows.clear();
+      for (final PurchaseLineDraft line in draft.lines) {
+        final _RowCtl row = _RowCtl(
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+        );
+        final Product? product = line.productId.isEmpty
+            ? null
+            : widget.productService.byId(line.productId);
+        row.product = product;
+        row.baseUnit = line.baseUnit ?? product?.unit;
+        row.packageUnit = line.packageUnit ?? product?.packageUnit;
+        row.packageSize = line.packageSize ?? product?.packageSize;
+        row.entryUnit = line.entryUnit;
+        _rows.add(row);
+      }
+      if (_rows.isEmpty) _rows.add(_RowCtl());
+
+      for (final _PayCtl pay in _pays) {
+        pay.dispose();
+      }
+      _pays.clear();
+      for (final PurchasePaymentDraft p in draft.payments) {
+        Account? account;
+        for (final Account a in _accounts) {
+          if (a.id == p.accountId) {
+            account = a;
+            break;
+          }
+        }
+        _pays.add(_PayCtl(account: account, amount: p.amount));
+      }
+      if (_pays.isEmpty && _accounts.isNotEmpty) {
+        _pays.add(_PayCtl(account: _accounts.first));
+      }
+
+      _restoreRaw = null;
+      _lastDraftSig = '';
+    });
+  }
+
+  Widget _draftBanner(ThemeData theme) {
+    final Object? rawLines = _restoreRaw?['lines'];
+    return DraftBanner(
+      prefix: 'purchase',
+      savedAt: draftSavedAt(_restoreRaw),
+      lineCount: rawLines is List ? rawLines.length : 0,
+      onRestore: _restoreDraft,
+      onDiscard: _discardDraft,
+    );
   }
 
   // ------------------------------------------------------------ 草稿合成
@@ -451,6 +580,9 @@ class _PurchasePageState extends State<PurchasePage> {
   /// 保存成功：**保留供应商与日期**（连续给同一供应商录多笔 / 补录同一天是常态），
   /// 只清明细与付款 —— 每次开单不多两步（§X 六 / P-3）。
   void _afterSaved(DocumentSubmitResult result) {
+    // ① 保存成功 ⇒ 草稿使命完成
+    widget.drafts?.delete(DraftKind.purchase);
+    _lastDraftSig = '';
     setState(() {
       for (final _RowCtl row in _rows) {
         row.dispose();
@@ -548,6 +680,9 @@ class _PurchasePageState extends State<PurchasePage> {
       if (confirmed != true) return false;
     }
     if (!mounted) return false;
+    // ① 用户确认放弃 ⇒ 草稿一起删
+    widget.drafts?.delete(DraftKind.purchase);
+    _lastDraftSig = '';
     setState(() {
       _partyId = null;
       _partyName = null;
@@ -631,6 +766,8 @@ class _PurchasePageState extends State<PurchasePage> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    // ① 草稿：任何输入变化都会重建 ⇒ 在这里统一调度防抖（与销售页同款）
+    _maybeScheduleDraft();
     // M09（2026-10-08）：**返回键也要走放弃确认** —— AppBar 返回箭头（手机壳的
     // 整屏开单页）与系统返回都绕过下面绑定的 Escape，以前填了数量点返回直接丢草稿。
     return PopScope(
@@ -669,6 +806,8 @@ class _PurchasePageState extends State<PurchasePage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
+                      // ① 草稿橙条（最上面：进页第一眼看到「上次的东西还在」）
+                      if (_restoreRaw != null) _draftBanner(theme),
                       // §CV·八十 批 1 ③：失败时把「哪几处要填」摆在页顶
                       SubmitErrorSummary(messages: _submitErrorMessages()),
                       _headerRow(theme),
