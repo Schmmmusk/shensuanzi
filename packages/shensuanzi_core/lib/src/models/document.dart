@@ -152,13 +152,6 @@ class Document extends ImmutableEntity {
   static bool isPendingDocNo(String docNo) =>
       docNo.isEmpty || docNo.startsWith(pendingDocNoPrefix);
 
-  /// 允许 UPDATE 的列 —— 唯一白名单（`Agents.md` 纪律 3）
-  static const Set<String> updatableColumns = <String>{
-    'status',
-    'paid_amount',
-    'updated_at',
-  };
-
   @override
   final String id;
 
@@ -224,7 +217,7 @@ class Document extends ImmutableEntity {
   /// 主机落库前重写「只有主机能决定的字段」。
   ///
   /// ⚠️ 这**不是** UPDATE —— 它是 `INSERT` 前的一次性赋值（`doc_no` 根本不在
-  /// [updatableColumns] 白名单里）。用途：客户端离线开的单只有临时展示号，
+  /// 白名单三列里，见 `Agents.md` 纪律 3）。用途：客户端离线开的单只有临时展示号，
   /// 主机在事务内分配正式单号与主机时钟后写入。
   Document withHostAssigned({
     required String docNo,

@@ -137,6 +137,8 @@ export 'src/documents/delivery_service.dart'
     show DeliveryDraftInvalid, DeliverySaved, DeliveryService, DeliverySigned;
 export 'src/documents/discount_spread.dart' show spreadDiscount;
 export 'src/documents/overpay.dart' show Overpay;
+export 'src/documents/outstanding.dart'
+    show outstandingCentsOf, outstandingAmountSql;
 export 'src/documents/quantity_conversion.dart'
     show
         ConversionFailed,

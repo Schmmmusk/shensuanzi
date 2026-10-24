@@ -26,6 +26,7 @@ import '../dao/account_dao.dart';
 import '../db/database.dart';
 import '../models/account.dart';
 import '../models/document.dart';
+import 'outstanding.dart';
 import '../models/document_line.dart';
 import '../models/settlement.dart';
 import '../rules/payment_entry.dart';
@@ -127,8 +128,16 @@ class SettlementService {
     final Document? doc = documents.findById(documentId);
     if (doc == null) return 0;
     final int settled = SettlementDao(_db).settledAmountOf(documentId);
+    // 退货单读作「未退款额」（封顶口径，见上文）—— 不交给债权口径函数
     if (isReturnType(doc.docType)) return doc.totalAmount - settled;
-    return doc.totalAmount - settled - documents.returnedAgainst(documentId);
+    // 3a：其余类型与列表 / 详情 / 文案共用同一个纯函数
+    return outstandingCentsOf(
+      docType: doc.docType,
+      status: doc.status,
+      totalAmount: doc.totalAmount,
+      paidAmount: settled,
+      returnedAmount: documents.returnedAgainst(documentId),
+    );
   }
 
   /// 给界面看的「未收 / 未付 / 未退款」金额：**欠款不会小于 0**（#38 甲，2026-10-14）。

@@ -28,6 +28,7 @@ import '../models/product.dart';
 import '../rules/rule_engine.dart';
 import '../rules/rule_rejection.dart';
 import 'document_build.dart';
+import 'outstanding.dart';
 import 'draft_invalid.dart';
 import 'purchase_draft.dart';
 
@@ -178,7 +179,14 @@ class PurchaseService {
       docNo: stored.docNo,
       totalCents: stored.totalAmount,
       paidCents: stored.paidAmount,
-      dueCents: stored.totalAmount - stored.paidAmount,
+      // 3a（2026-10-24）：未结金额走**唯一口径**（新建时不可能有退货 ⇒ 冲减 0）
+      dueCents: outstandingCentsOf(
+        docType: stored.docType,
+        status: stored.status,
+        totalAmount: stored.totalAmount,
+        paidAmount: stored.paidAmount,
+        returnedAmount: 0,
+      ),
       partyDueCents: balance < 0 ? -balance : 0,
       changeCents: draft.changeCents,
     );

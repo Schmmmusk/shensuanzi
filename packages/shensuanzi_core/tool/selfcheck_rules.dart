@@ -542,13 +542,29 @@ void main() {
       totalAmount: 100,
       status: DocStatus.confirmed,
     );
-    engine.dispatch(document: shyReceipt, now: now());
+    // 3b-1（⑥甲）之后「无分配的收款单」被拒 ⇒ 全额核销上面那张 100 的销售单
+    engine.dispatch(
+      document: shyReceipt,
+      allocations: <Allocation>[
+        Allocation(targetDocId: liedSale.id, amount: 100),
+      ],
+      now: now(),
+    );
     check(
       'B-2：收款单 payload 写 confirmed ⇒ 落库 settled',
       documents.findById(shyReceipt.id)!.status == DocStatus.settled,
       '${documents.findById(shyReceipt.id)!.status}',
     );
   }
+
+  // 3b-3（2026-10-24，§3.5-6）：白名单 ⊆ 方向表（加新类型必须配方向）
+  section('3b-3 白名单 ⊆ 方向表');
+  check(
+    '3b-3：allocatableTargetTypes 都在 settleDirections 里',
+    RuleEngine.settleDirections.keys.toSet().containsAll(
+      RuleEngine.allocatableTargetTypes,
+    ),
+  );
 
   // P2 #15（2026-10-24，业务审查 §3.7）：核销第 6 道门槛 —— 目标已作废。
   section('P2 #15 核销门槛：目标已作废');

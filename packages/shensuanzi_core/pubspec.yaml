@@ -15,6 +15,8 @@ dependencies:
   uuid: ^4.5.1
   path: ^1.9.0
   collection: ^1.18.0
+  # 编译期注解（`@visibleForTesting` / `@immutable`）—— 零运行时重量。
+  meta: ^1.9.0
 
 dev_dependencies:
   test: ^1.25.0

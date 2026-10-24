@@ -197,9 +197,12 @@ void main() {
     expect(outcome.kind, SyncOutcomeKind.authExpired);
     expect(outcome.message, contains('重新扫码'));
 
-    // 忘记主机 = 清 pairing.json
-    service.forgetHost();
-    expect(PairingStore(pairingFile).load(), isNull);
+    // P2 #8（2026-10-24）：认证失效由**服务自己**清配对，调用方不需要再点一次
+    expect(
+      PairingStore(pairingFile).load(),
+      isNull,
+      reason: 'P2 #8：401/403 ⇒ 清配对收进 MobileSyncService 一处',
+    );
   });
 
   test('pull 401 ⇒ authExpired（任何请求都算）', () async {
@@ -269,6 +272,26 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
   }
+
+  // P2 #8（业务审查 §3.7）：401/403 只在「立即同步」清配对 —— `autoPush`
+  // （开单 / 建档成功后的后台推）不清 ⇒ 面板还显示「已连接」，后台每次
+  // 推送都 401，用户看不到任何变化。清配对收进服务一处，三条路径共用。
+  test('P2 #8：autoPush 遇 401 也清配对（不再只有「立即同步」清）', () async {
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
+    );
+    enqueueOne('q-auth');
+    host.pushStatus = 401;
+
+    final SyncOutcome outcome = await service.autoPush();
+
+    expect(outcome.kind, SyncOutcomeKind.authExpired);
+    expect(
+      PairingStore(pairingFile).load(),
+      isNull,
+      reason: 'P2 #8：autoPush 的 401 也必须清配对（否则面板永远显示已连接）',
+    );
+  });
 
   test('autoPush 未配对 ⇒ notPaired（不开镜像库）', () async {
     final SyncOutcome outcome = await service.autoPush();

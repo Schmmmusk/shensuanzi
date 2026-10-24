@@ -259,6 +259,29 @@ void main() {
       expect(p.basename(different.path), '神算子-库存-20260928.csv');
     });
 
+    // 3d（2026-10-24，业务审查 §3.7 P2 #2）：导出遇到「读不出来被跳过」的行，
+    // 必须**自曝** —— 缺行文件拿去对账会与屏幕不符，不说清楚就是撒谎。
+    test('3d：跳过坏行 ⇒ 结果带计数、文案说「不完整」', () async {
+      final ExportOutcome outcome = await service.write(
+        ExportTable(
+          label: '商品',
+          header: const <String>['编码', '商品名称'],
+          rows: const <List<String>>[
+            <String>['P0001', '可乐'],
+          ],
+          skippedBadRows: 2,
+        ),
+      );
+      expect(outcome, isA<ExportSuccess>());
+      final ExportSuccess ok = outcome as ExportSuccess;
+      expect(ok.skippedBadRows, 2, reason: '3d：服务要把表的计数透传到结果');
+      expect(ok.isComplete, isFalse);
+      final String message = exportOutcomeMessage(ok);
+      expect(message, contains('已导出 1 条到'));
+      expect(message, contains('2 行读不出来被跳过'), reason: '3d：文案必须自曝');
+      expect(message, contains('不完整'));
+    });
+
     test('结果文案三分支（遗漏 5：成功带完整路径）', () async {
       final ExportOutcome ok = await service.write(table(rows: 2));
       expect(exportOutcomeMessage(ok), contains('已导出 2 条到'));

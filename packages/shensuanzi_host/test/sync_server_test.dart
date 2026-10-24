@@ -1086,6 +1086,54 @@ void main() {
 
   // ============================================================ documentAction
 
+  // 3b-2（2026-10-24，业务审查 §3.5-1）：**单号只由主机分配** ——
+  // 客户端发来的 `doc_no` 从前会被原样采用（`documents` 可写列里有它），
+  // 与「单号主机生成」不一致，还能撞 UNIQUE 变成内部错误。
+  group('3b-2 客户端不能指定单号', () {
+    test('payload 带正式号 ⇒ 落库的是主机号（≠ 客户端那个）', () {
+      final String id = newId();
+      final String partyId = syncParty();
+      final String productId = syncProduct(code: 'P977');
+      final SyncResponse response = server.handle(
+        SyncOperation(
+          entity: Schema.documents,
+          entityId: id,
+          operation: SyncOpType.createDocument,
+          payload: <String, Object?>{
+            'document': <String, Object?>{
+              'id': id,
+              'doc_no': 'XS20260101-001', // 客户端硬塞
+              'doc_type': 'sale',
+              'status': 'confirmed',
+              'party_id': partyId,
+              'total_amount': 100,
+              'occurred_at': now(),
+            },
+            'lines': <Object?>[
+              <String, Object?>{
+                'id': newId(),
+                'document_id': id,
+                'product_id': productId,
+                'quantity': 1,
+                'unit_price': 100,
+                'amount': 100,
+              },
+            ],
+          },
+        ),
+        now: now(),
+      );
+      expect(response.status, SyncStatus.applied, reason: response.reason);
+      final Document saved = DocumentDao(db).findById(id)!;
+      expect(
+        saved.docNo,
+        isNot('XS20260101-001'),
+        reason: '3b-2：客户端指定的单号必须被丢弃',
+      );
+      expect(saved.docNo, startsWith('XS'), reason: '主机按自己的规则生成');
+    });
+  });
+
   group('documentAction（R-3 已裁定：mark_delivered）', () {
     test('in_transit → applied，单据落到 delivered（R-3.1：归约为状态判定）', () {
       final String p = syncProduct();
@@ -1896,6 +1944,45 @@ void main() {
       expect(refreshed['id'], docId);
       expect(refreshed['status'], 'settled');
       expect(refreshed['paid_amount'], 100);
+    });
+
+    // P2 #11（业务审查 §3.7）：窗口只并主单、**不并明细**，而 `document_lines`
+    // 没有独立游标 ⇒ 只经窗口到达的主单在客户端**永久缺明细**（点开是空单）。
+    test('P2 #11：只经窗口到达的主单也要带上明细', () {
+      final String p = syncProduct(code: 'P954');
+      final String party = syncParty();
+      syncPurchase(p, party, 1, 100);
+
+      // ① 基线：主分页带明细
+      final SyncPullResult first = server.pull();
+      expect(first.entities['document_lines'], isNotEmpty);
+
+      // ② 主分页推到底（docSince = 游标 ⇒ documents 主分页 0 行），
+      //    窗口（updated_at）仍覆盖这张单 ⇒ 它**只经窗口**到达
+      final SyncPullResult windowOnly = server.pull(
+        stockSince: first.nextCursors[SyncCursorKeys.stock]!,
+        moneySince: first.nextCursors[SyncCursorKeys.money]!,
+        partySince: first.nextCursors[SyncCursorKeys.party]!,
+        settleSince: first.nextCursors[SyncCursorKeys.settle]!,
+        docSince: first.nextCursors[SyncCursorKeys.doc]!,
+        productsSince: first.nextCursors[SyncCursorKeys.products]!,
+        partiesSince: first.nextCursors[SyncCursorKeys.parties]!,
+        accountsSince: first.nextCursors[SyncCursorKeys.accounts]!,
+        docUpdatedSince: 0,
+      );
+
+      expect(
+        windowOnly.entities['documents'],
+        hasLength(1),
+        reason: '前置：这张单只经窗口到达',
+      );
+      expect(
+        windowOnly.entities['document_lines'],
+        isNotEmpty,
+        reason:
+            'P2 #11：窗口并进来的主单必须补明细 —— '
+            '`document_lines` 没有独立游标，漏了就永远拉不到',
+      );
     });
 
     test('窗口不产生重复行：主分页与窗口同时命中同一单只出现一次', () {

@@ -65,9 +65,39 @@ class Db {
   /// 只做 `SELECT count(*) FROM sqlite_master`（真的读文件头，`SELECT 1` 不读）。
   ///
   /// ⚠️ 刻意**不走 [open]**：那会跑迁移链 —— 探测不该有副作用。
+  /// 探测「这个路径能不能开成库」——**绝不在 `path` 上留下文件**
+  /// （3c-22，2026-10-24）。
+  ///
+  /// 从前是 `sqlite3.open(path)`：文件不存在时**建出一个空库**，一次判定就把
+  /// 用户的空账建出来了（`bootstrap.missingConfigured` 靠注释规避）。
+  ///
+  /// 现在的两条语义：
+  /// - **文件在** ⇒ 只读打开并读一次 `sqlite_master`（库损坏 / 不是库 ⇒ false）；
+  /// - **文件不在** ⇒ 探测**父目录可写**（临时文件写完即删）——
+  ///   仍然回答「这里能不能开库」，但不创建 `path` 本身。
   static bool probe(String path) {
+    final File file = File(path);
+    if (!file.existsSync()) {
+      final Directory dir = file.parent;
+      if (!dir.existsSync()) return false;
+      final File tmp = File(
+        '${dir.path}${Platform.pathSeparator}.probe-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      try {
+        tmp.writeAsStringSync('x');
+        return true;
+      } catch (_) {
+        return false;
+      } finally {
+        try {
+          if (tmp.existsSync()) tmp.deleteSync();
+        } catch (_) {
+          // 删不掉不影响结论（下次探测用新名字）
+        }
+      }
+    }
     try {
-      final Database db = sqlite3.open(path);
+      final Database db = sqlite3.open(path, mode: OpenMode.readOnly);
       try {
         db.select('SELECT count(*) AS c FROM sqlite_master');
         return true;
@@ -124,6 +154,11 @@ class Db {
   static void _configure(Database db, {required bool foreignKeys}) {
     db.execute('PRAGMA foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}');
     db.execute('PRAGMA synchronous = NORMAL');
+    // 3b-4（2026-10-24，业务审查 §3.5-4）：**等锁而不是立刻失败**。
+    // 从前只设了 `synchronous` / `foreign_keys`，一旦出现第二个写者
+    // （备份进程 / 另一个实例 / 杀毒软件扫描）SQLite 立刻 `SQLITE_BUSY`。
+    // 3 秒足够任何一次本地写事务收尾。
+    db.execute('PRAGMA busy_timeout = 3000');
   }
 
   /// 迁移。**逐版本、每版一个事务**（`Agents.md` 纪律 14）。

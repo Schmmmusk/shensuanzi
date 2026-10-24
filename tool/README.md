@@ -261,3 +261,45 @@ python tool/destructive_acceptance.py --phase all --data-dir /tmp/fixture --conf
 
 判据：任务1 退出码 `0` 且打印「校验：通过」；任务2 打印
 「备份规则复刻自检通过」且**没有** ❌ 条目。
+
+---
+
+## 六、长时间性能实测（`perf_*.py`）
+
+三个脚本 + 一份手册，用于**外部测试机**上的「长时间使用」性能实测。
+完整流程见 **[`docs/perf_test_guide.md`](../docs/perf_test_guide.md)**（测试人员只看那份）。
+
+| 脚本 | 干什么 | 会写库吗 |
+|---|---|---|
+| [`perf_seed.py`](perf_seed.py) | 造一份**体量真实、内部自洽**的账本（每张流水表 ≥ 10 万行） | ✅ 只写指定的测试库 |
+| [`perf_bench.py`](perf_bench.py) | 15 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN` | ❌ 只读（`mode=ro`） |
+| [`perf_monitor.py`](perf_monitor.py) | 人工实测期间按秒记录进程/文件/探针指标 + 动作计时 | ❌ 只读 |
+| [`gen_schema_snapshot.py`](gen_schema_snapshot.py) | 从 `schema.dart` 重新生成 `schema_snapshot.json`（**改 schema 后必跑**） | ❌ 写快照 |
+
+参考基线（开发机实测，默认参数 = 26 万单 / 36.6 万条库存流水 / 476 MB）：
+`stock_group` / `stock_cost` 各约 **1.3 秒**（非覆盖索引，每行回表）、`party_balances` 0.62 秒、
+`list_documents` 0.30 秒、`doc_search` 0.36 秒，而 `pull_*` / `lines_of_page` 均 **< 1 毫秒**。
+测试机的数字本来就更大，用来看「量级对不对」；完整表见手册 §4.5。
+
+三条硬规矩：
+1. **这份数据只能用于性能/容量，不能用于业务正确性验收** —— `perf_seed.py`
+   直写 SQL（不是 RuleEngine），它只保证「四张流水 + 缓存字段自洽」；
+2. **必须指定独立的测试目录**，且默认拒绝往已有业务数据的库里写
+   （要重造须 `--allow-nonempty --confirm-wipe`）；
+3. **改过 `schema.dart` 就必须重生成快照**，否则两个造数脚本都会以
+   「快照已过期」停下（这是故意的）：
+   ```bash
+   python tool/gen_schema_snapshot.py            # 生成
+   python tool/gen_schema_snapshot.py --check    # 校验（CI / 发版前）
+   ```
+
+最小自验（开发机上，不写仓库外任何东西）：
+
+```bash
+python tool/gen_schema_snapshot.py --check
+python tool/perf_seed.py --data-dir /tmp/perf --dry-run
+python tool/perf_seed.py --data-dir /tmp/perf --min-rows 800 --days 30 --products 40 --parties 30
+python tool/perf_seed.py --data-dir /tmp/perf --verify
+python tool/perf_bench.py --data-dir /tmp/perf --rounds 5 --explain
+python tool/perf_monitor.py checklist
+```

@@ -13987,3 +13987,129 @@ core 14 自检 + host 5 自检 + app 5 自检 + typecheck 全过。
 
 旧编辑被新编辑覆盖时，客户端仍提示「已在别处被修改」—— 字面不准但处置正确；
 改文案会削弱**真正的并发编辑**提示 ⇒ 保留。用户复核同意。
+
+## §CV·九十五 **第 2 批剩余：P2 #7 / #8 / #9 / #11 落地**（2026-10-24）
+
+> 业务审查 §3.7 的四条（#7 / #8 / #9 / #11），均无需新裁定，按报告建议直接做。
+
+### 一、P2 #7 `reason_code` 参与分支（`sync_client.dart`）
+
+- **旧**：所有 `rejected` 一律 `_retry`（指数退避 11 次后进死信）—— 协议违反 / 规则拒绝
+  白烧 11 次退避，用户等一整天也看不到「这条永远发不出去」。
+- **新**：按 `reason_code` 分类（`sync_protocol.md` §8.5.2）：
+  - **可重试**：`reference_missing`（引用的主数据还在队列里）· `host_storage`
+    （主机忙 / 满 / 只读，瞬时）· **缺码**（旧主机不带 `reason_code` ⇒ 保守按可重试）
+  - **其余 ⇒ 立即死信**（`_deadLetter`：`retry_count = maxRetries + 1`、`next_retry_at = 0`）
+- 测试：3 条（不可重试 ⇒ failed 且不再到期 / `reference_missing` ⇒ pending 退避 /
+  `host_storage` ⇒ pending 退避）；**连带更新** `client_server_test` 与
+  `selfcheck_client_server` 的「purchase 收签收 ⇒ 进重试」→「⇒ 直接死信」
+  （`action_not_applicable` 属不可重试，旧断言按 #7 之前的处置写）。
+- 文档：§8.5.2 补「客户端落地口径」（两个可重试码 + 缺码兜底 + 死信形态）。
+
+### 二、P2 #8 认证失效集中处置（`mobile_sync_service.dart` + `app.dart`）
+
+- **旧**：401/403 只在「立即同步」由 `app.dart` 调 `service.forgetHost()`；
+  **`autoPush`（开单 / 建档后的后台推）不清** ⇒ 面板仍显示「已连接」，每次推送都 401，
+  用户看不到任何变化。
+- **新**：`_authExpired()` 成为**唯一处置点**（先 `forgetHost()` 再返回 outcome），
+  三条路径（health 探测 / `syncNow` / `autoPush`）共用；`app.dart` 的重复调用删掉。
+- 测试：新增「autoPush 遇 401 ⇒ 配对已清」；原 health-401 用例去掉手动 `forgetHost()`，
+  直接断言服务已清（把「谁负责」钉进测试）。
+
+### 三、P2 #9 窗口下界用手表偏移（`sync_client.dart` + `mobile_sync_service.dart`）
+
+- **旧**：`_pullPage` 用**手机裸时钟**算「最近更新窗口」下界；而
+  `recordClockOffset` / `estimatedServerTime` **生产零调用**（注释还写着「主机时间拿不到」）。
+  ⇒ 手机时钟快 > 7 天时整个窗口落在**未来**，什么都拉不到、状态永不更新。
+- **新**：`syncNow` 的 health 步把 `server_time` 喂进 `client.recordClockOffset`；
+  `_pullPage` 用 `estimatedServerTime()`（未记录偏移时与从前等价）。
+- 测试：手机快 10 天 + 记录偏移 ⇒ 窗口下界 ≈ 主机时间 − 7 天（裸时钟会落在未来）。
+
+### 四、P2 #11 窗口主单补明细（`sync_server.dart`）
+
+- **旧**：窗口只并主单、**不并明细**，而 `document_lines` 没有独立游标
+  ⇒ 只经窗口到达的主单在客户端**永久缺明细**（点开是空单）。
+- **新**：窗口合并后把新增主单的明细一并 `_linesOf` 追加进 `document_lines`。
+- 测试：主分页推到底 + 窗口覆盖 ⇒ `documents` 有 1 行且 `document_lines` 非空。
+- 镜像：`selfcheck_sync` 同场景（190 项）；`selfcheck_sync_client` 加 #7 死信形态与 #9 窗口下界。
+
+### 五、门禁（全绿）
+
+根 **280** · core **663**（+4）· host **158**（+1）· app **339**（+1）· analyze **0** ·
+format **0** · core 14 自检（sync_client 118）· host 5 自检（sync 190 / client_server 36）·
+app 5 自检 · typecheck 全过。
+
+### 六、剩余（第 3 批：一致性收口）
+
+§3.4 部分核销「账上看不出来」（⑥甲已裁）· §3.5 三处「两套口径」（未收额 / 名称解析 / 金额输入）·
+§3.1 P2 #1（未结清筛选用缓存）/ #2（导出不检查跳过计数）/ #4（SettlementView.occurredAt）/
+#5（todaySummary 无上界）/ #12 已完成 · #13 已完成 · #16（退货超额两处文案）/ #19 / #20 / #21 / #22 / #23。
+
+## §CV·九十六 **第 3 批：一致性收口落地（零 schema）**（2026-10-24）
+
+> 提案：`docs/proposals/第3批-一致性收口-方案.md`（用户裁定「零 schema」，并补充
+> 「退货单自身的 unsettled 设为 0」+「3b-1 要在 SyncServer 补拒绝文案」）。
+> **无 `Schema.version` 变更、无迁移、无回填。**
+
+### 一、3a 未收统一来源（本批核心）
+
+**新增 `core/lib/src/documents/outstanding.dart`**：
+- `outstandingCentsOf({docType, status, total, paid, returned})` —— **唯一债权口径**：
+  销售 / 采购 / 送货 = `总额 − 已核销 − 退货冲减`（**可为负**）；退货 / 收付款 / 盘点 /
+  调拨 = **0**（退货是冲减方，欠款由原单表达 —— 用户 2026-10-24 明确）；作废 = 0。
+- `outstandingAmountSql({doc, paid, returned})` —— 与纯函数**逐字同形**的 SQL 片段，
+  对拍测试（20 组参数）保证两份代码不漂。
+
+**四处口径收拢**：
+| 位置 | 改动 |
+|---|---|
+| `document_dao` 未结清筛选 | 用 `outstandingAmountSql`；**已收也改走 `settlements` 汇总**（`s.psum`）—— 从前用 `d.paid_amount` 缓存，注释却写「与 unsettledCentsOf 同口径」 |
+| `document_dao` 列表行 / `summaryById` | 行内 `paidAmount` 用流水汇总覆盖（缓存只作兜底）—— 否则「行显示已收 0 却被筛掉」 |
+| `settlement_service.unsettledCentsOf` | 非退货类型委托给纯函数（退货仍是「未退款额」，封顶口径不变） |
+| `sale_service` / `purchase_service` 保存提示、`rule_engine` 校验文案 | 改用纯函数 |
+
+**负未收显式显示**：详情页 `未收 −¥30` → **「多收 ¥30.00」**（正数），不再夹 0。
+
+> 报告 P2 #1 说「未结清筛选拿 `paid_amount` 缓存当真相」—— **退货那一项已修，
+> 已收那一项仍是缓存**；本批把两项都改成流水口径，并让行显示与筛选同源。
+
+### 二、3b 规则与协议（4 项）
+
+| 项 | 改动 |
+|---|---|
+| **⑥甲 部分核销** | `_settle` 加 `requested != doc.totalAmount` ⇒ 业务拒绝（文案：「金额要和核销掉的合计一致，多出来的请单独收一笔」）。**连带**：`rule_engine_test` 与 `selfcheck_rules` 的 B-2 用例（裸收款单）改为全额核销 —— 那个裸收款单正是「账上没人能解释的钱」 |
+| **§3.5-1 单号** | `SyncServer._createDocument` 在 `...values` **之后**强制 `'doc_no': ''`（客户端塞的号一律丢弃；`_prepare` 生成）。**不动 `_prepare`** —— 它是单机与同步共用入口 |
+| **§3.5-6 方向表** | 断言 `allocatableTargetTypes ⊆ settleDirections`（测试 + 自检），防止加新类型忘配方向 |
+| **§3.5-4 等锁** | `Db.open` 加 `PRAGMA busy_timeout = 3000`（从前第二个写者一到就 `SQLITE_BUSY`） |
+
+### 三、3c 数据与文案（7 项）
+
+- **#4 `SettlementView.occurredAt`** → `COALESCE(d.occurred_at, s.created_at)`：
+  它和对端单号是**同一个实体**，从前装的是 `settlements.created_at`（录入时刻）。
+- **#5 `todaySummary`** 加 `occurred_at < 明日零点`（未来日期的补录单不再算「今日」）。
+- **#16** 规则层退货超额文案**去掉「件」**（单位化文案统一走 `ReturnLineDraft.validate`）。
+- **#18** `Money.fromYuan` 标 `@visibleForTesting`（core 新增 `meta` 依赖，纯注解零运行时）。
+- **#19** 删死常量 `Document.updatableColumns`（全仓零引用）。
+- **#20** `stock_ledger.dart` 注释从 v2 的 `qty × unit_price` 改成 v3 的 `line.amount`。
+- **#22** `Db.probe` 重写：文件在 ⇒ 只读打开；**文件不在 ⇒ 探测父目录可写（临时文件即删）**，
+  绝不在目标路径上建空库。⚠️ 首版只读打开会让 `bootstrap.resolved()` 对「有标记、还没库」
+  的目录判 false（三个 app 用例红）—— 已按「能不能在这里开库」的原意修正。
+
+### 四、3d 导出完整性自曝
+
+`ExportTable.skippedBadRows` + `ExportSuccess.skippedBadRows` + `isComplete`；
+文案：`已导出 N 条到：…\n⚠️ 有 M 行读不出来被跳过，这份文件不完整`。
+单据页导出**已接线**（导出前后采样 `readFailures.count` 的差值）。
+
+> **残余（已登记）**：商品页 / 往来方页的导出还是默认 0（页面拿不到 `db.readFailures`，
+> 需各加 3 行同款采样）；流水类导出吃已算好的 flow，导出阶段不可能跳过行 ⇒ 0 是正确的。
+
+### 五、门禁（全绿）
+
+根 **281**（+1）· core **675**（+4）· host **159** · app **340**（+2）· analyze **0** ·
+format **0** · core 13 自检（rules 54 / payments 99 / query 32）· host 5 自检（sync 191）·
+app 5 自检（155）· typecheck 全过。
+
+### 六、剩余
+
+第 4 批（性能：先度量）· 第 5 批（低配体验）。另：3d 的商品/往来方导出接线（3 行 × 2 处）。

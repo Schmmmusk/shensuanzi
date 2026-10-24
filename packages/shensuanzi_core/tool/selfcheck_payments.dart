@@ -653,6 +653,28 @@ void main() {
               .first['id']!
           as String;
 
+  // 3a（2026-10-24，§3.4 / P2 #1）：未结金额只有一个口径 ——
+  // 销售/采购/送货算，退货/收付款/盘点/作废 = 0，负数不夹 0。
+  check(
+    '3a：outstandingCentsOf 类型表（退货单 = 0、销售可负）',
+    outstandingCentsOf(
+              docType: DocType.saleReturn,
+              status: DocStatus.confirmed,
+              totalAmount: 1000,
+              paidAmount: 0,
+              returnedAmount: 0,
+            ) ==
+            0 &&
+        outstandingCentsOf(
+              docType: DocType.sale,
+              status: DocStatus.confirmed,
+              totalAmount: 1000,
+              paidAmount: 500,
+              returnedAmount: 800,
+            ) ==
+            -300,
+  );
+
   check('自动生成的收款单不进列表', !shown.contains(autoReceiptId));
   check('includeDerived: true 能看到全部', allShown.contains(autoReceiptId));
   check('手动收款单要显示', shown.contains(vreceipt.id));

@@ -1,10 +1,18 @@
 /// 金额工具。**金额一律用 `int` 分表示，禁止浮点。**
 ///
 /// 见 `docs/data_model.md` §一 通用约定。
+library;
+
+import 'package:meta/meta.dart';
+
 class Money {
   Money._();
 
-  /// 元 → 分
+  /// 元 → 分。
+  ///
+  /// ⚠️ **只给测试用**（3c-18，2026-10-24）：生产代码一律走 [tryParseYuan] /
+  /// [parseYuan]（字符串解析，不经浮点）。浮点入口留在公共 API 里迟早被误用。
+  @visibleForTesting
   static int fromYuan(double yuan) => (yuan * 100).round();
 
   /// 解析**用户输入的「元」字符串** → 分；不合法返回 `null`。

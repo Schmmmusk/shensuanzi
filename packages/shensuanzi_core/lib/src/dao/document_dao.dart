@@ -3,6 +3,7 @@ import 'package:sqlite3/sqlite3.dart';
 import '../db/database.dart';
 import '../db/read_failures.dart';
 import '../db/schema.dart';
+import '../documents/outstanding.dart';
 import '../models/document.dart';
 import '../models/document_line.dart';
 
@@ -262,9 +263,17 @@ class DocumentDao {
   /// —— 散客 / 散采为 `null`，由 `documentPartyLabel` 统一成文字。
   DocumentSummary? summaryById(String id) {
     final List<Map<String, Object?>> rows = _raw.select(
-      'SELECT d.*, pa.name AS party_name '
+      'SELECT d.*, pa.name AS party_name, '
+      // 3a：详情页的「已收」也走流水（与列表同源）
+      'COALESCE(s.psum, 0) AS paid_sum '
       'FROM ${Schema.documents} d '
       'LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id '
+      'LEFT JOIN ('
+      'SELECT target_doc_id AS tgt, SUM(amount) AS psum '
+      'FROM ${Schema.settlements} '
+      'WHERE target_doc_id IS NOT NULL '
+      'GROUP BY target_doc_id'
+      ') s ON s.tgt = d.id '
       'WHERE d.id = ? LIMIT 1',
       <Object?>[id],
     );
@@ -275,7 +284,12 @@ class DocumentDao {
     final List<DocumentSummary> found = decodeRows(
       rows,
       (Map<String, Object?> row) => DocumentSummary(
-        document: Document.fromRow(row, failures: db.readFailures),
+        // 3a：`paid_amount` 用流水汇总覆盖（缓存只作兜底）——
+        // 行显示与「未结清」筛选必须同源，否则会出现「显示已收 0 却被筛掉」
+        document: Document.fromRow(<String, Object?>{
+          ...row,
+          'paid_amount': row['paid_sum'] ?? row['paid_amount'],
+        }, failures: db.readFailures),
         partyName: row['party_name'] as String?,
         returnedCents: returns.sum,
         returnedCount: returns.count,
@@ -401,7 +415,8 @@ class DocumentDao {
               "'${DocType.sale.wire}', '${DocType.purchase.wire}', "
               "'${DocType.delivery.wire}') "
               "AND d.status <> '${DocStatus.cancelled.wire}' AND "
-              '(d.total_amount - d.paid_amount - COALESCE(r.rsum, 0)) > 0)',
+              // 3a：已收走流水（`s.psum`），与 `outstandingCentsOf` 逐字同形
+              '${outstandingAmountSql(paid: 'COALESCE(s.psum, 0)')} > 0)',
             );
           case DocumentStatusView.cancelled:
             parts.add("d.status = '${DocStatus.cancelled.wire}'");
@@ -458,7 +473,16 @@ class DocumentDao {
       "doc_type IN ('${DocType.saleReturn.wire}', "
       "'${DocType.purchaseReturn.wire}') "
       'GROUP BY ref_doc_id'
-      ') r ON r.ref = d.id ';
+      ') r ON r.ref = d.id '
+      // 3a（2026-10-24，§3.7 P2 #1）：**已收/已付也走流水** ——
+      // `d.paid_amount` 只是缓存（`data_model.md`），真相在 `settlements`。
+      // 从前筛选用它、`unsettledCentsOf` 用流水 ⇒ 缓存一脏，列表与详情互相打脸。
+      'LEFT JOIN ('
+      'SELECT target_doc_id AS tgt, SUM(amount) AS psum '
+      'FROM ${Schema.settlements} '
+      'WHERE target_doc_id IS NOT NULL '
+      'GROUP BY target_doc_id'
+      ') s ON s.tgt = d.id ';
 
   List<DocumentSummary> _summaries({
     Set<DocType> types = const <DocType>{},
@@ -493,7 +517,9 @@ class DocumentDao {
     final List<Map<String, Object?>> rows = _raw.select(
       'SELECT d.*, pa.name AS party_name, '
       'COALESCE(r.rsum, 0) AS returned_sum, '
-      'COALESCE(r.rcnt, 0) AS returned_count '
+      'COALESCE(r.rcnt, 0) AS returned_count, '
+      // 3a：已收/已付的**流水口径**（列表行显示与筛选同一来源）
+      'COALESCE(s.psum, 0) AS paid_sum '
       '$_docFrom'
       '${filter.where}'
       // ⚠️ **按「日」分桶，日内按录入时刻倒序**（#26①，2026-10-18 裁定甲）。
@@ -520,7 +546,12 @@ class DocumentDao {
     final List<DocumentSummary> found = decodeRows(
       rows,
       (Map<String, Object?> row) => DocumentSummary(
-        document: Document.fromRow(row, failures: db.readFailures),
+        // 3a：`paid_amount` 用流水汇总覆盖（缓存只作兜底）——
+        // 行显示与「未结清」筛选必须同源，否则会出现「显示已收 0 却被筛掉」
+        document: Document.fromRow(<String, Object?>{
+          ...row,
+          'paid_amount': row['paid_sum'] ?? row['paid_amount'],
+        }, failures: db.readFailures),
         partyName: row['party_name'] as String?,
         returnedCents: (row['returned_sum'] as int?) ?? 0,
         returnedCount: (row['returned_count'] as int?) ?? 0,

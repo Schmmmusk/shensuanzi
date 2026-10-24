@@ -246,6 +246,10 @@ class MobileSyncService {
         );
       }
       hostSchema = decoded['schema_version']! as int;
+      // P2 #9（2026-10-24，业务审查 §3.7）：把主机的 `server_time` 记成时钟偏移 ——
+      // pull 的「最近更新窗口」按它算（手机时钟歪时不至于窗口整段落空）。
+      final Object? serverTime = decoded['server_time'];
+      if (serverTime is int) client.recordClockOffset(serverTime);
     } on SyncHttpException catch (error) {
       return SyncOutcome(SyncOutcomeKind.unreachable, error.detail);
     } catch (error) {
@@ -436,10 +440,19 @@ class MobileSyncService {
   /// 自己开的单，不说清楚他会以为还在自动补传。
   int lastHostSwitchHeldEntries = 0;
 
-  SyncOutcome _authExpired() => const SyncOutcome(
-    SyncOutcomeKind.authExpired,
-    '配对已失效 —— 主机可能重启过或重新生成了配对码，请重新扫码连接',
-  );
+  /// 认证失效（401 / 403）的**唯一处置点**。
+  ///
+  /// P2 #8（2026-10-24，业务审查 §3.7）：**清配对收进服务一处**，三条路径
+  /// （health 探测 / `syncNow` / `autoPush`）共用。从前只有「立即同步」在
+  /// `app.dart` 里调 `forgetHost()` —— 开单 / 建档后的**后台自动推送**不清，
+  /// 面板还显示「已连接」，每次推送都 401，用户看不到任何变化。
+  SyncOutcome _authExpired() {
+    forgetHost();
+    return const SyncOutcome(
+      SyncOutcomeKind.authExpired,
+      '配对已失效 —— 主机可能重启过或重新生成了配对码，请重新扫码连接',
+    );
+  }
 }
 
 /// 三态条的**前置链接态**（M04，2026-10-08 · `docs/reply.md` §二·1）。

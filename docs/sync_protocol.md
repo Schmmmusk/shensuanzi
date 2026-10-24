@@ -697,6 +697,12 @@ GET    /api/party_ledger?party_id=&since=
 > **重推该单即通过**。
 >
 > ⚠️ 其余码**重试无意义**（要么是客户端 bug，要么得先改数据），不要一律退避重试。
+>
+> **客户端的落地口径（P2 #7，2026-10-24，§CV·九十五）**：
+> 可重试 = `reference_missing` · `host_storage`（主机忙 / 满 / 只读，瞬时）·
+> **缺码**（旧主机不带 `reason_code` ⇒ 保守按可重试）。
+> 其余码**直接进死信**（`retry_count` 置超限、`next_retry_at = 0`），
+> 不再白烧 11 次退避。
 
 **客户端只需展示 `reason`，不要解析它**（中文会改；判分支一律用 `reason_code`）。
 

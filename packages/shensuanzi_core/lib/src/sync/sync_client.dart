@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:sqlite3/sqlite3.dart';
 
 import '../dao/sync_dao.dart';
+import '../reject_code.dart';
 import '../db/database.dart';
 import '../db/schema.dart';
 import '../models/sync_queue_entry.dart';
@@ -257,11 +258,26 @@ class SyncClient {
             queue.delete(entry.id);
             conflicts++;
           case SyncStatus.rejected:
-            // 业务拒绝 → 排重试（**同时**计入 rejected 与 retried：
-            // 前者是「为什么失败」的归类，后者是「接下来怎么办」的处置）
-            _retry(entry, receipt.reason ?? 'rejected', now);
+            // P2 #7（2026-10-24，业务审查 §3.7 / `sync_protocol.md` §8.5.2）：
+            // **按 `reason_code` 分类**，不再一律退避 11 次。
+            // 可重试 = 「等一下再推就成功」：
+            //   - `reference_missing`：引用的主数据还在队列里（协议点名）
+            //   - `host_storage`：主机忙 / 满 / 只读 —— 瞬时
+            //   - `null`：旧主机不带码 ⇒ 保守起见按可重试处理（不能因为读不懂就打死）
+            // 其余（协议违反 / 规则拒绝）重试无意义 —— 要么是客户端 bug，
+            // 要么得先改数据 ⇒ **直接进死信**，把次数留给人工处理。
             rejected++;
-            retried++;
+            final RejectCode? code = receipt.reasonCode;
+            final bool retryable =
+                code == null ||
+                code == RejectCode.referenceMissing ||
+                code == RejectCode.hostStorage;
+            if (retryable) {
+              _retry(entry, receipt.reason ?? 'rejected', now);
+              retried++;
+            } else {
+              _deadLetter(entry, receipt.reason ?? 'rejected');
+            }
             errors.add('${entry.entityId}: ${receipt.reason ?? 'rejected'}');
         }
       }
@@ -350,6 +366,18 @@ class SyncClient {
       retryCount: retryCount,
       nextRetryAt: now + _backoffMs(retryCount),
       dead: retryCount > maxRetries,
+    );
+  }
+
+  /// 直接进死信（P2 #7）：重试无意义的拒绝 —— `retry_count` 置为超限、
+  /// `next_retry_at = 0`（不再自动到期），状态 `failed`（等人工处理）。
+  void _deadLetter(SyncQueueEntry entry, String error) {
+    queue.markFailed(
+      entry.id,
+      error: error,
+      retryCount: maxRetries + 1,
+      nextRetryAt: 0,
+      dead: true,
     );
   }
 
@@ -454,12 +482,16 @@ class SyncClient {
     final Map<String, String> since = cursors.getAll();
 
     // 最近更新窗口的下界 = 「现在 − [docUpdateWindow]」，但**不晚于**
-    // [docUpdatedSinceFloor]（取更早者）。传绝对毫秒（不传天数）：
-    // 客户端本地时钟可以歪，但歪的是**窗口边缘**，漏掉一行会在下一次同步的
-    // 窗口里被补回来；而「主机时间」客户端拿不到，硬要反而要额外一次握手。
+    // [docUpdatedSinceFloor]（取更早者）。传绝对毫秒（不传天数）。
+    //
+    // P2 #9（2026-10-24，业务审查 §3.7）：**用主机估算时间，不用手机裸时钟** ——
+    // `/api/health` 的 `server_time` 已经由调用方喂进 [recordClockOffset]，
+    // 手机快 10 天时裸时钟会让整个窗口落在**未来**（什么都拉不到、状态永不更新）。
+    // 未记录偏移（`offsetMs == 0`）时与从前等价。
     int? docUpdatedSince;
     if (docUpdateWindow != null && firstPage) {
-      final int defaultBound = now - docUpdateWindow!.inMilliseconds;
+      final int defaultBound =
+          estimatedServerTime() - docUpdateWindow!.inMilliseconds;
       docUpdatedSince =
           docUpdatedSinceFloor == null || docUpdatedSinceFloor >= defaultBound
           ? defaultBound

@@ -386,10 +386,17 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                 // 在这一行里放它会把一句结论读成矛盾的。
                 _kv(theme, '', '已全部退清')
               else if (unsettled != 0)
+                // 3a（2026-10-24，业务审查 §3.4 / 用户裁定）：负未收是**真实信号**
+                // —— 退得比收得多 ⇒ 我们欠客户钱。显示「多收 ¥X」（正数），
+                // 而不是把数字夹成 0 或显示「未收 ¥-30」（后者会被读成错账）。
                 _kv(
                   theme,
-                  isReturnDoc ? '未退款' : '未${_moneyVerb(doc)}',
-                  '¥${Money.formatGrouped(unsettledShown)}',
+                  isReturnDoc
+                      ? '未退款'
+                      : unsettled < 0
+                      ? '多${_moneyVerb(doc)}'
+                      : '未${_moneyVerb(doc)}',
+                  '¥${Money.formatGrouped(unsettled < 0 ? -unsettled : unsettledShown)}',
                 ),
             // §审查 BUG-04：状态展示用真实未收判定（已确认且结清 ⇒ 显示已结清）
             _kv(

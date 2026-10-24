@@ -348,13 +348,16 @@ class SyncServer {
     // 主机专属字段补默认值。客户端的值不可能覆盖它们 ——
     // 白名单已把 hostOnlyColumns 挡在外面，所以展开顺序是安全的。
     final Map<String, Object?> row = <String, Object?>{
-      'doc_no': '', // 空 = 临时展示号，主机 `_prepare` 会分配正式单号
       'total_amount': 0,
       'paid_amount': 0,
       'time_estimated': 0,
       'created_at': now,
       'updated_at': now,
       ...values,
+      // 3b-2（2026-10-24，业务审查 §3.5-1）：**单号只由主机分配** ——
+      // 客户端发来的 `doc_no` 一律丢弃（`documents` 的可写列里有它，
+      // 从前会被原样采用；空串 ⇒ `_prepare` 生成正式号）。
+      'doc_no': '',
     };
 
     // ⚠️ **两个 try 分开**（§CV·十九 裁定）：原来合成一个 catch ⇒ detail 里分不清是
@@ -915,7 +918,18 @@ class SyncServer {
       final int room = limit - pageDocs.length;
       if (room > 0 && fresh.isNotEmpty) {
         final int take = fresh.length <= room ? fresh.length : room;
-        pageDocs.addAll(fresh.sublist(0, take));
+        final List<Map<String, Object?>> added = fresh.sublist(0, take);
+        pageDocs.addAll(added);
+        // P2 #11（2026-10-24，业务审查 §3.7）：**窗口并进来的主单要补明细**。
+        // `document_lines` 没有独立游标（明细只跟着主分页走），窗口里的单
+        // 若只并主单不并明细，客户端会永久缺行 —— 点开是一张**空单**
+        // （明细永远拉不到，除非这单再次被主分页扫到）。
+        entities[Schema.documentLines] = <Map<String, Object?>>[
+          ...entities[Schema.documentLines]!,
+          ..._linesOf(<String>[
+            for (final Map<String, Object?> row in added) row['id']! as String,
+          ]),
+        ];
       }
     }
 

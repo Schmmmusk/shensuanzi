@@ -106,8 +106,19 @@ class QueryDao {
       'FROM ${Schema.documents} '
       "WHERE status != '${DocStatus.cancelled.wire}' "
       '  AND occurred_at >= ? '
+      // 3c-5（2026-10-24，§3.7 P2 #5）：**必须有上界** —— 手滑填了明天 /
+      // 下月的单会被算进「今日销售」，数字虚高且用户无法解释。
+      '  AND occurred_at < ? '
       'GROUP BY doc_type',
-      <Object?>[dayStart.millisecondsSinceEpoch],
+      <Object?>[
+        dayStart.millisecondsSinceEpoch,
+        // 明日零点（本地时区；与 `dayStart` 同一套口径 —— 由调用方给的零点推）
+        DateTime(
+          dayStart.year,
+          dayStart.month,
+          dayStart.day + 1,
+        ).millisecondsSinceEpoch,
+      ],
     );
     int saleCount = 0, saleCents = 0, deliveryCount = 0, deliveryCents = 0;
     for (final Map<String, Object?> row in rows) {

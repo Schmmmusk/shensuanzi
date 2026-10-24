@@ -1293,9 +1293,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     );
     if (!mounted) return;
 
-    if (outcome.kind == SyncOutcomeKind.authExpired) {
-      service.forgetHost(); // 裁定 ②：清除本地凭据，面板回到「扫码」态
-    }
+    // P2 #8（2026-10-24）：清配对已收进 `MobileSyncService._authExpired`
+    // （三条路径共用），这里**不再重复调用** —— 只留一句说明防回归。
     setState(() {}); // 裁定 ⑦：镜像可能变了 + 面板状态切换
     _toast(outcome.message);
   }

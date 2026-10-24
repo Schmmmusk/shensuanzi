@@ -103,7 +103,12 @@ class SettlementDao {
   ) => decodeRows(
     _raw.select(
       'SELECT d.id AS doc_id, d.doc_no AS doc_no, '
-      's.amount AS amount, s.created_at AS created_at '
+      's.amount AS amount, '
+      // 3c-4（2026-10-24，§3.7 P2 #4）：`occurredAt` 是**对端单据**的业务时刻
+      // （与 docId / docNo 同一个实体）—— 从前装的是 `settlements.created_at`
+      // （录入时刻），同一笔钱在「核销去向」和「单据列表」里显示成两个时间。
+      // 对端缺失（预收 / 预付）才退回录入时刻。
+      'COALESCE(d.occurred_at, s.created_at) AS occurred_at '
       'FROM ${Schema.settlements} s '
       'LEFT JOIN ${Schema.documents} d ON $joinOn '
       '$where '
@@ -114,7 +119,7 @@ class SettlementDao {
       docId: r['doc_id'] as String?,
       docNo: r['doc_no'] as String?,
       amount: r['amount']! as int,
-      occurredAt: r['created_at']! as int,
+      occurredAt: r['occurred_at']! as int,
     ),
     table: Schema.settlements,
     failures: db.readFailures,

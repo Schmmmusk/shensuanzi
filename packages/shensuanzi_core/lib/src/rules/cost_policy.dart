@@ -117,8 +117,10 @@ class CostPolicy {
     final int cumulativeQty = priorQty + returnQuantity;
     if (cumulativeQty > originalQty) {
       throw RuleRejection(
-        '这次要退的数量超过了原单剩的（原单共 $originalQty 件，'
-        '算上这次累计已 $cumulativeQty 件）。请把数量改小后再退。',
+        // 3c-16（2026-10-24）：**不写单位** —— 规则层不知道这件商品按瓶还是按箱
+        // 录的；单位化文案统一走 `ReturnLineDraft.validate`（那里有 baseUnit）。
+        '这次要退的数量超过了原单剩的（原单共 $originalQty、'
+        '算上这次累计 $cumulativeQty）。请把数量改小后再退。',
         code: RejectCode.returnExceedsOriginal,
         detail:
             '累计退货量 $cumulativeQty 超过原单量 $originalQty'

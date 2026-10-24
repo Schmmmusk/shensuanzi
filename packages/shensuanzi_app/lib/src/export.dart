@@ -41,6 +41,7 @@ class ExportTable {
     required this.label,
     required this.header,
     required this.rows,
+    this.skippedBadRows = 0,
   });
 
   /// 表名（`商品` / `库存` / `往来方` / `单据` / `往来流水`）—— 进文件名
@@ -51,7 +52,25 @@ class ExportTable {
 
   final List<List<String>> rows;
 
+  /// **读不出来被跳过的行数**（3d，2026-10-24，业务审查 §3.7 P2 #2）。
+  ///
+  /// 为什么必须有：`decodeRows` 遇到坏行会**跳过并记日志**（不让整页打不开），
+  /// 但导出从前照样落一份**缺行**的 CSV，用户拿文件对账会与屏幕不符，而且
+  /// **没有任何提示**。有坏行 ⇒ 文件不完整，必须说出来。
+  ///
+  /// ⚠️ 只对「导出时才查库」的表有意义（单据 / 商品 / 往来方）；
+  /// 流水类导出吃的是已算好的 flow，导出阶段不可能再跳过行 ⇒ 保持 0。
+  final int skippedBadRows;
+
   bool get isEmpty => rows.isEmpty;
+
+  /// 只改「跳过坏行数」（3d）：导出前后采样 `readFailures.count` 的差值时用。
+  ExportTable copyWith({int? skippedBadRows}) => ExportTable(
+    label: label,
+    header: header,
+    rows: rows,
+    skippedBadRows: skippedBadRows ?? this.skippedBadRows,
+  );
 }
 
 /// 导出文件名（§AF-7：中文 + 日期 + **无空格**）。
@@ -122,7 +141,11 @@ sealed class ExportOutcome {
 }
 
 class ExportSuccess extends ExportOutcome {
-  const ExportSuccess({required this.path, required this.rowCount});
+  const ExportSuccess({
+    required this.path,
+    required this.rowCount,
+    this.skippedBadRows = 0,
+  });
 
   /// 最终 CSV 的完整路径（SnackBar 直接展示，用户可复制）
   final String path;
@@ -130,6 +153,11 @@ class ExportSuccess extends ExportOutcome {
   /// 实际导出的**行数**（不含表头）—— 事后确认放这里最有意义：
   /// 用户点的时候不需要预先知道数量，拿到文件时「导了多少条」才重要（AF-5）
   final int rowCount;
+
+  /// 读不出来被跳过的行数（3d）—— >0 ⇒ 这份文件**不完整**
+  final int skippedBadRows;
+
+  bool get isComplete => skippedBadRows == 0;
 }
 
 /// 0 行 → **没有生成文件**（遗漏 4）
@@ -151,8 +179,16 @@ class ExportFailed extends ExportOutcome {
 
 /// 导出结果的**用户可见**文案。
 String exportOutcomeMessage(ExportOutcome outcome) => switch (outcome) {
-  ExportSuccess(:final String path, :final int rowCount) =>
-    '已导出 $rowCount 条到：\n$path',
+  ExportSuccess(
+    :final String path,
+    :final int rowCount,
+    :final int skippedBadRows,
+  ) =>
+    skippedBadRows == 0
+        ? '已导出 $rowCount 条到：\n$path'
+        // 3d：**必须自曝** —— 缺行文件拿去对账会与屏幕不符，不说清楚就是撒谎
+        : '已导出 $rowCount 条到：\n$path\n'
+              '⚠️ 有 $skippedBadRows 行读不出来被跳过，这份文件不完整',
   ExportEmpty() => '当前筛选没有数据，没有生成文件',
   ExportFailed(:final String reason) => '导出失败：$reason',
 };
@@ -257,7 +293,12 @@ class ExportService implements ExportSink {
       File(
         path,
       ).writeAsBytesSync(csvBytes(table.header, table.rows), flush: true);
-      return ExportSuccess(path: path, rowCount: table.rows.length);
+      return ExportSuccess(
+        path: path,
+        rowCount: table.rows.length,
+        // 3d：把「导出时跳过的坏行」带到结果里 —— UI 据此说「文件不完整」
+        skippedBadRows: table.skippedBadRows,
+      );
     } catch (error, stack) {
       // #35（2026-10-14）：**按 errno 分流**（映射表在 core 领域层），且
       // **不再把原始异常拼进用户文案** —— 原来是 `PathAccessException`

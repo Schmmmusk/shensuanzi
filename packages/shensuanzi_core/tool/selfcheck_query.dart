@@ -449,6 +449,37 @@ void main() {
     db.close();
   }
 
+  // 3c-5（2026-10-24，§3.7 P2 #5）：todaySummary 必须有上界 ——
+  // 手滑填明天 / 下月的单不许算进「今日销售」。
+  section('3c-5 todaySummary 上界');
+  {
+    freshDb();
+    final String p = createProduct(code: 'P955');
+    final int day = DateTime(2026, 10, 12).millisecondsSinceEpoch;
+    // 全局 `db`（freshDb 已建）
+    db.raw.execute(
+      'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+      'occurred_at, created_at, updated_at) '
+      "VALUES ('d-today', 'XS1', 'sale', 'confirmed', 300, ?, ?, ?)",
+      <Object?>[day, day, day],
+    );
+    db.raw.execute(
+      'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+      'occurred_at, created_at, updated_at) '
+      "VALUES ('d-future', 'XS2', 'sale', 'confirmed', 500, ?, ?, ?)",
+      <Object?>[day + const Duration(days: 1).inMilliseconds, day, day],
+    );
+    final OverviewSummary sum = query.todaySummary(
+      DateTime.fromMillisecondsSinceEpoch(day),
+    );
+    check(
+      '3c-5：未来日期的单不算今日',
+      sum.saleCount == 1 && sum.saleCents == 300,
+      'count=${sum.saleCount} cents=${sum.saleCents}',
+    );
+    check('3c-5：夹具商品已建', p.isNotEmpty);
+  }
+
   stdout.writeln('\n${'=' * 46}');
   if (_failures.isEmpty) {
     stdout.writeln('全部通过：$_passed 项');

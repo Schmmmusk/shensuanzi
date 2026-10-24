@@ -117,6 +117,44 @@ void main() {
 
   // ============================================================ 列表过滤
 
+  // 3c-4（2026-10-24，业务审查 §3.7 P2 #4）：`SettlementView.occurredAt`
+  // 从前装的是 `settlements.created_at`（录入时刻），不是收款单的**业务时刻**。
+  // 结果：同一笔钱在「核销去向」和「单据列表」里显示成两个时间。
+  group('3c-4 SettlementView.occurredAt 取收款单的业务时刻', () {
+    test('occurred_at 与 created_at 不同 ⇒ 视图用 occurred_at', () {
+      final String p = createProduct();
+      final String acc = createAccount();
+      final String party = createParty();
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 1000,
+      );
+      run(sale, lines: <DocumentLine>[line(sale, p, 1, 1000)]);
+
+      final Document receipt = doc(
+        type: DocType.receipt,
+        partyId: party,
+        accountId: acc,
+        totalAmount: 1000,
+      );
+      run(
+        receipt,
+        allocs: <Allocation>[Allocation(targetDocId: sale.id, amount: 1000)],
+      );
+      // 把收款单的两个时间改成不同值：业务时刻 = 1000，录入时刻 = 2000
+      db.raw.execute(
+        "UPDATE documents SET occurred_at = 1000, created_at = 2000 WHERE id = ?",
+        <Object?>[receipt.id],
+      );
+
+      final SettlementView view = settlements
+          .settlementsOfTarget(sale.id)
+          .single;
+      expect(view.occurredAt, 1000, reason: '3c-4：核销去向显示的是**收款单的业务时刻**，不是录入时刻');
+    });
+  });
+
   group('列表过滤自动生成的收付款单（§AN·二）', () {
     test('自动单默认不显示、退货单不被误伤、手动单要显示', () {
       final String p = createProduct();

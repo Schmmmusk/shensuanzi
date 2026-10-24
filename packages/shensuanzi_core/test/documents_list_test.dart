@@ -174,6 +174,54 @@ void main() {
       );
     });
 
+    // 3a（2026-10-24，业务审查 §3.7 P2 #1）：**未结清筛选以流水为准** ——
+    // 从前用 `d.paid_amount` 缓存，注释却写「与 unsettledCentsOf 同一口径」
+    // （那个口径读 settlements）。两者一旦漂移，列表说「未结清」而详情说
+    // 「已收满」，用户看到的是两个互相打脸的数字。
+    test('3a：#1 未结清以 settlements 为准（paid_amount 缓存脏了也不影响）', () {
+      insertParty(db.raw, 'y-1', name: '王老板');
+      insertDocument(
+        db.raw,
+        'd-1',
+        docNo: 'XS20261012-001',
+        docType: 'sale',
+        partyId: 'y-1',
+        totalAmount: 100,
+      );
+      // 缓存脏：paid_amount = 0，但流水里有一条 100 的核销
+      db.raw.execute("UPDATE documents SET paid_amount = 0 WHERE id = 'd-1'");
+      insertDocument(
+        db.raw,
+        'r-1',
+        docNo: 'SK20261012-001',
+        docType: 'receipt',
+        totalAmount: 100,
+      );
+      db.raw.execute(
+        "INSERT INTO settlements "
+        "(id, receipt_doc_id, target_doc_id, amount, seq_no, created_at) "
+        "VALUES ('s-1', 'r-1', 'd-1', 100, 1, 0)",
+      );
+
+      expect(
+        docNosOf(
+          documents.listDocuments(
+            statusViews: <DocumentStatusView>{DocumentStatusView.unsettled},
+          ),
+        ),
+        isNot(contains('XS20261012-001')),
+        reason: '3a：流水说已收满 ⇒ 不该出现在未结清里（缓存 paid_amount=0 不算数）',
+      );
+      final DocumentSummary row = documents.listDocuments().firstWhere(
+        (DocumentSummary e) => e.document.id == 'd-1',
+      );
+      expect(
+        row.document.paidAmount,
+        100,
+        reason: '3a：列表行显示的「已收」也走流水 —— 否则行显示 0、筛掉它，自相矛盾',
+      );
+    });
+
     // P2 #14（2026-10-24，业务审查 §3.7）：默认只看根 —— 退货单不进默认
     // 列表；`includeDerived: true` 才进；导出恒全量（AF-12）。
     // 从前 DAO 默认 `rootsOnly: false`、UI 显式传 `true`，两套默认值。

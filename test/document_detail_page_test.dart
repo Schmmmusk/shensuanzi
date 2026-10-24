@@ -124,6 +124,38 @@ void main() {
     );
   });
 
+  // 3a（2026-10-24，业务审查 §3.4 / 用户裁定）：负未收是真实信号 ——
+  // 「退得比收得多」时我们欠客户钱，要显示「多收 ¥X」，不许夹成 0。
+  testWidgets('3a：退得比收得多 ⇒ 显示「多收 ¥3.00」（不是「未收 ¥0.00」）', (
+    WidgetTester tester,
+  ) async {
+    final Document doc = sellOnCredit(); // 10.00
+    // 已收满 10.00
+    db.raw.execute(
+      'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+      'occurred_at, created_at, updated_at) '
+      "VALUES ('rc1', 'SK1', 'receipt', 'settled', 1000, 0, 0, 0)",
+    );
+    db.raw.execute(
+      'INSERT INTO settlements (id, receipt_doc_id, target_doc_id, amount, '
+      'seq_no, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      <Object?>['st1', 'rc1', doc.id, 1000, 1, 0],
+    );
+    // 之后退了 3.00
+    db.raw.execute(
+      'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+      'ref_doc_id, occurred_at, created_at, updated_at) '
+      "VALUES ('rt1', 'XT1', 'sale_return', 'confirmed', 300, ?, 0, 0, 0)",
+      <Object?>[doc.id],
+    );
+
+    await tester.pumpWidget(page(doc.id));
+    await tester.pumpAndSettle();
+
+    expect(find.text('多收'), findsOneWidget, reason: '3a：负数要读作「多收」');
+    expect(find.text('¥3.00'), findsWidgets, reason: '3a：金额显示为正数');
+  });
+
   testWidgets('对话框：预填未收额；超收 → 内联告知、不弹第二个窗、按未收额落库', (WidgetTester tester) async {
     final Document doc = sellOnCredit();
     await tester.pumpWidget(page(doc.id));

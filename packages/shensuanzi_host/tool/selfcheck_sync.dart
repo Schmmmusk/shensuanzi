@@ -1094,6 +1094,51 @@ void main() {
     db.close();
   }
 
+  // 3b-2（2026-10-24，§3.5-1）：**单号只由主机分配** —— 客户端塞的
+  // `doc_no` 必须被丢弃（`documents` 可写列里有它，从前会原样采用）。
+  section('3b-2 客户端不能指定单号');
+  {
+    freshDb(); // 上文用过非规范编码（'PU1'），编码生成器会抛 ⇒ 换空库
+    final String id = newId();
+    final String party = syncParty();
+    final String prod = syncProduct(code: 'P978');
+    final SyncResponse resp = server.handle(
+      SyncOperation(
+        entity: Schema.documents,
+        entityId: id,
+        operation: SyncOpType.createDocument,
+        payload: <String, Object?>{
+          'document': <String, Object?>{
+            'id': id,
+            'doc_no': 'XS20260101-999',
+            'doc_type': 'sale',
+            'status': 'confirmed',
+            'party_id': party,
+            'total_amount': 100,
+            'occurred_at': now(),
+          },
+          'lines': <Object?>[
+            <String, Object?>{
+              'id': newId(),
+              'document_id': id,
+              'product_id': prod,
+              'quantity': 1,
+              'unit_price': 100,
+              'amount': 100,
+            },
+          ],
+        },
+      ),
+      now: now(),
+    );
+    check(
+      '3b-2：客户端单号被丢弃',
+      resp.status == SyncStatus.applied &&
+          DocumentDao(db).findById(id)!.docNo != 'XS20260101-999',
+      '${resp.status} / ${DocumentDao(db).findById(id)?.docNo}',
+    );
+  }
+
   // ============================================================ documentAction
   section('documentAction（R-3 已裁定：mark_delivered）');
   {
@@ -1439,6 +1484,27 @@ void main() {
 
     final SyncPullResult docIncrement = server.pull(docSince: docCursor);
     check('documents 增量：再拉为空', docIncrement.countOf('documents') == 0);
+
+    // P2 #11（2026-10-24，业务审查 §3.7）：只经**窗口**到达的主单必须补明细
+    // —— `document_lines` 没有独立游标，漏了就永远拉不到（客户端点开是空单）。
+    final SyncPullResult windowOnly = server.pull(
+      stockSince: first.nextCursors[SyncCursorKeys.stock]!,
+      moneySince: first.nextCursors[SyncCursorKeys.money]!,
+      partySince: first.nextCursors[SyncCursorKeys.party]!,
+      settleSince: first.nextCursors[SyncCursorKeys.settle]!,
+      docSince: docCursor,
+      productsSince: first.nextCursors[SyncCursorKeys.products]!,
+      partiesSince: first.nextCursors[SyncCursorKeys.parties]!,
+      accountsSince: first.nextCursors[SyncCursorKeys.accounts]!,
+      docUpdatedSince: 0,
+    );
+    check(
+      'P2 #11：只经窗口到达的主单也带明细',
+      windowOnly.countOf('documents') == 1 &&
+          windowOnly.countOf('document_lines') > 0,
+      'docs=${windowOnly.countOf('documents')} '
+          'lines=${windowOnly.countOf('document_lines')}',
+    );
     db.close();
   }
 

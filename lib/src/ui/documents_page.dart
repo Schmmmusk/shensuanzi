@@ -312,8 +312,12 @@ class _DocumentsPageState extends State<DocumentsPage> {
                       // 导出**不合并**（退货单单独一行）—— 不写这句，会计核对时会
                       // 以为软件导错了（`docs/reply.md` 裁定 6 甲）。
                       label: '导出当前筛选的单据（不做合并：退货单独一行）',
-                      export: () => widget.exports!.write(
-                        documentExportTable(
+                      export: () {
+                        // 3d（2026-10-24，业务审查 §3.7 P2 #2）：导出前后采样
+                        // 坏行计数 —— `decodeRows` 跳过坏行时不报错，缺行文件
+                        // 必须自曝（用户拿它去对账，与屏幕不符就是撒谎）。
+                        final int before = widget.dao.db.readFailures.count;
+                        final ExportTable table = documentExportTable(
                           // AF-5：导出走**独立查询**（无 200 上限），
                           // 筛选条件与列表同一份（`since` 是同一个局部变量）
                           widget.dao.listDocumentsForExport(
@@ -326,11 +330,17 @@ class _DocumentsPageState extends State<DocumentsPage> {
                             // 「导出当前筛选」在用户打字的那一刻就变成谎话
                             query: hasQuery ? query : null,
                           ),
-                        ),
-                        from: since == null
-                            ? null
-                            : DateTime.fromMillisecondsSinceEpoch(since),
-                      ),
+                        );
+                        return widget.exports!.write(
+                          table.copyWith(
+                            skippedBadRows:
+                                widget.dao.db.readFailures.count - before,
+                          ),
+                          from: since == null
+                              ? null
+                              : DateTime.fromMillisecondsSinceEpoch(since),
+                        );
+                      },
                     ),
                 ],
               ),

@@ -66,6 +66,14 @@ void main() {
     });
   });
 
+  // 3b-4（2026-10-24，业务审查 §3.5-4）：没有 `busy_timeout` 时，第二个写者
+  // 一到就 `SQLITE_BUSY`（备份进程 / 另一个实例 / 杀毒扫描都会造成）。
+  test('3b-4：busy_timeout = 3000（等锁而不是立刻失败）', () {
+    final int timeout =
+        db.raw.select('PRAGMA busy_timeout').first.values.first! as int;
+    expect(timeout, 3000);
+  });
+
   group('可重入事务（P0-1 回归）', () {
     test('单层事务返回 body 的值', () {
       expect(db.transaction(() => 'ok'), 'ok');

@@ -576,8 +576,10 @@ Future<void> main() async {
     check('documentAction（purchase 收签收）→ rejected', report.rejected == 1);
     final SyncQueueEntry after = w.clientA.queue.findById(action.id)!;
     check(
-      'rejected → 进重试而非死信',
-      after.status == SyncQueueStatus.pending && after.retryCount == 1,
+      // P2 #7（2026-10-24，§8.5.2）：`action_not_applicable` 不可重试 ⇒ 死信
+      'rejected（不可重试码）→ 直接死信',
+      after.status == SyncQueueStatus.failed &&
+          after.retryCount > SyncClient.maxRetries,
     );
     // #22 裁定：协议违反（非送货单不能签收）的回执给通用中文 ⇒ 队列里存的
     // 也是它；细节（`purchase 不适用签收`）只在**主机日志**里。

@@ -570,6 +570,36 @@ void main() {
   // ============================================================ #32 概览速览
 
   group('#32 概览速览（todaySummary / receivablesSummary / 未签收 / 未同步计数）', () {
+    // 3c-5（2026-10-24，业务审查 §3.7 P2 #5）：`todaySummary` 没有上界 ——
+    // 手滑填了明天 / 下月的单会被算进「今日销售」，数字虚高且无法解释。
+    test('3c-5：未来日期的单据不算「今日」', () {
+      final String p = createProduct();
+      final String party = createParty();
+      seedPurchase(p, party, 10, 100);
+      final DateTime day = DateTime.fromMillisecondsSinceEpoch(1700000000000);
+      // 今天的一张
+      final Document today = doc(
+        type: DocType.sale,
+        partyId: party,
+        totalAmount: 300,
+      );
+      run(today, oneLine(today.id, p, 3, 100));
+      // 明天的一张（业务日期在明天）—— 直接落库（`doc()` 帮手写死了 occurredAt）
+      insertDocument(
+        db.raw,
+        'd-tomorrow',
+        docNo: 'XS-TOMORROW',
+        docType: 'sale',
+        partyId: party,
+        totalAmount: 500,
+        occurredAt: day.add(const Duration(days: 1)).millisecondsSinceEpoch,
+      );
+
+      final OverviewSummary s = query.todaySummary(day);
+      expect(s.saleCount, 1, reason: '3c-5：只算今天那单');
+      expect(s.saleCents, 300, reason: '3c-5：明天的 500 不许算进今日');
+    });
+
     test('todaySummary：sale / delivery 分列；金额 = total_amount 合计', () {
       final String p = createProduct();
       final String party = createParty();

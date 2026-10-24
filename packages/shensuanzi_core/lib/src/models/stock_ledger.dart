@@ -8,7 +8,9 @@ import 'base.dart';
 ///
 /// - [totalCost] 是**成本真相**（精确，无累积误差）
 /// - [unitCost] 是**派生展示字段** = `round_half_up(totalCost / quantity)`
-/// - `totalCost` 取值：入库 = `quantity × unit_price`；出库 = `round_half_up(库存总成本 × 出库数量 / 库存数量)`
+/// - `totalCost` 取值：入库 = **`line.amount`**（这一行真正发生多少钱，v3 起；
+///   **不是** `quantity × unit_price` —— `unit_price` 是派生值，反算有舍入差）；
+///   出库 = `round_half_up(库存总成本 × 出库数量 / 库存数量)`
 /// - 毛利 = `SUM(销售额) - SUM(出库 totalCost)`
 ///
 /// ## seq_no

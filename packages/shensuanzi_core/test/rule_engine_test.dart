@@ -706,6 +706,7 @@ void main() {
 
     test('收款单 payload 写 confirmed ⇒ 落库 settled', () {
       final String partyId = createParty();
+      final String productId = createProduct();
       final int t = now();
       final Account account = Account(
         id: newId(),
@@ -716,6 +717,27 @@ void main() {
       );
       AccountDao(db).insert(account);
 
+      // 3b-1（⑥甲）之后，「无分配的收款单」被拒（那正是账上没人能解释的钱）
+      // ⇒ 这里先造一张 100 的赊账销售，再全额核销（保持本用例的原意：
+      // payload 写 confirmed，落库仍是 settled）
+      final Document sale = pendingDoc(
+        type: DocType.sale,
+        partyId: partyId,
+        totalAmount: 100,
+      );
+      engine.dispatch(
+        document: sale,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: sale.id,
+            productId: productId,
+            quantity: 1,
+            unitPrice: 100,
+          ),
+        ],
+        now: now(),
+      );
+
       final Document doc = pendingDoc(
         type: DocType.receipt,
         partyId: partyId,
@@ -723,7 +745,13 @@ void main() {
         totalAmount: 100,
         status: DocStatus.confirmed, // 客户端少写一档
       );
-      engine.dispatch(document: doc, now: now());
+      engine.dispatch(
+        document: doc,
+        allocations: <Allocation>[
+          Allocation(targetDocId: sale.id, amount: 100),
+        ],
+        now: now(),
+      );
       // ⚠️ 反向验证实录（2026-10-23）：本条**单独摘掉归一层仍然绿** ——
       // 核销流程末尾的状态派生（`paid >= total ⇒ settled`）本来就把它
       // 兜成 settled。它是**不变量护栏**（哪层坏了都红），不是归一层的
@@ -741,6 +769,131 @@ void main() {
   // P2 #15（业务审查 §3.7）：核销五道门槛之外补**第 6 道** —— 目标已作废
   // （`cancelled`）不能当核销目标。从前全程不看 `target.status`，一张作废
   // 的送货单照样能被收款核销：钱进了账、`paid_amount` 被刷、单据永远挂着。
+  // 3b-1（2026-10-24，业务审查 §3.4 / 用户裁定 ⑥甲）：**收付款单金额必须 =
+  // 分配合计**。从前只拦「大于」⇒ `requested < total` 时差额既不在
+  // `settlements` 也不在任何查询里（money_ledger 记全额、往来冲全额、
+  // settlements 只记部分）⇒ 账上出现一笔没人能解释的钱。
+  // 3b-3（2026-10-24，业务审查 §3.5-6）：`allocatableTargetTypes` 与
+  // `settleDirections` 是两张表，`_settle` 的方向校验**只在方向表里有键时**
+  // 生效 —— 将来往白名单加了新类型却忘了配方向，新类型会**静默跳过方向校验**。
+  test('3b-3：白名单 ⊆ 方向表（加新类型必须配方向）', () {
+    expect(
+      RuleEngine.settleDirections.keys.toSet().containsAll(
+        RuleEngine.allocatableTargetTypes,
+      ),
+      isTrue,
+      reason:
+          '3b-3：${RuleEngine.allocatableTargetTypes.difference(RuleEngine.settleDirections.keys.toSet())} '
+          '缺方向配置',
+    );
+  });
+
+  group('3b-1 部分核销被拒（金额 == 分配合计）', () {
+    test('收款单 100、只核销 60 ⇒ rejected（文案说「要一致」）', () {
+      final String productId = createProduct();
+      final String partyId = createParty();
+      final Document sale = pendingDoc(
+        type: DocType.sale,
+        partyId: partyId,
+        totalAmount: 1000,
+      );
+      engine.dispatch(
+        document: sale,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: sale.id,
+            productId: productId,
+            quantity: 10,
+            unitPrice: 100,
+          ),
+        ],
+        now: now(),
+      );
+
+      final int t = now();
+      final Account account = Account(
+        id: newId(),
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      );
+      AccountDao(db).insert(account);
+
+      final Document receipt = pendingDoc(
+        type: DocType.receipt,
+        partyId: partyId,
+        accountId: account.id,
+        totalAmount: 1000,
+      );
+      final RuleOutcome outcome = engine.dispatch(
+        document: receipt,
+        // 只核销 600，剩下的 400 无处可去
+        allocations: <Allocation>[
+          Allocation(targetDocId: sale.id, amount: 600),
+        ],
+        now: now(),
+      );
+
+      expect(
+        outcome.status,
+        RuleStatus.rejected,
+        reason: '3b-1：部分核销 ⇒ 账上多出一笔没人能解释的钱',
+      );
+      expect(outcome.reason, contains('一致'), reason: outcome.reason);
+      expect(documents.findById(receipt.id), isNull, reason: '拒绝 ⇒ 零落库');
+      expect(
+        db.raw.select('SELECT COUNT(*) AS c FROM settlements').first['c'],
+        0,
+      );
+    });
+
+    test('收款单 100、核销 100 ⇒ applied（全核销照旧）', () {
+      final String productId = createProduct();
+      final String partyId = createParty();
+      final Document sale = pendingDoc(
+        type: DocType.sale,
+        partyId: partyId,
+        totalAmount: 1000,
+      );
+      engine.dispatch(
+        document: sale,
+        lines: <DocumentLine>[
+          DocumentLine.create(
+            documentId: sale.id,
+            productId: productId,
+            quantity: 10,
+            unitPrice: 100,
+          ),
+        ],
+        now: now(),
+      );
+      final int t = now();
+      final Account account = Account(
+        id: newId(),
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      );
+      AccountDao(db).insert(account);
+      final Document receipt = pendingDoc(
+        type: DocType.receipt,
+        partyId: partyId,
+        accountId: account.id,
+        totalAmount: 1000,
+      );
+      final RuleOutcome outcome = engine.dispatch(
+        document: receipt,
+        allocations: <Allocation>[
+          Allocation(targetDocId: sale.id, amount: 1000),
+        ],
+        now: now(),
+      );
+      expect(outcome.status, RuleStatus.applied, reason: outcome.reason);
+    });
+  });
+
   group('P2 #15 核销第 6 道门槛（目标已作废）', () {
     test('用 receipt 核销 cancelled delivery ⇒ rejected，且零落库', () {
       final String productId = createProduct();

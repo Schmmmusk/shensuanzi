@@ -473,7 +473,7 @@ void main() {
   // ============================================================ v1 边界
 
   test(
-    'documentAction：purchase 收 mark_delivered → rejected（规则不允许），进重试',
+    'documentAction：purchase 收 mark_delivered → rejected（规则不允许），直接死信',
     () async {
       final String docId = newId();
       clientA.queue.enqueue(
@@ -510,16 +510,18 @@ void main() {
 
       expect(report.rejected, 1, reason: 'purchase 不适用「签收」—— 规则不允许');
       final SyncQueueEntry after = clientA.queue.findById(action.id)!;
+      // P2 #7（2026-10-24，§8.5.2）：`action_not_applicable` 属**不可重试**
+      // （客户端 bug / 规则不允许，重试无意义）⇒ 直接死信，不再白烧 11 次。
       expect(
         after.status,
-        SyncQueueStatus.pending,
-        reason: 'rejected 排重试（§六 处置不变）',
+        SyncQueueStatus.failed,
+        reason: 'P2 #7：不可重试码 ⇒ 死信（等人工处理）',
       );
       // #22 裁定（2026-10-09）：协议违反（非送货单不能签收）的回执只给通用中文
       // ⇒ 队列里存的也是它；细节（`purchase 不适用签收`）只在**主机日志**里。
       // 镜像 `tool/selfcheck_client_server.dart` 的同名断言。
       expect(after.lastError, malformedSyncRequestReason);
-      expect(after.retryCount, 1);
+      expect(after.retryCount, greaterThan(SyncClient.maxRetries));
     },
   );
 

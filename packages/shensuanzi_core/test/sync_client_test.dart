@@ -359,6 +359,38 @@ void main() {
       );
     });
 
+    // P2 #9（2026-10-24，业务审查 §3.7）：窗口下界曾用**手机裸时钟**，
+    // 而 `recordClockOffset` / `estimatedServerTime` 生产零调用 ⇒ 手机时钟
+    // 快 > 7 天时，整个窗口落在未来，什么都拉不到（状态永不更新）。
+    test('P2 #9：手机快 10 天 ⇒ 窗口下界按**主机时间**算', () async {
+      const int hostNow = 1700000000000;
+      const Duration tenDays = Duration(days: 10);
+      final SyncClient skewed = SyncClient(
+        db: db,
+        transport: transport,
+        baseUri: Uri.parse('http://127.0.0.1:17890'),
+        token: 'tok-abc',
+        clock: () => hostNow + tenDays.inMilliseconds, // 手机快 10 天
+      );
+      skewed.recordClockOffset(hostNow); // health 回来的 server_time
+      transport.replyJson(pullBody());
+
+      await skewed.pull();
+
+      final int? since = int.tryParse(
+        transport.last.uri.queryParameters['doc_updated_since'] ?? '',
+      );
+      final int expected = hostNow - const Duration(days: 7).inMilliseconds;
+      expect(since, isNotNull, reason: '窗口下界必须存在');
+      expect(
+        (since! - expected).abs() <= 2,
+        isTrue,
+        reason:
+            'P2 #9：窗口按主机时间 —— 裸时钟会让窗口整段落在未来'
+            '（实际 $since / 期望 $expected）',
+      );
+    });
+
     test('docUpdateWindow = null ⇒ 不带窗口参数（旧行为，可退）', () async {
       final SyncClient bare = SyncClient(
         db: db,
@@ -924,12 +956,14 @@ void main() {
       String entityId,
       String status, {
       String? reason,
+      String? reasonCode,
     }) => <String, Object?>{
       'entity_id': entityId,
       'status': status,
       // `?reason` = 空值感知元素：`reason` 为 null 时整个键都不出现
       // （等价于 `if (reason != null) 'reason': reason`，见 lint use_null_aware_elements）
       'reason': ?reason,
+      'reason_code': ?reasonCode,
     };
 
     test('队列为空 → 不发请求', () async {
@@ -993,6 +1027,85 @@ void main() {
       expect(client.queue.findById(b.id)!.status, SyncQueueStatus.sent);
       expect(client.queue.findById(a.id)!.status, SyncQueueStatus.pending);
       expect(client.queue.findById(a.id)!.lastError, '规则拒绝');
+    });
+
+    // P2 #7（业务审查 §3.7 / `sync_protocol.md` §8.5.2）：rejected 要**按
+    // `reason_code` 分类** —— 只有「等一下再推就成功」的码才退避重试；
+    // 其余（客户端 bug / 得先改数据）重试无意义，直接进死信，不白烧 11 次。
+    test('P2 #7：reason_code 不可重试（规则拒绝）⇒ 立即死信，不进退避', () async {
+      final SyncQueueEntry entry = enqueueDoc('d1');
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[
+          receipt(
+            'd1',
+            'rejected',
+            reason: '退货数量超过原单',
+            reasonCode: 'rule_validation_failed',
+          ),
+        ]),
+      );
+
+      final SyncPushReport report = await client.push();
+
+      final SyncQueueEntry after = client.queue.findById(entry.id)!;
+      expect(report.rejected, 1);
+      expect(
+        after.status,
+        SyncQueueStatus.failed,
+        reason: 'P2 #7：不可重试的码 ⇒ 直接死信（等人工处理）',
+      );
+      expect(after.retryCount, greaterThan(SyncClient.maxRetries));
+      expect(after.nextRetryAt, 0, reason: '死信不再自动到期');
+      expect(
+        client.queue.due(now()).where((SyncQueueEntry e) => e.id == entry.id),
+        isEmpty,
+      );
+      expect(after.lastError, '退货数量超过原单');
+    });
+
+    test('P2 #7：reference_missing ⇒ 仍退避重试（等主数据先落地）', () async {
+      final SyncQueueEntry entry = enqueueDoc('d1');
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[
+          receipt(
+            'd1',
+            'rejected',
+            reason: '引用的客户还没同步',
+            reasonCode: 'reference_missing',
+          ),
+        ]),
+      );
+
+      await client.push();
+
+      final SyncQueueEntry after = client.queue.findById(entry.id)!;
+      expect(
+        after.status,
+        SyncQueueStatus.pending,
+        reason: 'P2 #7：唯一「等一下再推就成功」的码',
+      );
+      expect(after.retryCount, 1);
+      expect(after.nextRetryAt, greaterThan(0));
+    });
+
+    test('P2 #7：host_storage ⇒ 仍退避重试（主机忙 / 满，属瞬时）', () async {
+      final SyncQueueEntry entry = enqueueDoc('d1');
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[
+          receipt(
+            'd1',
+            'rejected',
+            reason: '主机存储忙',
+            reasonCode: 'host_storage',
+          ),
+        ]),
+      );
+
+      await client.push();
+
+      final SyncQueueEntry after = client.queue.findById(entry.id)!;
+      expect(after.status, SyncQueueStatus.pending);
+      expect(after.retryCount, 1);
     });
 
     test('rejected → 重试计数 +1、退避 1s、记原因', () async {

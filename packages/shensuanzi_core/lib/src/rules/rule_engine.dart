@@ -5,6 +5,7 @@ import '../dao/ledger_dao.dart';
 import '../dao/settlement_dao.dart';
 import '../db/database.dart';
 import '../db/schema.dart';
+import '../documents/outstanding.dart';
 import '../models/document.dart';
 import '../models/document_line.dart';
 import '../models/money_ledger.dart';
@@ -759,6 +760,20 @@ class RuleEngine {
         detail: '核销总额 $requested 超过收付款单金额 ${doc.totalAmount}',
       );
     }
+    // 3b-1（2026-10-24，业务审查 §3.4 / 用户裁定 ⑥甲）：**金额必须 = 分配合计**。
+    // 从前只拦「大于」⇒ 差额既不在 `settlements` 也不在任何查询里
+    // （`money_ledger` 记全额、往来冲全额、`settlements` 只记部分）——
+    // 账上多出一笔没人能解释的钱，而「预收余额」查询也看不见它。
+    if (requested != doc.totalAmount) {
+      throw RuleRejection(
+        '这张${doc.docType == DocType.payment ? '付款单' : '收款单'}的金额'
+        '（${Money.format(doc.totalAmount)} 元）要和核销掉的合计'
+        '（${Money.format(requested)} 元）一致。'
+        '多出来的钱请单独收一笔，少收的部分请把金额改小。',
+        code: RejectCode.ruleValidationFailed,
+        detail: '收付款单金额 ${doc.totalAmount} ≠ 分配合计 $requested',
+      );
+    }
 
     // 收付款单创建即终态
     final Document settled = doc.copyWithAllowed(
@@ -1198,7 +1213,7 @@ class RuleEngine {
     );
     if (settled < doc.totalAmount && doc.partyId == null) {
       throw StateError(
-        '存在未结清金额（${doc.totalAmount - settled}）时必须有 party_id，'
+        '存在未结清金额（${outstandingCentsOf(docType: doc.docType, status: doc.status, totalAmount: doc.totalAmount, paidAmount: settled, returnedAmount: _docs.returnedAgainst(doc.id))}）时必须有 party_id，'
         '否则欠款无处记录',
       );
     }

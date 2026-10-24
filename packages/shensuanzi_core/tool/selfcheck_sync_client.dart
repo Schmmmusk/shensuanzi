@@ -285,6 +285,22 @@ Future<void> main() async {
           '${client.queue.unsent().length}',
     );
 
+    // P2 #7（2026-10-24，业务审查 §3.7）：rejected 按 reason_code 分类 ——
+    // 不可重试的码直接死信（retry_count 超限、next_retry_at = 0）。
+    check('P2 #7：死信形态（retry_count 超限 + next_retry_at 0）', () {
+      client.queue.markFailed(
+        entry.id,
+        error: '规则拒绝（不可重试）',
+        retryCount: SyncClient.maxRetries + 1,
+        nextRetryAt: 0,
+        dead: true,
+      );
+      final SyncQueueEntry after = client.queue.findById(entry.id)!;
+      return after.status == SyncQueueStatus.failed &&
+          after.retryCount > SyncClient.maxRetries &&
+          after.nextRetryAt == 0;
+    }());
+
     client.queue.markFailed(
       entry.id,
       error: '规则拒绝',
@@ -525,6 +541,35 @@ Future<void> main() async {
       'cleared=${normal.confirmedQueueEntries}',
     );
     db3.close();
+
+    // P2 #9（2026-10-24，业务审查 §3.7）：窗口下界按**主机估算时间**算。
+    section('pull · 窗口下界用主机时间（P2 #9）');
+    {
+      const int hostNow = 1700000000000;
+      final Db db9 = Db.openInMemory(foreignKeys: false);
+      final FakeTransport t9 = FakeTransport();
+      final SyncClient c9 = SyncClient(
+        db: db9,
+        transport: t9,
+        baseUri: Uri.parse('http://127.0.0.1:17890'),
+        token: 'tok-abc',
+        // 手机快 10 天
+        clock: () => hostNow + const Duration(days: 10).inMilliseconds,
+      );
+      c9.recordClockOffset(hostNow); // health 的 server_time
+      t9.replyJson(pullBody(cursors: cursors));
+      await c9.pull();
+      final int? since = int.tryParse(
+        t9.last.uri.queryParameters['doc_updated_since'] ?? '',
+      );
+      final int expected = hostNow - const Duration(days: 7).inMilliseconds;
+      check(
+        'P2 #9：手机快 10 天 ⇒ 窗口下界仍 ≈ 主机时间 − 7 天',
+        since != null && (since - expected).abs() <= 2,
+        'since=$since expected=$expected',
+      );
+      db9.close();
+    }
 
     section('pull · 幂等与覆盖');
     final Map<String, Object?> samePage = pullBody(
