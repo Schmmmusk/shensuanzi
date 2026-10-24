@@ -169,11 +169,10 @@ class PurchaseService {
       throw StateError('采购单 ${applied.docNo} 已保存但读不回来，请检查数据库');
     }
 
-    // 累计欠款：`partyBalances` 负值 = 我欠对方。散采（无供应商）恒为 0。
+    // 累计欠款：负值 = 我欠对方。散采（无供应商）恒为 0。
+    // 5b：**点查**（从前为这一句扫全表 `party_ledger`）。
     final String? partyId = stored.partyId;
-    final int balance = partyId == null
-        ? 0
-        : (_queries.partyBalances()[partyId] ?? 0);
+    final int balance = partyId == null ? 0 : _queries.partyBalanceOf(partyId);
 
     return PurchaseSaved(
       docNo: stored.docNo,

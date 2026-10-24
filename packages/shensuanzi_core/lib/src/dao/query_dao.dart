@@ -80,6 +80,24 @@ class QueryDao {
     'GROUP BY a.id',
   );
 
+  /// **单个往来方的余额**（正 = 对方欠我，负 = 我欠对方）。
+  ///
+  /// 与 [partyBalances] **同一口径**（`SUM(amount)`，不含 `initial_balance`），
+  /// 只是不再为了一句提示扫全表。
+  ///
+  /// 5b（2026-10-24，§CV·一百）：三个 service 在**每单保存末尾**为了 SnackBar 里
+  /// 那句「对方现在欠多少」调 [partyBalances] —— 那是**每单固定成本**（26 万行
+  /// `party_ledger` 全表聚合），随经营年限线性增长，与这单毫无关系。
+  /// 改点查后走 `idx_party_covering` 前缀，**结果完全一样**。
+  int partyBalanceOf(String partyId) {
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT COALESCE(SUM(amount), 0) AS v FROM ${Schema.partyLedger} '
+      'WHERE party_id = ?',
+      <Object?>[partyId],
+    );
+    return rows.isEmpty ? 0 : rows.first['v']! as int;
+  }
+
   /// 往来余额。正 = 对方欠我（应收），负 = 我欠对方（应付）。
   Map<String, int> partyBalances() => _keyedSum(
     'SELECT party_id AS k, COALESCE(SUM(amount), 0) AS v '

@@ -170,11 +170,10 @@ class SaleService {
       throw StateError('销售单 ${applied.docNo} 已保存但读不回来，请检查数据库');
     }
 
-    // 客户累计欠款：`partyBalances` 正值 = 对方欠我。散客（无客户）恒为 0。
+    // 客户累计欠款：正值 = 对方欠我。散客（无客户）恒为 0。
+    // 5b：**点查**（从前为这一句扫全表 `party_ledger` —— 每单固定成本）。
     final String? partyId = stored.partyId;
-    final int balance = partyId == null
-        ? 0
-        : (_queries.partyBalances()[partyId] ?? 0);
+    final int balance = partyId == null ? 0 : _queries.partyBalanceOf(partyId);
 
     return SaleSaved(
       docNo: stored.docNo,

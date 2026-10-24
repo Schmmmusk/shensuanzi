@@ -26,6 +26,7 @@
 library;
 
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -220,7 +221,12 @@ String backupStatusLine({
   required bool manual,
   required DateTime now,
   String? lastFailure,
+  bool backingUp = false,
 }) {
+  // 5c（2026-10-24，§CV·一百）：**正在备份**要说话。
+  // 5a 之前文件拷贝在主线程，界面是冻住的、提示根本画不出来；搬进 isolate 之后
+  // 界面可以继续用，这句提示才真的有意义（机械盘大库要几秒）。
+  if (backingUp) return '正在备份…（库大的话要几秒，界面可以继续用）';
   if (lastFailure != null) return '上次备份没成功：$lastFailure';
   if (lastBackup == null) return '上次备份：从未';
   return '上次备份：${formatBackupTime(lastBackup, now)}'
@@ -271,6 +277,17 @@ String backupOutcomeMessage(BackupOutcome outcome) {
 
 /// 备份执行服务。判断都在这里；UI 只调 [backupNow] / [autoBackup] /
 /// [lastBackupTime] / [status]。
+/// **顶层函数**：在 isolate 里做纯文件拷贝。
+///
+/// ⚠️ `Isolate.run` 的闭包**不能捕获不可发送的对象**（`Db` / `Database` /
+/// `Completer` 都不行 —— 2026-10 真机炸过「object is unsendable: _AsyncCompleter」，
+/// 见 `app.dart` 的 `_runMigrationInIsolate`）。所以这里**只接两个字符串**，
+/// 数据库相关的工作（`wal_checkpoint`）留在主线程做。
+bool _copyFileInIsolate(({String source, String target}) paths) {
+  File(paths.source).copySync(paths.target);
+  return true;
+}
+
 class BackupService {
   BackupService({
     required this.dataDirectory,
@@ -387,7 +404,17 @@ class BackupService {
       if (!source.existsSync()) {
         return BackupOutcome.failure('找不到数据文件（$source），无法备份');
       }
-      source.copySync(tmp);
+      // 5a（2026-10-24，§CV·一百）：**文件拷贝搬进 isolate**。
+      //
+      // 机械盘上 100 MB 库 ≈ 1–3 s（SSD 实测 42 ms），同步拷贝会把主线程
+      // 冻住 —— 期间界面完全不动，用户会连点或强杀。
+      //
+      // ⚠️ `wal_checkpoint(TRUNCATE)` **必须留在主线程**（上一行）：它要数据库
+      // 连接，而连接不能跨 isolate。语义仍是「同步拷贝」—— 拷出来的仍是一个
+      // 一致的库文件（`Agents.md` §4.5 的承诺没变），只是不再占 UI 线程。
+      await Isolate.run(
+        () => _copyFileInIsolate((source: source.path, target: tmp)),
+      );
 
       // AE-1 加固：打开**副本**做完整性校验 —— 「看起来成功的备份」变成
       // 「确实能用的备份」；失败删残件，不留假备份

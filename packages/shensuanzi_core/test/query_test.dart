@@ -251,6 +251,39 @@ void main() {
       expect(balances[supplier], -1000, reason: '应付为负');
       expect(balances[customer], 2000, reason: '应收为正');
     });
+
+    // 5b（2026-10-24，§CV·一百）：三个 service 每单保存末尾只为一句提示调
+    // `partyBalances()` 扫全表 —— 改成 `partyBalanceOf()` 点查。
+    // 这条用例钉住「点查 == 全表取那一个」：**逐个往来方**比对，含「一条流水都没有」的。
+    test('5b：partyBalanceOf 与 partyBalances 逐个相等（含无流水的往来方）', () {
+      final String p = createProduct();
+      final String supplier = createParty();
+      final String customer = createParty();
+      final String idle = createParty(); // 一条流水都没有
+
+      seedPurchase(p, supplier, 10, 100);
+      final Document sale = doc(
+        type: DocType.sale,
+        partyId: customer,
+        totalAmount: 2000,
+      );
+      run(sale, oneLine(sale.id, p, 2, 1000));
+
+      final Map<String, int> all = query.partyBalances();
+      for (final String id in <String>[supplier, customer, idle]) {
+        expect(
+          query.partyBalanceOf(id),
+          all[id] ?? 0,
+          reason: '5b：点查必须与全表口径一致（$id）',
+        );
+      }
+      expect(query.partyBalanceOf(idle), 0, reason: '没有流水 ⇒ 0，不是报错');
+      expect(
+        query.partyBalanceOf('不存在的-id'),
+        0,
+        reason: '5b：未知 id 也返回 0（调用方不必先判存在）',
+      );
+    });
   });
 
   group('往来流水视图（§AA 六 / AA-6：JOIN documents 人可读版）', () {

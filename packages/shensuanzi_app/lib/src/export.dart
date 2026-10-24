@@ -12,13 +12,19 @@
 /// - **坑 1 / 坑 2 / 遗漏 1**：编码与转义全在 [csvBytes]（`csv.dart`）
 /// - **遗漏 5**：结果文案（成功带**完整路径**）
 ///
-/// ⚠️ **文件读写一律用同步 API**（`writeAsBytesSync`）：与 `BackupService`
-/// 同一个理由 —— 数据量是几百 KB 级，而**异步 IO 在 widget 测试里不会自己
-/// 完成**（`testWidgets` 的 fake async 不推真实事件循环），会让测试必须套
-/// `runAsync`，测出来的东西更远。
+/// ⚠️ **写盘在 isolate 里做**（5a，2026-10-24，§CV·一百）。
+///
+/// 旧规则是「文件读写一律用同步 API」，理由是**测试方便**（`testWidgets` 的
+/// fake async 不推真实事件循环，异步 IO 不会自己完成）。但那条理由现在不成立：
+/// 低配机 + 杀毒软件扫描下 2 万行 CSV 要 **50–300 ms**，而「导出中…」这个提示
+/// 在同步阻塞期间**根本画不出来** —— 反馈是假的。
+///
+/// 现在：拼 CSV 与写盘一起进 `Isolate.run`（只捕获路径 + 行数据，都是可发送的），
+/// 调用方本来就在 `await` 结果，所以 `export_test` 不用改。
 library;
 
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -26,6 +32,16 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'csv.dart';
 import 'format.dart';
 import 'fs.dart';
+
+/// **顶层函数**：在 isolate 里拼 CSV 并写盘（只捕获可发送的值）。
+///
+/// 拼字节也一起搬过来 —— 20 万行时 `csvBytes` 本身就有几十毫秒，
+/// 留在主线程等于把「导出中…」的绘制挤掉。
+void _writeCsvInIsolate(
+  ({String path, List<String> header, List<List<String>> rows}) job,
+) {
+  File(job.path).writeAsBytesSync(csvBytes(job.header, job.rows), flush: true);
+}
 
 /// 一张待导出的表：**列名 + 行**（映射规则在 `export_tables.dart`，纯 Dart 可测）。
 class ExportTable {
@@ -290,9 +306,15 @@ class ExportService implements ExportSink {
 
     final String path = p.join(exportDirectory, fileName);
     try {
-      File(
-        path,
-      ).writeAsBytesSync(csvBytes(table.header, table.rows), flush: true);
+      // 5a：写盘（含拼字节）进 isolate —— 低配 + 杀软扫描下 50–300 ms，
+      // 同步写会让「导出中…」画不出来。见文件头的规则说明。
+      await Isolate.run(
+        () => _writeCsvInIsolate((
+          path: path,
+          header: table.header,
+          rows: table.rows,
+        )),
+      );
       return ExportSuccess(
         path: path,
         rowCount: table.rows.length,

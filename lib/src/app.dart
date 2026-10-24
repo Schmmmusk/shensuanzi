@@ -55,7 +55,18 @@ class ShensuanziApp extends StatefulWidget {
     this.defaultDataDirectory,
     this.shellKind,
     this.dataRoot,
+    this.backup,
   });
+
+  /// **备份服务的注入缝**（5a，2026-10-24，§CV·一百）。
+  ///
+  /// `null` = 生产行为（按解析出来的数据目录 / 备份目录现造一个）。
+  ///
+  /// 为什么需要它：备份的文件拷贝已搬进 `Isolate.run`，而 `testWidgets` 的
+  /// fake async **不推真实事件循环** ⇒ widget 测试里「等真实备份完成」会挂。
+  /// 所以 UI 层只验「**调用了备份服务、参数对**」，真实的拷贝 / 校验 / 轮转
+  /// 留在纯 Dart 的 `backup_test.dart`（34 条）里测。
+  final BackupService? backup;
 
   /// 选文件夹。**启动流程的两个系统交互之一** —— 它会真弹系统框，
   /// 不注入的话 widget 测试直接挂死（`docs/reply_review.md` §V）。
@@ -220,6 +231,14 @@ class _ShensuanziAppState extends State<ShensuanziApp>
 
   /// 备份服务（库打开成功才有；自动与手动共用它，于是共用单飞锁）
   BackupService? _backup;
+
+  /// 5c：**正在备份**（超过 300 ms 才置真 —— 不然每次启动都闪一下）。
+  ///
+  /// 5a 把文件拷贝搬进 isolate 之后界面不再冻结，这条提示才真的能画出来。
+  bool _backingUp = false;
+
+  /// 300 ms 后才把 [_backingUp] 置真的定时器（备份很快时不留痕迹）
+  Timer? _backupHintTimer;
 
   /// 主机同步服务（§AH · AH-A）。**库打开成功才有** —— 它要拿 `Db` 跑
   /// `SyncServer`，而配对文件 `host.json` 放数据目录。
@@ -810,16 +829,19 @@ class _ShensuanziAppState extends State<ShensuanziApp>
           _log.write('刷新标记文件失败（$refreshError）—— 数据可正常使用，下次启动会再试');
         }
       }
-      final BackupService backup = BackupService(
-        dataDirectory: location.directory,
-        // 2026-10-22：用户可指定备份位置（默认仍 = 数据目录的兄弟目录）
-        backupDirectory: _config.backupDirectory ?? location.backupDirectory,
-        schemaVersion: schemaVersion,
-        // #43：备份失败的原始异常进日志（界面只显示分类文案 —— 与
-        // ExportService.onFailure 同款）
-        onFailure: (Object error, StackTrace stack) =>
-            _log.crash(error, stack, label: '备份失败'),
-      );
+      final BackupService backup =
+          widget.backup ??
+          BackupService(
+            dataDirectory: location.directory,
+            // 2026-10-22：用户可指定备份位置（默认仍 = 数据目录的兄弟目录）
+            backupDirectory:
+                _config.backupDirectory ?? location.backupDirectory,
+            schemaVersion: schemaVersion,
+            // #43：备份失败的原始异常进日志（界面只显示分类文案 —— 与
+            // ExportService.onFailure 同款）
+            onFailure: (Object error, StackTrace stack) =>
+                _log.crash(error, stack, label: '备份失败'),
+          );
       final ExportService exports = ExportService(
         exportDirectory: location.exportDirectory,
         // #35（2026-10-14）：写盘失败的**原始异常**进日志 —— 界面只显示
@@ -1351,9 +1373,12 @@ class _ShensuanziAppState extends State<ShensuanziApp>
 
   /// §AE-3：每天首次启动自动备份一次。
   ///
-  /// ⚠️ 先让出一次事件循环再动库：备份是**同步**文件拷贝
-  /// （`File.copySync`，几 MB 级别），别卡在「启动那一下」里 ——
-  /// 用户先看到界面，备份在后面很快跑完。
+  /// ⚠️ 先让出一次事件循环再动库：备份要读库、写文件，别卡在「启动那一下」里 ——
+  /// 用户先看到界面，备份在后面跑。
+  ///
+  /// 5a（2026-10-24，§CV·一百）：**文件拷贝已搬进 `Isolate.run`**
+  /// （机械盘 100 MB ≈ 1–3 s，同步拷会把界面冻住）；`wal_checkpoint` 仍在
+  /// 主线程（它要数据库连接，而连接不能跨 isolate）。
   ///
   /// **失败完全静默**（不弹窗、不阻塞）；失败原因留给 [_backupError]，
   /// 由概览橙卡与设置页呈现（§AE 遗漏 2：静默不等于永远看不见）。
@@ -1363,12 +1388,22 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     final BackupService? backup = _backup;
     final Db? db = _db;
     if (!mounted || backup == null || db == null) return;
-    final BackupOutcome outcome = await backup.autoBackup(
-      db: db,
-      hasContent: _hasDocuments,
-    );
-    _noteBackupOutcome(outcome);
-    _refreshBackupStatus();
+    // 5c：**超过 300 ms 还没跑完才提示** —— 小库瞬间完成时不该闪一下。
+    _backupHintTimer?.cancel();
+    _backupHintTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _backingUp = true);
+    });
+    try {
+      final BackupOutcome outcome = await backup.autoBackup(
+        db: db,
+        hasContent: _hasDocuments,
+      );
+      _noteBackupOutcome(outcome);
+      _refreshBackupStatus();
+    } finally {
+      _backupHintTimer?.cancel();
+      if (mounted && _backingUp) setState(() => _backingUp = false);
+    }
   }
 
   /// **「导出本机数据文件」**（原「导出备份到手机文件」；2026-10-07 按
@@ -1815,6 +1850,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
               manual: _lastBackup?.manual ?? false,
               now: now,
               lastFailure: _backupError,
+              // 5c：正在备份时先说「正在备份」，不说「上次备份是昨天」
+              backingUp: _backingUp,
             ),
       backupNeedsAttention:
           _backup != null &&

@@ -63,12 +63,15 @@ void main() {
     Future<String?> Function()? pickDirectory,
     AppConfigStore? configStore,
     String? defaultDataDirectory,
+    BackupService? backup,
   }) => ShensuanziApp(
     pickDirectory: pickDirectory ?? () async => null,
     configStore: configStore ?? store,
     // §BR·补 2 裁定 方案 B：只注入「机器给的默认位置」**一个值**
     //（`null` = 不注入 ⇒ 走真实机器的默认值）
     defaultDataDirectory: defaultDataDirectory,
+    // 5a：备份的文件拷贝进了 isolate，fake async 下等不到 ⇒ 由用例注入假服务
+    backup: backup,
   );
 
   // ---------------------------------------------------------------- 查找器
@@ -521,29 +524,35 @@ void main() {
     );
   });
 
-  testWidgets('场景 8：有单据 + 目录可写 → 启动即自动备份，橙卡不出现（§AE-3）', (
+  // 5a（2026-10-24，§CV·一百）：**这条用例改了断言口径**。
+  //
+  // 从前它等真实备份文件出现。现在备份的文件拷贝在 `Isolate.run` 里，而
+  // `testWidgets` 的 fake async **不推真实事件循环** ⇒ 真实备份永远等不到。
+  //
+  // 按审查意见：UI 层只验「**调用了备份服务、参数对**」，真实的拷贝 / 完整性
+  // 校验 / 文件名规则留在纯 Dart 的 `backup_test.dart`（34 条，已覆盖
+  // `shensuanzi-schema1-20260928-1530.db` 这种命名往返）。
+  testWidgets('场景 8：有单据 → 启动即调自动备份（hasContent=true），橙卡不出现', (
     WidgetTester tester,
   ) async {
     final String dataDir = seedDataDir('data8');
     store.save(AppConfig(dataDirectory: dataDir));
+    final _RecordingBackup fake = _RecordingBackup(
+      dataDirectory: dataDir,
+      backupDirectory: backupDirPath(),
+      schemaVersion: Schema.version,
+    );
 
-    await tester.pumpWidget(app());
+    await tester.pumpWidget(app(backup: fake));
     await tester.pumpAndSettle();
 
-    final Directory backupDir = Directory(backupDirPath());
-    expect(backupDir.existsSync(), isTrue, reason: '备份目录由服务自己建');
-    final List<File> packs = backupDir
-        .listSync()
-        .whereType<File>()
-        .where((File f) => f.path.endsWith('.db'))
-        .toList();
-    expect(packs, hasLength(1), reason: '启动即生成一份，且只有一份');
+    expect(fake.autoCalls, 1, reason: '启动即自动备份一次（且只一次）');
     expect(
-      p.basename(packs.single.path),
-      startsWith('shensuanzi-schema${Schema.version}-'),
-      reason: 'AE-4：文件名带 schema 版本（跟随 Schema.version，升版不再红）',
+      fake.lastHasContent,
+      isTrue,
+      reason: '有单据 ⇒ hasContent=true；空库才该跳过（场景 6 管那一半）',
     );
-    expect(backupCard, findsNothing, reason: '刚备份成功 → 不该再提醒');
+    expect(backupCard, findsNothing, reason: '备份成功 → 不该再提醒');
   });
 
   // ---------------------------------------------------------------- 回归
@@ -576,4 +585,42 @@ void main() {
     expect(dialogTitle, findsOneWidget);
     expect(find.text('开始使用'), findsOneWidget);
   });
+}
+
+/// **假备份服务**（5a）：只记录调用，不碰文件系统。
+///
+/// 为什么需要它：真实备份的文件拷贝已进 `Isolate.run`，而 `testWidgets` 的
+/// fake async 不推真实事件循环 ⇒ 等不到。UI 测试只该验「调了、参数对」，
+/// 真实行为在 `backup_test.dart`（纯 Dart）里测。
+class _RecordingBackup extends BackupService {
+  _RecordingBackup({
+    required super.dataDirectory,
+    required super.backupDirectory,
+    required super.schemaVersion,
+  });
+
+  int autoCalls = 0;
+  bool? lastHasContent;
+
+  @override
+  Future<BackupOutcome> autoBackup({
+    required Db db,
+    required bool hasContent,
+  }) async {
+    autoCalls++;
+    lastHasContent = hasContent;
+    // ⚠️ 概览橙卡读的是**目录里的文件**（`latestBackupFile`），不是返回值 ——
+    // 所以假服务要造出那个可观测结果：一份命名合法的备份文件。
+    // 不做真实拷贝（那在 Isolate.run 里，fake async 等不到），
+    // 命名规则直接用生产类 `BackupFileName`，**不复制逻辑**。
+    Directory(backupDirectory).createSync(recursive: true);
+    final BackupFileName name = BackupFileName(
+      manual: false,
+      schemaVersion: schemaVersion,
+      time: DateTime(2026, 10, 24, 9, 5),
+    );
+    final File file = File(p.join(backupDirectory, name.fileName));
+    if (!file.existsSync()) file.writeAsStringSync('（假备份，只验 UI 口径）');
+    return BackupOutcome.ok(file.path);
+  }
 }

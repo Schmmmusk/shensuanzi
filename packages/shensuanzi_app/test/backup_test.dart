@@ -230,6 +230,29 @@ void main() {
       );
     });
 
+    // 5c（2026-10-24，§CV·一百）：正在备份时**先说正在备份**。
+    // 5a 之前拷贝在主线程、界面冻结，这句根本画不出来；搬进 isolate 之后才有意义。
+    test('5c：backingUp ⇒ 说「正在备份」，不传则行为不变', () {
+      expect(
+        backupStatusLine(
+          lastBackup: DateTime(2026, 9, 28, 9, 5),
+          manual: false,
+          now: now,
+          backingUp: true,
+        ),
+        contains('正在备份'),
+      );
+      expect(
+        backupStatusLine(
+          lastBackup: DateTime(2026, 9, 28, 9, 5),
+          manual: false,
+          now: now,
+        ),
+        startsWith('上次备份：'),
+        reason: '默认值不变（不传 backingUp 与从前一致）',
+      );
+    });
+
     test('backupReminderText 与 needsBackupAttention 同源', () {
       expect(
         backupReminderText(lastBackup: null, now: now, hasDocuments: false),

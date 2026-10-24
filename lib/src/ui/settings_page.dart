@@ -24,6 +24,8 @@ library;
 
 import 'dart:io';
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -150,6 +152,19 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 店名超长的即时提示（SC-2：≤ 20 字符）
   String? _shopNameError;
 
+  /// 店名防抖（5b，2026-10-24，§CV·一百）。
+  ///
+  /// 现状是**每敲一键 2 次同步写盘 + 整个 AppShell 重建**（`_apply` 里的
+  /// `configStore.save` + 宿主 `onChanged` 里又一次 save），机械盘上打字一顿一顿。
+  /// 改成「停手 300 ms 或失焦时落盘」—— 用户感知不到延迟（店名显示在概览页），
+  /// 而「改完就去点别处」由 [FocusNode] 的失焦立即落盘兜住。
+  Timer? _shopNameTimer;
+
+  /// 待落盘的店名（`null` = 没有待落盘值）
+  String? _pendingShopName;
+
+  final FocusNode _shopNameFocus = FocusNode();
+
   /// 「立即备份」进行中（遗漏 11：禁用 + 文案，先给反馈再谈并发）
   bool _backupBusy = false;
 
@@ -157,9 +172,26 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _exporting = false;
 
   @override
+  void initState() {
+    super.initState();
+    _shopNameFocus.addListener(_onShopNameFocus);
+  }
+
+  @override
   void dispose() {
+    // 用户直接关窗口：把待落盘值写掉，别丢最后几个字
+    // （`_flushShopName` 内部会 cancel 定时器）
+    _flushShopName();
+    _shopNameFocus.removeListener(_onShopNameFocus);
+    _shopNameFocus.dispose();
     _shopName.dispose();
     super.dispose();
+  }
+
+  /// 失焦 ⇒ **立即落盘**（不等 300 ms）：用户「改完店名直接去点别处」是常态，
+  /// 等防抖会让最后几个字符丢在内存里。
+  void _onShopNameFocus() {
+    if (!_shopNameFocus.hasFocus) _flushShopName();
   }
 
   /// 手动「立即备份」。文案（含完整路径）来自领域层，本页不造句。
@@ -236,18 +268,34 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// 店名变化：只更新提示 + 起防抖，**不立即落盘**（见 [_shopNameTimer]）。
   void _updateShopName(String text) {
     final String trimmed = text.trim();
     if (trimmed.length > 20) {
+      // 超长：不落盘（SC-2），也不起防抖 —— 否则 300 ms 后会把**上一次**的值
+      // 再写一遍，白写一次盘
       setState(() => _shopNameError = '店名最长 20 个字，多出的部分不会被保存');
       return;
     }
     setState(() => _shopNameError = null);
+    _pendingShopName = trimmed;
+    _shopNameTimer?.cancel();
+    _shopNameTimer = Timer(const Duration(milliseconds: 300), _flushShopName);
+  }
+
+  /// 把待落盘的店名写进配置（防抖到期 / 失焦 / 页面销毁前调用）。
+  void _flushShopName() {
+    _shopNameTimer?.cancel();
+    final String? pending = _pendingShopName;
+    _pendingShopName = null;
+    if (pending == null) return;
+    // 没变就不写盘（重复触发是常态：失焦与防抖可能前后脚到）
+    if (pending == (_current.shopName ?? '')) return;
     _apply(
       AppConfig(
         dataDirectory: _current.dataDirectory,
         uiScale: _current.uiScale,
-        shopName: trimmed.isEmpty ? null : trimmed,
+        shopName: pending.isEmpty ? null : pending,
       ),
     );
   }
@@ -344,6 +392,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   TextField(
                     key: const Key('setting-shop-name'),
                     controller: _shopName,
+                    // 5b：失焦立即落盘（见 `_onShopNameFocus`）
+                    focusNode: _shopNameFocus,
                     // 刻意**不设 maxLength**：输入阶段截断会让 onChanged 永远
                     // 收不到超长文本，「超长提示」成死代码 —— 放手让用户输入，
                     // 超长时显示提示且不落盘（SC-2）

@@ -191,7 +191,8 @@ class DeliveryService {
     }
 
     // 客户**必选**（校验已保证）⇒ `partyId` 非空
-    final int balance = _queries.partyBalances()[stored.partyId!] ?? 0;
+    // 5b：**点查**（从前为这一句扫全表 `party_ledger`）。
+    final int balance = _queries.partyBalanceOf(stored.partyId!);
 
     return DeliverySaved(
       docNo: stored.docNo,
