@@ -722,11 +722,18 @@ GET    /api/party_ledger?party_id=&since=
 ⇒ 客户端**不需要**在本地合并同一实体的多次操作，**按顺序 push 即可**；
 主机收到**同一实体的 create / update** 以任何顺序都收敛到同一状态（`data_model.md §4.1`）。
 
-> ⚠️ **收窄（2026-10-24，业务审查 C-1）**：上面的「收敛」**只对 create↔update 成立**。
-> **update↔update 不保证收敛**：两次 update 乱序到达时，`base_version` 落后的一方拿到
-> `conflict`，客户端用 `server_state` 覆盖本地 ⇒ **后一次修改被静默回退**
-> （手机连改两次售价、中间网络抖动即可复现）。这是**已知缺口**，修复方案待裁定
-> （业务审查 §3.7 C-1，第 2 批）；在那之前**不要**把本契约读成「任意顺序都收敛」。
+> ✅ **已修（2026-10-24，业务审查 §3.7 C-1 / 用户裁定 甲，§CV·九十四）**：
+> **update↔update 也收敛 —— 收敛到「版本更高」的那一次编辑。**
+>
+> 关键：**update 触发的 upsert 要接手 `base_version`**（建档写
+> `sync_version = base + 1`；`create` 没有 base ⇒ 仍从 0 起）。
+> 于是两次乱序 update 到达时：
+> - 后到的**旧**编辑（`base` 更低）⇒ 版本不等 ⇒ `conflict`，客户端用
+>   `server_state`（**新值**）覆盖本地 ⇒ 收敛到新值；
+> - 顺序正常时版本连续匹配 ⇒ 新编辑直接生效。
+>
+> ⚠️ 实现细节见 `sync_server.dart` 的 `_insertMasterData` —— **不能**写成
+> `(base_version ?? 0) + 1`，那会把 `create` 抬成 `v1`（既定契约是 `v0`）。
 
 #### `rejected` 与 `conflict` 的分类原则（R-3.4）
 

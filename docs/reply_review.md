@@ -13936,3 +13936,54 @@ C-1 主数据 update↔update 收敛（协议措辞已在第 1 批收窄，实�
 甲「行不存在时把 `base_version == 0` 视为无版本要求、建档后置 `sync_version = 1`」；
 乙「同 id 的 update 做版本单调判断（后到不覆盖更高版本）」。二者可叠加。
 其余第 2 批：P2 #7（reason_code 分类）/ #8（401 集中处置）/ #9（手表偏移）/ #11（窗口补明细）。
+
+## §CV·九十四 **C-1 主数据 update↔update 收敛落地**（2026-10-24，用户裁定「甲」+ 一处公式修正）
+
+> 提案：`docs/proposals/C-1-主数据update乱序收敛-方案.md`（已随裁定更新状态）。
+> 用户裁定：**甲**；并**亲自抓出提案公式的一个真 bug**（见下）。
+
+### 一、修正（用户指出，落地以此为准）
+
+提案写的 `(op.baseVersion ?? 0) + 1` 对 `create` 会得 **1**，与「create 仍 `v0`」自相矛盾
+（既有契约：新建主数据 `sync_version = 0`）。落地改为：
+
+```dart
+'sync_version': op.baseVersion == null ? 0 : op.baseVersion! + 1,
+```
+
+⇒ `create`（无 `base_version`）仍 `v0`；`update` 触发的 upsert 接手 base（`v = base + 1`）。
+
+### 二、根因与效果
+
+`_insertMasterData` 从前恒写 `sync_version = 0`，**丢掉 `base_version`** ⇒
+两条乱序时间线**都让旧值赢**：
+
+| 顺序 | 修复前 | 修复后 |
+|---|---|---|
+| U2(base 1) 先到 → U1(base 0) 后到 | U1 `v0 == base0` 通过 ⇒ **旧值覆盖** | U2 建档 v2；U1 `2 != 0` ⇒ conflict，客户端取 `server_state`（新值）⇒ 收敛到新值 |
+| U1(base 0) 先到 → U2(base 1) 后到 | U2 `v0 != base1` ⇒ conflict ⇒ **新值被丢** | U1 建档 v1；U2 `1 == 1` 通过 ⇒ 新值生效 |
+
+### 三、改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `packages/shensuanzi_host/lib/src/sync_server.dart` | `_insertMasterData` 的版本写法（含「不能写 `(?? 0) + 1`」的注释） |
+| `packages/shensuanzi_host/test/sync_server_test.dart` | +4 条（分支 A / 分支 B / 两种顺序终态相同 / create 仍 v0）；另**改**一条旧契约断言「upsert 版本从 0 起」→ `v1` |
+| `packages/shensuanzi_host/tool/selfcheck_sync.dart` | 镜像同场景（+4 项，189 项） |
+| `docs/sync_protocol.md` §8.1 | 「不保证收敛」的收窄段 → 「**update↔update 也收敛，收敛到版本更高者**」+ upsert 接手 base 的说明 |
+
+### 四、护栏与反向验证
+
+- 先红：4 条里 3 条在修复前红（分支 A 期望 v2 得 0、分支 B 期望 v1 得 0、旧 upsert 断言期望 1 得 0）。
+- **反向验证**：把 `'sync_version': …` 改回 `0` ⇒ **3 条红**；恢复 ⇒ 4 条绿。
+- 「两种顺序终态相同」用序列驱动（`(base, price)` 列表）跑两遍，都断言 1150。
+
+### 五、门禁（全绿）
+
+根 **280** · core **659** · host **157**（+4）· app **338** · analyze **0** · format **0** ·
+core 14 自检 + host 5 自检 + app 5 自检 + typecheck 全过。
+
+### 六、残余（不修，提案 §八已留档）
+
+旧编辑被新编辑覆盖时，客户端仍提示「已在别处被修改」—— 字面不准但处置正确；
+改文案会削弱**真正的并发编辑**提示 ⇒ 保留。用户复核同意。

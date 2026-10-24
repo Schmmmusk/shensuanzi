@@ -591,13 +591,21 @@ class SyncServer {
         'code': _products.resolvePreferredCode(rawCode as String?),
       };
     }
-    // created_at / updated_at / sync_version 由主机写（纪律 10 + §七）
+    // created_at / updated_at / sync_version 由主机写（纪律 10 + §七）。
+    //
+    // C-1（2026-10-24，业务审查 §3.7 / 用户裁定 甲）：**update 触发的 upsert
+    // 要接手 `base_version`** —— `sync_version = base + 1`。
+    // 从前恒写 0：两次 update 乱序时，后到的**旧** update 满足 `v0 == base0`
+    // ⇒ 直接覆盖新值（两个方向都会让旧值赢）。
+    // `create` 没有 `base_version` ⇒ 仍从 0 起（既定契约不变）。
+    // ⚠️ 写成 `op.baseVersion == null ? 0 : op.baseVersion! + 1`，
+    // **不能**写 `(op.baseVersion ?? 0) + 1` —— 那会把 create 抬成 v1。
     _insertRow(op.entity, <String, Object?>{
       ...effective,
       'id': op.entityId,
       'created_at': now,
       'updated_at': now,
-      'sync_version': 0,
+      'sync_version': op.baseVersion == null ? 0 : op.baseVersion! + 1,
     });
     return SyncResponse(entityId: op.entityId, status: SyncStatus.applied);
   }

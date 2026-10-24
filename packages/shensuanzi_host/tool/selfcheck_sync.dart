@@ -862,15 +862,67 @@ void main() {
       'upsert 用 payload 的 id 建档',
       ProductDao(db).findById(upsertId)!.name == '离线建的商品',
     );
+    // C-1（2026-10-24，业务审查 §3.7 / 用户裁定 甲）：update 触发的 upsert
+    // **接手 base_version** ⇒ base 0 落 v1（从前恒写 0，后到的旧 update 能覆盖新值）。
     check(
-      'upsert 建档版本从 0 起（与 create 同）',
-      ProductDao(db).findById(upsertId)!.syncVersion == 0,
+      'C-1：upsert 建档版本 = base + 1',
+      ProductDao(db).findById(upsertId)!.syncVersion == 1,
+      '${ProductDao(db).findById(upsertId)!.syncVersion}',
     );
     check(
       '编码由主机生成（update payload 不带 code）',
       ProductDao(db).findById(upsertId)!.code.isNotEmpty,
       ProductDao(db).findById(upsertId)!.code,
     );
+
+    // C-1 两条时间线：都收敛到**新值**。
+    {
+      int runOrder(List<MapEntry<int, int>> sequence) {
+        final String id = newId();
+        for (final MapEntry<int, int> step in sequence) {
+          server.handle(
+            opMaster(
+              'products',
+              id,
+              SyncOpType.updateMasterData,
+              baseVersion: step.key,
+              payload: {'name': 'C-1 商品', 'sell_price': step.value},
+            ),
+            now: now(),
+          );
+        }
+        return ProductDao(db).findById(id)!.sellPrice;
+      }
+
+      final int newerFirst = runOrder(<MapEntry<int, int>>[
+        const MapEntry<int, int>(1, 1150),
+        const MapEntry<int, int>(0, 1200),
+      ]);
+      final int olderFirst = runOrder(<MapEntry<int, int>>[
+        const MapEntry<int, int>(0, 1200),
+        const MapEntry<int, int>(1, 1150),
+      ]);
+      check('C-1：U2 → U1 ⇒ 收敛到新值 1150', newerFirst == 1150, '$newerFirst');
+      check('C-1：U1 → U2 ⇒ 收敛到新值 1150', olderFirst == 1150, '$olderFirst');
+    }
+    {
+      // create 无 base ⇒ 仍 v0
+      final String createId = newId();
+      server.handle(
+        opMaster(
+          'products',
+          createId,
+          SyncOpType.createMasterData,
+          payload: {'name': '新商品', 'sell_price': 100},
+        ),
+        now: now(),
+      );
+      check(
+        'C-1 回归：create 仍 v0（不是 1）',
+        ProductDao(db).findById(createId)!.syncVersion == 0,
+        '${ProductDao(db).findById(createId)!.syncVersion}',
+      );
+    }
 
     // 乱序收敛：update 先到 ⇒ 建档；create 后到 ⇒ already_exists
     final SyncResponse lateCreate = server.handle(

@@ -733,8 +733,148 @@ void main() {
       final Product saved = ProductDao(db).findById(id)!;
       expect(saved.name, '离线建的商品');
       expect(saved.sellPrice, 350);
-      expect(saved.syncVersion, 0, reason: 'upsert 建档与 create 同：版本从 0 起');
+      // C-1（2026-10-24，用户裁定 甲）：update 触发的 upsert **接手 base**
+      // ⇒ base 0 落 v1（从前恒写 0，导致后到的旧 update 也能覆盖）。
+      expect(saved.syncVersion, 1, reason: 'C-1：upsert 建档 = base + 1');
       expect(saved.code, isNotEmpty, reason: '编码由主机生成（update payload 不带 code）');
+    });
+
+    // ================================================== C-1 主数据乱序收敛
+    // 业务审查 §3.7 C-1（用户裁定 甲，2026-10-24）：upsert 建档时
+    // `sync_version = base_version + 1`（create 仍 0）—— 版本「接手」客户端的
+    // base，后到的旧 update 才会被 conflict 挡住，而不是覆盖新值。
+    test('C-1 分支 A：U2(base 1) 先到、U1(base 0) 后到 ⇒ 新值不被旧值覆盖', () {
+      final String id = newId();
+      // U2 先到（create 还在重试 ⇒ 行不存在 ⇒ upsert 建档）
+      final SyncResponse u2 = server.handle(
+        opMaster(
+          'products',
+          id,
+          SyncOpType.updateMasterData,
+          baseVersion: 1,
+          payload: {'name': '新价', 'sell_price': 1150},
+        ),
+        now: now(),
+      );
+      expect(u2.status, SyncStatus.applied, reason: u2.reason);
+      expect(
+        ProductDao(db).findById(id)!.syncVersion,
+        2,
+        reason: 'C-1：upsert 接手 base ⇒ 1 + 1',
+      );
+
+      // U1 后到（旧编辑，base 0）
+      final SyncResponse u1 = server.handle(
+        opMaster(
+          'products',
+          id,
+          SyncOpType.updateMasterData,
+          baseVersion: 0,
+          payload: {'name': '旧价', 'sell_price': 1200},
+        ),
+        now: now(),
+      );
+      expect(
+        u1.status,
+        SyncStatus.conflict,
+        reason: 'C-1：旧编辑必须被挡住（从前 v0 == base0 会让它覆盖新值）',
+      );
+      expect(u1.serverState!['sell_price'], 1150);
+      expect(
+        ProductDao(db).findById(id)!.sellPrice,
+        1150,
+        reason: '主机值 = 新值（U2）',
+      );
+    });
+
+    test('C-1 分支 B：U1(base 0) 先到、U2(base 1) 后到 ⇒ 收敛到新值', () {
+      final String id = newId();
+      final SyncResponse u1 = server.handle(
+        opMaster(
+          'products',
+          id,
+          SyncOpType.updateMasterData,
+          baseVersion: 0,
+          payload: {'name': '旧价', 'sell_price': 1200},
+        ),
+        now: now(),
+      );
+      expect(u1.status, SyncStatus.applied, reason: u1.reason);
+      expect(ProductDao(db).findById(id)!.syncVersion, 1);
+
+      final SyncResponse u2 = server.handle(
+        opMaster(
+          'products',
+          id,
+          SyncOpType.updateMasterData,
+          baseVersion: 1,
+          payload: {'name': '新价', 'sell_price': 1150},
+        ),
+        now: now(),
+      );
+      expect(u2.status, SyncStatus.applied, reason: u2.reason);
+      final Product saved = ProductDao(db).findById(id)!;
+      expect(saved.sellPrice, 1150, reason: '后到的更新编辑生效');
+      expect(saved.syncVersion, 2);
+    });
+
+    test('C-1：两种顺序终态相同（都收敛到 11.50）', () {
+      // 序列元素 = (base_version, sell_price)
+      int runOrder(List<MapEntry<int, int>> sequence) {
+        final String id = newId();
+        for (final MapEntry<int, int> step in sequence) {
+          server.handle(
+            opMaster(
+              'products',
+              id,
+              SyncOpType.updateMasterData,
+              baseVersion: step.key,
+              payload: <String, Object?>{
+                'name': 'C-1 商品',
+                'sell_price': step.value,
+              },
+            ),
+            now: now(),
+          );
+        }
+        return ProductDao(db).findById(id)!.sellPrice;
+      }
+
+      expect(
+        runOrder(<MapEntry<int, int>>[
+          const MapEntry<int, int>(1, 1150), // 新编辑先到
+          const MapEntry<int, int>(0, 1200), // 旧编辑后到
+        ]),
+        1150,
+        reason: 'U2 → U1：旧编辑被 conflict 挡住',
+      );
+      expect(
+        runOrder(<MapEntry<int, int>>[
+          const MapEntry<int, int>(0, 1200), // 旧编辑先到
+          const MapEntry<int, int>(1, 1150), // 新编辑后到
+        ]),
+        1150,
+        reason: 'U1 → U2：版本匹配，新编辑生效',
+      );
+    });
+
+    test('C-1 回归：create 仍写 v0（无 base_version）', () {
+      final String id = newId();
+      final SyncResponse response = server.handle(
+        opMaster(
+          'products',
+          id,
+          SyncOpType.createMasterData,
+          payload: {'name': '新商品', 'sell_price': 100},
+        ),
+        now: now(),
+      );
+      expect(response.status, SyncStatus.applied, reason: response.reason);
+      expect(
+        ProductDao(db).findById(id)!.syncVersion,
+        0,
+        reason: 'C-1 修正：create 没有 base_version ⇒ 仍从 0 起（不是 1）',
+      );
     });
 
     test('乱序收敛：update 先到 ⇒ 建档；create 后到 ⇒ already_exists，只有一行', () {
