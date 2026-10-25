@@ -243,7 +243,12 @@ class DocumentDao {
     Set<DocumentStatusView> statusViews = const <DocumentStatusView>{},
     int? sinceMillis,
     int? untilMillis,
-    bool includeDerived = false,
+    // ⚠️ **F10（2026-10-25 裁定 D2 甲）：默认 `true`** —— 导出必须"把数据带走"。
+    // 从前默认 `false`，界面上那个「含派生单」开关又把当前值传了进来 ⇒
+    // 派生收付款单（`ref_doc_id` 非空）与「原单已作废的全额退货单」被一起滤掉：
+    // 复跑实测筛「今天」导出 13 行，库里 18 张 —— 少的正是 3 张自动收付款 + 1 张退款 + 1 张拒收退货。
+    // 参数保留只为测试构造"对照"（显式传 false 才排除），业务调用一律用默认值。
+    bool includeDerived = true,
     String? query,
   }) => _summaries(
     types: types,

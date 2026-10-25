@@ -243,7 +243,10 @@ void main() {
       expect(all.length, greaterThan(shown.length), reason: '全量一定不少于默认视图');
     });
 
-    test('导出口径与列表一致（同一个 _summaries）', () {
+    // F10（2026-10-25 裁定 D2 甲）：**导出恒全量**，与列表**不同**口径 ——
+    // 列表是"屏幕上怎么显示"（一笔生意一行），导出是"把数据带走"（一张单一行）。
+    // 从前两者同口径，复跑实测导出漏了 5 张（3 张自动收付款 + 1 张退款 + 1 张拒收退货）。
+    test('导出口径：列表折叠、导出全量（F10 / D2 甲）', () {
       final String p = createProduct();
       final String acc = createAccount();
       final String party = createParty();
@@ -260,13 +263,24 @@ void main() {
       );
 
       expect(
-        documents.listDocumentsForExport().length,
         documents.listDocuments().length,
-        reason: 'AF-5：导出与列表同一份筛选',
+        1,
+        reason: '列表：一笔生意一行（自动收款单折进原单）',
+      );
+      expect(
+        documents.listDocumentsForExport().length,
+        2,
+        reason: 'F10：导出恒全量 —— 派生收付款单必须带走（对账少一张就炸）',
       );
       expect(
         documents.listDocumentsForExport(includeDerived: true).length,
-        greaterThan(documents.listDocumentsForExport().length),
+        documents.listDocumentsForExport().length,
+        reason: '显式 true 与默认同义（业务调用一律用默认值）',
+      );
+      expect(
+        documents.listDocumentsForExport(includeDerived: false).length,
+        1,
+        reason: '参数只为测试构造对照：显式 false 才排除派生单',
       );
     });
   });

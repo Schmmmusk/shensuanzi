@@ -325,7 +325,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
                             statusViews: _statusViews,
                             sinceMillis: since,
                             untilMillis: until,
-                            includeDerived: _includeDerived,
+                            // F10（D2 甲）：**不传** `includeDerived` —— 导出恒全量，
+                            // 列表那个开关只管"屏幕上显示什么"，不该决定"带走什么"。
                             // AF-5：导出必须带**同一个搜索词**，否则
                             // 「导出当前筛选」在用户打字的那一刻就变成谎话
                             query: hasQuery ? query : null,

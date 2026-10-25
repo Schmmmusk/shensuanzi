@@ -284,6 +284,20 @@ void main() {
         docNosOf(documents.listDocumentsForExport(includeDerived: true)),
         docNosOf(documents.listDocuments(includeDerived: true)),
       );
+
+      // F10（2026-10-25 裁定 D2 甲）：**导出默认就含派生收付款单**。
+      // 复跑实测漏了 5 张（3 张自动收付款 + 1 张退款 + 1 张拒收退货）——
+      // 会计拿这份 CSV 对账，"单据数"和软件里对不上就是撒谎。
+      expect(
+        docNosOf(documents.listDocumentsForExport()),
+        contains('SK20261012-006'),
+        reason: 'F10：导出必须含派生收付款单',
+      );
+      expect(
+        docNosOf(documents.listDocuments()),
+        isNot(contains('SK20261012-006')),
+        reason: '列表仍然折叠（一笔生意一行），两件事互不影响',
+      );
     });
   });
 
