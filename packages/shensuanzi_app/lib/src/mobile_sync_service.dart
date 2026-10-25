@@ -46,6 +46,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart'
         TransportResponse;
 
 import 'http_transport.dart';
+import 'sync_failure_message.dart';
 import 'mirror_archive.dart';
 import 'pairing_store.dart';
 
@@ -90,6 +91,7 @@ class MobileSyncService {
     required this.mirrorPath,
     required this.pairingStore,
     this.transport,
+    this.onError,
     int? Function()? clock,
   }) : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch);
 
@@ -101,6 +103,11 @@ class MobileSyncService {
 
   /// 传输层；`null` = 生产用 [HttpTransport]（测试注入桩）
   final Transport? transport;
+
+  /// **原始异常的唯一去处**（F15 / M15 两通道）：界面只给人话
+  /// （[syncFailureMessage]），`toString()` + 栈进日志。
+  /// `null` = 不记（测试 / 未装配日志的宿主）。
+  final void Function(Object error, StackTrace stack, String label)? onError;
 
   final int? Function() _clock;
 
@@ -230,13 +237,11 @@ class MobileSyncService {
     _syncing = true;
     try {
       return await _syncNowInner();
-    } catch (error) {
+    } catch (error, stack) {
+      onError?.call(error, stack, '同步失败');
       // ⚠️ 顶层兜底：openMirror（SqliteException 14 = 父目录不存在 / 权限）
       // 等任何异常都必须变成结果 —— 抛出去 = 遮罩永转圈（真机两连踩）
-      return SyncOutcome(
-        SyncOutcomeKind.error,
-        '同步时出错（$error）—— 请重试；一直这样请把这句话告诉技术支持',
-      );
+      return SyncOutcome(SyncOutcomeKind.error, syncFailureMessage(error));
     } finally {
       _syncing = false;
     }
@@ -289,13 +294,11 @@ class MobileSyncService {
       if (serverTime is int) client.recordClockOffset(serverTime);
     } on SyncHttpException catch (error) {
       return SyncOutcome(SyncOutcomeKind.unreachable, error.detail);
-    } catch (error) {
+    } catch (error, stack) {
+      onError?.call(error, stack, '同步失败（health）');
       // ⚠️ 兜底：任何非预期异常都必须变成结果 —— 抛出去 = 调用方的
       // 转圈永远停不下来（真机踩过：§BL·落地·补 1）
-      return SyncOutcome(
-        SyncOutcomeKind.error,
-        '同步时出错（$error）—— 请重试；一直这样请把这句话告诉技术支持',
-      );
+      return SyncOutcome(SyncOutcomeKind.error, syncFailureMessage(error));
     }
 
     // ② 镜像重建。两条**独立**理由：
@@ -374,12 +377,10 @@ class MobileSyncService {
         return _authExpired();
       }
       return SyncOutcome(SyncOutcomeKind.error, error.detail);
-    } catch (error) {
+    } catch (error, stack) {
+      onError?.call(error, stack, '同步失败（pull/push）');
       // ⚠️ 兜底同上 —— 任何非预期异常都变成结果，不让调用方转圈到天荒地老
-      return SyncOutcome(
-        SyncOutcomeKind.error,
-        '同步时出错（$error）—— 请重试；一直这样请把这句话告诉技术支持',
-      );
+      return SyncOutcome(SyncOutcomeKind.error, syncFailureMessage(error));
     }
   }
 
@@ -443,10 +444,7 @@ class MobileSyncService {
       }
       return SyncOutcome(SyncOutcomeKind.error, error.detail);
     } catch (error) {
-      return SyncOutcome(
-        SyncOutcomeKind.error,
-        '自动推送失败（$error）—— 条目留在队列，稍后随同步重试',
-      );
+      return SyncOutcome(SyncOutcomeKind.error, '自动推送没成功 —— 这条单还在队列里，稍后随同步重试。');
     }
   }
 

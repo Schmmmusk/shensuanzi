@@ -224,6 +224,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     return _mobileSync ??= MobileSyncService(
       mirrorPath: p.join(root, 'mirror', 'shensuanzi_mirror.db'),
       pairingStore: PairingStore(File(p.join(root, '神算子', 'pairing.json'))),
+      // F15 / M15 两通道：界面只给人话（`syncFailureMessage`），
+      // 原始异常 + 栈进日志 —— 用户不再看到 `Bad state: …` 这种源码。
+      onError: (Object error, StackTrace stack, String label) =>
+          _log.crash(error, stack, label: label),
     );
   }
 

@@ -551,6 +551,49 @@ void main() {
   // 旧主机收下了但本机没确认（pull 还没跑）；换主机后新主机没有这条，
   // 而 `unsent()` 明确排除 `sent` ⇒ 它既不会被挂起、也永远不会再推。
   // 用户刚开的单**凭空消失**，队列里还留一条永远清不掉的 `sent`。
+  test('F15：同步失败只给人话，原始异常进 onError（不进界面）', () async {
+    final List<String> labels = <String>[];
+    final MobileSyncService logged = MobileSyncService(
+      mirrorPath: p.join(box.path, 'mirror2', 'shensuanzi_mirror.db'),
+      pairingStore: PairingStore(File(p.join(box.path, 'pairing2.json'))),
+      onError: (Object error, StackTrace stack, String label) =>
+          labels.add(label),
+    );
+    logged.pairFromCode(pairCode('h-1'));
+    // 镜像里先有一条 P0001（模拟另一台主机留下的货），主机再推一条同编码、不同 id 的
+    // ⇒ 落库时 UNIQUE constraint failed: products.code（F14 的现场）
+    logged.openMirror().raw.execute(
+      'INSERT INTO products (id, code, name, unit, cost_price, sell_price, '
+      'safety_stock, is_active, created_at, updated_at, sync_version) '
+      "VALUES ('p-local','P0001','本地旧货','瓶',100,200,0,1,1,1,0)",
+    );
+    host.pullBody['products'] = <Object?>[
+      <String, Object?>{
+        'id': 'p-host',
+        'code': 'P0001',
+        'name': '主机的货',
+        'unit': '瓶',
+        'cost_price': 100,
+        'sell_price': 200,
+        'safety_stock': 0,
+        'is_active': 1,
+        'created_at': 1,
+        'updated_at': 1,
+      },
+    ];
+
+    final SyncOutcome outcome = await logged.syncNow();
+
+    expect(outcome.kind, SyncOutcomeKind.error);
+    expect(outcome.message, contains('重建本机数据副本'), reason: 'F15：要告诉用户**怎么办**');
+    expect(
+      outcome.message,
+      isNot(contains('UNIQUE')),
+      reason: 'F15：原始异常不许出现在界面上',
+    );
+    expect(labels, isNotEmpty, reason: '原始异常必须走 onError（日志），而不是拼进文案');
+  });
+
   test('C-2：换主机时 `sent` 条目也要降级为挂起（不能留成永远清不掉的 sent）', () async {
     service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
