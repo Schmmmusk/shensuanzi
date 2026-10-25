@@ -67,6 +67,35 @@ class ProductDao {
     return found.isEmpty ? null : found.first;
   }
 
+  /// 按**名字精确匹配**一个商品（开单页「无缝建档」用，§CV·一百零五）。
+  ///
+  /// ⚠️ SQL 必须 `TRIM(name) = ?`，参数也 `trim()` —— 两边都归一是 reply §二-3
+  /// 要求的：用户复制粘贴常带前后空格，只 trim 参数不 trim 列、或反过来，
+  /// 都会匹配不到，于是**多建一个同名商品**（库存被拆成两半）。
+  ///
+  /// **不过滤 `is_active`**：按名字认，不按启用状态认 —— 停用的「停产汽水」
+  /// 与用户手打的「停产汽水」是同一个东西，过滤掉就会再建一个同名的。
+  ///
+  /// 命中多个（历史脏数据里可能真有同名）⇒ 取**最早建档**的那个：
+  /// 这条路径的调用方是「自动绑定」，静默挑最早一条比报错更符合现场
+  /// （报错会让人工手打的名字彻底存不进去）。要人工选择的是**条码**，
+  /// 那条路径见 [findByBarcode]（那里绝不静默挑）。
+  Product? findByExactName(String name) {
+    final String trimmed = name.trim();
+    if (trimmed.isEmpty) return null;
+    final List<Product> found = decodeRows(
+      _raw.select(
+        'SELECT * FROM ${Schema.products} WHERE TRIM(name) = ? '
+        'ORDER BY created_at, id LIMIT 1',
+        <Object?>[trimmed],
+      ),
+      Product.fromRow,
+      table: Schema.products,
+      failures: db.readFailures,
+    );
+    return found.isEmpty ? null : found.first;
+  }
+
   /// 列表查询。[query] 模糊匹配 `code` / `name` / `barcode`。
   ///
   /// ⚠️ 排序用 `(created_at, id)` 而不是 `code`：编码虽然是补零的，

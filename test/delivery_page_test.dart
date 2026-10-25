@@ -163,6 +163,12 @@ void main() {
     });
   });
 
+  /// 打开商品选择器（② 之后行卡的商品格是**输入框**，统一走右边的小图标）。
+  Future<void> openPicker(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('delivery-pick-product')));
+    await tester.pumpAndSettle();
+  }
+
   /// 选第一行的商品。
   ///
   /// ⚠️ 三个坑（都是真踩过的）：
@@ -172,7 +178,7 @@ void main() {
   /// ③ **点结果行一律用 `widgetWithText(ListTile, …)`，不要用 `find.text(名).first`**
   ///    —— 见 `pickCustomer` 里那段说明（搜索框里的字也会被 `find.text` 命中）。
   Future<void> pickFirstProduct(WidgetTester tester) async {
-    await tester.tap(find.text('点此选商品'));
+    await openPicker(tester);
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const Key('picker-search')), '红富士');
@@ -328,7 +334,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // 选牛奶（⚠️ 结果行按 ListTile 找 —— 搜索框里的字也会被 find.text 命中）
-    await tester.tap(find.text('点此选商品'));
+    await openPicker(tester);
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('picker-search')), '蒙牛');
     await tester.pumpAndSettle();
@@ -440,11 +446,9 @@ void main() {
     TextField qtyField() =>
         tester.widget<TextField>(find.byKey(const Key('delivery-qty')));
 
-    /// 打开选择器并选中 [name]。
-    /// [opener] = 行内当前可点的文案：还没选过是「点此选商品」，选过是**上一个商品名**。
-    Future<void> pick(String opener, String keyword, String name) async {
-      await tester.tap(find.text(opener));
-      await tester.pumpAndSettle();
+    /// 打开选择器并选中 [name]（② 之后统一点行卡右边的小图标）。
+    Future<void> pick(String keyword, String name) async {
+      await openPicker(tester);
       await tester.enterText(find.byKey(const Key('picker-search')), keyword);
       await tester.pumpAndSettle();
       // ⚠️ 结果行一律用 `widgetWithText(ListTile, …)`：本文件开头的注释记着
@@ -455,11 +459,11 @@ void main() {
     }
 
     // ① 选 A（红富士苹果 售价 5.00）⇒ 预填
-    await pick('点此选商品', '红富士', '红富士苹果');
+    await pick('红富士', '红富士苹果');
     expect(priceField().controller!.text, '5.00');
 
     // ② 同一行改选 B（黄金梨 售价 12.50）⇒ 【修复前必红】
-    await pick('红富士苹果', '黄金梨', '黄金梨');
+    await pick('黄金梨', '黄金梨');
     expect(
       priceField().controller!.text,
       '12.50',
@@ -467,26 +471,25 @@ void main() {
     );
 
     // ③ 再选回 A ⇒ 「重选同一商品」也要回到该商品的初始态
-    await pick('黄金梨', '红富士', '红富士苹果');
+    await pick('红富士', '红富士苹果');
     expect(priceField().controller!.text, '5.00');
 
     // ④ **手改过**也不阻挡覆盖
     await tester.enterText(find.byKey(const Key('delivery-price')), '9.99');
     await tester.pumpAndSettle();
     expect(priceField().controller!.text, '9.99');
-    await pick('红富士苹果', '黄金梨', '黄金梨');
+    await pick('黄金梨', '黄金梨');
     expect(priceField().controller!.text, '12.50', reason: '手改不阻挡覆盖');
 
     // ⑤ 换商品**不碰数量**
     await tester.enterText(find.byKey(const Key('delivery-qty')), '7');
     await tester.pumpAndSettle();
-    await pick('黄金梨', '红富士', '红富士苹果');
+    await pick('红富士', '红富士苹果');
     expect(qtyField().controller!.text, '7', reason: '换商品只重置价与单位；数量是用户的输入');
 
     // ⑥ 打开选择器后**取消** ⇒ 不覆盖（`picked == null` 的对称边界）
     final String before = priceField().controller!.text;
-    await tester.tap(find.text('红富士苹果'));
-    await tester.pumpAndSettle();
+    await openPicker(tester);
     Navigator.of(tester.element(find.byKey(const Key('picker-search')))).pop();
     await tester.pumpAndSettle();
     expectPickerClosed(); // 前提断言（复用本文件顶层助手）
@@ -612,7 +615,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // 选牛奶（⚠️ 结果行按 ListTile 找 —— 搜索框里的字也会被 find.text 命中）
-    await tester.tap(find.text('点此选商品'));
+    await openPicker(tester);
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('picker-search')), '蒙牛');
     await tester.pumpAndSettle();
@@ -702,6 +705,45 @@ void main() {
       reason:
           '#52：合计金额完整可读（外测报告 V05 的场景；'
           '页内合计展示不止一处，两处都要在）',
+    );
+  });
+  // ========================================================== 无缝建档（②）
+  //
+  // 真实诉求批 ②（2026-10-25，§CV·一百零五）：三个开单页同构，
+  // 送货单**没有收付款**，手打名字那条路一样走。
+  testWidgets('手打名字 ⇒ 确认后建档 + 落单（送货单无收付款）', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    await pickCustomer(tester);
+
+    await tester.enterText(
+      find.byKey(const Key('delivery-product-name')),
+      '整箱矿泉水',
+    );
+    await tester.enterText(find.byKey(const Key('delivery-qty')), '2');
+    await tester.enterText(find.byKey(const Key('delivery-price')), '30.00');
+    await tester.pumpAndSettle();
+
+    await tapSave(tester);
+    expect(
+      find.byKey(const Key('missing-product-dialog')),
+      findsOneWidget,
+      reason: '② 没建档的名字必须先问一句',
+    );
+
+    await tester.tap(find.byKey(const Key('missing-product-create')));
+    await tester.pumpAndSettle();
+
+    final Map<String, Object?> made = db.raw
+        .select("SELECT * FROM products WHERE TRIM(name) = '整箱矿泉水'")
+        .single;
+    expect(made['sell_price'], 3000, reason: '② 送货单价按售价记');
+    expect(
+      db.raw.select(
+        "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'delivery'",
+      ),
+      hasLength(1),
+      reason: '② 单也落了',
     );
   });
 }

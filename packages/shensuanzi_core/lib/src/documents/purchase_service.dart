@@ -28,6 +28,7 @@ import '../models/product.dart';
 import '../rules/rule_engine.dart';
 import '../rules/rule_rejection.dart';
 import 'document_build.dart';
+import 'product_backfill.dart';
 import 'outstanding.dart';
 import 'draft_invalid.dart';
 import 'purchase_draft.dart';
@@ -135,11 +136,30 @@ class PurchaseService {
   /// 提交草稿。校验不通过抛 [PurchaseDraftInvalid]；规则拒绝抛 [StateError]
   /// （此时库已整单回滚，界面走「意外失败」兜底文案）。
   PurchaseSaved create(PurchaseDraft draft, {int? now}) {
-    final PurchaseDraftInvalid? failure = purchaseDraftFailure(draft);
-    if (failure != null) throw failure;
-
     final int stamp = now ?? DateTime.now().millisecondsSinceEpoch;
 
+    // ② 开单页「无缝建档」（2026-10-25，§CV·一百零五）：整个 create 包在一个
+    // 事务里，因为中途可能要**建商品**（`ProductService.create` 自己开事务，
+    // `Db.transaction` 可重入 ⇒ 会加入这一层）。
+    //
+    // 顺序是刻意的：**先补缺档、再校验**。
+    // - 校验必须看得到补全后的商品 id（否则手打名字的行永远报「请选一个商品」）；
+    // - 校验失败时抛异常 ⇒ **整段回滚** ⇒ 刚建出来的商品也一起没了
+    //   （一次打错数量不会在主数据里留下垃圾商品）。
+    return _queries.db.transaction(() {
+      final PurchaseDraft full = backfillPurchaseProducts(
+        _queries.db,
+        draft,
+        now: stamp,
+      );
+      final PurchaseDraftInvalid? failure = purchaseDraftFailure(full);
+      if (failure != null) throw failure;
+      return _persist(full, stamp);
+    });
+  }
+
+  /// 真正落库的那一半 —— **必须在 [create] 的事务内调用**（它自己不 BEGIN）。
+  PurchaseSaved _persist(PurchaseDraft draft, int stamp) {
     // B3a：构造抽到 `document_build.dart`（与 QueueSink 共用一份，行为零变化）
     final DocumentBuild build = buildPurchaseDocument(draft, now: stamp);
 

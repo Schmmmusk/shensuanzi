@@ -40,6 +40,7 @@ class OverviewPage extends StatefulWidget {
     this.queries,
     this.pendingMarks,
     this.onNavigate,
+    this.onPriceLookup,
   });
 
   /// 数据目录（用户选的，数据库就放在这里）
@@ -74,6 +75,14 @@ class OverviewPage extends StatefulWidget {
   /// **#32（裁定③：快捷入口 = 高频动作）**：跳转回调（销售开单 / 采购入库 /
   /// 送货）。`null` = 不显示入口卡（测试/独立预览）。
   final void Function(String destinationId)? onNavigate;
+
+  /// **查价**入口（真实诉求批 ③，2026-10-24，§CV·一百零四）。
+  ///
+  /// 家人（和替班看店的人）只需要「输入名字/扫码 → 看到大字售价」，
+  /// 而库存页是为盘点对账设计的（四列信息）。所以单开一页，入口放这里。
+  ///
+  /// `null` = 不显示按钮（测试不传 ⇒ 既有用例逐字不变）。
+  final VoidCallback? onPriceLookup;
 
   /// 「你的数据在」的显示文案（§BH·五 B1b 裁定 2：Android 私有目录用户
   /// 打不开，显示友好文案而非具体路径；路径挪到帮助页「关于」小字）。
@@ -323,6 +332,13 @@ class _OverviewPageState extends State<OverviewPage> {
               icon: const Icon(Icons.local_shipping_outlined, size: 18),
               label: const Text('送货'),
             ),
+            if (widget.onPriceLookup != null)
+              OutlinedButton.icon(
+                key: const Key('overview-go-price'),
+                onPressed: widget.onPriceLookup,
+                icon: const Icon(Icons.price_check_outlined, size: 18),
+                label: const Text('查价'),
+              ),
           ],
         ),
       ],

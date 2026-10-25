@@ -177,9 +177,19 @@ void main() {
   //
   // ⚠️ 声明必须排在**首个使用点之前**：Dart 的局部函数按局部变量处理，
   //    声明点之前不可见（2026-10-08 真实踩到：M08 用例在它之前调用 ⇒ 编译不过）。
-  Future<void> pickFirstProduct(WidgetTester tester) async {
-    await tester.tap(find.text('点此选商品'));
+  /// 打开商品选择器。
+  ///
+  /// ② 之后行卡的商品格分两种形态（`allowTypedName`）：
+  /// - 主机出口（`ServiceSink`）⇒ 可手打的输入框 + 右边小图标；
+  /// - 队列出口（`QueueSink`）⇒ 仍是「点此选商品」单元格（它不能建主数据）。
+  Future<void> openPicker(WidgetTester tester) async {
+    final Finder byKey = find.byKey(const Key('sale-pick-product'));
+    await tester.tap(byKey.evaluate().isNotEmpty ? byKey : find.text('点此选商品'));
     await tester.pumpAndSettle();
+  }
+
+  Future<void> pickFirstProduct(WidgetTester tester) async {
+    await openPicker(tester);
 
     // ⚠️ 搜索框必须用 Key：`byType(TextField).first` 会命中弹层底下页面的输入框
     await tester.enterText(find.byKey(const Key('picker-search')), '红富士');
@@ -488,7 +498,14 @@ void main() {
     await tester.tap(find.text('放弃'));
     await tester.pumpAndSettle();
 
-    expect(find.text('点此选商品'), findsOneWidget);
+    // ② 之后商品格是输入框：清空 = 名字为空（不再是「点此选商品」文案）
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('sale-product-name')))
+          .controller!
+          .text,
+      isEmpty,
+    );
     expect(find.text('放弃这次开单？'), findsNothing);
   });
 
@@ -758,7 +775,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // 选牛奶（⚠️ 结果行按 ListTile 找 —— 搜索框里的字也会被 find.text 命中）
-    await tester.tap(find.text('点此选商品'));
+    await tester.tap(find.byKey(const Key('sale-pick-product')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('picker-search')), '蒙牛');
     await tester.pumpAndSettle();
@@ -869,7 +886,7 @@ void main() {
       await tester.pumpWidget(page(policy: const MasterDataPolicy.mobile()));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('点此选商品'));
+      await tester.tap(find.byKey(const Key('sale-pick-product')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('新建商品'));
       await tester.pumpAndSettle();
@@ -929,10 +946,11 @@ void main() {
         tester.widget<TextField>(find.byKey(const Key('sale-qty')));
 
     /// 打开选择器并选中 [name]。
-    /// [opener] = 行内当前可点的文案：还没选过是「点此选商品」，选过是**上一个商品名**。
-    Future<void> pick(String opener, String keyword, String name) async {
-      await tester.tap(find.text(opener));
-      await tester.pumpAndSettle();
+    ///
+    /// ② 之后行卡的商品格是**输入框**（可手打），选商品统一点右边的小图标
+    /// —— 不再需要「当前显示的是哪个名字」来决定点哪里。
+    Future<void> pick(String keyword, String name) async {
+      await openPicker(tester);
       await tester.enterText(find.byKey(const Key('picker-search')), keyword);
       await tester.pumpAndSettle();
       // ⚠️ 结果行一律用 `widgetWithText(ListTile, …)`：`find.text` 连搜索框的
@@ -942,11 +960,11 @@ void main() {
     }
 
     // ① 选 A（红富士苹果 售价 5.00）⇒ 预填
-    await pick('点此选商品', '红富士', '红富士苹果');
+    await pick('红富士', '红富士苹果');
     expect(priceField().controller!.text, '5.00');
 
     // ② 同一行改选 B（黄金梨 售价 12.50）⇒ 【修复前必红】
-    await pick('红富士苹果', '黄金梨', '黄金梨');
+    await pick('黄金梨', '黄金梨');
     expect(
       priceField().controller!.text,
       '12.50',
@@ -954,26 +972,25 @@ void main() {
     );
 
     // ③ 再选回 A ⇒ 「重选同一商品」也要回到该商品的初始态
-    await pick('黄金梨', '红富士', '红富士苹果');
+    await pick('红富士', '红富士苹果');
     expect(priceField().controller!.text, '5.00');
 
     // ④ **手改过**也不阻挡覆盖
     await tester.enterText(find.byKey(const Key('sale-price')), '9.99');
     await tester.pumpAndSettle();
     expect(priceField().controller!.text, '9.99');
-    await pick('红富士苹果', '黄金梨', '黄金梨');
+    await pick('黄金梨', '黄金梨');
     expect(priceField().controller!.text, '12.50', reason: '手改不阻挡覆盖');
 
     // ⑤ 换商品**不碰数量**
     await tester.enterText(find.byKey(const Key('sale-qty')), '7');
     await tester.pumpAndSettle();
-    await pick('黄金梨', '红富士', '红富士苹果');
+    await pick('红富士', '红富士苹果');
     expect(qtyField().controller!.text, '7', reason: '换商品只重置价与单位；数量是用户的输入');
 
     // ⑥ 打开选择器后**取消** ⇒ 不覆盖（`picked == null` 的对称边界）
     final String before = priceField().controller!.text;
-    await tester.tap(find.text('红富士苹果'));
-    await tester.pumpAndSettle();
+    await openPicker(tester);
     Navigator.of(tester.element(find.byKey(const Key('picker-search')))).pop();
     await tester.pumpAndSettle();
     expect(
@@ -1025,7 +1042,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // 选牛奶（⚠️ 结果行按 ListTile 找 —— 搜索框里的字也会被 `find.text` 命中）
-    await tester.tap(find.text('点此选商品'));
+    await tester.tap(find.byKey(const Key('sale-pick-product')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('picker-search')), '蒙牛');
     await tester.pumpAndSettle();
@@ -1254,6 +1271,206 @@ void main() {
 
       expect(find.byKey(const Key('sale-draft-banner')), findsNothing);
       expect(File(path).existsSync(), isFalse, reason: '读不了就删，别再打扰');
+    });
+  });
+  // ========================================================== 无缝建档（②）
+  //
+  // 真实诉求批 ②（2026-10-25，§CV·一百零五）。家人拿着进货单直接录，
+  // 不知道要先建商品档案 ⇒ 允许在明细行**手打名字**，保存时确认一次。
+  //
+  // 这三条是「不能错」的护栏：静默建档会把错别字固化成商品；
+  // 每次都弹窗会让手打这件事变得比建档还烦。
+  group('无缝建档（②）', () {
+    Finder nameField([int at = 0]) =>
+        find.byKey(const Key('sale-product-name')).at(at);
+
+    Future<void> typeName(
+      WidgetTester tester,
+      String name, {
+      int at = 0,
+    }) async {
+      await tester.enterText(nameField(at), name);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('手打名字 ⇒ 保存时弹确认；点「先建档再保存」⇒ 建档 + 落单', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      await typeName(tester, '蒙牛纯牛奶');
+      await tester.enterText(find.byKey(const Key('sale-qty')), '3');
+      await tester.enterText(find.byKey(const Key('sale-price')), '5.00');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('全款'));
+      await tester.pumpAndSettle();
+
+      await tapSave(tester);
+      expect(
+        find.byKey(const Key('missing-product-dialog')),
+        findsOneWidget,
+        reason: '② 没建档的名字必须先问一句（错别字不能被静默固化）',
+      );
+      expect(
+        find.textContaining('蒙牛纯牛奶'),
+        findsWidgets,
+        reason: '② 对话框要把名字**原样**摆出来',
+      );
+
+      await tester.tap(find.byKey(const Key('missing-product-create')));
+      await tester.pumpAndSettle();
+
+      final List<Map<String, Object?>> made = db.raw.select(
+        "SELECT * FROM products WHERE TRIM(name) = '蒙牛纯牛奶'",
+      );
+      expect(made, hasLength(1), reason: '② 建档了');
+      expect(made.single['sell_price'], 500, reason: '② 销售单价 = 售价');
+      expect(
+        db.raw.select(
+          "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'sale'",
+        ),
+        hasLength(1),
+        reason: '② 单也落了',
+      );
+      expect(
+        find.byKey(const Key('missing-product-dialog')),
+        findsNothing,
+        reason: '② 关掉了',
+      );
+    });
+
+    testWidgets('点「取消」⇒ 不建档、不保存，输入一个都不丢', (WidgetTester tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      await typeName(tester, '打错字的货');
+      await tester.enterText(find.byKey(const Key('sale-qty')), '2');
+      await tester.enterText(find.byKey(const Key('sale-price')), '1.00');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('全款'));
+      await tester.pumpAndSettle();
+
+      await tapSave(tester);
+      await tester.tap(find.byKey(const Key('missing-product-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(
+        db.raw.select(
+          "SELECT COUNT(*) AS c FROM products WHERE name = '打错字的货'",
+        ),
+        hasLength(1),
+        reason: '② 取消 ⇒ 不建档',
+      );
+      expect(
+        db.raw.select(
+          "SELECT COUNT(*) AS c FROM documents WHERE doc_type = 'sale'",
+        ),
+        hasLength(1),
+        reason: '② 取消 ⇒ 不落单',
+      );
+      expect(
+        tester.widget<TextField>(nameField()).controller!.text,
+        '打错字的货',
+        reason: '② **不丢输入**（取消 ≠ 清空）',
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('sale-qty')))
+            .controller!
+            .text,
+        '2',
+      );
+    });
+
+    testWidgets('两个缺档行 ⇒ **一个**对话框列全（不弹三次）', (WidgetTester tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('加一行'));
+      await tester.pumpAndSettle();
+
+      await typeName(tester, '甲货', at: 0);
+      await typeName(tester, '乙货', at: 1);
+      await tester.enterText(find.byKey(const Key('sale-qty')).at(0), '1');
+      await tester.enterText(find.byKey(const Key('sale-price')).at(0), '1.00');
+      await tester.enterText(find.byKey(const Key('sale-qty')).at(1), '1');
+      await tester.enterText(find.byKey(const Key('sale-price')).at(1), '2.00');
+      await tester.pumpAndSettle();
+      // 两行时「全款」滚出了 800×600 视口 ⇒ 必须先滚到可见再点
+      await tapFinder(tester, find.text('全款'));
+
+      await tapSave(tester);
+      expect(find.byKey(const Key('missing-product-dialog')), findsOneWidget);
+      expect(find.text('· 甲货'), findsOneWidget, reason: '② 一次列全');
+      expect(find.text('· 乙货'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('missing-product-create')));
+      await tester.pumpAndSettle();
+      expect(
+        db.raw.select("SELECT name FROM products WHERE name IN ('甲货','乙货')"),
+        hasLength(2),
+        reason: '② 两个都建出来了',
+      );
+    });
+
+    testWidgets('名字与已有商品一字不差 ⇒ **不弹框**，直接绑定（④甲）', (WidgetTester tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      // 「红富士苹果」是 setUp 里建好的商品（售价 5.00）
+      await typeName(tester, '红富士苹果');
+      await tester.enterText(find.byKey(const Key('sale-qty')), '4');
+      // 手打名字**不会**预填单价（没经过商品选择器）⇒ 用户自己填
+      await tester.enterText(find.byKey(const Key('sale-price')), '5.00');
+      await tester.pumpAndSettle();
+      await tapFinder(tester, find.text('全款'));
+
+      await tapSave(tester);
+      expect(
+        find.byKey(const Key('missing-product-dialog')),
+        findsNothing,
+        reason: '④甲：同名自动匹配 —— 拿弹窗打扰用户是错的',
+      );
+      expect(
+        db.raw.select(
+          "SELECT COUNT(*) AS c FROM products WHERE name = '红富士苹果'",
+        ),
+        hasLength(1),
+        reason: '④甲：不许出现两个同名商品（库存会被拆成两半）',
+      );
+      final List<Map<String, Object?>> lines = db.raw.select(
+        'SELECT product_id FROM document_lines',
+      );
+      expect(lines.single['product_id'], productId, reason: '绑到了已有商品');
+    });
+
+    testWidgets('手机队列出口（QueueSink）⇒ **没有**手打输入框（不给假承诺）', (
+      WidgetTester tester,
+    ) async {
+      final Db queueDb = Db.openInMemory(foreignKeys: false);
+      addTearDown(queueDb.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SalePage(
+              service: service,
+              productService: products,
+              partyService: partyService,
+              sink: QueueSink(queue: SyncQueueDao(queueDb)),
+              masterDataPolicy: const MasterDataPolicy.desktop(),
+              masterDataSink: ServiceMasterSink(products),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('sale-product-name')),
+        findsNothing,
+        reason: '② 队列出口建不了主数据 —— 放开手打只会「填了名字存不进去」',
+      );
+      expect(find.text('点此选商品'), findsOneWidget, reason: '② 手机端保持原样');
     });
   });
 }

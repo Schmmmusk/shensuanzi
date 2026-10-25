@@ -71,12 +71,15 @@ const Color _noticeColor = AppColors.warningOrange;
 /// 直接调它会**只写镜像、不入队**（改动永远到不了电脑，且没人报错）。
 ///
 /// [service] 仍要传 —— 但**只用于读**（条码查重 `barcodeOwners`）。
+/// [initialName] = **名字预填**（开单页「去填详细信息」那条路，§CV·一百零五）：
+/// 用户在明细行手打的名字带过来，省得再敲一遍；其余字段仍是空表单。
 Future<Product?> showProductFormDialog(
   BuildContext context, {
   required ProductService service,
   required MasterDataSink sink,
   Product? existing,
   bool allowOpeningStock = false,
+  String? initialName,
 }) => showDialog<Product>(
   context: context,
   builder: (BuildContext dialogContext) => _ProductFormDialog(
@@ -84,6 +87,7 @@ Future<Product?> showProductFormDialog(
     sink: sink,
     existing: existing,
     allowOpeningStock: allowOpeningStock,
+    initialName: initialName,
   ),
 );
 
@@ -93,7 +97,11 @@ class _ProductFormDialog extends StatefulWidget {
     required this.sink,
     this.existing,
     this.allowOpeningStock = false,
+    this.initialName,
   });
+
+  /// 新增时**预填的商品名**（`null` = 空表单；编辑时忽略 —— 名字来自 [existing]）
+  final String? initialName;
 
   /// **只读**用（条码查重）—— 写入一律走 [sink]。
   final ProductService service;
@@ -150,7 +158,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     final ProductDraft draft = widget.existing == null
         ? const ProductDraft()
         : ProductDraft.of(widget.existing!);
-    _name = TextEditingController(text: draft.name);
+    // 预填只在「新增」时生效（编辑当然显示原来的名字）
+    _name = TextEditingController(
+      text: widget.existing == null
+          ? (widget.initialName ?? draft.name)
+          : draft.name,
+    );
     _unit = TextEditingController(text: draft.unit);
     _sellPrice = TextEditingController(text: draft.sellPrice);
     _costPrice = TextEditingController(text: draft.costPrice);

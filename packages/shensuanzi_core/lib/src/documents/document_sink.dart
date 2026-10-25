@@ -139,6 +139,17 @@ class DocumentSubmitResult {
 
 /// 开单提交出口。三个开单页只认这个接口（B3b 改接线）。
 abstract class DocumentSink {
+  /// 这个出口能不能**顺手建商品**（开单页「无缝建档」，2026-10-25，§CV·一百零五）。
+  ///
+  /// | 出口 | 值 | 为什么 |
+  /// |---|---|---|
+  /// | 主机 [ServiceSink] | `true` | `*Service.create` 在**同一事务**里建商品再落单 |
+  /// | 客户端 `QueueSink` | `false`（默认） | 它只入队、不跑规则 —— 建主数据得主机做 |
+  ///
+  /// 界面**必须**按它决定要不要放开「手打商品名」：手机端放开了只会给出
+  /// 「填了名字却存不进去」的假承诺（纪律 17：描述不存在的功能 = 撒谎）。
+  bool get canCreateProducts => false;
+
   DocumentSubmitResult submitSale(SaleDraft draft, {int? now});
 
   DocumentSubmitResult submitPurchase(PurchaseDraft draft, {int? now});
@@ -176,6 +187,10 @@ class ServiceSink implements DocumentSink {
   /// 盘点 / 期初的提交出口（2026-10-20 放开手机「重新清点」；桌面期初页
   /// **不用它** —— 直连 `StocktakeService.create`，见 `opening_stock_page`）。
   final StocktakeService? _stocktakes;
+
+  /// 主机出口能在同一事务里建商品（见 [DocumentSink.canCreateProducts]）。
+  @override
+  bool get canCreateProducts => true;
 
   @override
   DocumentSubmitResult submitSale(SaleDraft draft, {int? now}) {
@@ -282,6 +297,13 @@ class QueueSink implements DocumentSink {
   QueueSink({required SyncQueueDao queue, int Function()? clock})
     : _queue = queue,
       _clock = clock ?? _systemClock;
+
+  /// 客户端**不能**建商品：本类只入队，不跑规则、不写主数据。
+  ///
+  /// 所以手机端不放开「手打商品名」（`SalePage` 按这个 getter 决定）——
+  /// 放开了只会让用户在手机上填了名字、推给主机后被拒，白填一遍。
+  @override
+  bool get canCreateProducts => false;
 
   final SyncQueueDao _queue;
 

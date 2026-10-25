@@ -21,6 +21,7 @@ import 'scaled.dart';
 
 import 'nav_icons.dart';
 import 'overview_page.dart';
+import 'price_lookup_page.dart';
 import 'products_page.dart';
 import 'account_page.dart';
 import 'documents_page.dart';
@@ -289,6 +290,9 @@ Widget appShellPage(
   // #32：概览页「要开工？」快捷入口的跳转回调（两壳各给各的导航方式：
   // 桌面切 destination / 手机推整屏）。`null` = 概览不显示入口卡。
   void Function(String destinationId)? onNavigate,
+  // ③ 查价（2026-10-24，§CV·一百零四）：两壳各给各的「打开方式」
+  //（桌面/手机都是 push 一个整屏路由，但 context 在各自的壳里）。
+  VoidCallback? onPriceLookup,
 }) {
   final Widget page;
   // #46（2026-10-14 外测 M01）：**手机不给「立即备份」** —— 执行既有裁定
@@ -316,6 +320,8 @@ Widget appShellPage(
       queries: shell.queries,
       pendingMarks: shell.pendingMarks,
       onNavigate: onNavigate,
+      // ③ 查价：只读页（商品 + 账面库存），不动库存页
+      onPriceLookup: onPriceLookup,
     );
   } else if (destination.id == 'products') {
     // 商品是核心闭环的第一块 —— 已实现，不再是占位页
@@ -573,6 +579,18 @@ class _AppShellState extends State<AppShell> {
         final NavDestination? d = AppNavigation.byId(id);
         if (d != null) _select(d);
       },
+      // ③ 查价：推一个整屏只读页（不进左侧导航 —— 它是「顺手查一下」，
+      // 不是长期停留的地方；家人明确说别动库存页）
+      onPriceLookup: widget.products == null || widget.queries == null
+          ? null
+          : () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (BuildContext _) => PriceLookupPage(
+                  products: widget.products!,
+                  stockSnapshot: widget.queries!.stockByProduct,
+                ),
+              ),
+            ),
     );
     // #42 甲 · L4：坏数据提示条挂内容区顶部 —— **库级**状况，两套壳共用同一个
     // widget（`read_failure_banner.dart`）；计数为 0 时它自己收成 `SizedBox.shrink()`

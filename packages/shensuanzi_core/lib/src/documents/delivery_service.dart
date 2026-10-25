@@ -22,6 +22,7 @@ import '../rules/rule_engine.dart';
 import '../rules/rule_rejection.dart';
 import 'delivery_draft.dart';
 import 'document_build.dart';
+import 'product_backfill.dart';
 import 'draft_invalid.dart';
 
 /// 草稿校验失败：**带两组字段级原因**，界面直接标红对应输入框。
@@ -158,11 +159,30 @@ class DeliveryService {
   /// 提交草稿。校验不通过抛 [DeliveryDraftInvalid]；规则拒绝抛 [StateError]
   /// （此时库已整单回滚，界面走「意外失败」兜底文案）。
   DeliverySaved create(DeliveryDraft draft, {int? now}) {
-    final DeliveryDraftInvalid? failure = deliveryDraftFailure(draft);
-    if (failure != null) throw failure;
-
     final int stamp = now ?? DateTime.now().millisecondsSinceEpoch;
 
+    // ② 开单页「无缝建档」（2026-10-25，§CV·一百零五）：整个 create 包在一个
+    // 事务里，因为中途可能要**建商品**（`ProductService.create` 自己开事务，
+    // `Db.transaction` 可重入 ⇒ 会加入这一层）。
+    //
+    // 顺序是刻意的：**先补缺档、再校验**。
+    // - 校验必须看得到补全后的商品 id（否则手打名字的行永远报「请选一个商品」）；
+    // - 校验失败时抛异常 ⇒ **整段回滚** ⇒ 刚建出来的商品也一起没了
+    //   （一次打错数量不会在主数据里留下垃圾商品）。
+    return _queries.db.transaction(() {
+      final DeliveryDraft full = backfillDeliveryProducts(
+        _queries.db,
+        draft,
+        now: stamp,
+      );
+      final DeliveryDraftInvalid? failure = deliveryDraftFailure(full);
+      if (failure != null) throw failure;
+      return _persist(full, stamp);
+    });
+  }
+
+  /// 真正落库的那一半 —— **必须在 [create] 的事务内调用**（它自己不 BEGIN）。
+  DeliverySaved _persist(DeliveryDraft draft, int stamp) {
     // B3a：构造抽到 `document_build.dart`（与 QueueSink 共用一份，行为零变化）。
     // ⚠️ 送货单**没有收款区** ⇒ build.payments 恒为空列表。
     final DocumentBuild build = buildDeliveryDocument(draft, now: stamp);

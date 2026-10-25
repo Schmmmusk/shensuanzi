@@ -28,6 +28,7 @@ void main() {
     QueryDao? queries,
     PendingMarks? pendingMarks,
     void Function(String destinationId)? onNavigate,
+    VoidCallback? onPriceLookup,
   }) => MaterialApp(
     home: Scaffold(
       body: OverviewPage(
@@ -42,6 +43,7 @@ void main() {
         queries: queries,
         pendingMarks: pendingMarks,
         onNavigate: onNavigate,
+        onPriceLookup: onPriceLookup,
       ),
     ),
   );
@@ -493,5 +495,20 @@ void main() {
       isNull,
       reason: '概览页在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
     );
+  });
+
+  // ③ 查价入口（真实诉求批 ③，2026-10-24，§CV·一百零四）
+  testWidgets('点「查价」回调被调用；不传回调则不显示按钮', (WidgetTester tester) async {
+    int opened = 0;
+    await tester.pumpWidget(
+      page(onNavigate: (_) {}, onPriceLookup: () => opened++),
+    );
+    expect(find.byKey(const Key('overview-go-price')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('overview-go-price')));
+    expect(opened, 1);
+
+    // 不传 ⇒ 不显示（既有装配没有这个能力时不该露一个死按钮）
+    await tester.pumpWidget(page(onNavigate: (_) {}));
+    expect(find.byKey(const Key('overview-go-price')), findsNothing);
   });
 }

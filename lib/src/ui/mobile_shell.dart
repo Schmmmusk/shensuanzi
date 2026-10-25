@@ -23,6 +23,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'app_shell.dart';
+import 'price_lookup_page.dart';
 import 'read_failure_banner.dart';
 
 /// 底部导航的 5 个入口（§AH-5 裁定的入口名，不许增减改名）。
@@ -179,6 +180,19 @@ class _MobileShellState extends State<MobileShell> {
           final NavDestination? d = AppNavigation.byId(id);
           if (d != null) _openFull(d);
         },
+        // ③ 查价（2026-10-24，§CV·一百零四）：手机上**更需要** ——
+        // 顾客问「这个多少钱」时店员手里只有手机，扫码枪就是摄像头/键盘。
+        onPriceLookup:
+            widget.shell.products == null || widget.shell.queries == null
+            ? null
+            : () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (BuildContext _) => PriceLookupPage(
+                    products: widget.shell.products!,
+                    stockSnapshot: widget.shell.queries!.stockByProduct,
+                  ),
+                ),
+              ),
       ),
       'stock' => appShellPage(widget.shell, AppNavigation.byId('stock')!),
       'parties' => appShellPage(widget.shell, AppNavigation.byId('parties')!),

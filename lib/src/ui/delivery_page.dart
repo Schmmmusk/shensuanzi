@@ -46,6 +46,7 @@ import 'entry_fields_row.dart';
 import 'stock_snapshot_cache.dart';
 import 'draft_banner.dart';
 import 'submit_error_summary.dart';
+import 'missing_product_dialog.dart';
 import 'product_form_dialog.dart';
 
 /// 店内送货页。
@@ -124,9 +125,29 @@ class DeliveryPage extends StatefulWidget {
 
 /// 一行明细的控制器（商品选择结果 + 数量 / 单价原文）
 class _RowCtl {
-  _RowCtl({String quantity = '', String unitPrice = ''})
-    : quantity = TextEditingController(text: quantity),
-      unitPrice = TextEditingController(text: unitPrice);
+  _RowCtl({
+    String quantity = '',
+    String unitPrice = '',
+    String productName = '',
+  }) : quantity = TextEditingController(text: quantity),
+       unitPrice = TextEditingController(text: unitPrice),
+       name = TextEditingController(text: productName);
+
+  /// 明细行上的**商品名**（② 无缝建档，2026-10-25，§CV·一百零五）。
+  /// 与销售 / 采购页**逐字段同构** —— 改一边必须扫另两边（纪律 18）。
+  final TextEditingController name;
+
+  /// 名字被手改 ⇒ 解绑商品；换算上下文一并对齐清空。
+  void setName(String text) {
+    if (product == null) return;
+    if (text.trim() == product!.name.trim()) return;
+    product = null;
+    baseUnit = null;
+    packageUnit = null;
+    packageSize = null;
+    entryUnit = '';
+    entryPriceKept = false;
+  }
 
   /// 商品选择结果 —— 只能由「选商品」动作写入（`_pickProduct`）。
   Product? product;
@@ -161,6 +182,7 @@ class _RowCtl {
   /// 选商品时写入换算上下文；**换商品重置单位**（不同商品上下文不同）
   void attachProduct(Product picked) {
     product = picked;
+    name.text = picked.name;
     baseUnit = picked.unit;
     packageUnit = picked.packageUnit;
     packageSize = picked.packageSize;
@@ -205,6 +227,7 @@ class _RowCtl {
 
   bool get isEmpty =>
       product == null &&
+      name.text.trim().isEmpty &&
       quantity.text.trim().isEmpty &&
       unitPrice.text.trim().isEmpty;
 
@@ -247,6 +270,7 @@ class _RowCtl {
   void dispose() {
     quantity.dispose();
     unitPrice.dispose();
+    name.dispose();
   }
 }
 
@@ -383,6 +407,10 @@ class _DeliveryPageState extends State<DeliveryPage> {
             ? null
             : widget.productService.byId(line.productId);
         row.product = product;
+        // ② 手打名字的行也要把名字填回去（草稿里存了 `productName`）
+        row.name.text = line.productName.trim().isEmpty
+            ? (product?.name ?? '')
+            : line.productName.trim();
         row.baseUnit = line.baseUnit ?? product?.unit;
         row.packageUnit = line.packageUnit ?? product?.packageUnit;
         row.packageSize = line.packageSize ?? product?.packageSize;
@@ -418,8 +446,9 @@ class _DeliveryPageState extends State<DeliveryPage> {
     lines: <DeliveryLineDraft>[
       for (final _RowCtl row in _rows)
         DeliveryLineDraft(
+          // ② 手打名字的行：`productId` 为空、`productName` 有值（服务层补档）
           productId: row.product?.id ?? '',
-          productName: row.product?.name ?? '',
+          productName: row.name.text.trim(),
           quantity: row.quantity.text,
           unitPrice: row.unitPrice.text,
           entryUnit: row.entryUnit,
@@ -486,8 +515,53 @@ class _DeliveryPageState extends State<DeliveryPage> {
   }
 
   /// `sink.submitDelivery` 是**同步**的（库操作 / 入队进程内完成，无 IO 等待）。
-  void _save() {
+  /// 打开商品表单（名字预填），建好后绑到同名的那一行（「去填详细信息」那条路）。
+  Future<void> _openProductFormFor(String name) async {
+    final Product? created = await showProductFormDialog(
+      context,
+      service: widget.productService,
+      sink: widget.masterDataSink,
+      initialName: name,
+    );
+    if (created == null || !mounted) return;
+    setState(() {
+      for (final _RowCtl row in _rows) {
+        if (row.product == null && row.name.text.trim() == name.trim()) {
+          row.attachProduct(created);
+        }
+      }
+    });
+  }
+
+  Future<void> _save() async {
     if (_saving) return;
+
+    // ② 无缝建档（2026-10-25，§CV·一百零五）：先按名字绑已有商品（只读），
+    // 剩下的才问 —— 名字一模一样就自动匹配，不拿弹窗打扰用户（④甲）。
+    final ProductBackfill backfill = ProductBackfill(widget.productService.db);
+    for (final _RowCtl row in _rows) {
+      if (row.product != null || row.name.text.trim().isEmpty) continue;
+      final Product? found = backfill.findByName(row.name.text);
+      if (found != null) row.attachProduct(found);
+    }
+    final List<String> missing = <String>[
+      for (final _RowCtl row in _rows)
+        if (row.product == null && row.name.text.trim().isNotEmpty)
+          row.name.text.trim(),
+    ];
+    if (missing.isNotEmpty) {
+      final MissingProductChoice choice = await showMissingProductDialog(
+        context,
+        names: missing.toSet().toList(),
+      );
+      if (!mounted) return;
+      if (choice == MissingProductChoice.cancel) return;
+      if (choice == MissingProductChoice.openForm) {
+        await _openProductFormFor(missing.first);
+        return; // 本单不保存
+      }
+    }
+
     final DeliveryDraft draft = _draft;
     setState(() => _saving = true);
     try {
@@ -870,6 +944,8 @@ class _DeliveryPageState extends State<DeliveryPage> {
               ? null
               : _unsyncedDelta[_rows[i].product!.id],
           enabled: !_saving,
+          // ② 主机出口才能顺手建档（手机 QueueSink 不行）
+          allowTypedName: widget.sink.canCreateProducts,
           onPickProduct: () => _pickProduct(i),
           onChanged: () => setState(() => _invalid = null),
           onRemove: _rows.length > 1 ? () => _removeRow(i) : null,
@@ -1003,6 +1079,7 @@ class _LineCard extends StatelessWidget {
     required this.stockOfProduct,
     this.unsyncedOfProduct,
     required this.enabled,
+    required this.allowTypedName,
     required this.onPickProduct,
     required this.onChanged,
     required this.onRemove,
@@ -1018,6 +1095,10 @@ class _LineCard extends StatelessWidget {
   /// 该商品的**本地未同步影响**（M08）：`null` = 没有 / 桌面端
   final int? unsyncedOfProduct;
   final bool enabled;
+
+  /// 能不能**手打商品名**（② 无缝建档）= `widget.sink.canCreateProducts`。
+  /// 手机队列出口建不了主数据 ⇒ 保持原来的「点此选商品」单元格。
+  final bool allowTypedName;
   final VoidCallback onPickProduct;
   final VoidCallback onChanged;
   final VoidCallback? onRemove;
@@ -1049,26 +1130,56 @@ class _LineCard extends StatelessWidget {
               children: <Widget>[
                 Expanded(
                   flex: 5,
-                  child: InkWell(
-                    onTap: enabled ? onPickProduct : null,
-                    child: InputDecorator(
-                      isEmpty: row.product == null,
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        isDense: true,
-                        errorText: errors?[DeliveryLineField.product],
-                      ),
-                      child: Text(
-                        row.product?.name ?? '点此选商品',
-                        style: TextStyle(
-                          height: 1.6,
-                          color: row.product == null
-                              ? theme.hintColor
-                              : theme.colorScheme.onSurface,
+                  // ② 桌面：直接手打名字（右边小图标仍能开选择器）；
+                  //    手机：保持原来的「点此选商品」单元格（见 allowTypedName）
+                  child: allowTypedName
+                      ? TextField(
+                          key: const Key('delivery-product-name'),
+                          controller: row.name,
+                          enabled: enabled,
+                          textInputAction: TextInputAction.next,
+                          onSubmitted: (_) =>
+                              FocusScope.of(context).nextFocus(),
+                          onChanged: (String text) {
+                            row.setName(text);
+                            onChanged();
+                          },
+                          decoration: InputDecoration(
+                            border: const OutlineInputBorder(),
+                            isDense: true,
+                            hintText: '输入或选商品',
+                            errorText: errors?[DeliveryLineField.product],
+                            suffixIcon: IconButton(
+                              key: const Key('delivery-pick-product'),
+                              tooltip: '从商品列表选',
+                              onPressed: enabled ? onPickProduct : null,
+                              icon: const Icon(
+                                Icons.list_alt_outlined,
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                        )
+                      : InkWell(
+                          onTap: enabled ? onPickProduct : null,
+                          child: InputDecorator(
+                            isEmpty: row.product == null,
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              isDense: true,
+                              errorText: errors?[DeliveryLineField.product],
+                            ),
+                            child: Text(
+                              row.product?.name ?? '点此选商品',
+                              style: TextStyle(
+                                height: 1.6,
+                                color: row.product == null
+                                    ? theme.hintColor
+                                    : theme.colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                  ),
                 ),
                 const SizedBox(width: 8),
                 if (onRemove != null)
