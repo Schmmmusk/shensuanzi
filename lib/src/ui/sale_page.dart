@@ -447,6 +447,10 @@ class _SalePageState extends State<SalePage> {
     if (store == null) return;
     final SaleDraft draft = _draft;
     if (!saleDraftHasContent(draft)) {
+      // F1（2026-10-25 复跑）：**表单空 ≠ 用户清空了草稿**。
+      // 进页时草稿只被读进 `_restoreRaw` 等用户点「恢复」，表单本来就还是空的；
+      // 此时删掉 = 「切两次页面就丢」。宁可多留一份脏数据，也不吞用户输入。
+      if (_restoreRaw != null) return;
       store.delete(DraftKind.sale);
       return;
     }

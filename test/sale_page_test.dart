@@ -1198,6 +1198,26 @@ void main() {
       );
     });
 
+    // F1（2026-10-25 复跑）：待恢复的草稿不许被 dispose 删掉。
+    testWidgets('有未恢复的草稿 ⇒ 离开页面不得删掉它（F1）', (WidgetTester tester) async {
+      seedDraft();
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('sale-draft-banner')), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(
+        store.exists(DraftKind.sale),
+        isTrue,
+        reason: '待恢复 ≠ 用户清空：这份草稿不许被 dispose 删掉',
+      );
+
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('sale-draft-banner')), findsOneWidget);
+    });
+
     testWidgets('点「恢复」⇒ 数量/备注被填回来，橙条收起', (WidgetTester tester) async {
       seedDraft(quantity: '3');
       await tester.pumpWidget(page(drafts: store));

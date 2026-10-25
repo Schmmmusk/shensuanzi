@@ -148,6 +148,36 @@ void main() {
       expect(qty.controller!.text, isEmpty, reason: '① 不自动填');
     });
 
+    // F1（2026-10-25 复跑）：待恢复的草稿不许被 dispose 删掉。
+    testWidgets('有未恢复的草稿 ⇒ 离开页面不得删掉它（F1）', (WidgetTester tester) async {
+      store.writeSync(
+        DraftKind.delivery,
+        deliveryDraftToJson(
+          const DeliveryDraft(
+            date: '2026-10-24',
+            lines: <DeliveryLineDraft>[
+              DeliveryLineDraft(quantity: '12', unitPrice: '1.00'),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('delivery-draft-banner')), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(
+        store.exists(DraftKind.delivery),
+        isTrue,
+        reason: '待恢复 ≠ 用户清空：这份草稿不许被 dispose 删掉',
+      );
+
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('delivery-draft-banner')), findsOneWidget);
+    });
+
     testWidgets('输入后 1.5 s 落盘', (WidgetTester tester) async {
       await tester.pumpWidget(page(drafts: store));
       await tester.pumpAndSettle();

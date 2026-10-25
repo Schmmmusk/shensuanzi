@@ -48,6 +48,9 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# 组件包构建产物
+packages/shensuanzi_core/build/
+
 # AI assistant related
 /.workbuddy/
 /.workbuddy-ai/

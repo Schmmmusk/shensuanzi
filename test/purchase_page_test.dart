@@ -135,6 +135,41 @@ void main() {
       );
       expect(back!.lines.first.quantity, '4');
     });
+
+    // F1（2026-10-25 复跑）：草稿只活一次导航。
+    // 第一次离开：表单有内容 ⇒ 写盘（草稿在）。
+    // 第二次进页：草稿只被读进 `_restoreRaw` 等用户点「恢复」，**表单仍是空的**。
+    // 第二次离开：当前表单空 ⇒ 旧实现 `store.delete()` ⇒ 上一份被抹掉。
+    testWidgets('有未恢复的草稿 ⇒ 离开页面不得删掉它（F1）', (WidgetTester tester) async {
+      store.writeSync(
+        DraftKind.purchase,
+        purchaseDraftToJson(
+          const PurchaseDraft(
+            date: '2026-10-24',
+            lines: <PurchaseLineDraft>[
+              PurchaseLineDraft(quantity: '9', unitPrice: '2.00'),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('purchase-draft-banner')), findsOneWidget);
+
+      // 不点「恢复」，直接离开（dispose → `_writeDraftNow()`）。
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(
+        store.exists(DraftKind.purchase),
+        isTrue,
+        reason: '待恢复 ≠ 用户清空：这份草稿不许被 dispose 删掉',
+      );
+
+      // 再进来还能看到橙条（端到端语义）
+      await tester.pumpWidget(page(drafts: store));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('purchase-draft-banner')), findsOneWidget);
+    });
   });
 
   /// 打开商品选择器（② 之后行卡的商品格是**输入框**，统一走右边的小图标）。
