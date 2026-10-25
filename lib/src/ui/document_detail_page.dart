@@ -347,6 +347,17 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     final int unsettledShown = widget.settlements.unsettledForDisplayCentsOf(
       widget.documentId,
     );
+    // F3（D1 甲）：**货全退 ≠ 钱退完**。退货单可以先建、退款后补 ——
+    // 全退时要把"还欠多少退款"明说出来，不能只写「已全部退清」。
+    final int refundedCents = widget.settlements.refundedAgainstCentsOf(
+      widget.documentId,
+    );
+    final int pendingRefund = fullyReturned
+        ? (summary.returnedCents - refundedCents).clamp(
+            0,
+            summary.returnedCents,
+          )
+        : 0;
     final bool isCancelled = doc.status == DocStatus.cancelled;
     final bool isMoneyDoc =
         doc.docType == DocType.receipt || doc.docType == DocType.payment;
@@ -384,10 +395,17 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
             // §审查 BUG-05：已作废的单不显示「未收」——避免对着废单收款的诱导
             if (!isMoneyDoc && !isCancelled)
               if (fullyReturned)
-                // #38 甲：全退之后没有「还要收 / 要欠」可言 ⇒ 只留一句结论。
-                // ⚠️ 标签留空是**有意的**：「未收」这个标签本身就是「还要收多少」，
-                // 在这一行里放它会把一句结论读成矛盾的。
-                _kv(theme, '', '已全部退清')
+                // #38 甲 + F3（D1 甲）：全退之后没有「还要收 / 要欠」可言；
+                // 但**钱没退完时必须说出来** —— 只写「已全部退清」会让用户以为完事了。
+                pendingRefund > 0
+                    ? _kv(
+                        theme,
+                        SettlementService.isInbound(doc.docType) == false
+                            ? '还欠我们退款'
+                            : '还欠客户退款',
+                        '¥${Money.formatGrouped(pendingRefund)}',
+                      )
+                    : _kv(theme, '', '已全部退清')
               else if (unsettled != 0)
                 // 3a（2026-10-24，业务审查 §3.4 / 用户裁定）：负未收是**真实信号**
                 // —— 退得比收得多 ⇒ 我们欠客户钱。显示「多收 ¥X」（正数），
@@ -405,7 +423,12 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
             _kv(
               theme,
               '状态',
-              docStatusLabel(SettlementService.displayStatus(doc, unsettled)),
+              // F3：货全退了就别再说「已结清」（钱可能还没退完）
+              fullyReturned && !isCancelled
+                  ? '已全退'
+                  : docStatusLabel(
+                      SettlementService.displayStatus(doc, unsettled),
+                    ),
             ),
           ],
         ),

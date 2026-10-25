@@ -194,6 +194,30 @@ class SettlementService {
   /// - **#39**：全退之后**隐去「退货」入口**（否则可反复点、继续退款）；
   /// - **#38**：全退之后**不再显示「未收 / 欠多少」的数字**，改说「已全部退清」。
   ///
+  /// 这张单的退货单**已经退回去多少钱**（退货单的 `paid_amount` 合计）。
+  ///
+  /// ## 为什么要它（F3，2026-10-25 裁定 **D1 甲**）
+  ///
+  /// 「货全退了」不等于「钱退完了」：退货单可以先建、退款后补。
+  /// 复跑实测 `XS…-001` 全退 ¥14.00，但只有 ¥3.50 退了款，
+  /// 卡片却只写「已全部退清 / 已结清」—— **一个字都没提还欠客户 ¥10.50**。
+  ///
+  /// 用户裁定原话：「商品全退了，但钱没退，状态写『已结清』是自欺欺人。
+  /// 必须显示『还欠客户退款 ¥X』。」
+  ///
+  /// ⚠️ 方向：**销售退货** = 我方退钱给客户（客户应收）；**采购退货** = 供应商退钱给我们。
+  /// 本方法只给"已退回去多少"，方向由调用方按 `isInbound` 决定措辞。
+  int refundedAgainstCentsOf(String documentId) {
+    final List<Map<String, Object?>> rows = _db.raw.select(
+      'SELECT COALESCE(SUM(paid_amount), 0) AS s FROM documents '
+      "WHERE ref_doc_id = ? AND doc_type IN ('sale_return', 'purchase_return')",
+      <Object?>[documentId],
+    );
+    if (rows.isEmpty) return 0;
+    final Object? value = rows.first['s'];
+    return value is int ? value : 0;
+  }
+
   /// [returnedCents] 由 `DocumentDao.returnedAgainst` 按退货单冲减算好
   /// （`DocumentSummary.returnedCents`）。⚠️ `> 0` 不能省：金额为 0 的单据
   /// 会让后面的 `>=` **空真**，把一张空单说成「已全退」。

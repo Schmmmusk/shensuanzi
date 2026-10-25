@@ -514,7 +514,7 @@ void main() {
   // #38 甲（2026-10-14，用户裁定）：**全退之后不再显示「还要收多少 / 欠多少」**。
   // 报告里那张单（全收 ¥120 + 全退 ¥120）原本显示「未收 ¥-120.00」——
   // 现在只留一句「已全部退清」；**算术不动**（第二步口径的裁定对象）。
-  testWidgets('#38 甲：全收 + 全退 ⇒ 「未收」负数消失，改说「已全部退清」', (
+  testWidgets('#38 甲 + F3（D1 甲）：全收 + 全退但**没退钱** ⇒ 说「还欠客户退款」', (
     WidgetTester tester,
   ) async {
     final RuleEngine engine = RuleEngine(db);
@@ -558,16 +558,30 @@ void main() {
     await tester.pumpWidget(page(sale.id));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('已全部退清'),
-      findsOneWidget,
-      reason: '#38 甲：全退后只留一句结论，不再显示要收 / 欠多少',
-    );
+    // F3（D1 甲，2026-10-25 用户裁定）：「商品全退了，但钱没退，
+    // 状态写『已结清』是自欺欺人。必须显示『还欠客户退款 ¥X』。」
+    expect(find.text('还欠客户退款'), findsOneWidget, reason: '全退但没退款 ⇒ 必须明说还欠多少');
+    expect(find.text('¥10.00'), findsWidgets, reason: '待退款 = 退货总额 − 已退款');
+    expect(find.text('已全部退清'), findsNothing, reason: '钱没退完就不许说「已全部退清」');
+    expect(find.text('已全退'), findsOneWidget, reason: '状态不再写「已结清」');
     expect(
       find.textContaining('未收'),
       findsNothing,
       reason: '「未收」这一行不再出现（标签本身就是「还要收多少」）',
     );
+
+    // 把退款补上（给退货单做一笔核销）⇒ 回到「已全部退清」
+    settlements.settle(
+      targetDocId: ret.id,
+      accountId: 'a1',
+      amountCents: 1000,
+      now: 1700000000000,
+    );
+    await tester.pumpWidget(page(sale.id));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已全部退清'), findsOneWidget, reason: '钱退完了才算「退清」');
+    expect(find.text('还欠客户退款'), findsNothing);
     expect(find.textContaining('¥-'), findsNothing, reason: '界面不再出现负数金额');
   });
 
