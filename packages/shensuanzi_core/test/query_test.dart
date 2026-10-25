@@ -903,6 +903,35 @@ void main() {
       expect(r.topCents, 1200);
     });
 
+    // F13（2026-10-25 复跑）：概览页「要留心」从前只看应收 —— 欠着供应商的钱
+    // 一个字都不说，边界上还会显示「目前没有要留心的事」。
+    test('payablesSummary：我欠人（金额取正）+ top1，与应收互不污染', () {
+      final String p = createProduct();
+      final String supA = createParty();
+      final String supB = createParty();
+      db.raw.execute('UPDATE parties SET name = ? WHERE id = ?', <Object?>[
+        '供应商甲',
+        supA,
+      ]);
+      db.raw.execute('UPDATE parties SET name = ? WHERE id = ?', <Object?>[
+        '供应商乙',
+        supB,
+      ]);
+      seedPurchase(p, supA, 30, 100); // 欠甲 3000
+      seedPurchase(p, supB, 10, 100); // 欠乙 1000
+
+      final PayablesSummary pay = query.payablesSummary();
+      expect(pay.totalCents, 4000, reason: '金额取**正**：我欠人 4000');
+      expect(pay.partyCount, 2);
+      expect(pay.topName, '供应商甲', reason: '欠得最多的排前');
+      expect(pay.topCents, 3000);
+      expect(
+        query.receivablesSummary().totalCents,
+        0,
+        reason: '两个方向互不污染：只有应付时应收必须是 0',
+      );
+    });
+
     test('PendingMarks.unconfirmedCount：pending + sent 都算，确认后归零', () {
       final PendingMarks marks = PendingMarks(SyncQueueDao(db));
       expect(marks.unconfirmedCount(), 0);

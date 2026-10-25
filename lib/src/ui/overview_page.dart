@@ -354,6 +354,10 @@ class _OverviewPageState extends State<OverviewPage> {
     final QueryDao queries = widget.queries!;
     final OverviewSummary today = queries.todaySummary(_dayStart());
     final ReceivablesSummary receivables = queries.receivablesSummary();
+    // F13（2026-10-25 复跑）：从前「要留心」只看应收 —— 欠着供应商的钱一个字都不说，
+    // 边界上还会显示「目前没有要留心的事」。应付（我欠人）与应收同权重，且**排在前面**：
+    // 要还出去的钱比要收进来的更急。
+    final PayablesSummary payables = queries.payablesSummary();
     final int transitCount = queries.deliveryInTransitCount();
     final int negativeStock = queries
         .stockByProduct()
@@ -395,6 +399,23 @@ class _OverviewPageState extends State<OverviewPage> {
       key: 'overview-card-care',
       title: '要留心',
       lines: <Widget>[
+        if (payables.totalCents > 0) ...<Widget>[
+          Text(
+            '应付合计 ¥${Money.formatGrouped(payables.totalCents)}'
+            '（${payables.partyCount} 家未结）',
+            style: const TextStyle(height: 1.7, fontSize: 15),
+          ),
+          if (payables.topName != null)
+            Text(
+              '其中 ${payables.topName} ¥${Money.formatGrouped(payables.topCents)}'
+              '${payables.topActive ? '' : '（已停用）'}',
+              style: TextStyle(
+                height: 1.6,
+                fontSize: 13,
+                color: theme.textTheme.bodySmall?.color,
+              ),
+            ),
+        ],
         if (receivables.totalCents > 0) ...<Widget>[
           Text(
             '应收合计 ¥${Money.formatGrouped(receivables.totalCents)}'
@@ -427,7 +448,9 @@ class _OverviewPageState extends State<OverviewPage> {
               color: theme.colorScheme.error,
             ),
           ),
-        if (receivables.totalCents <= 0 && negativeStock == 0)
+        if (receivables.totalCents <= 0 &&
+            payables.totalCents <= 0 &&
+            negativeStock == 0)
           const Text('目前没有要留心的事。', style: TextStyle(height: 1.7)),
       ],
     );

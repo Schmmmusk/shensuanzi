@@ -89,7 +89,12 @@ export 'src/dao/ledger_dao.dart'
 export 'src/dao/party_dao.dart' show PartyDao;
 export 'src/dao/product_dao.dart' show ProductDao;
 export 'src/dao/query_dao.dart'
-    show QueryDao, OverviewSummary, ReceivablesSummary;
+    show
+        QueryDao,
+        OverviewSummary,
+        DuesSummary,
+        ReceivablesSummary,
+        PayablesSummary;
 export 'src/dao/settlement_dao.dart' show SettlementDao;
 export 'src/dao/sync_dao.dart'
     show ClockOffsetDao, SyncCursorDao, SyncQueueDao, SyncQueueTriage;

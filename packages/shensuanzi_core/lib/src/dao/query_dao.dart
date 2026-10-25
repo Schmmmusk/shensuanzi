@@ -174,18 +174,31 @@ class QueryDao {
   ///
   /// top1 = 欠得最多的那家（**停用的也显示**，OBS-05「账未结清要能查到」；
   /// UI 标「（已停用）」）。没有应收 ⇒ 全零 + `topName == null`。
-  ReceivablesSummary receivablesSummary() {
+  ReceivablesSummary receivablesSummary() => _duesSummary(positive: true);
+
+  /// **应付汇总**（F13，2026-10-25 裁定）：谁我欠着钱、一共欠多少。
+  ///
+  /// 金额一律取**正数** —— 「我欠李哥 ¥72」对用户就是 72，不该显示成 −72。
+  PayablesSummary payablesSummary() => _duesSummary(positive: false);
+
+  /// 应收 / 应付**同一份实现**（纪律 18：不许两处并行，早晚漂移）。
+  ///
+  /// [positive] = true 取正余额（人欠我）；false 取负余额（我欠人，金额取绝对值）。
+  DuesSummary _duesSummary({required bool positive}) {
     final Map<String, int> balances = partyBalances();
-    final List<MapEntry<String, int>> receivables =
+    final List<MapEntry<String, int>> dues =
         balances.entries
-            .where((MapEntry<String, int> e) => e.value > 0)
+            .where(
+              (MapEntry<String, int> e) => positive ? e.value > 0 : e.value < 0,
+            )
             .toList()
           ..sort(
-            (MapEntry<String, int> a, MapEntry<String, int> b) =>
-                b.value.compareTo(a.value),
+            (MapEntry<String, int> a, MapEntry<String, int> b) => positive
+                ? b.value.compareTo(a.value)
+                : a.value.compareTo(b.value), // 负得越多 = 欠得越多，排前面
           );
-    if (receivables.isEmpty) {
-      return const ReceivablesSummary(
+    if (dues.isEmpty) {
+      return const DuesSummary(
         totalCents: 0,
         partyCount: 0,
         topName: null,
@@ -193,20 +206,20 @@ class QueryDao {
         topCents: 0,
       );
     }
-    final MapEntry<String, int> top = receivables.first;
+    final MapEntry<String, int> top = dues.first;
     final List<Map<String, Object?>> rows = _raw.select(
       'SELECT name, is_active FROM ${Schema.parties} WHERE id = ?',
       <Object?>[top.key],
     );
-    return ReceivablesSummary(
-      totalCents: receivables.fold(
+    return DuesSummary(
+      totalCents: dues.fold(
         0,
-        (int s, MapEntry<String, int> e) => s + e.value,
+        (int s, MapEntry<String, int> e) => s + e.value.abs(),
       ),
-      partyCount: receivables.length,
+      partyCount: dues.length,
       topName: rows.isEmpty ? null : rows.first['name']! as String,
       topActive: rows.isEmpty || (rows.first['is_active']! as int) == 1,
-      topCents: top.value,
+      topCents: top.value.abs(),
     );
   }
 
@@ -481,8 +494,8 @@ class OverviewSummary {
 }
 
 /// [QueryDao.receivablesSummary] 的结果（#32：概览页「要留心」卡）。
-class ReceivablesSummary {
-  const ReceivablesSummary({
+class DuesSummary {
+  const DuesSummary({
     required this.totalCents,
     required this.partyCount,
     required this.topName,
@@ -501,6 +514,13 @@ class ReceivablesSummary {
   final bool topActive;
   final int topCents;
 }
+
+/// 应收（人欠我）—— 旧名保留，形状与 [DuesSummary] 一致。
+typedef ReceivablesSummary = DuesSummary;
+
+/// 应付（我欠人）—— F13（2026-10-25）：概览页「要留心」从前只看应收，
+/// 欠着供应商的钱一个字都不说，边界上还会显示「目前没有要留心的事」。
+typedef PayablesSummary = DuesSummary;
 
 /// 一个商品的库存聚合（[QueryDao.stockAggregates] 的返回元素）。
 class StockAgg {
