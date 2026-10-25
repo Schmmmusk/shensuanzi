@@ -429,6 +429,124 @@ void main() {
     expect(service.lastHostSwitchHeldEntries, 1);
   });
 
+  // ============================================ F14：换主机必须**归档**（2026-10-25 裁定）
+  //
+  // 判定依据 = **镜像自己记的 hostId**（`mirror_meta`），不是 `pairing.json` ——
+  // 「忘记这台主机」会删掉后者，旧实现据此跳过重建 ⇒ 旧镜像的商品编码与新主机
+  // 撞车 ⇒ `UNIQUE constraint failed: products.code`，每次重试都必失败。
+
+  int productRows() =>
+      service
+              .openMirror()
+              .raw
+              .select('SELECT COUNT(*) AS n FROM products')
+              .first['n']!
+          as int;
+
+  String pairCode(String hostId, {String ip = '127.0.0.1'}) =>
+      'shensuanzi://pair?host_id=$hostId&ip=$ip&port=${host.baseUri.port}'
+      '&token=tok-$hostId&v=1';
+
+  /// 镜像里放一个商品（模拟上一台主机拉下来的货）
+  Future<void> syncOneProduct() async {
+    host.pullBody['products'] = <Object?>[
+      <String, Object?>{
+        'id': 'p-old',
+        'code': 'P0009',
+        'name': '旧主机的货',
+        'unit': '瓶',
+        'cost_price': 100,
+        'sell_price': 200,
+        'safety_stock': 0,
+        'is_active': 1,
+        'created_at': 1,
+        'updated_at': 1,
+      },
+    ];
+    await service.syncNow();
+    expect(productRows(), 1);
+  }
+
+  test('防呆① 同 IP、异 host_id ⇒ 必须归档 + 重建镜像', () async {
+    service.pairFromCode(pairCode('h-1'));
+    await syncOneProduct();
+
+    // 同一个 IP / 端口，只有 host_id 变了（老王家和老李家都是 192.168.1.100）
+    service.pairFromCode(pairCode('h-2'));
+
+    expect(productRows(), 0, reason: '镜像必须重建，否则新主机推同编码会撞 UNIQUE');
+    final List<MirrorArchiveEntry> archives = service.archive.list();
+    expect(archives, hasLength(1), reason: '旧主机必须归档 —— 不能只清不存');
+    expect(archives.single.hostId, 'h-1');
+    expect(
+      File(
+        p.join(archives.single.directory, 'shensuanzi_mirror.db'),
+      ).existsSync(),
+      isTrue,
+      reason: '归档里要有旧镜像本体',
+    );
+  });
+
+  test('防呆② 同 host_id、异 IP ⇒ 不归档、镜像与积压队列都保留', () async {
+    service.pairFromCode(pairCode('h-1'));
+    await syncOneProduct();
+    enqueueOne('q-keep');
+
+    // 同一台主机，换了地址（换路由器 / DHCP 续租）
+    service.pairFromCode(pairCode('h-1', ip: '127.0.0.2'));
+
+    expect(service.archive.list(), isEmpty, reason: '同一台主机不该归档');
+    expect(productRows(), 1, reason: '镜像不许重建');
+    expect(
+      SyncQueueDao(service.openMirror()).all(),
+      hasLength(1),
+      reason: '积压单必须还在，换地址不影响推送',
+    );
+    expect(service.lastHostSwitchHeldEntries, 0);
+  });
+
+  test('忘记主机后重新扫另一台 ⇒ 必须归档重建（F14 现场）', () async {
+    service.pairFromCode(pairCode('h-1'));
+    await syncOneProduct();
+    enqueueOne('q-1');
+    service.forgetHost(); // ← 这一步会删掉 pairing.json（旧实现据此跳过重建）
+    expect(service.pairingStore.load(), isNull);
+
+    service.pairFromCode(pairCode('h-2'));
+
+    expect(productRows(), 0, reason: 'F14：旧镜像的商品还在 ⇒ 新主机一推同编码就 UNIQUE 撞死');
+    expect(
+      service.archive.list().single.hostId,
+      'h-1',
+      reason: '身份取自镜像（mirror_meta），不是已被删掉的 pairing.json',
+    );
+  });
+
+  test('全新手机首次配对 ⇒ 不归档（情形 C）', () async {
+    service.pairFromCode(pairCode('h-new'));
+
+    expect(service.archive.list(), isEmpty);
+    expect(
+      Directory(service.archive.archiveRoot).existsSync(),
+      isFalse,
+      reason: '空镜像连 archive 目录都不该建',
+    );
+    expect(service.lastHostSwitchHeldEntries, 0);
+  });
+
+  test('老镜像（有数据但无 host_id 标记）⇒ 按换主机处理', () async {
+    service.pairFromCode(pairCode('h-1'));
+    await syncOneProduct();
+    // 模拟 0.6.5 升上来：镜像里没有 mirror_meta
+    MirrorMeta(service.openMirror()).clearHostId();
+    service.forgetHost();
+
+    service.pairFromCode(pairCode('h-1')); // 甚至还是同一台主机
+
+    expect(productRows(), 0, reason: '无法证明这份镜像属于谁 ⇒ 安全侧：归档重建，不让旧店的货混进新店');
+    expect(service.archive.list().single.hostId, 'unknown');
+  });
+
   // C-2（业务审查 §3.7，2026-10-24）：`sent` 条目换主机后**两头落空** ——
   // 旧主机收下了但本机没确认（pull 还没跑）；换主机后新主机没有这条，
   // 而 `unsent()` 明确排除 `sent` ⇒ 它既不会被挂起、也永远不会再推。

@@ -228,5 +228,6 @@ export 'src/sync/sync_client.dart'
     show StockView, SyncClient, SyncPullReport, SyncPushReport;
 export 'src/sync/stock_delta.dart' show StockDelta;
 export 'src/sync/pending_marks.dart' show PendingMarks;
+export 'src/sync/mirror_meta.dart' show MirrorMeta;
 export 'src/sync/transport.dart'
     show SyncHttpException, Transport, TransportRequest, TransportResponse;

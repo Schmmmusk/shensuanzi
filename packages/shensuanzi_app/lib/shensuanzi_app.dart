@@ -56,6 +56,7 @@ export 'src/mobile_sync_service.dart'
         syncBarToneOf,
         syncLinkStateOf;
 export 'src/mirror_view.dart' show MirrorView;
+export 'src/mirror_archive.dart' show MirrorArchive, MirrorArchiveEntry;
 export 'src/mobile_guidance.dart'
     show
         MobileGuideTopic,

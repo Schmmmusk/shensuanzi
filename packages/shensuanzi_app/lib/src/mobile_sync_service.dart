@@ -31,6 +31,7 @@ import 'package:path/path.dart' as p;
 import 'package:shensuanzi_core/shensuanzi_core.dart'
     show
         Db,
+        MirrorMeta,
         PairingPayload,
         SyncClient,
         SyncHttpException,
@@ -45,6 +46,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart'
         TransportResponse;
 
 import 'http_transport.dart';
+import 'mirror_archive.dart';
 import 'pairing_store.dart';
 
 /// 一次 `syncNow()` 的结果。
@@ -105,6 +107,16 @@ class MobileSyncService {
   Db? _mirror;
   bool _syncing = false;
 
+  /// 换主机时的镜像归档（F14，2026-10-25 裁定）。落点 = 镜像库的兄弟目录 `archive/`。
+  late final MirrorArchive archive = MirrorArchive(
+    mirrorPath: mirrorPath,
+    // 本服务的 clock 允许返回 null（测试可注入"读不到时间"），归档要一个确定的毫秒
+    clock: () => _clock() ?? DateTime.now().millisecondsSinceEpoch,
+  );
+
+  /// 镜像的身份标记（哪台主机的镜像）。**判定换主机看它，不看 `pairing.json`。**
+  MirrorMeta _meta() => MirrorMeta(openMirror());
+
   /// 打开（或创建）镜像库。库的生命周期跟随服务（app 退出时 close）。
   ///
   /// ⚠️ **先建父目录**（`mirror/`）—— sqlite3 只建文件、不建中间目录，
@@ -125,6 +137,21 @@ class MobileSyncService {
   void forgetHost() {
     pairingStore.clear();
   }
+
+  /// 手动「重建本机数据副本」（F14 的 UI 出口）。
+  ///
+  /// 与换主机的区别：**身份不变**（还是同一台主机）⇒ 不清 `mirror_meta`、
+  /// 不需要重新扫码。用于「镜像坏了 / 数字明显不对 / 拉了一半」的兜底。
+  ///
+  /// 顺序 = 归档 → 挂起未推送队列 → 重建镜像（游标清零）⇒ 下次同步从头全量拉。
+  /// 返回被挂起的队列条数（UI 用它多说一句）。
+  int rebuildLocalCopy() {
+    final MirrorMeta meta = _meta();
+    return resetForNewHost(previousHostId: meta.hostId);
+  }
+
+  /// 已有的历史主机归档（设置页「历史主机数据」列表用），新 → 旧。
+  List<MirrorArchiveEntry> archives() => archive.list();
 
   /// **换主机 = 重置同步状态**（2026-10-07 裁定，审计报告 #3 / Android 报告 ②）。
   ///
@@ -150,6 +177,16 @@ class MobileSyncService {
   /// 返回被挂起的条目数。
   int resetForNewHost({String? previousHostId}) {
     final Db mirror = openMirror();
+    // F14（2026-10-25 用户裁定）：换主机前先把旧主机这份镜像**整份归档**到
+    // `archive/<旧 hostId>-<时间>/`（含当时未推送的队列）。
+    // ⚠️ 归档是**快照**、不搬走队列：队列里是用户自己开的单，留在活库里他才能
+    // 在新主机上点「重试」补发（既有行为，见 `mobile_sync_service_test` 换主机用例）。
+    // 归档失败不阻断（`snapshot` 内部吞异常）—— 磁盘满也要让用户能换主机。
+    archive.snapshot(
+      db: mirror,
+      hostId: previousHostId ?? 'unknown',
+      now: _clock(),
+    );
     // 先把队列挂起，再重建镜像 —— 顺序反了也一样（rebuildMirror 不碰队列），
     // 但「先挂起」保证任何中途失败都不会留下"仍会自动推给新主机"的条目
     final SyncQueueDao queue = SyncQueueDao(mirror);
@@ -261,8 +298,27 @@ class MobileSyncService {
       );
     }
 
-    // ② 镜像重建（裁定：重建而非迁移 —— 主机版本更高时，本库作废重来）
+    // ② 镜像重建。两条**独立**理由：
+    //    ⓐ 身份不符（F14）：镜像属于另一台主机，或老镜像没有身份但**有数据**
+    //       —— 这是"扫码成功、第一次同步就撞 `UNIQUE constraint failed`"的兜底
+    //       （例如 `pairing.json` 是上一版写的、没走新 `pairFromCode`）。
+    //    ⓑ 主机 schema 更高（既有裁定：重建而非迁移 —— 镜像是派生数据）。
     bool rebuilt = false;
+    final MirrorMeta meta = _meta();
+    final String? mirrorHostId = meta.hostId;
+    final bool identityMismatch = mirrorHostId == null
+        ? meta.hasAnyData()
+        : mirrorHostId != pairing.hostId;
+    if (identityMismatch) {
+      archive.snapshot(
+        db: mirror,
+        hostId: mirrorHostId ?? 'unknown',
+        now: _clock(),
+      );
+      client.rebuildMirror();
+      meta.writeHostId(pairing.hostId);
+      rebuilt = true;
+    }
     if (hostSchema > mirror.schemaVersion) {
       client.rebuildMirror();
       rebuilt = true;
@@ -426,10 +482,29 @@ class MobileSyncService {
       token: payload.token,
     );
     final PairingInfo? previous = pairingStore.load();
-    lastHostSwitchHeldEntries =
-        previous != null && previous.hostId != info.hostId
-        ? resetForNewHost(previousHostId: previous.hostId)
-        : 0;
+    final MirrorMeta meta = _meta();
+
+    // ---------------------------------------------------------------- F14
+    // 判定依据 = **镜像自己记的 hostId**，不是 `pairing.json`。
+    // 原因：「忘记这台主机」会删掉 `pairing.json`（正常路径），旧实现据此判定
+    // `previous == null` ⇒ 跳过重建 ⇒ 旧镜像的商品编码与新主机撞车 ⇒ 同步永久失败。
+    final String? mirrorHostId = meta.hostId;
+    final String? effectiveOld = mirrorHostId ?? previous?.hostId;
+    // 没有身份标记、但镜像里**有数据** ⇒ 0.6.5 及更早的老镜像，无法证明属于谁。
+    // 按"换了主机"处理（安全侧）：宁可归档重建，也不把旧店的货混进新店。
+    final bool unknownButDirty = effectiveOld == null && meta.hasAnyData();
+    final bool switched = effectiveOld != null && effectiveOld != info.hostId;
+
+    if (switched || unknownButDirty) {
+      lastHostSwitchHeldEntries = resetForNewHost(previousHostId: effectiveOld);
+    } else {
+      // 情形 A：同一台主机（hostId 相同、只是换了 IP / 端口 / 令牌）
+      // ⇒ **不归档、不重建**，本地积压的队列照旧推给新地址。
+      lastHostSwitchHeldEntries = 0;
+    }
+
+    // 身份写到镜像上（情形 C 的空镜像也在这里落身份，下次就能判 A / B）
+    meta.writeHostId(info.hostId);
     pairingStore.save(info);
     return info;
   }

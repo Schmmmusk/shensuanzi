@@ -1179,6 +1179,49 @@ void main() {
     );
   }
 
+  // ------------------------------------------------ F14 换主机的身份与归档
+  section('换主机的身份标记与归档（F14，2026-10-25 裁定）');
+  final Directory f14Box = Directory.systemTemp.createTempSync('sz_f14_');
+  try {
+    final String mirrorPath = p.join(
+      f14Box.path,
+      'mirror',
+      'shensuanzi_mirror.db',
+    );
+    Directory(p.dirname(mirrorPath)).createSync(recursive: true);
+    final Db mirror = Db.open(mirrorPath, foreignKeys: false);
+    final MirrorMeta meta = MirrorMeta(mirror);
+    check('全新镜像没有身份（情形 C 的前提）', meta.hostId == null);
+    check('全新镜像没有数据', !meta.hasAnyData());
+    meta.writeHostId('h-1');
+    check('身份写在镜像上（不依赖 pairing.json）', meta.hostId == 'h-1');
+    mirror.raw.execute(
+      'INSERT INTO products (id, code, name, unit, cost_price, sell_price, '
+      'safety_stock, is_active, created_at, updated_at, sync_version) '
+      "VALUES ('p1','P0001','货','瓶',100,200,0,1,1,1,0)",
+    );
+    check('有数据后 hasAnyData 为真（老镜像判据）', meta.hasAnyData());
+    final MirrorArchive archive = MirrorArchive(mirrorPath: mirrorPath);
+    final Directory? snapshot = archive.snapshot(db: mirror, hostId: 'h-1');
+    check('归档落盘', snapshot != null && snapshot.existsSync());
+    check(
+      '归档里有旧镜像本体',
+      snapshot != null &&
+          File(p.join(snapshot.path, 'shensuanzi_mirror.db')).existsSync(),
+    );
+    check('归档能被列出', archive.list().length == 1);
+    check('归档里的 hostId 读回一致', archive.list().first.hostId == 'h-1');
+    meta.clearHostId();
+    check('清身份后回到 null', meta.hostId == null);
+    mirror.close();
+  } finally {
+    try {
+      f14Box.deleteSync(recursive: true);
+    } catch (_) {
+      // 删不掉不影响结论
+    }
+  }
+
   // ⚠️ 统计输出必须在**所有** section 之后 —— 详见上文那条注释。
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   stdout.writeln('=' * 46);

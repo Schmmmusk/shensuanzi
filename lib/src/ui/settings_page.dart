@@ -660,6 +660,10 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
             icon: const Icon(Icons.qr_code_scanner),
             label: const Text('扫码连接主机'),
           ),
+          // F14：没配对时也要能看到「以前那台主机的数据」——
+          // 归档不依赖当前是否连着主机。
+          const SizedBox(height: 8),
+          _archiveRow(theme),
         ],
       );
     }
@@ -724,8 +728,167 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
             ),
           ],
         ),
+        // ------------------------------------------------ F14（2026-10-25）
+        // ① 归档可见：换主机时自动把上一台主机的镜像存起来，这里给出口；
+        // ② 手动重建：镜像坏了 / 数字明显不对时的兜底（错误文案早就承诺过，
+        //    之前界面上没有这个按钮）。
+        const SizedBox(height: 4),
+        _archiveRow(theme),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const Key('mobile-sync-rebuild'),
+            onPressed: _rebuild,
+            icon: const Icon(Icons.restore_page_outlined, size: 18),
+            label: const Text('重建本机数据副本'),
+          ),
+        ),
       ],
     );
+  }
+
+  /// 「历史主机数据（N 份）」+ 查看入口（没有归档时只显示一行灰字，不给死按钮）
+  Widget _archiveRow(ThemeData theme) {
+    final List<MirrorArchiveEntry> entries = widget.service.archives();
+    return Row(
+      children: <Widget>[
+        Expanded(
+          child: Text(
+            entries.isEmpty ? '历史主机数据：暂无' : '历史主机数据（${entries.length} 份）',
+            style: TextStyle(
+              height: 1.6,
+              color: theme.textTheme.bodySmall?.color,
+            ),
+          ),
+        ),
+        if (entries.isNotEmpty)
+          TextButton(
+            key: const Key('mobile-sync-archives'),
+            onPressed: () => _showArchives(entries),
+            child: const Text('查看'),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _showArchives(List<MirrorArchiveEntry> entries) async {
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('历史主机数据'),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  '换主机时自动把上一台主机的数据副本存在这里，'
+                  '用来核对「以前那台电脑上有什么」。它不参与现在的同步。',
+                  style: TextStyle(height: 1.6),
+                ),
+                const SizedBox(height: 12),
+                for (final MirrorArchiveEntry entry in entries)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('主机 ${entry.hostId}'),
+                    subtitle: Text(
+                      formatDateTime(entry.archivedAt.millisecondsSinceEpoch),
+                    ),
+                    trailing: TextButton(
+                      onPressed: () => _deleteArchive(dialogContext, entry),
+                      child: const Text('删除'),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteArchive(
+    BuildContext dialogContext,
+    MirrorArchiveEntry entry,
+  ) async {
+    final bool? sure = await showDialog<bool>(
+      context: dialogContext,
+      builder: (BuildContext c) => AlertDialog(
+        title: const Text('删除这份历史数据？'),
+        content: Text(
+          '「主机 ${entry.hostId}」在 '
+          '${formatDateTime(entry.archivedAt.millisecondsSinceEpoch)} 的副本'
+          '会被删掉，删了就找不回来了。',
+          style: const TextStyle(height: 1.7),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true) return;
+    widget.service.archive.delete(entry.directory);
+    // ⚠️ 用的是 `dialogContext`，就必须查它的 `mounted`（查 State 的 mounted
+    // 是"不相关的守卫"，analyzer 会报 use_build_context_synchronously）
+    if (!dialogContext.mounted) return;
+    Navigator.pop(dialogContext);
+    setState(() {});
+  }
+
+  Future<void> _rebuild() async {
+    final bool? sure = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext c) => AlertDialog(
+        title: const Text('重建本机数据副本？'),
+        content: const Text(
+          '会先把现在这份副本归档（在「历史主机数据」里能看到），'
+          '再从电脑重新拉一份完整的。\n\n'
+          '你还没传上去的单不会丢 —— 它们会变成「待重试」，'
+          '需要你在同步队列里确认后再发。',
+          style: TextStyle(height: 1.7),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('重建'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    final int held = widget.service.rebuildLocalCopy();
+    if (!mounted) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          held > 0 ? '本机副本已重建，$held 条未同步的单已挂起；正在从电脑重新拉取' : '本机副本已重建，正在从电脑重新拉取',
+        ),
+        duration: const Duration(seconds: 6),
+      ),
+    );
+    await widget.onSyncNow?.call();
+    if (mounted) setState(() {});
   }
 }
 
