@@ -22,6 +22,7 @@ import 'scaled.dart';
 import 'export_button.dart';
 import 'list_scaffold.dart';
 import 'product_form_dialog.dart';
+import 'notice.dart';
 
 class ProductsPage extends StatefulWidget {
   const ProductsPage({
@@ -99,7 +100,8 @@ class _ProductsPageState extends State<ProductsPage> {
     _masterDataSink.setProductActive(product.id, !wasActive);
     setState(() {});
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    showSnack(
+      context,
       SnackBar(
         content: Text(
           wasActive ? '已停用「${product.name}」' : '已恢复「${product.name}」',
@@ -118,9 +120,7 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   void _announce(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    showSnack(context, SnackBar(content: Text(message)));
   }
 
   @override

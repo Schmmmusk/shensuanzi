@@ -44,6 +44,7 @@ import 'draft_banner.dart';
 import 'submit_error_summary.dart';
 import 'missing_product_dialog.dart';
 import 'product_form_dialog.dart';
+import 'notice.dart';
 
 /// 店内销售开单页。
 class SalePage extends StatefulWidget {
@@ -838,7 +839,8 @@ class _SalePageState extends State<SalePage> {
       // onStorageFailure：这不是内部错误（detail 已由引擎经 onInternalError
       // 进宿主日志）。草稿保留，改完能直接再交。
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text(error.reason),
           duration: const Duration(seconds: 8),
@@ -849,7 +851,8 @@ class _SalePageState extends State<SalePage> {
       // M15（2026-10-08）：界面只给**分类文案**，原始异常交给宿主记日志 ——
       // `SqliteException` 的文本带着整条 SQL 与绑定参数（等于把这张单印出来）
       widget.onStorageFailure?.call(error, stack);
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text(storageFailureNote(error)),
           duration: const Duration(seconds: 8),
@@ -895,7 +898,8 @@ class _SalePageState extends State<SalePage> {
 
     // 裁定 ②：入队成功的文案在 core（`queuedNotice`），UI 不造句
     if (result.isQueued) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text(result.queuedNotice!),
           duration: const Duration(seconds: 6),
@@ -917,7 +921,8 @@ class _SalePageState extends State<SalePage> {
     final String partyDue = (result.partyDueCents ?? 0) > 0
         ? '；$_partyName 累计欠款 ¥${Money.formatGrouped(result.partyDueCents!)}'
         : '';
-    ScaffoldMessenger.of(context).showSnackBar(
+    showSnack(
+      context,
       SnackBar(
         content: Text(
           '单号 ${result.finalDocNo} 已保存 ¥${Money.formatGrouped(result.totalCents)}'
@@ -2070,7 +2075,8 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
         role: PartyRole.customer,
       );
       if (notice != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        showSnack(
+          context,
           SnackBar(content: Text(notice), duration: const Duration(seconds: 4)),
         );
       }

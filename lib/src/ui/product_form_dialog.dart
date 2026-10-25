@@ -315,9 +315,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       // 手机端：**说清这条还没到电脑** —— 编码由主机定，靠 pull 回写镜像
       final String? notice = result.queuedNotice;
       if (notice != null) {
-        ScaffoldMessenger.maybeOf(
-          context,
-        )?.showSnackBar(SnackBar(content: Text(notice)));
+        ScaffoldMessenger.maybeOf(context)
+          ?..removeCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(notice)));
       }
       Navigator.of(context).pop(result.product);
     } catch (error) {

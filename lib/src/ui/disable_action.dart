@@ -21,6 +21,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'notice.dart';
 
 /// 停用前的确认（仅在**有余额**时弹）。返回 `true` = 继续停用。
 ///
@@ -66,7 +67,8 @@ void showDisableUndoBar(
   required String message,
   required VoidCallback onUndo,
 }) {
-  ScaffoldMessenger.of(context).showSnackBar(
+  showSnack(
+    context,
     SnackBar(
       content: Text(message),
       duration: const Duration(seconds: 6),

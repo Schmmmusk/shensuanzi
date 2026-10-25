@@ -26,6 +26,7 @@ import 'list_scaffold.dart';
 import 'export_button.dart';
 import 'mobile_guidance_dialog.dart';
 import 'party_flow_page.dart';
+import 'notice.dart';
 
 /// 往来方页。
 class PartiesPage extends StatefulWidget {
@@ -385,7 +386,8 @@ class _PartiesPageState extends State<PartiesPage> {
     if (!context.mounted) return;
     final String? notice = partyMutationNotice(mutation);
     if (notice != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(content: Text(notice), duration: const Duration(seconds: 4)),
       );
     }

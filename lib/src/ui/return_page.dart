@@ -17,6 +17,7 @@ import 'app_colors.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'submit_error_summary.dart';
+import 'notice.dart';
 
 class ReturnPage extends StatefulWidget {
   const ReturnPage({
@@ -216,15 +217,11 @@ class _ReturnPageState extends State<ReturnPage> {
     if (_saving) return;
     final ReturnDraft? draft = _draftOrNull();
     if (draft == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请先填至少一行的退货数量')));
+      showSnack(context, const SnackBar(content: Text('请先填至少一行的退货数量')));
       return;
     }
     if (draft.totalCents <= 0) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('退货金额合计要大于 0')));
+      showSnack(context, const SnackBar(content: Text('退货金额合计要大于 0')));
       return;
     }
 
@@ -235,7 +232,8 @@ class _ReturnPageState extends State<ReturnPage> {
     try {
       final ReturnSaved saved = widget.service.create(draft);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text(
             '退货单 ${saved.docNo} 已保存，冲减 '
@@ -258,7 +256,8 @@ class _ReturnPageState extends State<ReturnPage> {
       // 进宿主日志）。草稿保留。
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text(error.reason),
           duration: const Duration(seconds: 8),
@@ -269,7 +268,8 @@ class _ReturnPageState extends State<ReturnPage> {
       widget.onStorageFailure?.call(error, stack);
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text(storageFailureNote(error)),
           duration: const Duration(seconds: 6),

@@ -42,6 +42,7 @@ import 'ui/app_shell.dart';
 import 'ui/data_directory_dialog.dart';
 import 'ui/mobile_shell.dart';
 import 'ui/pairing_scan_page.dart';
+import 'ui/notice.dart';
 
 class ShensuanziApp extends StatefulWidget {
   /// `pickDirectory` 的默认值**就在参数上就地给出**（真实实现）——
@@ -1218,7 +1219,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   void _toast(String message) {
     final BuildContext? dialogContext = _navigatorKey.currentContext;
     if (dialogContext == null) return;
-    ScaffoldMessenger.of(dialogContext).showSnackBar(
+    showSnack(
+      dialogContext,
       SnackBar(content: Text(message), duration: const Duration(seconds: 8)),
     );
   }

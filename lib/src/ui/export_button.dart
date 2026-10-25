@@ -59,6 +59,8 @@ class _ExportButtonState extends State<ExportButton> {
     if (!mounted) return;
     setState(() => _busy = false);
 
+    // ⚠️ 这里**故意**不用 `showSnack`：await 之后 `context` 可能已经失效，
+    // 只能用 await 之前取好的 messenger。它自带 removeCurrentSnackBar（F12 的两条规矩都满足）。
     messenger
       ..removeCurrentSnackBar()
       ..showSnackBar(

@@ -32,6 +32,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 
 import 'host_service_section.dart';
+import 'notice.dart';
 
 /// 设置页。
 class SettingsPage extends StatefulWidget {
@@ -203,7 +204,8 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
     setState(() => _backupBusy = false);
     // 遗漏 5：SnackBar 带完整路径（用户可立刻复制到文件管理器）
-    ScaffoldMessenger.of(context).showSnackBar(
+    showSnack(
+      context,
       SnackBar(
         content: Text(backupOutcomeMessage(outcome)),
         duration: const Duration(seconds: 4),
@@ -228,7 +230,8 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     if (!mounted) return;
     setState(() => _exporting = false);
-    ScaffoldMessenger.of(context).showSnackBar(
+    showSnack(
+      context,
       SnackBar(content: Text(message), duration: const Duration(seconds: 6)),
     );
   }
@@ -251,7 +254,8 @@ class _SettingsPageState extends State<SettingsPage> {
       // 还有一次 `_configStore.save`，它再抛一次就把 SnackBar 吞了。
       // ⇒ 用户看到「选了什么都没发生」，而我们什么都看不到。
       // 现在：**先告诉用户，再通知宿主**，两步各自独立。
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text(
             '没能存到磁盘（$error）。\n'
@@ -879,7 +883,8 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
     final int held = widget.service.rebuildLocalCopy();
     if (!mounted) return;
     setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
+    showSnack(
+      context,
       SnackBar(
         content: Text(
           held > 0 ? '本机副本已重建，$held 条未同步的单已挂起；正在从电脑重新拉取' : '本机副本已重建，正在从电脑重新拉取',

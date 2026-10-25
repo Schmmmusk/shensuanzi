@@ -25,6 +25,7 @@ import 'package:flutter/services.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'product_form_dialog.dart';
+import 'notice.dart';
 
 /// 期初录入页。
 class OpeningStockPage extends StatefulWidget {
@@ -248,7 +249,8 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
         });
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text('已记录 ${draft.filledCount} 件商品，等同步后电脑上的库存会按实际数量校正'),
           duration: const Duration(seconds: 3),
@@ -302,7 +304,8 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
         ? '已录入 ${result.changedCount} 件商品'
         : '已录入 ${result.changedCount + result.unchangedCount} 件商品'
               '（其中 ${result.unchangedCount} 件无变化）';
-    ScaffoldMessenger.of(context).showSnackBar(
+    showSnack(
+      context,
       SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
     );
     widget.onDone();

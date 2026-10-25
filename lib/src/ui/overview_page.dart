@@ -19,6 +19,7 @@ import 'dart:io' show Process;
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'notice.dart';
 
 /// 提醒橙 —— **不用错误红**（可以不拦人的提醒一律橙色，
 /// `docs/ui_principles.md` §1.3；与 `product_form_dialog.dart` 的内联提示同色）
@@ -109,7 +110,8 @@ class _OverviewPageState extends State<OverviewPage> {
     final BackupOutcome outcome = await run();
     if (!mounted) return;
     setState(() => _busy = false);
-    ScaffoldMessenger.of(context).showSnackBar(
+    showSnack(
+      context,
       SnackBar(
         content: Text(backupOutcomeMessage(outcome)),
         duration: const Duration(seconds: 4),

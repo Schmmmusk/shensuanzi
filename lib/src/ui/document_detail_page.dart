@@ -33,6 +33,7 @@ import 'scaled.dart';
 
 import 'settlement_dialog.dart';
 import 'return_page.dart';
+import 'notice.dart';
 
 class DocumentDetailPage extends StatefulWidget {
   const DocumentDetailPage({
@@ -164,7 +165,8 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
         : (isReturn
               ? '还差 ¥${Money.formatGrouped(saved.targetUnsettledAfterCents)} 没退。'
               : '还欠 ¥${Money.formatGrouped(saved.targetUnsettledAfterCents)}。');
-    ScaffoldMessenger.of(context).showSnackBar(
+    showSnack(
+      context,
       SnackBar(
         content: Text(
           '${isReturn ? '已退' : '已${saved.inbound ? '收' : '付'}'} '
@@ -203,7 +205,8 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     if (docNo == null) return;
     // 剪贴板写入**不等待**（与单据列表同款：平台通道的 Future 在测试里永不完成）
     unawaited(Clipboard.setData(ClipboardData(text: docNo)));
-    ScaffoldMessenger.of(context).showSnackBar(
+    showSnack(
+      context,
       SnackBar(
         content: Text('已复制单号 $docNo'),
         duration: const Duration(seconds: 2),
@@ -661,7 +664,8 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
       if (!mounted) return;
       setState(_load);
       widget.onChanged?.call();
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text(signed.message),
           duration: const Duration(seconds: 3),
@@ -671,7 +675,8 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
       // #23（裁定甲）：签收的业务拒绝（如状态已变）—— 文案照实显示；
       // 不调 onStorageFailure（detail 已由引擎进宿主日志）。
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text(error.reason),
           duration: const Duration(seconds: 6),
@@ -681,7 +686,8 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
       // #43：原始异常进日志，界面只给分类文案（M15 两通道）
       widget.onStorageFailure?.call(error, stack);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      showSnack(
+        context,
         SnackBar(
           content: Text(storageFailureNote(error)),
           duration: const Duration(seconds: 6),

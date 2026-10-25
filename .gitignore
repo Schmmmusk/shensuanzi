@@ -50,6 +50,8 @@ app.*.map.json
 
 # 组件包构建产物
 packages/shensuanzi_core/build/
+packages/shensuanzi_app/build/
+packages/shensuanzi_host/build/
 
 # AI assistant related
 /.workbuddy/
@@ -60,3 +62,4 @@ packages/shensuanzi_core/build/
 # DeepSeek Harness related temporary files
 .dsh_acceptance/
 .scratch/
+packages/shensuanzi_app/build/test_cache/build/fa875cea96ff9eb23bebfb51f104f901.cache.dill.track.dill
