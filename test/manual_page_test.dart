@@ -17,7 +17,9 @@ void main() {
       ).copyWith(textScaler: TextScaler.linear(scale)),
       child: child!,
     ),
-    home: const ManualPage(versionLine: 'v0.6.1'),
+    // 版本行是**假的**（这个文件只测排版，不测版本号）—— 刻意用 9.9.9，
+    // 免得每次 bump 都有人以为这里要跟着改（0.6.3 的 P1 就是这么来的）
+    home: const ManualPage(versionLine: 'v9.9.9（示例版本）'),
   );
 
   /// 第 1 章标号所在的方框

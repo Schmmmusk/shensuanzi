@@ -149,6 +149,18 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
 
   bool _saving = false;
 
+  // ---- P3（2026-10-25，§CV·一百零七）：滚动发现性 ----
+  //
+  // 表单在 800×600 / 125% 缩放下装不下：首屏只看得到 名称 / 单位 / 售价 / 包装，
+  // 「进价 · 安全库存 · 条码」要往下滚。目标用户是中老年，滚动发现性差
+  // （外测报告 P3：测试者本人差点据此误报「字段缺失」）。
+
+  /// 内容区滚动控制器（判断「下面还有没有东西」用）
+  final ScrollController _scroll = ScrollController();
+
+  /// **下面还有内容没露出来** —— 只有真的滚得动、且还没滚到底时才为真。
+  bool _moreBelow = false;
+
   /// 条码重复的内联提示原文（`ProductDraft.barcodeNotice` 的返回值）
   String? _barcodeNotice;
 
@@ -179,10 +191,26 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     if (widget.allowOpeningStock && widget.existing == null) {
       _openingStock = TextEditingController();
     }
+    _scroll.addListener(_syncMoreBelow);
+  }
+
+  /// 重新判断「下面还有内容没露出来」。
+  ///
+  /// ⚠️ **只在真的超出时才为真**：大窗口下所有字段都在视口里，还挂一句
+  /// 「往下还有」就是撒谎（纪律 17）—— 而目标用户会照着它去滚，滚不动
+  /// 就以为软件卡了。所以判据是 `maxScrollExtent > 0`，不是「有没有这个字段」。
+  void _syncMoreBelow() {
+    if (!mounted || !_scroll.hasClients) return;
+    final ScrollPosition position = _scroll.position;
+    final bool more =
+        position.maxScrollExtent > 0 &&
+        position.pixels < position.maxScrollExtent - 1;
+    if (more != _moreBelow) setState(() => _moreBelow = more);
   }
 
   @override
   void dispose() {
+    _scroll.dispose();
     _name.dispose();
     _unit.dispose();
     _sellPrice.dispose();
@@ -305,248 +333,324 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     }
   }
 
+  /// 「下面还有内容」提示（P3）。
+  ///
+  /// 为什么值得单做一个控件：目标用户不会「先滚一下看看还有没有」——
+  /// 他们看到表单结束就以为填完了，于是**进价永远填不上**（毛利恒为 0）。
+  /// 这行字把「还有东西」变成可见事实，**点一下直接滚到底**（不用学着拖）。
+  ///
+  /// 只在 [_moreBelow] 为真时出现（见 `_syncMoreBelow`）。
+  Widget _moreBelowHint(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Material(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          key: const Key('product-form-more-below'),
+          borderRadius: BorderRadius.circular(6),
+          onTap: () {
+            if (!_scroll.hasClients) return;
+            _scroll.animateTo(
+              _scroll.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(
+              children: <Widget>[
+                Icon(Icons.arrow_downward, size: 16, color: theme.hintColor),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '往下还有：进价 · 安全库存 · 条码（点这里滚下去）',
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.4,
+                      color: theme.hintColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool isNew = widget.existing == null;
+
+    // P3：内容高度会变（条码提示出现、错误框出现、窗口缩放）⇒ 每帧布局后重算
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncMoreBelow());
 
     return AlertDialog(
       title: Text(isNew ? '新增商品' : '编辑商品'),
       content: SizedBox(
         width: 560,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              if (_failure != null) ...<Widget>[
-                _failureBox(context),
-                const SizedBox(height: 12),
-              ],
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            // 内容区可滚动；「下面还有」提示挂在滚动区**外面**（不会被滚走）
+            Flexible(
+              child: SingleChildScrollView(
+                controller: _scroll,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    if (_failure != null) ...<Widget>[
+                      _failureBox(context),
+                      const SizedBox(height: 12),
+                    ],
 
-              // 名称独占一行（最长、最重要）
-              TextField(
-                controller: _name,
-                textInputAction: TextInputAction.next,
-                onChanged: (_) => _clearError(ProductField.name),
-                decoration: _decoration(ProductField.name),
-              ),
-              const SizedBox(height: 16),
-
-              // 单位（短的放左边）。placeholder 用「例：」开头 ——
-              // 给「这里可以自由填」的信号，比「请输入单位」强得多（§AJ·AI-6）
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Expanded(
-                    child: TextField(
-                      controller: _unit,
-                      focusNode: _unitFocus,
+                    // 名称独占一行（最长、最重要）
+                    TextField(
+                      controller: _name,
                       textInputAction: TextInputAction.next,
-                      onChanged: (_) => _clearError(ProductField.unit),
+                      onChanged: (_) => _clearError(ProductField.name),
+                      decoration: _decoration(ProductField.name),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 单位（短的放左边）。placeholder 用「例：」开头 ——
+                    // 给「这里可以自由填」的信号，比「请输入单位」强得多（§AJ·AI-6）
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Expanded(
+                          child: TextField(
+                            controller: _unit,
+                            focusNode: _unitFocus,
+                            textInputAction: TextInputAction.next,
+                            onChanged: (_) => _clearError(ProductField.unit),
+                            decoration: _decoration(
+                              ProductField.unit,
+                              hint: '例：桶、箱、捆、扎',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 2,
+                          child: TextField(
+                            controller: _sellPrice,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            textInputAction: TextInputAction.next,
+                            onChanged: (_) =>
+                                _clearError(ProductField.sellPrice),
+                            decoration: _decoration(
+                              ProductField.sellPrice,
+                              suffix: '元',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    // 常用单位：点一下就填好，不用敲字。末尾的 [其他▾] 是
+                    // 「可以自由填」的显式入口 —— 点击聚焦输入框（§AJ·AI-6）
+                    Wrap(
+                      spacing: 8,
+                      children: <Widget>[
+                        for (final String unit in _commonUnits)
+                          ActionChip(
+                            label: Text(unit),
+                            onPressed: () {
+                              _unit.text = unit;
+                              _clearError(ProductField.unit);
+                            },
+                          ),
+                        ActionChip(
+                          label: const Text('其他 ▾'),
+                          onPressed: () => _unitFocus.requestFocus(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Expanded(
+                          child: TextField(
+                            controller: _costPrice,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            textInputAction: TextInputAction.next,
+                            onChanged: (_) =>
+                                _clearError(ProductField.costPrice),
+                            decoration: _decoration(
+                              ProductField.costPrice,
+                              suffix: '元',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: TextField(
+                            controller: _safetyStock,
+                            keyboardType: TextInputType.number,
+                            textInputAction: TextInputAction.next,
+                            onChanged: (_) =>
+                                _clearError(ProductField.safetyStock),
+                            decoration: _decoration(ProductField.safetyStock),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    // 单位 = 最小销售单位（§AJ·AI-5）—— 这行小字解决 90% 的
+                    // 「按箱进、按个卖」困惑；「系统按个记，你心里按箱想」。
+                    //
+                    // P3（2026-10-25）：原来它紧跟单位 chips，白占首屏 3 行，把「进价」
+                    // 挤到折叠线以下。挪到**包装说明正上方** —— 这句话讲的就是「按箱进、
+                    // 按个卖」，紧挨包装说明读起来更顺，同时把首屏让给进价。
+                    Text(
+                      '单位填最小的售卖单位（个 / 瓶 / 斤），不是进货的箱子单位。'
+                      '按箱进的货，装箱关系写在下面的「包装说明」里。',
+                      style: TextStyle(
+                        height: 1.6,
+                        color: Theme.of(context).textTheme.bodySmall?.color,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // 包装说明（§AJ·AI-5）：纯文本备注，**不参与任何计算** ——
+                    // 用户看着「144 瓶」心算「是几箱」时靠它，零风险
+                    TextField(
+                      controller: _packageNote,
+                      textInputAction: TextInputAction.next,
+                      onChanged: (_) => _clearError(ProductField.packageNote),
                       decoration: _decoration(
-                        ProductField.unit,
-                        hint: '例：桶、箱、捆、扎',
+                        ProductField.packageNote,
+                        label: '包装说明（可选）',
+                        hint: '例：1 箱 = 48 瓶',
+                        helper: '只是备注，不影响记账',
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    flex: 2,
-                    child: TextField(
-                      controller: _sellPrice,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
+                    const SizedBox(height: 16),
+
+                    // 包装换算（v3，§BD·四 #2）：两列**成对**填才启用按箱录入；
+                    // 任一为空 ⇒ 与不填完全一样。与上面的「包装说明」分工：
+                    // 那个是给人看的备注，这两列是给换算用的数据。
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Expanded(
+                          child: TextField(
+                            controller: _packageUnit,
+                            textInputAction: TextInputAction.next,
+                            onChanged: (_) =>
+                                _clearError(ProductField.packageUnit),
+                            decoration: _decoration(
+                              ProductField.packageUnit,
+                              label: '包装单位（可选）',
+                              hint: '例：箱',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: _packageSize,
+                            keyboardType:
+                                const TextInputType.numberWithOptions(),
+                            textInputAction: TextInputAction.next,
+                            onChanged: (_) =>
+                                _clearError(ProductField.packageSize),
+                            decoration: _decoration(
+                              ProductField.packageSize,
+                              label: '1 包 = 多少（可选）',
+                              hint: '例：48',
+                              helper: '两格都填，开单就能按「箱」录入',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // #31（2026-10-16 裁定甲）：可选「当前库存」—— 手机新建专用
+                    //（`allowOpeningStock`；桌面期初有独立入口，编辑模式不显示 = 裁定③）。
+                    // 只按**商品单位**填（本批不做按箱换算，见台账 §CV·四十六·deviation）；
+                    // 空着 = 纯建档。
+                    if (_openingStock != null) ...<Widget>[
+                      const SizedBox(height: 16),
+                      TextField(
+                        key: const Key('product-opening-stock'),
+                        controller: _openingStock,
+                        keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.next,
+                        onChanged: (_) {
+                          if (_openingError != null) {
+                            setState(() => _openingError = null);
+                          }
+                        },
+                        decoration: InputDecoration(
+                          labelText: '当前库存（选填）',
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                          errorText: _openingError,
+                          helperText:
+                              '货架上现在实际有多少（按商品单位填）—— '
+                              '同步前库存页会标「期初 … 待同步」',
+                        ),
                       ),
-                      textInputAction: TextInputAction.next,
-                      onChanged: (_) => _clearError(ProductField.sellPrice),
+                    ],
+
+                    // 条码独占一行：可能很长，且要接扫码枪
+                    TextField(
+                      controller: _barcode,
+                      // 扫码枪通常在末尾带回车 —— 回车即保存，一次扫码完成建档
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => _save(),
+                      onChanged: _onBarcodeChanged,
                       decoration: _decoration(
-                        ProductField.sellPrice,
-                        suffix: '元',
+                        ProductField.barcode,
+                        // 有查重提示时让位：两行辅助文字会挤在一起，反而没人看
+                        helper: _barcodeNotice == null
+                            ? '没有条码可以先空着。有条码的话，扫一下会自动保存。'
+                            : null,
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // 常用单位：点一下就填好，不用敲字。末尾的 [其他▾] 是
-              // 「可以自由填」的显式入口 —— 点击聚焦输入框（§AJ·AI-6）
-              Wrap(
-                spacing: 8,
-                children: <Widget>[
-                  for (final String unit in _commonUnits)
-                    ActionChip(
-                      label: Text(unit),
-                      onPressed: () {
-                        _unit.text = unit;
-                        _clearError(ProductField.unit);
-                      },
-                    ),
-                  ActionChip(
-                    label: const Text('其他 ▾'),
-                    onPressed: () => _unitFocus.requestFocus(),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              // 单位 = 最小销售单位（§AJ·AI-5）—— 这行小字解决 90% 的
-              // 「按箱进、按个卖」困惑；「系统按个记，你心里按箱想」
-              Text(
-                '单位填最小的售卖单位（个 / 瓶 / 斤），不是进货的箱子单位。'
-                '按箱进的货，装箱关系写在下面的「包装说明」里。',
-                style: TextStyle(
-                  height: 1.6,
-                  color: Theme.of(context).textTheme.bodySmall?.color,
-                ),
-              ),
-              const SizedBox(height: 16),
 
-              // 包装说明（§AJ·AI-5）：纯文本备注，**不参与任何计算** ——
-              // 用户看着「144 瓶」心算「是几箱」时靠它，零风险
-              TextField(
-                controller: _packageNote,
-                textInputAction: TextInputAction.next,
-                onChanged: (_) => _clearError(ProductField.packageNote),
-                decoration: _decoration(
-                  ProductField.packageNote,
-                  label: '包装说明（可选）',
-                  hint: '例：1 箱 = 48 瓶',
-                  helper: '只是备注，不影响记账',
-                ),
-              ),
-              const SizedBox(height: 16),
+                    // 条码重复：**内联橙色提示**，不弹窗、不打断输入（R-15 裁定）。
+                    // 文案（含第二句「保存后扫码会显示…」）来自 core，界面只上色。
+                    if (_barcodeNotice != null) ...<Widget>[
+                      const SizedBox(height: 6),
+                      Text(
+                        _barcodeNotice!,
+                        style: const TextStyle(
+                          color: _noticeColor,
+                          height: 1.6,
+                        ),
+                      ),
+                    ],
 
-              // 包装换算（v3，§BD·四 #2）：两列**成对**填才启用按箱录入；
-              // 任一为空 ⇒ 与不填完全一样。与上面的「包装说明」分工：
-              // 那个是给人看的备注，这两列是给换算用的数据。
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Expanded(
-                    child: TextField(
-                      controller: _packageUnit,
-                      textInputAction: TextInputAction.next,
-                      onChanged: (_) => _clearError(ProductField.packageUnit),
-                      decoration: _decoration(
-                        ProductField.packageUnit,
-                        label: '包装单位（可选）',
-                        hint: '例：箱',
+                    const SizedBox(height: 12),
+                    Text(
+                      isNew ? '商品编码由系统自动编号，不用你填。' : '编码由系统生成，不会因为编辑而改变。',
+                      style: TextStyle(
+                        height: 1.6,
+                        color: Theme.of(context).textTheme.bodySmall?.color,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _packageSize,
-                      keyboardType: const TextInputType.numberWithOptions(),
-                      textInputAction: TextInputAction.next,
-                      onChanged: (_) => _clearError(ProductField.packageSize),
-                      decoration: _decoration(
-                        ProductField.packageSize,
-                        label: '1 包 = 多少（可选）',
-                        hint: '例：48',
-                        helper: '两格都填，开单就能按「箱」录入',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Expanded(
-                    child: TextField(
-                      controller: _costPrice,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      textInputAction: TextInputAction.next,
-                      onChanged: (_) => _clearError(ProductField.costPrice),
-                      decoration: _decoration(
-                        ProductField.costPrice,
-                        suffix: '元',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: TextField(
-                      controller: _safetyStock,
-                      keyboardType: TextInputType.number,
-                      textInputAction: TextInputAction.next,
-                      onChanged: (_) => _clearError(ProductField.safetyStock),
-                      decoration: _decoration(ProductField.safetyStock),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // #31（2026-10-16 裁定甲）：可选「当前库存」—— 手机新建专用
-              //（`allowOpeningStock`；桌面期初有独立入口，编辑模式不显示 = 裁定③）。
-              // 只按**商品单位**填（本批不做按箱换算，见台账 §CV·四十六·deviation）；
-              // 空着 = 纯建档。
-              if (_openingStock != null) ...<Widget>[
-                const SizedBox(height: 16),
-                TextField(
-                  key: const Key('product-opening-stock'),
-                  controller: _openingStock,
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.next,
-                  onChanged: (_) {
-                    if (_openingError != null) {
-                      setState(() => _openingError = null);
-                    }
-                  },
-                  decoration: InputDecoration(
-                    labelText: '当前库存（选填）',
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    errorText: _openingError,
-                    helperText:
-                        '货架上现在实际有多少（按商品单位填）—— '
-                        '同步前库存页会标「期初 … 待同步」',
-                  ),
-                ),
-              ],
-
-              // 条码独占一行：可能很长，且要接扫码枪
-              TextField(
-                controller: _barcode,
-                // 扫码枪通常在末尾带回车 —— 回车即保存，一次扫码完成建档
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _save(),
-                onChanged: _onBarcodeChanged,
-                decoration: _decoration(
-                  ProductField.barcode,
-                  // 有查重提示时让位：两行辅助文字会挤在一起，反而没人看
-                  helper: _barcodeNotice == null
-                      ? '没有条码可以先空着。有条码的话，扫一下会自动保存。'
-                      : null,
+                  ],
                 ),
               ),
-
-              // 条码重复：**内联橙色提示**，不弹窗、不打断输入（R-15 裁定）。
-              // 文案（含第二句「保存后扫码会显示…」）来自 core，界面只上色。
-              if (_barcodeNotice != null) ...<Widget>[
-                const SizedBox(height: 6),
-                Text(
-                  _barcodeNotice!,
-                  style: const TextStyle(color: _noticeColor, height: 1.6),
-                ),
-              ],
-
-              const SizedBox(height: 12),
-              Text(
-                isNew ? '商品编码由系统自动编号，不用你填。' : '编码由系统生成，不会因为编辑而改变。',
-                style: TextStyle(
-                  height: 1.6,
-                  color: Theme.of(context).textTheme.bodySmall?.color,
-                ),
-              ),
-            ],
-          ),
+            ),
+            if (_moreBelow) _moreBelowHint(context),
+          ],
         ),
       ),
       actions: <Widget>[

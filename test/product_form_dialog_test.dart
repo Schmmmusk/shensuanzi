@@ -319,6 +319,95 @@ void main() {
       reason: '商品建档表单在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
     );
   });
+  // ============================================================ P3（滚动发现性）
+  //
+  // 外测报告 P3（2026-10-25，§CV·一百零七）：表单高于视口，
+  // 「进价 / 安全库存 / 条码」要往下滚才看得见 —— 测试者本人差点据此误报
+  // 「字段缺失」。目标用户不会主动滚，会以为「就这些字段」，于是进价永远填不上
+  // （毛利恒为 0）。
+  //
+  // 两条修法各钉一条：
+  //  ① 进价上移到包装说明之前 ⇒ 首屏就能看见（最贵的补录字段）；
+  //  ② 「往下还有」提示 ⇒ 只在**真的滚得动**且没滚到底时出现（诚实性）。
+  group('P3：滚动发现性', () {
+    Finder moreBelow() => find.byKey(const Key('product-form-more-below'));
+
+    /// 固定视口（widget 测试默认就是 800×600，显式写出来免得将来默认变了）
+    void viewport(WidgetTester tester, Size size) {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+    }
+
+    testWidgets('800×600 ⇒ 出现「往下还有」；点它滚到底 ⇒ 提示消失', (WidgetTester tester) async {
+      viewport(tester, const Size(800, 600));
+      await openForm(tester);
+
+      expect(
+        moreBelow(),
+        findsOneWidget,
+        reason: 'P3：装不下就要说出来 —— 用户不会自己发现「还能往下滚」',
+      );
+      expect(find.textContaining('往下还有'), findsOneWidget);
+
+      await tester.tap(moreBelow());
+      await tester.pumpAndSettle();
+
+      expect(moreBelow(), findsNothing, reason: 'P3：滚到底还挂着提示就是噪音（而且会挡住最后一行）');
+    });
+
+    testWidgets('高窗口（1200×1600）⇒ **不出现**提示（没藏东西就不许说「往下还有」）', (
+      WidgetTester tester,
+    ) async {
+      viewport(tester, const Size(1200, 1600));
+      await openForm(tester);
+
+      expect(
+        moreBelow(),
+        findsNothing,
+        reason: 'P3 诚实性：所有字段都露着时还说「往下还有」就是撒谎（纪律 17）',
+      );
+    });
+
+    testWidgets('进价在首屏：不用滚就看得见（补录成本最高的字段）', (WidgetTester tester) async {
+      viewport(tester, const Size(800, 600));
+      await openForm(tester);
+
+      final Finder cost = field(label: '进价');
+      expect(cost, findsOneWidget);
+
+      final Rect costRect = tester.getRect(cost);
+      final Rect viewportRect = tester.getRect(
+        find.byType(SingleChildScrollView).first,
+      );
+      expect(
+        costRect.bottom,
+        lessThanOrEqualTo(viewportRect.bottom + 1),
+        reason: 'P3：进价必须露在首屏 —— 它决定了毛利算不算得出来',
+      );
+    });
+
+    // 低配机 + 125% 缩放下逻辑高度可能只有 ~500 —— 这里压到 480 看会不会溢出。
+    // Flutter 的溢出在测试里是**异常**（不只是黄条），所以这条能真拦住。
+    testWidgets('视口压到 800×480 ⇒ 不溢出、提示仍在、保存按钮可点', (WidgetTester tester) async {
+      viewport(tester, const Size(800, 480));
+      await openForm(tester);
+
+      expect(moreBelow(), findsOneWidget, reason: 'P3：越小越要提示');
+      expect(find.text('保存'), findsOneWidget, reason: '按钮不能被内容挤出屏幕');
+    });
+
+    testWidgets('滚动后「条码」确实在下面（提示点名的三样不是瞎写）', (WidgetTester tester) async {
+      viewport(tester, const Size(800, 600));
+      await openForm(tester);
+
+      await tester.tap(moreBelow());
+      await tester.pumpAndSettle();
+
+      expect(field(label: '条码'), findsOneWidget);
+      expect(field(label: '安全库存'), findsOneWidget);
+    });
+  });
 }
 
 /// #31 夹具（见 main 内说明）。

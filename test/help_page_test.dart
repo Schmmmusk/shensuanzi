@@ -52,7 +52,7 @@ void main() {
 
     expect(find.textContaining('github.com'), findsOneWidget);
     expect(find.textContaining('@163.com'), findsOneWidget);
-    // §AG-1：版本号**从 AppVersion 取**，且带「（第一个可部署版本）」限定词 ——
+    // §AG-1：版本号**从 AppVersion 取**，且带「（第 N 个可部署版本）」限定词 ——
     // 断言直接用那唯一来源，避免测试再手写一遍版本号
     expect(find.textContaining(AppVersion.display), findsOneWidget);
   });

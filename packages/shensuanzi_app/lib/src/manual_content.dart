@@ -102,7 +102,7 @@ class ManualSection {
 }
 
 /// 手册章节（[versionLine] 印在「反馈与版本」一章 —— 始终传 `AppVersion.display`，
-/// 形如 `v0.6.1（第六个可部署版本）`；限定词的由来见 `version.dart` 文件头）。
+/// 形如 `v0.6.5（第九个可部署版本）`；限定词的由来见 `version.dart` 文件头）。
 List<ManualSection> buildManualSections({required String versionLine}) =>
     <ManualSection>[
       ManualSection(

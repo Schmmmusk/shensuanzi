@@ -132,7 +132,7 @@ python perf_bench.py --data-dir "D:\perf-data" --csv before.csv --explain
 
 ```bat
 python perf_monitor.py run --data-dir "D:\perf-data" --out D:\perf-run1 ^
-  --label "老机器-机械盘-第1轮" --app-version 0.6.1 ^
+  --label "老机器-机械盘-第1轮" --app-version 0.6.4 ^
   --session-note "Win10/4GB/机械盘/杀软开着/系统缩放125%/应用150%" ^
   --spool D:\perf-run1\events.jsonl --probe-interval 60 --interval 5
 ```
