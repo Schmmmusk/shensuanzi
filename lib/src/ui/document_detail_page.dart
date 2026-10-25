@@ -45,6 +45,8 @@ class DocumentDetailPage extends StatefulWidget {
     this.returnService,
     this.onChanged,
     this.onStorageFailure,
+    this.originDocNo,
+    this.stackDepth = 0,
   });
 
   final String documentId;
@@ -69,6 +71,17 @@ class DocumentDetailPage extends StatefulWidget {
   /// **#43（2026-10-16）**：保存失败的**原始异常**出口（M15 同款两通道：
   /// 界面只给 `storageFailureNote` 的分类文案，异常全文进宿主日志）。
   final void Function(Object error, StackTrace stack)? onStorageFailure;
+
+  /// **原单单号**（F4，2026-10-25 裁定 D3 乙）。
+  ///
+  /// 详情页之间可以互相跳（原单 → 退货单 → 退货单里的核销 → 收付款单…），
+  /// 每跳一层都是 `push`，用户要退三四次才回得去 —— 复跑实测「被困在单据里」。
+  /// 裁定是**保留跳转 + 面包屑**：从关联单进来时记住"我从哪张单来的"，
+  /// 页面顶部给一个「回到原单 XS…」，一次弹回。
+  final String? originDocNo;
+
+  /// 距离原单**跳了几层**（原单本身 = 0）。「回到原单」按它 `pop` 这么多次。
+  final int stackDepth;
 
   @override
   State<DocumentDetailPage> createState() => _DocumentDetailPageState();
@@ -189,6 +202,10 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
           deliveries: widget.deliveries,
           products: widget.products,
           returnService: widget.returnService,
+          // F4（D3 乙）：把"我是从哪张单来的"一路带下去 —— 最外层的单号 +
+          // 已跳层数，页面顶部据此给「回到原单」。
+          originDocNo: widget.originDocNo ?? _summary?.document.docNo,
+          stackDepth: widget.stackDepth + 1,
           // ⚠️ 必须透传：否则从「退货记录」点进去的那一页会**丢掉**保存失败的
           // 原始异常出口（#43 / M15 两通道），错误只剩一句「请再试一次」
           onStorageFailure: widget.onStorageFailure,
@@ -199,6 +216,22 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     setState(_load);
     widget.onChanged?.call();
   }
+
+  /// 「回到原单 XS…」—— 一次 `pop` 回最外层那张单（F4 / D3 乙）。
+  Widget _backToOrigin(ThemeData theme) => Align(
+    alignment: Alignment.centerLeft,
+    child: TextButton.icon(
+      key: const Key('detail-back-to-origin'),
+      onPressed: () {
+        final NavigatorState nav = Navigator.of(context);
+        for (int i = 0; i < widget.stackDepth && nav.canPop(); i++) {
+          nav.pop();
+        }
+      },
+      icon: const Icon(Icons.subdirectory_arrow_left, size: 18),
+      label: Text('回到原单 ${widget.originDocNo}'),
+    ),
+  );
 
   void _copyDocNo() {
     final String? docNo = _summary?.document.docNo;
@@ -249,6 +282,12 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
+                    // F4（D3 乙）：从关联单进来时给一条面包屑 —— 详情页可以
+                    // 原单 → 退货单 → 核销 → 收付款单 一路下钻，退三四次才回得去。
+                    if (widget.originDocNo != null) ...<Widget>[
+                      _backToOrigin(theme),
+                      const SizedBox(height: 8),
+                    ],
                     _header(theme, summary),
                     const SizedBox(height: 16),
                     _amountCard(theme, summary),

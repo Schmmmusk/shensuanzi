@@ -444,6 +444,65 @@ void main() {
   // #39（2026-10-14）：**全部退回之后不该再有「退货」入口** —— 否则可以再点一次、
   // 误导用户继续退款。⚠️ 「客户拒收」会 `cancel` 原单（入口自然消失），
   // 「退货」**不会**（原单不作废，只是被冲减）⇒ 必须显式判 `returnedCents >= 总额`。
+  // F4（2026-10-25 裁定 D3 乙）：详情页之间可以一路下钻（原单 → 退货单 → 核销 → 收付款单），
+  // 复跑实测「用户被困在单据里很难出来」。裁定 = 保留跳转 + 面包屑：
+  // 关联单顶部给「回到原单 XS…」，一次弹回。
+  testWidgets('F4（D3 乙）：从退货单进来 ⇒ 顶部有「回到原单」，一次弹回', (WidgetTester tester) async {
+    final RuleEngine engine = RuleEngine(db);
+    final Document sale = sellOnCredit(); // 2 × ¥5.00 = ¥10.00
+    final Document ret = Document(
+      id: 'th-f4',
+      docNo: 'XT20261025-F4',
+      docType: DocType.saleReturn,
+      status: DocStatus.confirmed,
+      partyId: 'pt1',
+      totalAmount: 500,
+      refDocId: sale.id,
+      occurredAt: 1700000000000,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+    );
+    engine.dispatch(
+      document: ret,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: ret.id,
+          productId: 'p1',
+          quantity: 1,
+          unitPrice: 500,
+        ),
+      ],
+      now: 1700000000000,
+    );
+
+    await tester.pumpWidget(page(sale.id));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('detail-back-to-origin')),
+      findsNothing,
+      reason: '原单本身不该有面包屑',
+    );
+
+    await tester.tap(find.byKey(const Key('return-row-th-f4')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('detail-back-to-origin')),
+      findsOneWidget,
+      reason: 'F4：关联单顶部要给「回到原单」',
+    );
+    expect(find.textContaining(sale.docNo), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('detail-back-to-origin')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('detail-back-to-origin')),
+      findsNothing,
+      reason: '一次就回到原单了',
+    );
+  });
+
   testWidgets('#39 全部退回之后：退货入口消失 + 给一句说明', (WidgetTester tester) async {
     final RuleEngine engine = RuleEngine(db);
     Document mk(String id, DocType type, int total, {String? ref}) => Document(
