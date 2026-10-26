@@ -230,7 +230,12 @@ export 'src/reject_code.dart' show RejectCode;
 // 同步（客户端：离线队列 + 拉取应用。**不含传输实现**）
 export 'src/sync/pairing_payload.dart' show PairingPayload;
 export 'src/sync/sync_client.dart'
-    show StockView, SyncClient, SyncPullReport, SyncPushReport;
+    show
+        StockView,
+        SyncClient,
+        SyncPullReport,
+        SyncPushReport,
+        ensureSchemaIndexes;
 export 'src/sync/stock_delta.dart' show StockDelta;
 export 'src/sync/pending_marks.dart' show PendingMarks;
 export 'src/sync/mirror_meta.dart' show MirrorMeta;

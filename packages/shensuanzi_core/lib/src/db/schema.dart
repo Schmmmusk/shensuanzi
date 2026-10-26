@@ -119,6 +119,22 @@ class Schema {
   // ---------------------------------------------------------------- 执行顺序
 
   /// 建表与建索引语句。顺序即执行顺序（被引用的表必须先建）。
+  /// **建索引语句**（从 [createStatements] 里筛出来，单一来源不另抄一份）。
+  ///
+  /// ## 为什么需要它（2026-10-26 真机 P0）
+  ///
+  /// `SyncClient.rebuildMirror()` 从前只重放**建表**语句（正则 `CREATE TABLE`），
+  /// 而 `DROP TABLE` 会把该表的索引**一起删掉** ⇒ 重建后的镜像**一个索引都没有**。
+  /// 偏偏 `QueryDao.recentProducts` / `recentParties` 用了 `INDEXED BY`
+  /// （SQLite 的**硬提示**：索引不存在是**直接报错**，不是退化到全表扫）
+  /// ⇒ 手机点「选商品」整页变错误边界（logcat：`no such index: idx_documents_occurred`）。
+  ///
+  /// ⇒ 镜像重建、以及"已经被重建坏了"的自愈，都必须重放这一份。
+  static final List<String> indexStatements = <String>[
+    for (final String sql in createStatements)
+      if (sql.trimLeft().toUpperCase().startsWith('CREATE INDEX')) sql,
+  ];
+
   static const List<String> createStatements = <String>[
     // ============================ 主数据 ============================
     '''

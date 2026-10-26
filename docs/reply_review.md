@@ -15206,3 +15206,38 @@ F8 是**更晚的**用户指示（2026-10-25 复跑），两者**意图**（退�
 三种组合足以定案。**在 H1/H2/H3 分开之前不许动代码**（F17 那轮已付过一次学费）。
 
 **状态**：⏸ 待取证（回法 `F16 ①` 你截图 / `F16 ②` 我加临时日志）。
+
+### 十二、2026-10-26 真机 P0：镜像重建丢索引 ⇒ 手机不能开单（F19）
+
+**用户 22:15 反馈**：「想用手机开单发现不能选商品，但同步却能正常进行」。
+
+**复现**：开单 → 销售开单 → 点「点此选商品」⇒ 整页错误边界。客户选择器同样。
+
+**根因（logcat 直取）**：
+
+```
+SqliteException(1): no such index: idx_documents_occurred
+  ← QueryDao.recentProducts / recentParties 的 `INDEXED BY`
+  ← SaleService.recentlySold ← _showProductPicker
+```
+
+1. `SyncClient.rebuildMirror()` 只重放**建表**语句（`_createByTable` 用正则只筛
+   `CREATE TABLE`），而 `DROP TABLE` 会把索引**一起删掉** ⇒ 重建后的镜像**零索引**
+   （实测只剩 `idx_sync_status` / `idx_sync_entity`）。
+2. `INDEXED BY` 是 SQLite 的**硬提示** —— 索引不存在是**直接报错**，不是退化到全表扫。
+
+⇒ 只有走 `INDEXED BY` 的两条查询（商品/客户选择器）挂；同步、库存、单据列表都正常
+—— 正好对上用户说的「同步却能正常进行」。
+
+**修法三处**：`Schema.indexStatements`（新增，从 `createStatements` 筛）·
+`rebuildMirror()` 建完表补索引 · `MobileSyncService.openMirror()` **自愈**
+（`CREATE INDEX IF NOT EXISTS`，现网手机上的坏镜像下次打开就修好）。
+
+**测试**：新增 `packages/shensuanzi_core/test/mirror_indexes_test.dart`（2 条）。
+**反向灵敏度**：去掉 `rebuildMirror` 里那行 ⇒ 第 1 条红（只剩两条 `idx_sync_*`）。
+
+**真机验收**：装新包后「选商品」→「最近销售 + 测试可乐/大米」；「选客户」→「最近往来 + 王姐」。
+
+**门禁**：core **718**（+2）· app **362** · analyze 0 · format 0。
+
+**状态**：✅ 已落地并真机验证。

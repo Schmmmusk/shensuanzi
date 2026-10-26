@@ -43,7 +43,8 @@ import 'package:shensuanzi_core/shensuanzi_core.dart'
         SyncQueueTriage,
         Transport,
         TransportRequest,
-        TransportResponse;
+        TransportResponse,
+        ensureSchemaIndexes;
 
 import 'http_transport.dart';
 import 'sync_failure_message.dart';
@@ -132,7 +133,18 @@ class MobileSyncService {
   Db openMirror() {
     if (_mirror == null) {
       Directory(p.dirname(mirrorPath)).createSync(recursive: true);
-      _mirror = Db.open(mirrorPath, foreignKeys: false);
+      final Db opened = Db.open(mirrorPath, foreignKeys: false);
+      // ⚠️ **自愈：补建缺失的索引**（2026-10-26 真机 P0）。
+      //
+      // `SyncClient.rebuildMirror()` 从前只重放建表语句，而 `DROP TABLE` 会把索引
+      // 一起删掉 ⇒ 现网手机上**已经**有一个没有索引的镜像。
+      // `QueryDao.recentProducts` / `recentParties` 用 `INDEXED BY`（硬提示），
+      // 缺索引是直接报错 —— 现场表现就是「点『选商品』整页变错误边界」。
+      //
+      // `CREATE INDEX IF NOT EXISTS` 幂等，索引齐了就是空转（十几条语句，
+      // 只在**首次打开镜像**时跑一次，不是每次查询）。
+      ensureSchemaIndexes(opened.raw);
+      _mirror = opened;
     }
     return _mirror!;
   }

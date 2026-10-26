@@ -33,6 +33,22 @@ import 'transport.dart';
 ///
 /// 正因为后端两条路径存在，「用本地镜像推算游标」会**静默丢数据** ——
 /// 这是 R-14 选方案 A 的直接理由。
+/// **幂等地补建索引** —— 给"已经被重建坏了"的镜像自愈用（2026-10-26 真机 P0）。
+///
+/// 用 `CREATE INDEX IF NOT EXISTS`：索引已存在时是 no-op，所以可以每次打开镜像都跑。
+/// 为什么需要自愈：只修 [SyncClient.rebuildMirror] 只能救**将来**的重建，
+/// 而现网手机上的镜像**已经**没有索引了（下次重建才轮到修复 —— 那可能永远不来）。
+///
+/// ⚠️ 不要在这里 `DROP INDEX` 再建：索引名撞上但定义不同（schema 演进）时，
+/// 那是迁移链的事，不是自愈该干的。
+void ensureSchemaIndexes(Database raw) {
+  for (final String sql in Schema.indexStatements) {
+    raw.execute(
+      sql.replaceFirst('CREATE INDEX ', 'CREATE INDEX IF NOT EXISTS '),
+    );
+  }
+}
+
 class SyncClient {
   SyncClient({
     required this.db,
@@ -172,6 +188,11 @@ class SyncClient {
         }
         _raw.execute(sql);
       }
+      // ⚠️ **索引必须一起重建**（2026-10-26 真机 P0）：`DROP TABLE` 会把索引
+      // 连带删掉，而上面只重放了建表语句 ⇒ 重建出来的镜像没有索引。
+      // `QueryDao.recentProducts` / `recentParties` 用 `INDEXED BY`（硬提示），
+      // 缺索引直接报错 —— 现场是手机点「选商品」整页变错误边界。
+      ensureSchemaIndexes(_raw);
       cursors.clear();
     });
   }
