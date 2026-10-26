@@ -36,6 +36,36 @@ import 'opening_stock_page.dart';
 import 'product_form_dialog.dart';
 import 'stock_flow_page.dart';
 
+/// **在店可售的唯一公式**（F17-b 甲，2026-10-26 用户裁定）。
+///
+/// ```
+/// 在店可售 = 账面库存 + 本地未同步影响 − 送货在途
+/// ```
+///
+/// ## 为什么必须是**一个**顶层函数
+///
+/// 这个数字有三处消费者：**行内大字**、**负/低库存判定**（颜色 + 「该补货了」）、
+/// **列表排序**。三处若各算各的，就会出现用户无法理解的自相矛盾：
+///
+/// - 只改大字 ⇒ 大字写 34（低于安全库存 5）却仍是黑色、不报补货；
+/// - 只改大字 ⇒ A 显示 3、B 显示 5，A 却排在 B 前面；
+/// - 只改大字 ⇒ 大字 34、下方叠加行算出 36（两边算式不同）。
+///
+/// 所以公式只在这里写一次，三处一律调它。用户 `docs/reply.md` 的原话：
+/// 「抽一个统一的函数，不要各处算 —— 将来加字段或改公式时一定会漏」。
+///
+/// ⚠️ **放顶层而不是 `State` 里的闭包**：`_StockRow` 是 `StatelessWidget`，
+/// 只拿到本行的三个数（`book` / `unsynced` / `inTransit`），拿不到页面的 map，
+/// 用不了 `State` 的闭包。顶层纯函数两边都能调，且可单独测。
+///
+/// ⚠️ 桌面端 `unsynced` 恒为 `0`（`stockDelta == null`）⇒ 这里与旧口径
+/// `book - inTransit` **逐字相同**，桌面零回归。
+int effectiveInStoreOf({
+  required int book,
+  required int unsynced,
+  required int inTransit,
+}) => book + unsynced - inTransit;
+
 /// 库存查询页。
 class StockPage extends StatefulWidget {
   const StockPage({
@@ -264,8 +294,12 @@ class _StockPageState extends State<StockPage> {
         ? matched
         : matched.where(hasFlow).toList();
     // 遗漏 4：按在店可售降序（浏览页，不是查找页）
-    int inStore(Product product) =>
-        (book[product.id] ?? 0) - (inTransit[product.id] ?? 0);
+    // F17-b 甲：排序必须与**大字**同口径 —— 否则「显示 3 的排在显示 5 的前面」
+    int inStore(Product product) => effectiveInStoreOf(
+      book: book[product.id] ?? 0,
+      unsynced: unsyncedByProduct[product.id] ?? 0,
+      inTransit: inTransit[product.id] ?? 0,
+    );
     shown.sort((Product a, Product b) => inStore(b).compareTo(inStore(a)));
 
     final int hiddenCount = matched.length - shown.length;
@@ -491,12 +525,38 @@ class _StockRow extends StatelessWidget {
   ///（手机壳 / 流水查询缺省 —— 由页面判定后传入）。
   final VoidCallback? onOpen;
 
+  /// 行内大字（F17-b 甲）。估算态带 `≈` 前缀；挂 `Key` 让测试能按商品定位
+  /// （原来只有裸 `Text`，只能按文本找，两个商品同数就分不清）。
+  Widget _bigNumber(
+    ThemeData theme,
+    int value,
+    bool approximate,
+    Color color,
+  ) => Text(
+    approximate ? '≈ $value' : '$value',
+    key: Key('stock-instore-${product.id}'),
+    style: theme.textTheme.headlineSmall?.copyWith(
+      fontWeight: FontWeight.w700,
+      color: color,
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     // ⚠️ 局部变量才能提升非空（public 字段判空不提升 —— analyze 实测）
     final StockDelta? delta = this.delta;
-    final int inStore = book - inTransit;
+    // F17-b 甲：大字 / 判定 / 排序**同一个公式**（`effectiveInStoreOf`）
+    final int inStore = effectiveInStoreOf(
+      book: book,
+      unsynced: unsynced,
+      inTransit: inTransit,
+    );
+    // 这个数字是**估算**吗？两来源：本地有未同步单据（`unsynced`），
+    // 或期初录入还没同步（`openingPending` —— stocktake 的 delta 客户端算不出，
+    // 见 `stock_delta.dart:39`，所以它进不了 `inStore`，只能靠 `≈` 说明）。
+    final bool approximate = unsynced != 0 || openingPending != null;
 
     // AA-3 三档：负红 / 低橙 / 正常无色。safety_stock = 0 = 不需要告警。
     final int safety = product.safetyStock;
@@ -572,16 +632,24 @@ class _StockRow extends StatelessWidget {
                   ),
                 ),
                 // AA-2：主列大字加粗
-                Text(
-                  '$inStore',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: mainColor,
-                    fontFeatures: const <FontFeature>[
-                      FontFeature.tabularFigures(),
-                    ],
-                  ),
-                ),
+                //
+                // F17-b 甲（2026-10-26 裁定）：这个数字**含本地未同步影响**。
+                // 手机上离线卖了一件、大字却还写着原来的数 —— 用户会照它继续卖，
+                // 直接卖超。所以估算态必须带 `≈`：不标就是在说"这是确定值"。
+                // 期初未同步（`openingPending`）也算估算态 —— 那一笔**进不了**
+                // 这个数字（stocktake 的 delta 客户端算不出），更要标出来。
+                if (openingPending != null)
+                  Tooltip(
+                    // 只说"为什么是估的、缺了什么"，不解释内部机制
+                    message:
+                        '期初录入还没传到电脑，这个数字还不含期初的 '
+                        '$openingPending（${product.unit}）。',
+                    triggerMode: TooltipTriggerMode.tap,
+                    showDuration: const Duration(seconds: 4),
+                    child: _bigNumber(theme, inStore, approximate, mainColor),
+                  )
+                else
+                  _bigNumber(theme, inStore, approximate, mainColor),
                 // 批 3 第 16 条（用户裁定 ③）：**只给「点了会跳走」的行**加箭头。
                 // 库存行 tap = 打开流水页；手机壳 / 缺流水查询时 `onOpen` 为 null
                 // ⇒ 那一态行不可点，也就不加箭头（箭头是承诺，不能撒谎）。
@@ -743,6 +811,8 @@ class _StockRow extends StatelessWidget {
                 productId: product.id,
                 book: book,
                 unsynced: unsynced,
+                // F17-b 甲：这一行的合计必须**等于大字**（大字已含 − 在途）
+                inTransit: inTransit,
               ),
           ],
         ),
@@ -762,12 +832,20 @@ class _StockDeltaLine extends StatefulWidget {
     required this.productId,
     required this.book,
     required this.unsynced,
+    required this.inTransit,
   });
 
   final StockDelta delta;
   final String productId;
   final int book;
   final int unsynced;
+
+  /// **F17-b 甲**：这一行要写出**完整**算式。
+  ///
+  /// 旧文案是「台账 + 未同步 = 合计」，**没减在途** —— 而大字（甲之后）减了。
+  /// 于是同一行里大字 34、叠加行算 36，两个数字对不上 —— 比不显示更糟。
+  /// 所以这里必须与 [effectiveInStoreOf] 同口径。
+  final int inTransit;
 
   @override
   State<_StockDeltaLine> createState() => _StockDeltaLineState();
@@ -790,7 +868,12 @@ class _StockDeltaLineState extends State<_StockDeltaLine> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final int estimated = widget.book + widget.unsynced;
+    // F17-b 甲：与大字**同一个公式**（含 − 在途），否则同一行两个数字对不上
+    final int estimated = effectiveInStoreOf(
+      book: widget.book,
+      unsynced: widget.unsynced,
+      inTransit: widget.inTransit,
+    );
     final Color color = estimated < 0
         ? theme.colorScheme.error
         : AppColors.warningOrange;
@@ -805,7 +888,9 @@ class _StockDeltaLineState extends State<_StockDeltaLine> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(
-                '≈ 台账 ${widget.book} + 未同步 ${_signed(widget.unsynced)} '
+                // 完整算式（F17-b 甲）：有在途才写那一段，否则是噪音
+                '≈ 台账 ${widget.book} + 未同步 ${_signed(widget.unsynced)}'
+                '${widget.inTransit != 0 ? ' − 在途 ${widget.inTransit}' : ''} '
                 '= ${_signed(estimated)}'
                 '${estimated < 0 ? '（可能负库存）' : ''} —— 点看是哪几张单',
                 style: TextStyle(height: 1.6, color: color),

@@ -147,6 +147,7 @@ void main() {
   Widget page({
     ExportSink? exports,
     StockDelta? stockDelta,
+    PendingMarks? pendingMarks,
     StockLedgerDao? stockFlow,
     SettlementService? settlements,
     MasterDataSink? masterDataSink,
@@ -161,6 +162,8 @@ void main() {
         queries: queries,
         exports: exports,
         stockDelta: stockDelta,
+        // F17-b T7：期初待同步（`createMasterData.opening_quantity`）
+        pendingMarks: pendingMarks,
         // #27 批 2：商品流水 + 新建商品补充入口（手机壳 = 镜像实例化，
         // 测试里主库/镜像同库模拟「同源接线」）
         stockFlow: stockFlow,
@@ -173,8 +176,12 @@ void main() {
     ),
   );
 
-  /// 一条「卖出 [quantity] 件」的入队条目（payload = createDocument wire 形状）
-  void enqueueSale(String id, String productId, int quantity) {
+  /// 一条入队条目（payload = createDocument wire 形状）。
+  ///
+  /// [docType] 决定库存影响方向（`stock_delta.dart:52` 的符号表）：
+  /// `sale` / `delivery` / `purchase_return` 记 −，`purchase` / `sale_return` 记 +。
+  /// F17-b 的 T6 需要**同时**存在两种方向，所以这个助手要能造任意单据类型。
+  void enqueueDoc(String id, String productId, int quantity, String docType) {
     SyncQueueDao(db).enqueue(
       SyncQueueEntry(
         id: id,
@@ -185,7 +192,7 @@ void main() {
           'document': <String, Object?>{
             'id': 'd-$id',
             'doc_no': '${Document.pendingDocNoPrefix}$id',
-            'doc_type': 'sale',
+            'doc_type': docType,
             'status': 'confirmed',
             'occurred_at': 1700000000000,
           },
@@ -204,6 +211,10 @@ void main() {
       ),
     );
   }
+
+  /// 一条「卖出 [quantity] 件」的入队条目
+  void enqueueSale(String id, String productId, int quantity) =>
+      enqueueDoc(id, productId, quantity, 'sale');
 
   testWidgets('M14：**只有本地未同步影响**的商品，默认列表里也要看得到', (WidgetTester tester) async {
     // 手机端场景：刚在手机上卖了 1 件，权威账面仍是 0（还没推给电脑）
@@ -259,6 +270,224 @@ void main() {
       find.textContaining('= +0'),
       findsOneWidget,
       reason: '合计 = 台账 1 + 未同步 -1 = 0（显示为 +0）',
+    );
+  });
+
+  // ------------------------------------------- F17-b（裁定「甲」，2026-10-26）
+  //
+  // 手机壳的行内**大字**改成 `账面 + 未同步 − 在途`（`effectiveInStoreOf`），
+  // 有未同步（或期初未同步）时带 `≈`。三处消费者必须同口径：大字 / 判定 / 排序，
+  // 外加叠加行的算式 —— 少一处就自相矛盾（用户 `docs/reply.md` 的原话：
+  // 「这四处如果不统一步伐，用户会觉得软件彻底疯了」）。
+
+  /// 行内大字原文（按 Key 取 —— 两个商品显示同一个数时按文本找不到）
+  String bigNumberOf(WidgetTester tester, String id) =>
+      tester.widget<Text>(find.byKey(Key('stock-instore-$id'))).data!;
+
+  testWidgets('F17-b T1：手机壳大字 = 账面 + 未同步 − 在途，并带 ≈', (
+    WidgetTester tester,
+  ) async {
+    buy(5); // 账面 5
+    enqueueSale('q-t1', productId, 2); // 离线卖 2
+
+    await tester.pumpWidget(
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      bigNumberOf(tester, productId),
+      '≈ 3',
+      reason: '5 + (-2) - 0 = 3，且是估算 ⇒ 必须带 ≈',
+    );
+    expect(
+      find.text('账面 5 · 在途 0'),
+      findsOneWidget,
+      reason: '小字仍是权威原值 —— 它是"这个数怎么来的"的依据',
+    );
+  });
+
+  testWidgets('F17-b T2：桌面（stockDelta 为 null）零回归 —— 大字 5、不带 ≈', (
+    WidgetTester tester,
+  ) async {
+    buy(5);
+    enqueueSale('q-t2', productId, 2); // 桌面上本不该有队列；造一条证明它不被看见
+
+    await tester.pumpWidget(page()); // 不传 stockDelta = 桌面
+    await tester.pumpAndSettle();
+
+    expect(
+      bigNumberOf(tester, productId),
+      '5',
+      reason: '桌面 unsynced 恒 0 ⇒ 与旧口径 book - inTransit 逐字相同',
+    );
+    expect(find.textContaining('≈'), findsNothing, reason: '桌面不显示任何估算标记');
+  });
+
+  testWidgets('F17-b T3：低库存判定跟**合计**走（账面 6、安全 5、离线卖 2）', (
+    WidgetTester tester,
+  ) async {
+    buy(6);
+    enqueueSale('q-t3', productId, 2);
+
+    await tester.pumpWidget(
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(bigNumberOf(tester, productId), '≈ 4');
+    expect(
+      find.text('低于安全库存 5，该补货了'),
+      findsOneWidget,
+      reason: '只改大字不改判定 ⇒ 大字 4 却仍是黑色、不报补货',
+    );
+  });
+
+  testWidgets('F17-b T4：排序跟**合计**走（卖光的 A 排到 B 后面）', (
+    WidgetTester tester,
+  ) async {
+    // A = 红富士：账面 10，离线卖光 10 ⇒ 合计 0
+    buy(10);
+    enqueueSale('q-t4a', productId, 10);
+    // B = 另一件：账面 0，但离线进了 1 件 ⇒ 合计 1
+    final Product other = Product(
+      id: 'p-t4-other',
+      code: 'P0002',
+      name: '离线进的那件货',
+      costPrice: 300,
+      sellPrice: 500,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+    );
+    ProductDao(db).insert(other);
+    enqueueDoc('q-t4b', other.id, 1, 'purchase');
+
+    await tester.pumpWidget(
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(bigNumberOf(tester, productId), '≈ 0');
+    expect(bigNumberOf(tester, other.id), '≈ 1');
+    expect(
+      tester.getTopLeft(find.byKey(Key('stock-instore-${other.id}'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(Key('stock-instore-$productId'))).dy,
+      ),
+      reason: '合计 1 的 B 必须排在合计 0 的 A 前面（只改大字不改排序就会反过来）',
+    );
+  });
+
+  testWidgets('F17-b T5：叠加行算式含「− 在途」，且合计 = 大字', (WidgetTester tester) async {
+    buy(5); // 账面 5
+    // 送货 2 件（未签收 ⇒ 在途 2；RULE-003 创建即扣账面 ⇒ 账面 3）
+    final String customerId = PartyDao(
+      db,
+    ).findAll(role: PartyRole.customer).first.id;
+    DeliveryService(engine: RuleEngine(db), queries: queries).create(
+      DeliveryDraft(
+        partyId: customerId,
+        date: '2026-10-26',
+        lines: <DeliveryLineDraft>[
+          DeliveryLineDraft(
+            productId: productId,
+            productName: '红富士苹果',
+            quantity: '2',
+            unitPrice: '4.00',
+          ),
+        ],
+      ),
+      now: 1700000000000,
+    );
+    enqueueSale('q-t5', productId, 1); // 离线再卖 1
+
+    await tester.pumpWidget(
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 账面 3、未同步 −1、在途 2 ⇒ 3 − 1 − 2 = 0
+    expect(bigNumberOf(tester, productId), '≈ 0');
+    expect(
+      find.textContaining('≈ 台账 3 + 未同步 -1 − 在途 2 = +0'),
+      findsOneWidget,
+      reason: '旧文案漏了「− 在途」⇒ 大字 0、算式算 2，同一行两个数对不上',
+    );
+  });
+
+  testWidgets('F17-b T6：多条队列条目（卖 1 + 进 5）能正确叠加', (WidgetTester tester) async {
+    buy(10); // 账面 10
+    enqueueSale('q-t6a', productId, 1); // −1
+    enqueueDoc('q-t6b', productId, 5, 'purchase'); // +5
+
+    await tester.pumpWidget(
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      bigNumberOf(tester, productId),
+      '≈ 14',
+      reason: '10 + (-1 + 5) - 0 = 14 —— 两个方向必须相加，不是只取最后一个',
+    );
+    expect(
+      find.textContaining('未同步 +4'),
+      findsOneWidget,
+      reason: '−1 与 +5 合并成 +4',
+    );
+  });
+
+  testWidgets('F17-b T7：期初未同步（unsynced 仍为 0）也要带 ≈ + 说明', (
+    WidgetTester tester,
+  ) async {
+    buy(5);
+    // 手机「新建商品」带当前库存 ⇒ `createMasterData` + `opening_quantity`。
+    // ⚠️ 它的 `doc_type` 不是单据，`StockDelta.deltaOf` 直接返回 {} ⇒
+    // `unsynced == 0`，但那 10 件**确实没进这个数字**（stocktake 的差额
+    // 客户端算不出，见 `stock_delta.dart:39`）。
+    SyncQueueDao(db).enqueue(
+      SyncQueueEntry(
+        id: 'q-t7',
+        entity: Schema.products,
+        entityId: productId,
+        operation: SyncOpType.createMasterData,
+        payload: <String, Object?>{'opening_quantity': 10},
+        createdAt: 1700000000000,
+      ),
+    );
+
+    await tester.pumpWidget(
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+        pendingMarks: PendingMarks(SyncQueueDao(db)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      bigNumberOf(tester, productId),
+      '≈ 5',
+      reason: '数字不变（算不出），但**必须**标成估算 —— 否则用户问「我录的期初去哪了」',
+    );
+    expect(
+      find.byTooltip('期初录入还没传到电脑，这个数字还不含期初的 10（件）。'),
+      findsOneWidget,
+      reason: '估算态要说清缺的是什么（点一下才显示，不占版面）',
+    );
+    expect(
+      find.byKey(Key('opening-pending-$productId')),
+      findsOneWidget,
+      reason: '原有那条「期初 N（件）待同步」提示照旧',
     );
   });
 
