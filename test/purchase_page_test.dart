@@ -616,4 +616,49 @@ void main() {
       );
     });
   });
+
+  // ---------------------------------------------------------------- F2 假草稿
+  //
+  // F2（2026-10-25 复跑）：保存成功后 P-3 故意**保留供应商**（连续录单更快），
+  // 于是表单里只剩一个往来方 —— 而 `purchaseDraftHasContent` 恰恰把
+  // `partyId != null` 算作"有内容" ⇒ 离开页面时旧实现把这堆残留写成草稿，
+  // 下次进页面弹「恢复草稿」，恢复出来是空表单。
+  //
+  // ⚠️ **散采（不选供应商）测不到这条**：`partyId == null` 且明细已清空时，
+  // 旧代码本来就认为"没内容"，去掉守卫测试照样绿 —— 第一版就是这么假绿的。
+  // ⇒ 夹具的关键是**先选供应商**，不是先填行。
+  testWidgets('F2：选了供应商 + 保存 ⇒ 离开页面不留「只有供应商」的假草稿', (WidgetTester tester) async {
+    final DraftsStore draftsStore = DraftsStore(dataDirectory: box.path);
+    await tester.pumpWidget(page(drafts: draftsStore));
+    await tester.pumpAndSettle();
+
+    // ① 先选供应商 —— 这是 F2 的复现前提
+    await tester.tap(find.text('散采（不记往来）'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('王老板').first);
+    await tester.pumpAndSettle();
+
+    await fillRow(tester);
+    await tapFinder(tester, find.text('全款'));
+    await tapBottomButton(tester, '保存 (Ctrl+S)');
+    await tester.pumpAndSettle();
+
+    expect(draftsStore.exists(DraftKind.purchase), isFalse, reason: '保存成功即删');
+    // 先证明"残留里真有东西"，否则下面的断言等于没测（P-3 保留供应商）
+    expect(
+      find.text('王老板'),
+      findsOneWidget,
+      reason: 'P-3：保存后保留供应商 —— 这正是假草稿的来源',
+    );
+
+    // ② 离开页面（dispose → _writeDraftNow）
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+
+    expect(
+      draftsStore.exists(DraftKind.purchase),
+      isFalse,
+      reason: 'F2：保存后的残留不是草稿，不许写',
+    );
+  });
 }

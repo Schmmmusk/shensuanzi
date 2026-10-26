@@ -380,6 +380,20 @@ class _SalePageState extends State<SalePage> {
   /// 上次调度时的草稿指纹 —— 用来避免「每次 build 都重置定时器」
   String _lastDraftSig = '';
 
+  /// **保存后那一刻的表单指纹**（F2，2026-10-25 复跑）。
+  ///
+  /// P-3 裁定"保存后保留供应商"（连续录单更快），于是保存完表单里还剩一个往来方。
+  /// 离开页面时 `_writeDraftNow()` 会把这堆"残留"当成一份草稿写下去 ——
+  /// 下次进页面弹「恢复草稿」，恢复出来是空表单（复跑实测的假草稿）。
+  /// 记下基线：**表单没再动过**就不写（也不调度）。
+  String _savedSig = '';
+
+  String _draftSig() {
+    final Map<String, Object?> json = saleDraftToJson(_draft);
+    json.remove('savedAt');
+    return jsonEncode(json);
+  }
+
   /// 进页读到的**待恢复**草稿（`null` = 没有 / 已处理）
   Map<String, Object?>? _restoreRaw;
 
@@ -433,6 +447,7 @@ class _SalePageState extends State<SalePage> {
   /// 无关重建（缩放等）把定时器一直顶掉。
   void _maybeScheduleDraft() {
     if (widget.drafts == null) return;
+    if (_savedSig.isNotEmpty && _draftSig() == _savedSig) return; // F2：保存后的残留
     final Map<String, Object?> json = saleDraftToJson(_draft);
     json.remove('savedAt'); // 时间戳每次都变，不能进指纹
     final String sig = jsonEncode(json);
@@ -446,6 +461,11 @@ class _SalePageState extends State<SalePage> {
   void _writeDraftNow() {
     final DraftsStore? store = widget.drafts;
     if (store == null) return;
+    // F2：保存后表单没再动过 ⇒ 这是残留，不是用户要留的草稿
+    if (_savedSig.isNotEmpty && _draftSig() == _savedSig) {
+      store.delete(DraftKind.sale);
+      return;
+    }
     final SaleDraft draft = _draft;
     if (!saleDraftHasContent(draft)) {
       // F1（2026-10-25 复跑）：**表单空 ≠ 用户清空了草稿**。
@@ -868,6 +888,11 @@ class _SalePageState extends State<SalePage> {
     // ① 保存成功 ⇒ 草稿使命完成（清空表单后 `_writeDraftNow` 也会删，这里删得更快）
     widget.drafts?.delete(DraftKind.sale);
     _lastDraftSig = '';
+    // F2：等这一帧的 setState 落地（明细已清空、只留往来方）再记"保存后基线"；
+    // 用户之后再动任何输入，指纹就偏离基线 ⇒ 照常写草稿。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _savedSig = _draftSig();
+    });
     // 2026-10-22（§CV·八十一 批 2）：刚提交的单据已落账 ⇒ 快照作废，
     // 下一单看到的「当前库存」才是扣过的（否则该报负库存时不报）
     _stockSnapshot.invalidate();

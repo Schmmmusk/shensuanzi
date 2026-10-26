@@ -287,6 +287,21 @@ class _PurchasePageState extends State<PurchasePage> {
   // ---- 草稿（①）----
   Timer? _draftTimer;
   String _lastDraftSig = '';
+
+  /// **保存后那一刻的表单指纹**（F2，2026-10-25 复跑）。
+  ///
+  /// P-3 裁定"保存后保留供应商"（连续录单更快），于是保存完表单里还剩一个往来方。
+  /// 离开页面时 `_writeDraftNow()` 会把这堆"残留"当成一份草稿写下去 ——
+  /// 下次进页面弹「恢复草稿」，恢复出来是空表单（复跑实测的假草稿）。
+  /// 记下基线：**表单没再动过**就不写（也不调度）。
+  String _savedSig = '';
+
+  String _draftSig() {
+    final Map<String, Object?> json = purchaseDraftToJson(_draft);
+    json.remove('savedAt');
+    return jsonEncode(json);
+  }
+
   Map<String, Object?>? _restoreRaw;
 
   @override
@@ -328,6 +343,7 @@ class _PurchasePageState extends State<PurchasePage> {
 
   void _maybeScheduleDraft() {
     if (widget.drafts == null) return;
+    if (_savedSig.isNotEmpty && _draftSig() == _savedSig) return; // F2：保存后的残留
     final Map<String, Object?> json = purchaseDraftToJson(_draft);
     json.remove('savedAt');
     final String sig = jsonEncode(json);
@@ -340,6 +356,11 @@ class _PurchasePageState extends State<PurchasePage> {
   void _writeDraftNow() {
     final DraftsStore? store = widget.drafts;
     if (store == null) return;
+    // F2：保存后表单没再动过 ⇒ 这是残留，不是用户要留的草稿
+    if (_savedSig.isNotEmpty && _draftSig() == _savedSig) {
+      store.delete(DraftKind.purchase);
+      return;
+    }
     final PurchaseDraft draft = _draft;
     if (!purchaseDraftHasContent(draft)) {
       // F1（2026-10-25 复跑）：**表单空 ≠ 用户清空了草稿**。
@@ -665,6 +686,11 @@ class _PurchasePageState extends State<PurchasePage> {
     // ① 保存成功 ⇒ 草稿使命完成
     widget.drafts?.delete(DraftKind.purchase);
     _lastDraftSig = '';
+    // F2：等这一帧的 setState 落地（明细已清空、只留往来方）再记"保存后基线"；
+    // 用户之后再动任何输入，指纹就偏离基线 ⇒ 照常写草稿。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _savedSig = _draftSig();
+    });
     setState(() {
       for (final _RowCtl row in _rows) {
         row.dispose();

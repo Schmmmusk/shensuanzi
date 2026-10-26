@@ -776,4 +776,27 @@ void main() {
       reason: '② 单也落了',
     );
   });
+
+  // F2（2026-10-25 复跑）：送货的客户**必选**，保存后表单只剩客户
+  // （`deliveryDraftHasContent` 同样把 `partyId != null` 算作"有内容"）⇒
+  // 离开页面时旧实现写下假草稿，下次进来弹「恢复草稿」却是空表单。
+  testWidgets('F2：保存后离开页面不留「只有客户」的假草稿', (WidgetTester tester) async {
+    final DraftsStore draftsStore = DraftsStore(dataDirectory: box.path);
+    await tester.pumpWidget(page(drafts: draftsStore));
+    await pickCustomer(tester);
+    await fillRow(tester);
+    await tapSave(tester);
+
+    expect(draftsStore.exists(DraftKind.delivery), isFalse, reason: '保存成功即删');
+    expect(find.text('王老板'), findsOneWidget, reason: '保存后保留客户 —— 这正是假草稿的来源');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+
+    expect(
+      draftsStore.exists(DraftKind.delivery),
+      isFalse,
+      reason: 'F2：保存后的残留不是草稿，不许写',
+    );
+  });
 }

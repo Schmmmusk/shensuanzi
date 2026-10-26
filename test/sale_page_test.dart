@@ -1493,6 +1493,39 @@ void main() {
       expect(find.text('点此选商品'), findsOneWidget, reason: '② 手机端保持原样');
     });
   });
+
+  // F2（2026-10-25 复跑）：保存成功后表单只留**客户**，而
+  // `saleDraftHasContent` 把 `partyId != null` 算作"有内容" ⇒
+  // 离开页面时旧实现把这堆残留写成草稿，下次进页面弹「恢复草稿」，
+  // 恢复出来是空表单。⚠️ 散客（不选客户）**测不到**这条。
+  testWidgets('F2：选了客户 + 保存 ⇒ 离开页面不留「只有客户」的假草稿', (WidgetTester tester) async {
+    final DraftsStore draftsStore = DraftsStore(dataDirectory: box.path);
+    await tester.pumpWidget(page(drafts: draftsStore));
+    await tester.pumpAndSettle();
+
+    // ① 先选客户 —— F2 的复现前提
+    await tester.tap(find.text('散客（当场结清）'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, '李姐'));
+    await tester.pumpAndSettle();
+
+    await fillRow(tester);
+    await tapFinder(tester, find.text('全款'));
+    await tapSave(tester);
+
+    expect(draftsStore.exists(DraftKind.sale), isFalse, reason: '保存成功即删');
+    expect(find.text('李姐'), findsOneWidget, reason: '保存后保留客户 —— 这正是假草稿的来源');
+
+    // ② 离开页面（dispose → _writeDraftNow）
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+
+    expect(
+      draftsStore.exists(DraftKind.sale),
+      isFalse,
+      reason: 'F2：保存后的残留不是草稿，不许写',
+    );
+  });
 }
 
 /// 只用来数 `stockSnapshot()` 被调了几次（性能回归的机械判据）

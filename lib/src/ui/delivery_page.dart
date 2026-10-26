@@ -321,6 +321,21 @@ class _DeliveryPageState extends State<DeliveryPage> {
   // ---- 草稿（①）----
   Timer? _draftTimer;
   String _lastDraftSig = '';
+
+  /// **保存后那一刻的表单指纹**（F2，2026-10-25 复跑）。
+  ///
+  /// P-3 裁定"保存后保留供应商"（连续录单更快），于是保存完表单里还剩一个往来方。
+  /// 离开页面时 `_writeDraftNow()` 会把这堆"残留"当成一份草稿写下去 ——
+  /// 下次进页面弹「恢复草稿」，恢复出来是空表单（复跑实测的假草稿）。
+  /// 记下基线：**表单没再动过**就不写（也不调度）。
+  String _savedSig = '';
+
+  String _draftSig() {
+    final Map<String, Object?> json = deliveryDraftToJson(_draft);
+    json.remove('savedAt');
+    return jsonEncode(json);
+  }
+
   Map<String, Object?>? _restoreRaw;
 
   @override
@@ -354,6 +369,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
 
   void _maybeScheduleDraft() {
     if (widget.drafts == null) return;
+    if (_savedSig.isNotEmpty && _draftSig() == _savedSig) return; // F2：保存后的残留
     final Map<String, Object?> json = deliveryDraftToJson(_draft);
     json.remove('savedAt');
     final String sig = jsonEncode(json);
@@ -366,6 +382,11 @@ class _DeliveryPageState extends State<DeliveryPage> {
   void _writeDraftNow() {
     final DraftsStore? store = widget.drafts;
     if (store == null) return;
+    // F2：保存后表单没再动过 ⇒ 这是残留，不是用户要留的草稿
+    if (_savedSig.isNotEmpty && _draftSig() == _savedSig) {
+      store.delete(DraftKind.delivery);
+      return;
+    }
     final DeliveryDraft draft = _draft;
     if (!deliveryDraftHasContent(draft)) {
       // F1（2026-10-25 复跑）：**表单空 ≠ 用户清空了草稿**。
@@ -615,6 +636,14 @@ class _DeliveryPageState extends State<DeliveryPage> {
   /// ⚠️ 送货单**没有收款** ⇒ 落库后必然是「全额欠款 + 待签收」，
   /// 所以 SnackBar 不该说「已结清」那一套，而要说清**下一步做什么**。
   void _afterSaved(DocumentSubmitResult result) {
+    // ① 保存成功 ⇒ 草稿使命完成（清空表单后 `_writeDraftNow` 也会删，这里删得更快）
+    widget.drafts?.delete(DraftKind.delivery);
+    _lastDraftSig = '';
+    // F2：等这一帧的 setState 落地（明细已清空、只留客户）再记"保存后基线"；
+    // 用户之后再动任何输入，指纹就偏离基线 ⇒ 照常写草稿。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _savedSig = _draftSig();
+    });
     // 刚提交的单据已落账 ⇒ 快照作废（§CV·八十一 批 2）
     _stockSnapshot.invalidate();
     setState(() {
@@ -701,6 +730,9 @@ class _DeliveryPageState extends State<DeliveryPage> {
     // ① 用户确认放弃 ⇒ 草稿一起删
     widget.drafts?.delete(DraftKind.delivery);
     _lastDraftSig = '';
+    // 放弃之后表单是空的，「保存后基线」不再有任何意义 —— 清掉，
+    // 免得上一单的基线残留下来误判（F2 的基线只在 `_afterSaved` 里记）
+    _savedSig = '';
     setState(() {
       _partyId = null;
       _partyName = null;
