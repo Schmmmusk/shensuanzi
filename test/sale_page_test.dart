@@ -93,7 +93,17 @@ void main() {
     MasterDataPolicy? policy,
     bool mobileShell = false,
     DraftsStore? drafts,
+
+    /// F18：传 1.8 = 复现「界面大小 = 超大」（`MediaQuery.textScaler`）。
+    double textScale = 1.0,
   }) => MaterialApp(
+    // 缩放走 `textScaler`（`uiScaleOf` 就是从这里取的，见 `scaled.dart`）
+    builder: (BuildContext context, Widget? child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: child!,
+    ),
     home: Scaffold(
       body: SalePage(
         service: service,
@@ -1524,6 +1534,75 @@ void main() {
       draftsStore.exists(DraftKind.sale),
       isFalse,
       reason: 'F2：保存后的残留不是草稿，不许写',
+    );
+  });
+
+  // ============================================ F18 适老化（2026-10-26 裁定甲）
+  //
+  // 现场（界面大小 = 超大，真机截图 `big-2.png` / `big-3.png`）：
+  // 1. 日期折行断在**数字中间**（`2026-1` / `0-26`）；
+  // 2. 收款「金额」输入框被挤成一条缝（**必填**项，几乎看不见）；
+  // 3. 「全款」按钮只剩 43 px 高、文字被裁（`ui_principles.md` §二 要求 ≥44）。
+  //
+  // 根因都是同一类：**固定比例分栏**（`Row` + `Expanded(flex: 3/2)`）在字放大后
+  // 没跟着放大 —— 格子还是那个格子，字变成两倍。⇒ 放不下就**上下两行**。
+
+  /// 手机逻辑尺寸（1220×2712 物理 / dpr 3.1 ≈ 393×872）+ 超大字号。
+  ///
+  /// ⚠️ **必须缩画布**：默认测试画布 800 宽，比手机宽一倍 ——
+  /// F18-2 在 800 宽下"够放"，测不出真机那条缝（第一版就是这么假绿的）。
+  Future<void> pumpPhoneLarge(WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(393, 872));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(page(textScale: 1.8));
+  }
+
+  testWidgets('F18-1：超大字号下「日期」不能挤在同一行被折断', (WidgetTester tester) async {
+    await pumpPhoneLarge(tester);
+    await tester.pumpAndSettle();
+
+    final Rect party = tester.getRect(find.text('客户'));
+    final Rect date = tester.getRect(find.text('日期'));
+    expect(
+      date.top,
+      greaterThan(party.top),
+      reason: 'F18-1：放不下就上下两行 —— 从前 5:3 分栏把 2026-10-26 断成 2026-1 / 0-26',
+    );
+  });
+
+  testWidgets('F18-2：超大字号下「金额」输入框不能被挤成一条缝', (WidgetTester tester) async {
+    await pumpPhoneLarge(tester);
+    await tester.pumpAndSettle();
+
+    final Rect amount = tester.getRect(
+      find.byKey(const Key('sale-pay-amount')),
+    );
+    expect(
+      amount.width,
+      greaterThan(200),
+      reason: 'F18-2：它是**必填**项（留空 = 全部赊账），不能被账户下拉挤没',
+    );
+  });
+
+  // ⚠️ **F18-3 的更正（2026-10-26 22:5x）**：原来报的是「全款按钮只有 43 px、
+  // 文字被裁」。实测**按钮本身 68.2 × 48.0** —— 高度 48，本来就达标。
+  //
+  // 那个 43 是 `uiautomator` 报的**物理像素**、而且被**滚动视口裁掉了大半**
+  // （43 / dpr 3.1 ≈ 14 逻辑像素，就是"只露出一点"）。⇒ **误判，不是布局缺陷**。
+  //
+  // 这条留作**护栏**（当前 48，绿）：将来谁把 `TextButton` 换成 `isDense`
+  // 或塞进受限高度的 Row，这里会红。
+  testWidgets('F18-3（护栏）：「全款」按钮的点击高度必须 ≥ 44', (WidgetTester tester) async {
+    await pumpPhoneLarge(tester);
+    await tester.pumpAndSettle();
+
+    final Rect full = tester.getRect(
+      find.byKey(const Key('sale-full-payment')),
+    );
+    expect(
+      full.height,
+      greaterThanOrEqualTo(44),
+      reason: 'ui_principles.md §二 要求 44×44（实测 48，达标）',
     );
   });
 }

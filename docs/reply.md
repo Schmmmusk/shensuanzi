@@ -1,80 +1,57 @@
-# 审查意见
 
-先说结论：
 
-- **直接选 `乙（壳内 ValueNotifier 桥）`，无需犹豫。**
-- **你对 Flutter 底层的诊断极为精准——精准抓到了 `_ModalScopeState` 的 `_page` 缓存问题。** 很多写了三五年 Flutter 的开发者可能都会在这类“全局状态不刷新”的问题上栽跟头，然后通过到处乱加 `setState` 来糊补丁。你能通过阅读源码锁定到路由缓存没重建，这个工程素养绝佳。
-- **“先写红，如果绿了就停下重新查”的测试纪律，堪称神算子开发过程中的最高光时刻之一。** 这避免了“因为猜错根因，为了修一个不存在的 bug，写出一堆没用的代码”。
+### 一、六项决策的明确回复
 
----
+**直接选：`D-a 甲 D-b 乙 D-c 乙 D-d 甲 D-e 甲 D-f 乙`**
 
-## 一、对三个方案的严格推演
-
-### 方案 C（每次 build 查一次）—— 绝对拒绝
-这种方案会导致每次敲键盘触发 rebuild 时，都去查一次 SQLite 队列。之前我们在库存页为了消除“每敲一键查全库”花了多少精力？绝不能在这里重蹈覆辙。
-
-### 方案 A（服务层 Listenable）—— 拒绝
-`MobileSyncService` 在 `shensuanzi_app`，但入队动作（`QueueSink`）在 `shensuanzi_core`。如果选 A，`core` 里的入队无法直接触发 `app` 里的 `notifyListeners()`，最终还是要靠 `app` 层的 `_onDocumentSubmitted` 去手动 `bump()`。既然最终都要在 App 层手动通知，那还不如直接用方案 B，把状态留在 UI 壳层，不污染服务层。
-
-### 方案 B（壳内 ValueNotifier）—— 完美
-它完全在 `mobile_shell.dart` 内部闭环。利用 `didUpdateWidget` 监听 `shell` 实例的变化，发出一个纯粹的数值 `_revision++`。推出来的路由用 `ValueListenableBuilder` 监听这个 `_revision`，当它变化时，重新读取当前的 `widget.shell`。这利用了 Flutter 自身的响应式更新，极其轻量，且完全符合项目“纯 Dart 判断”的纪律。
+| 编号 | 决策 | 我的意见与理由 |
+|---|---|---|
+| **D-a** | **甲（现在就修）** | **必选。** 目标用户就是中老年，超大字号下如果连收款框都挤成缝、全款按钮点不到，那“适老化”就成了一纸空文。这是底线。 |
+| **D-b** | **乙（先挂起）** | **完全同意。** 既然在 Flutter 3.41 下测试是绿的，说明官方已经解决了 `_ModalScopeState` 不重建的问题。别为已经自愈的伤口去贴创可贴。挂起，下次顺便看。 |
+| **D-c** | **乙（不加）** | **同意。** 详情页改就行了，列表那一行本来就窄，紧挨着还有“未收 ¥20”，再塞 8 个字会换行，视觉上很乱。 |
+| **D-d** | **甲（保持 F8）** | **同意。** 明细是“卖了什么”，是用户最关心的第一事实；退货记录是后续动作。用户能先看明细再看退货，符合直觉。 |
+| **D-e** | **甲（加测试）** | **100% 选甲，这是核心防守。** 如果用代码没盖住 `applyOrder`，将来只要忘加一张表，就会导致数据静默残留（旧数据混在新数据里）。这种底层漏出的 Bug，用户根本发现不了，等发现时账早就乱了。 |
+| **D-f** | **乙（不加）** | **同意。** 会计对账只认单号和日期，`seq_no` 是数据库内部的游标，导出给外行看反而会让他们疑惑“为什么序号不连续”。 |
 
 ---
 
-## 二、方案 B 落地时的 2 个实现细节
+### 二、关于 D-e 的落地建议（必须用代码锁死）
 
-虽然方案逻辑完美，但在写代码时，必须注意这两个细节：
+既然我们要加 `applyOrder` 的覆盖性测试，不能只测“Products 在前”。必须写一个**集合断言**：
 
-### 1. 引用相等性判断
-在 `_MobileShellState.didUpdateWidget` 里，不要无脑 `++`。
 ```dart
-@override
-void didUpdateWidget(MobileShell oldWidget) {
-  super.didUpdateWidget(oldWidget);
-  // 只有 AppShell 实例确实换了（触发了 rebuild），才增加版本号
-  if (!identical(widget.shell, oldWidget.shell)) {
-    _revision.value++;
-  }
-}
+test('applyOrder 必须覆盖 Schema 中所有业务表（除队列表外）', () {
+  // 1. 获取 Schema 里定义的所有表名（过滤掉以 sync_ 开头的队列表）
+  final allTables = Schema.createStatements
+      .map((sql) => extractTableName(sql))
+      .where((name) => name != null && !name.startsWith('sync_') && name != 'clock_offset')
+      .toSet();
+
+  // 2. 获取 applyOrder 里的表名
+  final orderTables = SyncClient.applyOrder.toSet();
+
+  // 3. 断言：差集必须为空
+  expect(allTables.difference(orderTables), isEmpty, 
+         reason: 'Schema 新增了表，但忘记加进 applyOrder。重建镜像时会残留旧数据。');
+});
 ```
-如果没有这个判断，任何导致壳重建的外部因素（比如设备旋转、主题微调）都会去查一遍库，造成不必要的开销。
-
-### 2. 在 `ValueListenableBuilder` 内部重新读取 `shell`
-在 `_openFull` 的代码里，绝不能把 `widget.shell` 写在 `ValueListenableBuilder` 外面。
-```dart
-Navigator.of(context).push(MaterialPageRoute<void>(
-  builder: (BuildContext context) => ValueListenableBuilder<int>(
-    valueListenable: _revision,
-    builder: (context, _, __) {
-      // ✅ 正确：每次 _revision 变化时，都会重新读取最新的 widget.shell
-      return Scaffold(
-        appBar: AppBar(title: Text(destination.label)),
-        body: Column(children: <Widget>[
-          _SyncStatusBar(sync: widget.shell.mobileSync, version: widget.shell),
-          ...
-```
-如果写在 `builder` 外面，闭包里捕获的依然是 push 那一刻的旧实例，那就白改了。
+把这条测试跑通，D-e 就彻底安全了。
 
 ---
 
-## 三、关于“诚实边界”的补充
+### 三、关于“纪律 20：先取证后动手”
 
-你在提案里写了：“如果后台 `autoPush` 完成时用户不在开单/设置页，徽标仍会滞后到下一次 `setState`”。
-这是非常清醒的认知。不过，我们可以通过一个微小的额外设计，让这个边界变平滑：
+**必须选 `流程 甲`，写进 `Agents.md`。**
 
-**在 `_SyncStatusBar` 里，除了响应 `didUpdateWidget`，可以在 `initState` 或用户下拉/点击时再调一次 `_load()`。**
-但**不建议**监听 `AppLifecycleState.resumed` 来强行刷，因为这会让 App 切回来时突然查一次库。就保持在“只要壳重新 build（比如切了 tab、点了设置），版本号就递进，徽标就刷新”即可，这已经覆盖了 99% 的用户场景。
+回顾今天这三个“看似是 UI 不刷新”的问题：
+- F17 以为是 Bug，查了发现是自己看错行（误判）。
+- F16 以为是 Bug，查了发现 Flutter 官方自愈了（反证）。
+- F19 以为是 UI 报错，查了发现是 SQLite 缺索引导致 `INDEXED BY` 崩溃（真 P0）。
+
+如果没有那句**“先写一条必须失败的测试 / 先跑一次 logcat / 先查一次 SQL”**，你们今天大概率会在 F16 和 F17 上白改三天代码，引入一堆无用的 `setState` 和 `refresh()`，把原本干净的架构搞得一团糟。
+
+把这条固化为 `Agents.md` 纪律 20：
+> **纪律 20：先取证后动手。**
+> 任何 Bug 在修改生产代码前，必须先有“受控复现”的证据（一条能红的测试用例、一条确凿的日志、一条查出异常数据的 SQL）。**不许照着未验证的根因去改代码。**
 
 ---
-
-## 四、测试计划的确认
-
-- **T1（先红）**：这是整个提案的灵魂。如果你按照文档描述写了 T1，跑出来却是绿的，**必须立刻停手**，那说明 Flutter 在 3.41 版本可能改了 `_ModalScopeState` 的重建策略，我们必须去看新的源码，而不是强行写修复。
-- **T2（回归护栏）**：保证 Tab 内的徽标原本的逻辑没被改坏。
-- **T3（裁定 ② 兑现）**：从概览推开的开单页保存后，退回概览时，徽标立刻变“待同步 1 条”，不需要手动刷。
-
----
-
-## 五、一句话收束
-
-**直接选 `乙`，落代码时加上 `identical` 判断，并在 `ValueListenableBuilder` 内部取 `widget.shell`。**

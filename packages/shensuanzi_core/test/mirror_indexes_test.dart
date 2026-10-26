@@ -121,4 +121,47 @@ void main() {
       reason: '幂等：每次打开镜像都跑，不许第二次就炸',
     );
   });
+
+  // ---------------------------------------------------------------- D-e（2026-10-26 裁定甲）
+  //
+  // `rebuildMirror()` 依赖**手写**的顺序常量 `SyncClient.applyOrder`：
+  // 它按这个列表 drop + 重建表。现有测试只断言了**顺序**（products 在 documentLines
+  // 之前），**没有断言覆盖性** —— 将来 `Schema` 加一张表、忘了登记进 `applyOrder`，
+  // 重建时那张表**既不被 drop 也不被重建**，旧数据静默留在镜像里
+  //（与 F19「重建不完整」同一类，而且用户永远发现不了，等发现时账已经乱了）。
+  //
+  // ⚠️ 这是一条**护栏**（不是复现）：当前 applyOrder 是完整的，所以它一开始就是绿的。
+  // 反向灵敏度：从 applyOrder 里删掉任意一张表 ⇒ 立刻红。
+  test('applyOrder 必须覆盖 Schema 里所有「随镜像重建」的表', () {
+    // 从建表语句里取表名（与 `SyncClient._createByTable` 同一套正则）
+    final RegExp pattern = RegExp(r'CREATE TABLE\s+(\w+)');
+    final Set<String> schemaTables = <String>{
+      for (final String sql in Schema.createStatements)
+        if (pattern.firstMatch(sql) != null) pattern.firstMatch(sql)!.group(1)!,
+    };
+
+    // 这三张**有意**不进 applyOrder：
+    // - `sync_queue`：里面是用户还没传过去的单，重建镜像绝不能丢；
+    // - `sync_cursor`：重建后由 `cursors.clear()` 单独清；
+    // - `clock_offset`：与主机时钟的偏差，跨重建仍有效。
+    const Set<String> notRebuilt = <String>{
+      'sync_queue',
+      'sync_cursor',
+      'clock_offset',
+    };
+
+    final Set<String> expected = schemaTables.difference(notRebuilt);
+    final Set<String> registered = SyncClient.applyOrder.toSet();
+
+    expect(
+      expected.difference(registered),
+      isEmpty,
+      reason: 'Schema 加了表但没登记进 applyOrder ⇒ 重建镜像时它会残留旧数据',
+    );
+    expect(
+      registered.difference(expected),
+      isEmpty,
+      reason: 'applyOrder 里有 Schema 中不存在的表 ⇒ 重建会直接抛错',
+    );
+  });
 }

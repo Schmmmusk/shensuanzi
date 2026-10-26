@@ -1171,69 +1171,99 @@ class _SalePageState extends State<SalePage> {
   }
 
   /// 客户 + 日期
-  Widget _headerRow(ThemeData theme) => Row(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: <Widget>[
-      Expanded(
-        flex: 3,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text('客户', style: theme.textTheme.bodySmall),
-            const SizedBox(height: 4),
-            InkWell(
-              onTap: _pickParty,
-              child: InputDecorator(
-                isEmpty: _partyName == null,
-                decoration: InputDecoration(
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                  errorText: _invalid?.fieldErrors[SaleField.party],
-                ),
-                child: Text(
-                  _partyName ?? '散客（当场结清）',
-                  style: TextStyle(
-                    height: 1.6,
-                    color: theme.colorScheme.onSurface,
-                  ),
+  ///
+  /// **F18-1（2026-10-26 裁定甲）**：超大档（界面大小 = 超大）下 5:3 分栏会把
+  /// `2026-10-26` **折断在数字中间**（真机 `2026-1` / `0-26`）——
+  /// 格子还是那个格子，字变成两倍。⇒ 日期那格放不下就**上下两行**。
+  /// 判据按当前缩放算（`scaledOf`），所以标准档的布局**逐字不变**。
+  Widget _headerRow(ThemeData theme) {
+    final Widget partyCell = Expanded(
+      flex: 3,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('客户', style: theme.textTheme.bodySmall),
+          const SizedBox(height: 4),
+          InkWell(
+            onTap: _pickParty,
+            child: InputDecorator(
+              isEmpty: _partyName == null,
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                isDense: true,
+                errorText: _invalid?.fieldErrors[SaleField.party],
+              ),
+              child: Text(
+                _partyName ?? '散客（当场结清）',
+                style: TextStyle(
+                  height: 1.6,
+                  color: theme.colorScheme.onSurface,
                 ),
               ),
             ),
-            if (_partyName != null)
-              TextButton(onPressed: _clearParty, child: const Text('改为散客')),
-          ],
-        ),
+          ),
+          if (_partyName != null)
+            TextButton(onPressed: _clearParty, child: const Text('改为散客')),
+        ],
       ),
-      const SizedBox(width: 16),
-      Expanded(
-        flex: 2,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text('日期', style: theme.textTheme.bodySmall),
-            const SizedBox(height: 4),
-            InkWell(
-              onTap: _pickDate,
-              child: InputDecorator(
-                decoration: InputDecoration(
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                  errorText: _invalid?.fieldErrors[SaleField.date],
-                ),
-                child: Text(
-                  _fmtDate(_date),
-                  style: TextStyle(
-                    height: 1.6,
-                    color: theme.colorScheme.onSurface,
-                  ),
+    );
+
+    final Widget dateCell = Expanded(
+      flex: 2,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('日期', style: theme.textTheme.bodySmall),
+          const SizedBox(height: 4),
+          InkWell(
+            onTap: _pickDate,
+            child: InputDecorator(
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                isDense: true,
+                errorText: _invalid?.fieldErrors[SaleField.date],
+              ),
+              child: Text(
+                _fmtDate(_date),
+                style: TextStyle(
+                  height: 1.6,
+                  color: theme.colorScheme.onSurface,
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-    ],
-  );
+    );
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        const double gap = 16;
+        // 日期那格在 5:3 分栏下的实际宽度
+        final double dateWidth = (constraints.maxWidth - gap) * 2 / 5;
+        // `2026-10-26` 在基准字号下约 96 逻辑宽（10 个半角字符 + 输入框内边距）
+        if (dateWidth < scaledOf(context, 96)) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              // 竖排时 Expanded 没有意义（Column 里它是无限高）⇒ 包回普通 Box
+              Row(children: <Widget>[partyCell]),
+              const SizedBox(height: 12),
+              Row(children: <Widget>[dateCell]),
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            partyCell,
+            const SizedBox(width: gap),
+            dateCell,
+          ],
+        );
+      },
+    );
+  }
 
   Widget _linesSection(
     ThemeData theme,
@@ -1350,6 +1380,8 @@ class _SalePageState extends State<SalePage> {
           TextButton(
             // 没有账户时「全款」只会造出一条解不开的错 —— 禁用（死局预防）
             onPressed: (_saving || _accounts.isEmpty) ? null : _fillFullPayment,
+            // F18-3：给个 Key 才能量**按钮**的点击区（量文字会量成 36）
+            key: const Key('sale-full-payment'),
             child: const Text('全款'),
           ),
         ],
@@ -1932,70 +1964,98 @@ class _PayCard extends StatelessWidget {
   final VoidCallback? onRemove;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Row(
-      children: <Widget>[
-        Expanded(
-          flex: 3,
-          // 完全受控的 DropdownButton（理由同采购页：ValueKey 复用卡片时
-          // FormField 的 initialValue 不跟控制器）
-          child: InputDecorator(
-            decoration: InputDecoration(
-              labelText: '账户 *',
-              isDense: true,
-              border: const OutlineInputBorder(),
-              errorText: errors?[SalePaymentField.account],
+  Widget build(BuildContext context) {
+    // ---- 账户格（完全受控的 DropdownButton：ValueKey 复用卡片时
+    //      FormField 的 initialValue 不跟控制器）----
+    final Widget accountCell = InputDecorator(
+      decoration: InputDecoration(
+        labelText: '账户 *',
+        isDense: true,
+        border: const OutlineInputBorder(),
+        errorText: errors?[SalePaymentField.account],
+      ),
+      child: DropdownButton<Account>(
+        value: pay.account,
+        isDense: true,
+        isExpanded: true,
+        underline: const SizedBox.shrink(),
+        items: <DropdownMenuItem<Account>>[
+          for (final Account account in accounts)
+            DropdownMenuItem<Account>(
+              value: account,
+              child: Text(account.name, style: const TextStyle(height: 1.6)),
             ),
-            child: DropdownButton<Account>(
-              value: pay.account,
-              isDense: true,
-              isExpanded: true,
-              underline: const SizedBox.shrink(),
-              items: <DropdownMenuItem<Account>>[
-                for (final Account account in accounts)
-                  DropdownMenuItem<Account>(
-                    value: account,
-                    child: Text(
-                      account.name,
-                      style: const TextStyle(height: 1.6),
-                    ),
-                  ),
-              ],
-              onChanged: enabled ? onAccountChanged : null,
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          flex: 2,
-          child: TextField(
-            key: const Key('sale-pay-amount'),
-            controller: pay.amount,
-            enabled: enabled,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            textInputAction: TextInputAction.next,
-            onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-            onChanged: (_) => onChanged(),
-            decoration: InputDecoration(
-              labelText: '金额（元）',
-              isDense: true,
-              errorText: errors?[SalePaymentField.amount],
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        if (onRemove != null)
-          IconButton(
+        ],
+        onChanged: enabled ? onAccountChanged : null,
+      ),
+    );
+
+    final Widget amountCell = TextField(
+      key: const Key('sale-pay-amount'),
+      controller: pay.amount,
+      enabled: enabled,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      textInputAction: TextInputAction.next,
+      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+      onChanged: (_) => onChanged(),
+      decoration: InputDecoration(
+        labelText: '金额（元）',
+        isDense: true,
+        errorText: errors?[SalePaymentField.amount],
+      ),
+    );
+
+    final Widget trailing = onRemove != null
+        ? IconButton(
             tooltip: '删除这一笔',
             onPressed: onRemove,
             icon: const Icon(Icons.delete_outline),
           )
-        else
-          const SizedBox(width: 48),
-      ],
-    ),
-  );
+        : const SizedBox(width: 48);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          const double gap = 8;
+          // 金额那格在 3:2 分栏下的实际宽度（扣掉两个间距 + 删除按钮）
+          final double amountWidth =
+              (constraints.maxWidth - gap * 2 - 48) * 2 / 5;
+          // 「金额（元）」在基准字号下约 94 逻辑宽（5 个汉字 + 输入框内边距）
+          //
+          // **F18-2（2026-10-26 裁定甲）**：超大档下 3:2 分栏把它压成一条缝
+          //（真机截图只剩「金额…」+ 一小段下划线），而它是**必填**项
+          //（留空 = 全部赊账）。⇒ 放不下就**上下两行**：账户一行、金额一行。
+          // 标准档 `amountWidth ≥ 94`，走的还是原来的 Row —— **逐字不变**。
+          if (amountWidth < scaledOf(context, 94)) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                accountCell,
+                const SizedBox(height: gap),
+                Row(
+                  children: <Widget>[
+                    Expanded(child: amountCell),
+                    const SizedBox(width: gap),
+                    trailing,
+                  ],
+                ),
+              ],
+            );
+          }
+          return Row(
+            children: <Widget>[
+              Expanded(flex: 3, child: accountCell),
+              const SizedBox(width: gap),
+              Expanded(flex: 2, child: amountCell),
+              const SizedBox(width: gap),
+              trailing,
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
 
 /// 客户选择器：搜索 + 最近往来 + 最小新建（`ensureParty`，Z-4）。
