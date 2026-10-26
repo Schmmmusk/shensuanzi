@@ -729,7 +729,14 @@ void main() {
     expect(find.text('红富士苹果 的流水'), findsOneWidget);
     expect(find.text('10'), findsOneWidget, reason: '入库 = 正');
     expect(find.text('-3'), findsOneWidget, reason: '出库 = 负');
-    expect(find.text('¥35.00'), findsOneWidget, reason: '桌面显示成本（10 × 3.50）');
+    // F7（2026-10-26 复跑）：宽窗的成本列从前是**裸数字** `¥35.00`，
+    // 夹在「数量 ±10」和「日期」之间，看不出它是什么（窄窗那边早就有
+    // 「成本 ¥…（每件 ¥…）」）。⇒ 桌面宽窗补上「成本」前缀。
+    expect(
+      find.text('成本 ¥35.00'),
+      findsOneWidget,
+      reason: '桌面显示成本（10 × 3.50），且必须说清这是成本',
+    );
     expect(find.byKey(const Key('export-stock-flow')), findsOneWidget);
 
     // 流水行 tap ⇒ 跳单据详情
@@ -1023,5 +1030,36 @@ void main() {
     await tester.tap(find.byKey(const Key('list-search-clear')));
     await tester.pumpAndSettle();
     expect(find.textContaining('共 1 个商品'), findsOneWidget);
+  });
+
+  // ------------------------------------------------------- P3 · F6 成本标签错位
+  //
+  // 成本行是 `Wrap(alignment: spaceBetween)`，而它有**四个**子项：
+  // 「账面 · 在途」、「成本（均价）ⓘ」、`SizedBox(width: 4)`、金额。
+  // spaceBetween 会把空档塞进**每一对**相邻子项之间 ⇒ 标签与它自己的金额
+  // 被拉到两端，中间还夹着一个 4px 的"空档项"，读起来像标签在管别的东西。
+  testWidgets('F6：成本标签与它的金额贴在一起（不能各占一端）', (WidgetTester tester) async {
+    buy(2); // 2 × ¥3.50 ⇒ 均价 ¥3.50、共 ¥7.00
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    final Rect label = tester.getRect(find.text('成本（均价）'));
+    final Rect amount = tester.getRect(find.text('¥ 3.50'));
+    final double gap = amount.left - label.right;
+
+    expect(
+      gap,
+      lessThan(40),
+      reason:
+          '标签与金额之间只该有一个间距（8）+ 图标（14），实测 $gap px —— '
+          '几百 px 说明它们被 spaceBetween 拉到了两端',
+    );
+    expect(
+      (label.center.dy - amount.center.dy).abs(),
+      lessThan(16),
+      // 金额是「均价 + 共 ¥X」两行里的**第一行**，所以它比 44 高的标签框中心
+      // 略高一点（约半个行高）—— 阈值取 16 而不是 0，但远小于"换到下一行"的 35。
+      reason: '同一行（视觉上是一组）',
+    );
   });
 }

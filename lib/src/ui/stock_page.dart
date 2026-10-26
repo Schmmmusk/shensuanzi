@@ -673,78 +673,117 @@ class _StockRow extends StatelessWidget {
                     color: theme.textTheme.bodySmall?.color,
                   ),
                 ),
-                // AA-4：成本（均价）+ 口径说明；负值红色（与负库存联动）
-                Tooltip(
-                  message: '按历史加权平均成本计算。\n进价变化时可能与最近一次进价不同。',
-                  triggerMode: TooltipTriggerMode.tap,
-                  showDuration: const Duration(seconds: 4),
-                  // Q5 点击区（用户裁定 ③甲）：Tooltip 的触发面 = child 的边界。
-                  // 原先裸 Row 只有约 22px 高（14px 图标 + 1.6 行高），点不中
-                  // 就等于「口径说明不存在」。SizedBox(44) + Center：
-                  // 视觉不变（行仍居中），点击区达标（`ui_principles.md` §二 44×44）。
-                  child: SizedBox(
-                    key: const Key('stock-cost-info'),
-                    height: 44,
-                    child: Center(
-                      child: Row(
+                // F6（2026-10-26 复跑）：**标签与它的金额必须是一组**。
+                // 从前它们是外层 Wrap 的两个子项（中间还夹一个 `SizedBox(width: 4)`），
+                // 而外层用 `spaceBetween` —— 空档被塞进每一对相邻子项之间，于是
+                // 「成本（均价）」与「¥3.50」被拉到两端（实测间距 239.75 px），
+                // 读起来像这个标签在管别的东西。
+                // ⇒ 收成内层 `Wrap`：不撑满、放不下自动换行（超大档也不溢出）。
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 2,
+                  children: <Widget>[
+                    // AA-4：成本（均价）+ 口径说明；负值红色（与负库存联动）
+                    Tooltip(
+                      message: '按历史加权平均成本计算。\n进价变化时可能与最近一次进价不同。',
+                      triggerMode: TooltipTriggerMode.tap,
+                      showDuration: const Duration(seconds: 4),
+                      // Q5 点击区（用户裁定 ③甲）：Tooltip 的触发面 = child 的边界。
+                      // 原先裸 Row 只有约 22px 高（14px 图标 + 1.6 行高），点不中
+                      // 就等于「口径说明不存在」。SizedBox(44) + Center：
+                      // 视觉不变（行仍居中），点击区达标（`ui_principles.md` §二 44×44）。
+                      child: SizedBox(
+                        key: const Key('stock-cost-info'),
+                        height: 44,
+                        // ⚠️ `widthFactor: 1` 是 F6 的关键：裸 `Center` 会**撑满**
+                        // 可用宽度（`Align` 无 widthFactor 时取最大约束），于是这个
+                        // "44 高的点击区"实际占满整行 —— 标签被居中、金额被挤到
+                        // 下一行，读起来就是「成本（均价）在管别的东西」。
+                        // 加 widthFactor 后宽度 = 内容宽，44 的点击高度不变。
+                        child: Center(
+                          widthFactor: 1,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Text(
+                                '成本（均价）',
+                                style: TextStyle(
+                                  height: 1.6,
+                                  color: theme.textTheme.bodySmall?.color,
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                              Icon(
+                                Icons.info_outline,
+                                size: 14,
+                                color: theme.textTheme.bodySmall?.color,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    // §AD 遗漏 1：成本三态 —— 「¥0.00」会让首次使用的用户
+                    // 以为软件坏了；「待校准」说清了「为什么是 0、什么时候会变」
+                    if (!everInbound)
+                      Text(
+                        '未进货',
+                        style: TextStyle(
+                          height: 1.6,
+                          fontWeight: FontWeight.w600,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      )
+                    else if (costCents == 0)
+                      Tooltip(
+                        message: '期初录入未记成本。\n下次采购时进价会校准成本。',
+                        triggerMode: TooltipTriggerMode.tap,
+                        showDuration: const Duration(seconds: 4),
+                        child: Text(
+                          '待校准',
+                          style: TextStyle(
+                            height: 1.6,
+                            fontWeight: FontWeight.w600,
+                            color: theme.textTheme.bodySmall?.color,
+                          ),
+                        ),
+                      )
+                    else if (book > 0)
+                      // 业务审查 §4.2（用户裁定 ③乙）：主数字是**均价**。
+                      // 旧显示把「成本余值」（总额）当均价 —— 10 件 × ¥3.50 的货
+                      // 显示「¥35.00」，用户会以为一件成本 35 元，**直接误导定价**。
+                      // 均价 = 余值 ÷ 在店可售（round-half-up，与成本分摊同口径）；
+                      // 总额不丢，降为小字补充。
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
                         mainAxisSize: MainAxisSize.min,
                         children: <Widget>[
                           Text(
-                            '成本（均价）',
+                            '¥ ${Money.format(Money.divideRoundHalfUp(costCents, book))}',
                             style: TextStyle(
                               height: 1.6,
+                              fontWeight: FontWeight.w600,
+                              color: costCents < 0
+                                  ? theme.colorScheme.error
+                                  : theme.colorScheme.onSurface,
+                            ),
+                          ),
+                          Text(
+                            '共 ¥ ${Money.format(costCents)}',
+                            style: TextStyle(
+                              height: 1.6,
+                              fontSize: 11,
                               color: theme.textTheme.bodySmall?.color,
                             ),
                           ),
-                          const SizedBox(width: 2),
-                          Icon(
-                            Icons.info_outline,
-                            size: 14,
-                            color: theme.textTheme.bodySmall?.color,
-                          ),
                         ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                // §AD 遗漏 1：成本三态 —— 「¥0.00」会让首次使用的用户
-                // 以为软件坏了；「待校准」说清了「为什么是 0、什么时候会变」
-                if (!everInbound)
-                  Text(
-                    '未进货',
-                    style: TextStyle(
-                      height: 1.6,
-                      fontWeight: FontWeight.w600,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
-                  )
-                else if (costCents == 0)
-                  Tooltip(
-                    message: '期初录入未记成本。\n下次采购时进价会校准成本。',
-                    triggerMode: TooltipTriggerMode.tap,
-                    showDuration: const Duration(seconds: 4),
-                    child: Text(
-                      '待校准',
-                      style: TextStyle(
-                        height: 1.6,
-                        fontWeight: FontWeight.w600,
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
-                    ),
-                  )
-                else if (book > 0)
-                  // 业务审查 §4.2（用户裁定 ③乙）：主数字是**均价**。
-                  // 旧显示把「成本余值」（总额）当均价 —— 10 件 × ¥3.50 的货
-                  // 显示「¥35.00」，用户会以为一件成本 35 元，**直接误导定价**。
-                  // 均价 = 余值 ÷ 在店可售（round-half-up，与成本分摊同口径）；
-                  // 总额不丢，降为小字补充。
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
+                      )
+                    else
+                      // 没货 / 负库存：均价无意义（除不动），只显示总额
+                      // （下方 costNotice 会解释「已无货仍有成本」）
                       Text(
-                        '¥ ${Money.format(Money.divideRoundHalfUp(costCents, book))}',
+                        '¥ ${Money.format(costCents)}',
                         style: TextStyle(
                           height: 1.6,
                           fontWeight: FontWeight.w600,
@@ -753,29 +792,8 @@ class _StockRow extends StatelessWidget {
                               : theme.colorScheme.onSurface,
                         ),
                       ),
-                      Text(
-                        '共 ¥ ${Money.format(costCents)}',
-                        style: TextStyle(
-                          height: 1.6,
-                          fontSize: 11,
-                          color: theme.textTheme.bodySmall?.color,
-                        ),
-                      ),
-                    ],
-                  )
-                else
-                  // 没货 / 负库存：均价无意义（除不动），只显示总额
-                  // （下方 costNotice 会解释「已无货仍有成本」）
-                  Text(
-                    '¥ ${Money.format(costCents)}',
-                    style: TextStyle(
-                      height: 1.6,
-                      fontWeight: FontWeight.w600,
-                      color: costCents < 0
-                          ? theme.colorScheme.error
-                          : theme.colorScheme.onSurface,
-                    ),
-                  ),
+                  ],
+                ),
               ],
             ),
             if (notice != null)

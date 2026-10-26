@@ -146,6 +146,14 @@ ExportTable documentExportTable(List<DocumentSummary> summaries) => ExportTable(
   ],
 );
 
+/// ⚠️ **F11（2026-10-26 复跑）：三张流水表的时间列一律 `formatOccurredAt`。**
+///
+/// 自动生成的收付款单 `occurred_at` = 单据日期（当天 00:00），手工核销 = 真实时刻 ——
+/// 同一列两种精度，`00:00` 会被读成"半夜记的账"（复跑实测
+/// `FK20261025-001  付款  -20.00  2026-10-25 00:00`）。
+/// `formatOccurredAt` 的判据是「hour/minute/second/millisecond 全零 ⇒ 只印日期」，
+/// 有真时刻的**照旧印到分**（§AF 遗漏 6 的排序稳定不能丢）。
+///
 /// 往来流水导出（某一方的**全部**流水；文件名带往来方名，AF-7）
 ///
 /// `金额` 保持 `party_ledger` 原口径：**正 = 对方欠我增加**（不是「收了多少」）。
@@ -161,7 +169,7 @@ ExportTable partyFlowExportTable({required List<PartyFlowEntry> flow}) =>
             entry.docNo,
             entry.docType.label,
             Money.format(entry.amount),
-            formatDateTime(entry.occurredAt),
+            formatOccurredAt(entry.occurredAt),
           ],
       ],
     );
@@ -185,7 +193,7 @@ ExportTable stockFlowExportTable({required List<StockFlowEntry> flow}) =>
             entry.docType.label,
             '${entry.quantity}',
             Money.format(entry.totalCost),
-            formatDateTime(entry.occurredAt),
+            formatOccurredAt(entry.occurredAt),
           ],
       ],
     );
@@ -200,7 +208,7 @@ ExportTable accountFlowExportTable({required List<MoneyFlowEntry> flow}) =>
             entry.docNo,
             entry.docType.label,
             Money.format(entry.amount),
-            formatDateTime(entry.occurredAt),
+            formatOccurredAt(entry.occurredAt),
           ],
       ],
     );

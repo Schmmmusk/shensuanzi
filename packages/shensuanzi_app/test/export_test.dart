@@ -614,4 +614,84 @@ void main() {
       expectNoGroupedAmounts(t);
     });
   });
+
+  // F11（2026-10-26 复跑）：自动生成的收付款单 `occurred_at` = 单据日期（当天 00:00），
+  // 手工核销 = 真实时刻 —— 同一列两种精度，`00:00` 会被读成"半夜记的账"。
+  // 复跑实测：`FK20261025-001  付款  -20.00  2026-10-25 00:00`。
+  // ⇒ 三张流水导出（往来 / 商品 / 账户）一律走 `formatOccurredAt`：整日只印日期。
+  test('F11：整日流水只印日期，不补 00:00（三张流水表都要）', () {
+    final int midnight = DateTime(2026, 10, 25).millisecondsSinceEpoch;
+    final int timed = DateTime(2026, 10, 25, 14, 32).millisecondsSinceEpoch;
+
+    final ExportTable account = accountFlowExportTable(
+      flow: <MoneyFlowEntry>[
+        MoneyFlowEntry(
+          seqNo: 1,
+          documentId: 'd1',
+          docNo: 'FK20261025-001',
+          docType: DocType.payment,
+          amount: -2000,
+          occurredAt: midnight,
+          timeEstimated: false,
+        ),
+      ],
+    );
+    expect(
+      account.rows.single.last,
+      '2026-10-25',
+      reason: 'F11：整日不补 00:00（会被读成半夜记的账）',
+    );
+
+    final ExportTable stock = stockFlowExportTable(
+      flow: <StockFlowEntry>[
+        StockFlowEntry(
+          seqNo: 1,
+          documentId: 'd1',
+          docNo: 'CG20261025-001',
+          docType: DocType.purchase,
+          quantity: 10,
+          unitCost: 100,
+          totalCost: 1000,
+          occurredAt: midnight,
+          timeEstimated: false,
+        ),
+      ],
+    );
+    expect(stock.rows.single.last, '2026-10-25', reason: '商品流水同口径');
+
+    final ExportTable party = partyFlowExportTable(
+      flow: <PartyFlowEntry>[
+        PartyFlowEntry(
+          seqNo: 1,
+          documentId: 'd1',
+          docNo: 'XS20261025-001',
+          docType: DocType.sale,
+          amount: 20000,
+          occurredAt: midnight,
+          timeEstimated: false,
+        ),
+      ],
+    );
+    expect(party.rows.single.last, '2026-10-25', reason: '往来流水同口径');
+
+    // 反向护栏：**有真时刻的照旧带时分**（§AF 遗漏 6 的排序稳定不能丢）
+    final ExportTable withTime = accountFlowExportTable(
+      flow: <MoneyFlowEntry>[
+        MoneyFlowEntry(
+          seqNo: 2,
+          documentId: 'd2',
+          docNo: 'SK20261025-002',
+          docType: DocType.receipt,
+          amount: 3000,
+          occurredAt: timed,
+          timeEstimated: false,
+        ),
+      ],
+    );
+    expect(
+      withTime.rows.single.last,
+      '2026-10-25 14:32',
+      reason: '手工核销是真实时刻 ⇒ 必须印到分，否则同一天几张单长得一模一样',
+    );
+  });
 }

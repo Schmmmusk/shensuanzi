@@ -270,8 +270,11 @@ class _WideFlowTile extends StatelessWidget {
           ),
           const SizedBox(width: 16),
           if (showCost)
+            // F7（2026-10-26 复跑）：宽窗的成本列从前是**裸数字** `¥35.00`，
+            // 夹在「±数量」和「日期」之间，看不出它是什么（窄窗那边早有
+            // 「成本 ¥…（每件 ¥…）」）。⇒ 补上「成本」二字，与窄窗同词。
             Text(
-              '¥${Money.format(entry.totalCost)}',
+              '成本 ¥${Money.format(entry.totalCost)}',
               style: TextStyle(
                 height: 1.6,
                 color: theme.textTheme.bodySmall?.color,
