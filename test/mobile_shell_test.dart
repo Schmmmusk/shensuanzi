@@ -381,6 +381,96 @@ void main() {
     );
     expect(find.textContaining('待同步 1 条'), findsWidgets);
   });
+
+  // ============================== F16 提案的**反证** + 回归护栏（2026-10-26）
+  //
+  // 背景：真机两次看到「同步成功后徽标仍写待同步，切走再回来才对」。
+  // 提案（`docs/proposals/F16-同步徽标不刷新-方案.md`）当时判断根因是：
+  // 「`_openFull` 推的路由闭包捕获了 push 那一刻的 `widget.shell`，
+  //   加上 `_ModalScopeState._page` 缓存 ⇒ 徽标永远拿着旧实例」。
+  //
+  // **这条测试把它反证了。** 实测：队列清空 + 换新 `AppShell` 之后，
+  // 整屏页上的徽标**当场**就变成「已同步」（`skipOffstage: false` 数到
+  // 两个「已同步」：tab 一个、整屏页一个；「待同步」零个）。
+  //
+  // 为什么提案判断错了：闭包捕获的是 **`_MobileShellState` 这个 `State` 对象**，
+  // 而 `widget` 是 `State` 上的**可变字段** —— `didUpdateWidget` 之后它已经指向
+  // 新的 `MobileShell`，所以 `widget.shell` 读到的是**当前**实例，不是 push 时那个。
+  // （`_page` 缓存确实存在，`routes.dart:1085`；但 `pumpWidget` 换根会触发
+  //  `didChangeDependencies` 把它清掉，路由随之重建。）
+  //
+  // ⇒ 真机那条现象的根因**还没找到**，得回去取时间戳/日志，不许照着错根因改。
+  // 这条测试留作**护栏**：整屏页的徽标必须跟着壳刷新。
+  testWidgets('F16 反证：整屏页（设置）上的徽标会跟着壳刷新', (WidgetTester tester) async {
+    final Directory syncBox = Directory.systemTemp.createTempSync(
+      'shensuanzi_f16_',
+    );
+    addTearDown(() {
+      try {
+        syncBox.deleteSync(recursive: true);
+      } catch (_) {
+        // 镜像库可能还开着 —— 删不掉不影响结论
+      }
+    });
+
+    final MobileSyncService sync = syncServiceIn(
+      syncBox,
+      pairing: PairingInfo.fromPayload(
+        hostId: 'h1',
+        ip: '127.0.0.1',
+        port: 17890,
+        token: 't',
+      ).withLastSyncAt(1700000000000),
+    );
+
+    // 队列里放一条待同步的单 ⇒ 徽标「待同步 1 条」
+    final Db mirror = sync.openMirror();
+    final SyncQueueDao queue = SyncQueueDao(mirror);
+    queue.enqueue(
+      SyncQueueEntry(
+        id: 'q-f16',
+        entity: Schema.documents,
+        entityId: 'd-f16',
+        operation: SyncOpType.createDocument,
+        payload: <String, Object?>{
+          'document': <String, Object?>{'id': 'd-f16', 'doc_type': 'sale'},
+          'lines': <Object?>[
+            <String, Object?>{'product_id': 'p1', 'quantity': 1},
+          ],
+        },
+        createdAt: 1700000000000,
+      ),
+    );
+
+    await tester.pumpWidget(shellWith(sync));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('待同步 1 条'), findsOneWidget, reason: '前提');
+
+    // 进「我的 → 设置」—— 设置是 `_openFull` 推的**整屏页**，三态条也在里面
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('待同步 1 条'),
+      findsOneWidget,
+      reason: '整屏页上也有一条三态条（裁定 ②：用户是在这里开单的）',
+    );
+
+    // 模拟「同步完成」：队列清空
+    queue.delete('q-f16');
+
+    // 模拟 app `setState`：换一个**新的** AppShell 实例（同一棵树，State 保留）
+    await tester.pumpWidget(shellWith(sync));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('已同步'),
+      findsOneWidget,
+      reason: 'F16：整屏页的徽标必须跟着换 —— 不许等到"退出去再进来"',
+    );
+    expect(find.textContaining('待同步'), findsNothing);
+  });
 }
 
 /// 永不完成的传输桩 —— 重试用例里让「正在推送」成为**确定性状态**。

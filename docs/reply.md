@@ -2,65 +2,79 @@
 
 先说结论：
 
-- **坚决选甲。**
-- **这份提案的逻辑极其严密，尤其是「四处一起改」的推演和「桌面零回归」的论证，无懈可击。**
-- **但在落地时，有一个关于「数学一致性」和「视觉一致性」的暗坑需要防备。**
+- **直接选 `乙（壳内 ValueNotifier 桥）`，无需犹豫。**
+- **你对 Flutter 底层的诊断极为精准——精准抓到了 `_ModalScopeState` 的 `_page` 缓存问题。** 很多写了三五年 Flutter 的开发者可能都会在这类“全局状态不刷新”的问题上栽跟头，然后通过到处乱加 `setState` 来糊补丁。你能通过阅读源码锁定到路由缓存没重建，这个工程素养绝佳。
+- **“先写红，如果绿了就停下重新查”的测试纪律，堪称神算子开发过程中的最高光时刻之一。** 这避免了“因为猜错根因，为了修一个不存在的 bug，写出一堆没用的代码”。
 
 ---
 
-## 一、为什么必须选甲？
+## 一、对三个方案的严格推演
 
-### 1. 用户视角的「第一眼原则」
-手机端是老板站在货架前用的。他掏出手机看一眼大字「35」，心里的判断是“还能卖35个”。如果他离线卖了一个，大字不变，结果卖超了，这是绝对的体验灾难。
-把大字改成 `(book + unsynced) - inTransit`，并加上 `≈` 前缀，完美解决。
+### 方案 C（每次 build 查一次）—— 绝对拒绝
+这种方案会导致每次敲键盘触发 rebuild 时，都去查一次 SQLite 队列。之前我们在库存页为了消除“每敲一键查全库”花了多少精力？绝不能在这里重蹈覆辙。
 
-### 2. 乙方案治标不治本
-把估算行挪到商品名下方，仍然是大字和小字两个数字。中老年用户扫一眼就走，大字永远是他们的第一视线。大字不准，其他全白搭。
+### 方案 A（服务层 Listenable）—— 拒绝
+`MobileSyncService` 在 `shensuanzi_app`，但入队动作（`QueueSink`）在 `shensuanzi_core`。如果选 A，`core` 里的入队无法直接触发 `app` 里的 `notifyListeners()`，最终还是要靠 `app` 层的 `_onDocumentSubmitted` 去手动 `bump()`。既然最终都要在 App 层手动通知，那还不如直接用方案 B，把状态留在 UI 壳层，不污染服务层。
 
-### 3. 「四处一起改」的洞察极其关键
-你发现了 `:576` 大字、`:503` 判定、`:267` 排序、`:808` 叠加行文案是绑在一起的。
-- 如果只改大字：大字写 34，但低于安全库存 5 却显示黑色（判定没改）。
-- 如果只改大字：A 商品显示 3，B 商品显示 5，但 A 排在 B 前面（排序没改）。
-- 如果只改大字：大字写 34，叠加行算出来是 36（算式没改）。
-这四处如果不统一步伐，用户会觉得软件彻底疯了。
+### 方案 B（壳内 ValueNotifier）—— 完美
+它完全在 `mobile_shell.dart` 内部闭环。利用 `didUpdateWidget` 监听 `shell` 实例的变化，发出一个纯粹的数值 `_revision++`。推出来的路由用 `ValueListenableBuilder` 监听这个 `_revision`，当它变化时，重新读取当前的 `widget.shell`。这利用了 Flutter 自身的响应式更新，极其轻量，且完全符合项目“纯 Dart 判断”的纪律。
 
 ---
 
-## 二、落地时防备的 2 个暗坑
+## 二、方案 B 落地时的 2 个实现细节
 
-### 1. 抽一个统一的函数，不要各处算
-四处都要用新的 `inStore` 口径。如果分别在 4 个地方写 `(book + unsynced) - inTransit`，将来加字段或改公式时一定会漏。
+虽然方案逻辑完美，但在写代码时，必须注意这两个细节：
 
+### 1. 引用相等性判断
+在 `_MobileShellState.didUpdateWidget` 里，不要无脑 `++`。
 ```dart
-// 在页面 State 顶部定义：
-int effectiveInStore(Product p) {
-  final b = book[p.id] ?? 0;
-  final u = unsyncedByProduct[p.id] ?? 0;
-  final t = inTransit[p.id] ?? 0;
-  return (b + u) - t;
+@override
+void didUpdateWidget(MobileShell oldWidget) {
+  super.didUpdateWidget(oldWidget);
+  // 只有 AppShell 实例确实换了（触发了 rebuild），才增加版本号
+  if (!identical(widget.shell, oldWidget.shell)) {
+    _revision.value++;
+  }
 }
 ```
-大字、判定、排序都统一调这一个函数。
+如果没有这个判断，任何导致壳重建的外部因素（比如设备旋转、主题微调）都会去查一遍库，造成不必要的开销。
 
-### 2. 「期初待同步」（openingPending）的视觉断层
-如果用户只录了「期初」，由于 stocktake 的 delta 客户端算不出来，它会返回 0。这意味着：
-- `unsynced == 0` ⇒ 大字**不带** `≈` 前缀。
-- 但页面上会出现一条提示：「期初 N（瓶）待同步」。
-- 用户会看着不带 `≈` 的旧数字和「期初待同步」的提示，感到困惑：“我录的期初去哪了？”
-
-**防备建议**：
-如果存在 `openingPending`（即使库存的 `unsynced` 为 0），大字最好也强制带上 `≈` 前缀，并在 Tooltip 里说明：“由于期初录入未同步，本数字尚未包含期初量。”
+### 2. 在 `ValueListenableBuilder` 内部重新读取 `shell`
+在 `_openFull` 的代码里，绝不能把 `widget.shell` 写在 `ValueListenableBuilder` 外面。
+```dart
+Navigator.of(context).push(MaterialPageRoute<void>(
+  builder: (BuildContext context) => ValueListenableBuilder<int>(
+    valueListenable: _revision,
+    builder: (context, _, __) {
+      // ✅ 正确：每次 _revision 变化时，都会重新读取最新的 widget.shell
+      return Scaffold(
+        appBar: AppBar(title: Text(destination.label)),
+        body: Column(children: <Widget>[
+          _SyncStatusBar(sync: widget.shell.mobileSync, version: widget.shell),
+          ...
+```
+如果写在 `builder` 外面，闭包里捕获的依然是 push 那一刻的旧实例，那就白改了。
 
 ---
 
-## 三、测试用例的补充
+## 三、关于“诚实边界”的补充
 
-你的 5 条测试（T1-T5）非常完美。建议加一条反向证明：
-**T6**：同时存在「离线销售（-1）」与「离线采购（+5）」时，大字应为 `≈ (book -1 +5) - inTransit`。这验证了多个队列条目能正确叠加。
+你在提案里写了：“如果后台 `autoPush` 完成时用户不在开单/设置页，徽标仍会滞后到下一次 `setState`”。
+这是非常清醒的认知。不过，我们可以通过一个微小的额外设计，让这个边界变平滑：
+
+**在 `_SyncStatusBar` 里，除了响应 `didUpdateWidget`，可以在 `initState` 或用户下拉/点击时再调一次 `_load()`。**
+但**不建议**监听 `AppLifecycleState.resumed` 来强行刷，因为这会让 App 切回来时突然查一次库。就保持在“只要壳重新 build（比如切了 tab、点了设置），版本号就递进，徽标就刷新”即可，这已经覆盖了 99% 的用户场景。
 
 ---
 
-## 四、一句话收束
+## 四、测试计划的确认
 
-**选甲，立刻开工。**
-把四处口径统一到一个 `effectiveInStore(p)` 函数里，注意期初录入未同步时的 `≈` 兜底提示。
+- **T1（先红）**：这是整个提案的灵魂。如果你按照文档描述写了 T1，跑出来却是绿的，**必须立刻停手**，那说明 Flutter 在 3.41 版本可能改了 `_ModalScopeState` 的重建策略，我们必须去看新的源码，而不是强行写修复。
+- **T2（回归护栏）**：保证 Tab 内的徽标原本的逻辑没被改坏。
+- **T3（裁定 ② 兑现）**：从概览推开的开单页保存后，退回概览时，徽标立刻变“待同步 1 条”，不需要手动刷。
+
+---
+
+## 五、一句话收束
+
+**直接选 `乙`，落代码时加上 `identical` 判断，并在 `ValueListenableBuilder` 内部取 `widget.shell`。**
