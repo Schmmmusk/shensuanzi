@@ -235,6 +235,33 @@ void main() {
     );
   });
 
+  // F17（2026-10-25 复跑）：断网开了 1 袋大米，进库存页大米还是 1、账面 1、
+  // 在途 0，**没有任何「≈ 估算」标注** —— 用户以为还有货。
+  // 这条把复跑现场搬进测试：账面 1 + 离线卖 1 ⇒ 必须显示「≈ 台账 1 + 未同步 -1 = 0」。
+  testWidgets('F17：离线单必须影响库存显示（≈ 台账 + 未同步）', (WidgetTester tester) async {
+    buy(1); // 账面 1
+    enqueueSale('q-f17', productId, 1); // 离线卖了 1，还没推给电脑
+
+    await tester.pumpWidget(
+      page(
+        stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('≈ 台账 1 + 未同步 -1'),
+      findsOneWidget,
+      reason: 'F17：离线单必须体现在库存上，否则用户以为还有 1 件',
+    );
+    // ⚠️ `_signed(0)` 输出 `+0` 而不是 `0` —— 断言必须照实现写
+    expect(
+      find.textContaining('= +0'),
+      findsOneWidget,
+      reason: '合计 = 台账 1 + 未同步 -1 = 0（显示为 +0）',
+    );
+  });
+
   testWidgets('空库给「怎么办」：两段式空态（§AD-6）+ 首次入口文案（遗漏 2）', (
     WidgetTester tester,
   ) async {
