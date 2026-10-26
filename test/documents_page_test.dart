@@ -760,12 +760,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('单据详情'), findsOneWidget);
 
-    // ① 上移：在「明细」区块**上方**（以前压在页面底部）
+    // ① 位置（F8 于 2026-10-26 调整了顺序，**意图不变**）：
+    //    #26 批 3 甲案的原话是「不能压到页面底部」——因为列表把退货单折进了主单行，
+    //    这一块是它唯一的入口。F8（用户 2026-10-25 复跑建议「明细提到退货记录上方」，
+    //    比 #26 更晚）把**明细**放到了最前，所以这里不再要求「退货在明细之前」，
+    //    改为要求「退货仍在**操作行之前**」（即一进来就在首屏，没被挤到底部）。
     final double yReturns = tester
         .getTopLeft(find.byKey(const Key('detail-returns')))
         .dy;
     final double yLines = tester.getTopLeft(find.text('明细')).dy;
-    expect(yReturns < yLines, isTrue, reason: '甲案的「救生圈」：列表折叠了退货单，详情页必须一进来就看到');
+    // ⚠️ 不能用「操作行」当锚点：这张单是**全退**的，F3/#39 之后
+    // 既没有「收款」也没有「退货」按钮（`settle-button` 找不到）。
+    // 直接断言「首屏可见」—— 测试视口 800×600，那正是「一进来就看到」的意思。
+    expect(yReturns, lessThan(600), reason: '救生圈的**意图**：退货记录必须在首屏，不能被压到底部');
+    expect(yLines < yReturns, isTrue, reason: 'F8：明细在前（用户 2026-10-25 的建议）');
 
     // ② 往返：点退货行 ⇒ 退货单详情 ⇒ 返回 ⇒ 回到原单
     await tester.tap(find.byKey(Key('return-row-${f.ret1}')));
@@ -835,10 +843,12 @@ void main() {
     await tester.tap(find.byKey(Key('doc-row-$saleId')));
     await tester.pumpAndSettle();
 
-    // ① 上移：在「明细」上方
+    // ① 位置（F8 之后口径同上：**意图**是「不能压到底部」，不是「必须在明细之前」）
     final double yLinks = tester.getTopLeft(find.text('这单被哪些收付款核销过')).dy;
     final double yLines = tester.getTopLeft(find.text('明细')).dy;
-    expect(yLinks < yLines, isTrue, reason: '收款单被折起来了，这里是它的唯一入口，不能压到底部');
+    // 同 ①：这张单也已结清，「收款」按钮不在（`settle-button` 找不到）⇒ 断言首屏可见
+    expect(yLinks, lessThan(600), reason: '收款单被折起来了，这里是它唯一的入口 —— 必须在首屏');
+    expect(yLines < yLinks, isTrue, reason: 'F8：明细在最前');
 
     // ② 可点：进那张收款单的详情，再返回
     await tester.tap(find.byKey(Key('settle-row-${rcv.document.id}')));

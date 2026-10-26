@@ -73,6 +73,27 @@ String docStatusLabel(DocStatus status) => switch (status) {
   DocStatus.cancelled => '已作废',
 };
 
+/// 单据状态的**展示**文案（F9，2026-10-26 复跑裁定）：`已确认` 且还欠着钱
+/// ⇒ 「已确认 · 未结清」。
+///
+/// ## 为什么在展示层拼，而不是给 `DocStatus` 加一个枚举值
+///
+/// `status` 是**生命周期**（草稿 / 已确认 / 在途 / 已送达 / 已结清 / 已作废），
+/// 「结清」是**派生事实**（`paid_amount` 与「金额 − 退货冲减」的比较）。
+/// 加枚举值要动 schema 迁移 + 同步协议，**为一句文案不值得**（用户 `docs/reply.md`
+/// 的原话也是这个意思）。
+///
+/// ⚠️ 入参是 [SettlementService.displayStatus] 的结果，不是 `doc.status`：
+/// 「已确认且已结清」在那一层已经被翻成 `settled` 了 —— 所以这里只剩
+/// 「真·已确认且还欠着」这一种情况需要加后缀。
+String docStatusWithSettlement(DocStatus displayStatus, int unsettledCents) {
+  final String base = docStatusLabel(displayStatus);
+  if (displayStatus == DocStatus.confirmed && unsettledCents > 0) {
+    return '$base · 未结清';
+  }
+  return base;
+}
+
 /// 往来方角色的中文；多角色用「、」连接（`客户、供应商`）
 String partyRolesLabel(List<PartyRole> roles) =>
     roles.map(partyRoleLabel).join('、');

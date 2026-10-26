@@ -112,7 +112,12 @@ void main() {
     expect(find.text(doc.docNo), findsOneWidget);
     expect(find.textContaining('李姐'), findsWidgets);
     expect(find.textContaining('¥10.00'), findsWidgets, reason: '金额带千分位格式');
-    expect(find.text(docStatusLabel(DocStatus.confirmed)), findsWidgets);
+    // F9（2026-10-26）：赊账单的状态是「已确认 · 未结清」。
+    // 用展示层组合函数取词（口径单一来源），别在这里手拼字符串。
+    expect(
+      find.text(docStatusWithSettlement(DocStatus.confirmed, 1000)),
+      findsWidgets,
+    );
     expect(find.text('矿泉水'), findsOneWidget, reason: '明细行显示商品名');
 
     expect(find.byKey(const Key('settle-button')), findsOneWidget);
@@ -685,5 +690,125 @@ void main() {
       isNull,
       reason: '核销弹窗在 2.0 档下溢出（附录 B 点名：顶部 Row / 固定宽度）',
     );
+  });
+
+  // F5（2026-10-26 复跑）：明细行只写「× 24」和金额 —— 看不出**单价**，
+  // 也看不出用户当初是按什么单位录的（2 箱 vs 24 瓶）。这两样都是"回看这张单"
+  // 最常问的问题，而库里都有（`unit_price` / `entry_quantity` / `entry_unit`）。
+  testWidgets('F5：明细行显示「单价 × 数量」，有录入原文时也说出来', (WidgetTester tester) async {
+    final RuleEngine engine = RuleEngine(db);
+    final Document sale = Document(
+      id: 'd-f5',
+      docNo: 'XS20261026-F5',
+      docType: DocType.sale,
+      status: DocStatus.confirmed,
+      partyId: 'pt1',
+      totalAmount: 8400,
+      occurredAt: 1700000000000,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+    );
+    engine.dispatch(
+      document: sale,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: sale.id,
+          productId: 'p1',
+          quantity: 24,
+          unitPrice: 350,
+          entryQuantity: 2,
+          entryUnit: '箱',
+        ),
+      ],
+      now: 1700000000000,
+    );
+
+    await tester.pumpWidget(page(sale.id));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('¥3.50 × 24'),
+      findsOneWidget,
+      reason: 'F5：明细要说清单价，不能只有金额',
+    );
+    expect(
+      find.textContaining('录入原文：2 箱'),
+      findsOneWidget,
+      reason: 'F5：按箱录的单要能回看出「2 箱」，而不是只看到 24 瓶',
+    );
+  });
+
+  // F8（2026-10-26 复跑）：页面顺序是「金额 → 退货记录 → 核销 → 操作 → 明细」——
+  // 明细是这张单**本身**的内容，却排在所有"后续动作"之后。
+  // 复跑时用户的原话：「我点进来是想看这张单卖了什么，不是先看它退过什么。」
+  testWidgets('F8：明细排在「退货记录」上方', (WidgetTester tester) async {
+    final RuleEngine engine = RuleEngine(db);
+    final Document sale = sellOnCredit(); // 矿泉水 × 2 @ ¥5.00
+    final Document ret = Document(
+      id: 'th-f8',
+      docNo: 'XT20261026-F8',
+      docType: DocType.saleReturn,
+      status: DocStatus.confirmed,
+      partyId: 'pt1',
+      totalAmount: 500,
+      refDocId: sale.id,
+      occurredAt: 1700000000000,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+    );
+    engine.dispatch(
+      document: ret,
+      lines: <DocumentLine>[
+        DocumentLine.create(
+          documentId: ret.id,
+          productId: 'p1',
+          quantity: 1,
+          unitPrice: 500,
+        ),
+      ],
+      now: 1700000000000,
+    );
+
+    await tester.pumpWidget(page(sale.id));
+    await tester.pumpAndSettle();
+
+    final double linesY = tester.getTopLeft(find.text('明细')).dy;
+    final double returnsY = tester
+        .getTopLeft(find.byKey(const Key('detail-returns')))
+        .dy;
+    expect(linesY, lessThan(returnsY), reason: 'F8：先看这单卖了什么（明细），再看它退过什么');
+  });
+
+  // F9（2026-10-26 复跑）：`XS…-002` 金额 ¥50 / 已收 ¥30 / 未收 ¥20，而状态只写
+  // 「已确认」—— 读起来像"完事了"。`status` 是**生命周期**，结清是**派生事实**，
+  // 两者只显示前者。修法：展示层组合成「已确认 · 未结清」，**不加枚举值**
+  //（加枚举要迁移 + 改同步协议，为一句文案不值得）。
+  testWidgets('F9：未结清的已确认单写「已确认 · 未结清」', (WidgetTester tester) async {
+    final Document sale = sellOnCredit(); // ¥10.00 全赊 ⇒ 未收 ¥10.00
+    await tester.pumpWidget(page(sale.id));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('已确认 · 未结清'),
+      findsOneWidget,
+      reason: 'F9：状态要说出「还欠着」，不能只写「已确认」',
+    );
+    expect(find.text('已确认'), findsNothing, reason: '别两处各写一份');
+  });
+
+  testWidgets('F9 护栏：结清之后仍写「已结清」，不许带后缀', (WidgetTester tester) async {
+    final Document sale = sellOnCredit();
+    settlements.settle(
+      targetDocId: sale.id,
+      accountId: 'a1',
+      amountCents: 1000,
+      now: 1700000000000,
+    );
+
+    await tester.pumpWidget(page(sale.id));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已结清'), findsOneWidget);
+    expect(find.textContaining('未结清'), findsNothing);
   });
 }

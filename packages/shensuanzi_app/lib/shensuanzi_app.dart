@@ -139,6 +139,7 @@ export 'src/format.dart'
     show
         activeLabel,
         docStatusLabel,
+        docStatusWithSettlement,
         documentPartyLabel,
         formatDate,
         formatDateTime,

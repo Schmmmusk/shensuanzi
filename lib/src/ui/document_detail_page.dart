@@ -291,6 +291,25 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                     _header(theme, summary),
                     const SizedBox(height: 16),
                     _amountCard(theme, summary),
+                    // F8（2026-10-26 复跑）：明细是这张单**本身**的内容，必须排在
+                    // 「退货记录 / 核销去向」这些**后续动作**之前 —— 复跑原话：
+                    // 「点进来是想看这张单卖了什么，不是先看它退过什么」。
+                    // ⚠️ 退货记录**仍留在上半页**（#26 批 3 甲案的"救生圈"：
+                    // 列表把退货单折进主单行，这一块是它的唯一入口），
+                    // 只是让到明细之后 —— 不是把它压回页底。
+                    if (_lines.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 16),
+                      _sectionTitle(theme, '明细'),
+                      const SizedBox(height: 6),
+                      // F5：盘点单的 unit_price 恒为 0（`total_amount = 0` 的硬约束），
+                      // 显示「¥0.00 × 5」只会添乱 —— 那一档的「盘前/差异」
+                      // 由 `_stocktakeDiffLine` 负责说。
+                      _linesTable(
+                        theme,
+                        showUnitPrice:
+                            summary.document.docType != DocType.stocktake,
+                      ),
+                    ],
                     // §审查 2026-10-05：退过货才显示（没退过的单不该多一块空白）
                     //
                     // ⚠️ **位置在 2026-10-18 上移到这里**（#26 批 3 甲案的**强制补偿项**）：
@@ -311,12 +330,6 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                     const SizedBox(height: 16),
                     _actionRow(theme, summary),
                     const SizedBox(height: 20),
-                    if (_lines.isNotEmpty) ...<Widget>[
-                      _sectionTitle(theme, '明细'),
-                      const SizedBox(height: 6),
-                      _linesTable(theme),
-                      const SizedBox(height: 20),
-                    ],
                     // 空态留在底部：没有核销时不该在首屏占一块「还没有被核销过」
                     if (_links.isEmpty) _linksSection(theme, summary),
                   ],
@@ -465,8 +478,12 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
               // F3：货全退了就别再说「已结清」（钱可能还没退完）
               fullyReturned && !isCancelled
                   ? '已全退'
-                  : docStatusLabel(
+                  // F9：还欠着就写「已确认 · 未结清」——
+                  // 「已确认」单独出现读起来像"完事了"（复跑实测 XS…-002：
+                  // 金额 ¥50 / 已收 ¥30 / 未收 ¥20，状态只写「已确认」）
+                  : docStatusWithSettlement(
                       SettlementService.displayStatus(doc, unsettled),
+                      unsettled,
                     ),
             ),
           ],
@@ -758,7 +775,24 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     }
   }
 
-  Widget _linesTable(ThemeData theme) {
+  /// 明细行下方那行小字（F5）：`¥3.50 × 24  ·  录入原文：2 箱`。
+  ///
+  /// `null` = 什么都不用说（盘点单且没有录入原文）。
+  String? _linePriceNote(int index, bool showUnitPrice) {
+    final DocumentLine line = _lines[index];
+    final List<String> parts = <String>[];
+    if (showUnitPrice) {
+      parts.add('¥${Money.format(line.unitPrice)} × ${line.quantity}');
+    }
+    // 录入原文只在**和账面单位不同**时才有意义 —— 按最小单位录的单
+    //（entryUnit == null）不必重复一遍「24 瓶」。
+    if (line.entryUnit != null && line.entryQuantity != null) {
+      parts.add('录入原文：${line.entryQuantity} ${line.entryUnit}');
+    }
+    return parts.isEmpty ? null : parts.join('  ·  ');
+  }
+
+  Widget _linesTable(ThemeData theme, {required bool showUnitPrice}) {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -798,6 +832,21 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                       ),
                     ],
                   ),
+                  // F5（2026-10-26 复跑）：只写「× 24」和金额，看不出**单价**，
+                  // 也看不出用户当初是按什么单位录的（2 箱 vs 24 瓶）。两样都在库里
+                  //（`unit_price` / `entry_quantity` / `entry_unit`），一行小字说清，
+                  // 回看这张单时不必再翻开单页。
+                  if (_linePriceNote(i, showUnitPrice) != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        _linePriceNote(i, showUnitPrice)!,
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                    ),
                   // §审查 OBS-09②：盘点单要看得见「盘之前是多少、差多少」——
                   // 只有实盘数的话，用户没法判断这次盘点动了什么
                   if (_stockFlow.isNotEmpty) _stocktakeDiffLine(theme, i),
