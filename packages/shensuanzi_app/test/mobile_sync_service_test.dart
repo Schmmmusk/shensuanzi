@@ -46,6 +46,13 @@ class FakeHost {
 
   /// push 请求计数 + 可编程延迟（autoPush 并发/尾随测试用，B3a）
   int pushRequests = 0;
+
+  /// **脚本化的推送回执**（F16 乙用）：非空时按顺序取出当响应体，
+  /// 空时退回默认的「空 results」（= 主机什么都没收下）。
+  ///
+  /// 为什么要它：模拟「主机已落库、但 200 响应丢了」—— 第一次推送返回
+  /// **空 results**（客户端认为没推成），对账那次返回 `already_exists`。
+  final List<Map<String, Object?>> pushBodies = <Map<String, Object?>>[];
   Duration pushDelay = Duration.zero;
 
   Uri get baseUri => Uri.parse('http://127.0.0.1:${_server!.port}');
@@ -69,7 +76,9 @@ class FakeHost {
           pushRequests++;
           await Future<void>.delayed(pushDelay);
           status = pushStatus;
-          body = <String, Object?>{'results': <Object?>[]};
+          body = pushBodies.isEmpty
+              ? <String, Object?>{'results': <Object?>[]}
+              : pushBodies.removeAt(0);
           // ⚠️ 把请求体读干净（否则客户端等回执时会被自己的管道卡住）。
           // **客户端在收尾时断开是正常的**（`tearDown` 里 `close(force: true)`）
           // —— 那时这次 drain 会抛 `HttpException: Connection closed`，
@@ -318,6 +327,53 @@ void main() {
     final SyncOutcome outcome = await service.autoPush();
     expect(outcome.kind, SyncOutcomeKind.ok, reason: outcome.message);
     expect(host.pushRequests, 1);
+  });
+
+  // ---------------------------------------------------------------- F16 乙
+  //
+  // 真机现场（2026-10-27）：推送请求主机**已落库**，200 响应在路上丢了 ⇒
+  // 条目停在 pending + 退避，徽标如实显示「待同步」，实测卡了 2 分 40 秒。
+  //
+  // 这里用「第一次推送回空 results（= 客户端认为没推成）、第二次回
+  // already_exists（= 主机其实有）」来复现那个状态，然后断言 **syncNow 自己
+  // 会补问一次**（不需要用户切页面 / 再点一次）。
+  test('F16 乙：syncNow 推完还剩 pending ⇒ 自动对账（忽略退避再问一次）', () async {
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
+    );
+    enqueueOne('q-f16b');
+
+    // ① 第一次推送：主机「没给回执」（响应丢了）
+    host.pushBodies.add(<String, Object?>{'results': <Object?>[]});
+    // ② 对账那次：主机答「我已有这笔」
+    host.pushBodies.add(<String, Object?>{
+      'results': <Object?>[
+        <String, Object?>{'entity_id': 'd-q-f16b', 'status': 'already_exists'},
+      ],
+    });
+
+    final SyncOutcome outcome = await service.syncNow();
+
+    expect(outcome.kind, SyncOutcomeKind.ok, reason: outcome.message);
+    expect(host.pushRequests, 2, reason: 'pushAll 一次 + 对账一次 —— 少了第二次就说明乙没接上');
+    expect(
+      SyncQueueDao(service.openMirror()).counts().pendingCount,
+      0,
+      reason: '对账成功 ⇒ 队列清空 ⇒ 徽标会变「已同步」',
+    );
+  });
+
+  test('F16 乙护栏：队列本来就空 ⇒ 只推一次，不做多余的对账请求', () async {
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
+    );
+    final SyncOutcome outcome = await service.syncNow();
+    expect(outcome.kind, SyncOutcomeKind.ok, reason: outcome.message);
+    expect(
+      host.pushRequests,
+      0,
+      reason: '队列空 ⇒ pushAll 不发请求 ⇒ 没有 remaining ⇒ 不该触发对账',
+    );
   });
 
   test('autoPush 并发：第二次 busy；第一轮结束后**尾随补推**（裁定 ③）', () async {

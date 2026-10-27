@@ -207,11 +207,17 @@ class SyncClient {
   /// 推送队列里到期的条目。
   ///
   /// 回执**按 `entity_id` 配对，不按下标**（§六）；某条没有回执按失败处理。
-  Future<SyncPushReport> push({int? maxEntries}) async {
+  /// [ignoreBackoff] = 不看退避时间，把所有 `pending` 都拿出来
+  /// （只给 [reconcilePending] 用，见那里的说明）。
+  Future<SyncPushReport> push({
+    int? maxEntries,
+    bool ignoreBackoff = false,
+  }) async {
     final int now = _clock();
     final List<SyncQueueEntry> entries = queue.due(
       now,
       limit: maxEntries ?? batchLimit,
+      ignoreBackoff: ignoreBackoff,
     );
     if (entries.isEmpty) return SyncPushReport.empty;
 
@@ -368,6 +374,29 @@ class SyncClient {
       confirmedTotal: confirmed,
     );
   }
+
+  /// **推送后对账**（F16 乙，2026-10-27 用户裁定）—— 忽略退避，立刻再问主机一次。
+  ///
+  /// ## 它治的是什么
+  ///
+  /// 真机取证（2026-10-27）：推送请求**主机已落库**，但 200 响应在路上丢了
+  ///（Wi-Fi 瞬断 / 手机切后台）。客户端只看到传输层异常 ⇒ 条目停在 `pending`
+  /// 并进入退避 ⇒ 徽标如实显示「待同步 N 条」，而单据其实早就到了电脑。
+  /// 全仓**没有重试定时器**，那行只能等用户碰巧触发某个动作才重试 ——
+  /// 实测卡了 **2 分 40 秒**。
+  ///
+  /// ## 为什么是「再推一次」，而不是新加一个「你有没有这些 id」的接口
+  ///
+  /// 1. **推送本来就是幂等的**（`同步幂等键 = 实体 id`，主机已存在回
+  ///    `already_exists`）⇒ 再推一次**就是**在问「你有这笔吗」，而且答案是机读的；
+  /// 2. 新接口是**协议变更**：旧电脑 + 新手机 = 404 ⇒ 对账直接失效，
+  ///    而「电脑上跑的是上一版」在真实用户那里是常态；
+  /// 3. 用户点名的性能防呆：**只碰 `pending` 那几条**，不拉全量（不调 `pull`）。
+  ///
+  /// 与 [pushAll] 的分工：`pushAll` 是「按规则推干净」，本方法是「推不干净时
+  /// **补问一次**」。调用方（`MobileSyncService.syncNow`）只在
+  /// `pushAll` 之后仍有 `remaining` 时调它，**不做循环**（避免弱网下打转）。
+  Future<SyncPushReport> reconcilePending() => push(ignoreBackoff: true);
 
   /// 整批退避（传输层失败 / 非 200）
   void _retryAll(List<SyncQueueEntry> entries, String error, int now) {

@@ -1401,6 +1401,72 @@ void main() {
       );
       expect(small.queue.counts().pendingCount, 1);
     });
+
+    // ---------------------------------------------------------------- F16 乙
+    //
+    // 真机取证（2026-10-27）：推送请求主机**已落库**，但 200 响应在路上丢了
+    //（Wi-Fi 瞬断 / 切后台）⇒ 客户端只看到 SocketException ⇒ 条目停在 `pending`。
+    // 主机是幂等的（`already_exists`），所以「再问一次」就能确认 —— 这就是对账。
+    test('F16 乙：响应丢了 ⇒ 停 pending；对账（忽略退避再问一次）⇒ 转 sent', () async {
+      final SyncQueueEntry entry = enqueueDoc('d1');
+
+      // ① 主机已经落库，但客户端没收到回执（只看到传输层异常）
+      transport.replyThrow(Exception('响应丢了（主机其实已落库）'));
+      final SyncPushReport first = await client.push();
+      expect(first.sent, 0);
+      expect(
+        client.queue.findById(entry.id)!.status,
+        SyncQueueStatus.pending,
+        reason: '这是问题的起点：徽标会如实显示「待同步 1 条」',
+      );
+
+      // ② 对账：忽略退避再问一次。主机答 already_exists = 「我有这笔」
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[receipt('d1', 'already_exists')]),
+      );
+      final SyncPushReport reconciled = await client.reconcilePending();
+
+      expect(reconciled.attempts, 1);
+      expect(reconciled.sent, 1);
+      expect(
+        client.queue.findById(entry.id)!.status,
+        SyncQueueStatus.sent,
+        reason: '对账成功 ⇒ 条目转 sent ⇒ counts() 不再计入 ⇒ 徽标变「已同步」',
+      );
+      expect(client.queue.counts().pendingCount, 0);
+    });
+
+    test('F16 乙：普通 push 会被退避挡住，对账不会（否则永远等不到重试）', () async {
+      final SyncQueueEntry entry = enqueueDoc('d1');
+      transport.replyThrow(Exception('断网'));
+      await client.push(); // 失败 ⇒ 写 next_retry_at（1s 后）
+
+      // 退避期内普通 push 选不到它 ⇒ 不发请求
+      final SyncPushReport skipped = await client.push();
+      expect(skipped.attempts, 0, reason: '退避期内不该再试 —— 这正是"卡几分钟"的成因');
+
+      // 对账绕过退避
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[receipt('d1', 'already_exists')]),
+      );
+      final SyncPushReport reconciled = await client.reconcilePending();
+      expect(reconciled.attempts, 1);
+      expect(client.queue.findById(entry.id)!.status, SyncQueueStatus.sent);
+    });
+
+    test('F16 乙护栏：主机**真没有**这笔 ⇒ 对账重推会 applied（不是只查不推）', () async {
+      final SyncQueueEntry entry = enqueueDoc('d1');
+      transport.replyThrow(Exception('断网'));
+      await client.push();
+
+      // 主机这次真的没有（上一次请求根本没到）⇒ 正常创建
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[receipt('d1', 'applied')]),
+      );
+      final SyncPushReport reconciled = await client.reconcilePending();
+      expect(reconciled.sent, 1);
+      expect(client.queue.findById(entry.id)!.status, SyncQueueStatus.sent);
+    });
   });
 
   // ============================================================ 未同步影响

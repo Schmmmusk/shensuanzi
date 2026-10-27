@@ -23,6 +23,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'app_shell.dart';
+import 'notice.dart';
 import 'price_lookup_page.dart';
 import 'read_failure_banner.dart';
 
@@ -270,6 +271,9 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
   /// M04（2026-10-08）：链接态（配对 / 首同步）——**队列之外的前置判定**。
   SyncLinkState _link = SyncLinkState.notPaired;
 
+  /// 「立即重试」正在进行中（按钮转成「正在重试…」并禁用，防连点）
+  bool _retrying = false;
+
   @override
   void initState() {
     super.initState();
@@ -340,6 +344,31 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
     );
   }
 
+  /// **手动重试一次**（F16 丙，2026-10-27 用户裁定）。
+  ///
+  /// 为什么要有它：乙（推送后对账）只能救「响应丢了」；如果电脑上的服务真挂了、
+  /// 或者局域网彻底断，对账也会失败 —— 那时用户需要一个**能戳一下的出口**，
+  /// 而不是盯着「待同步 N 条」怀疑软件坏了。
+  ///
+  /// ⚠️ 用户点完**必须当场刷徽标**（`_load()`）—— F16 的原始观感就是
+  /// 「要切走再回来才变」，这里不能重演。
+  Future<void> _retryNow(BuildContext sheetContext) async {
+    final MobileSyncService? sync = widget.sync;
+    if (sync == null) return;
+    setState(() => _retrying = true);
+    final SyncOutcome outcome = await sync.reconcilePending();
+    if (!mounted) return;
+    setState(() => _retrying = false);
+    if (sheetContext.mounted) Navigator.of(sheetContext).pop();
+    _load(); // 丙：立刻刷徽标，不等切走再回来
+    // 统一走 `showNotice`（D4 甲：每次弹之前先清队列，默认 3 秒、长文案 6 秒）
+    showNotice(
+      context,
+      outcome.message,
+      long: outcome.kind != SyncOutcomeKind.ok,
+    );
+  }
+
   Future<void> _showDetail() async {
     final SyncQueueTriage? triage = _triage;
     final MobileSyncService? sync = widget.sync;
@@ -369,6 +398,18 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
             ),
+            // F16 丙：一个能戳的出口。只在**有待同步**时出现
+            //（`failed` 的条目各自有「重试，发给现在这台电脑」，不在这里重复）。
+            if (pending.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: FilledButton.icon(
+                  key: const Key('sync-retry-now'),
+                  onPressed: _retrying ? null : () => _retryNow(sheetContext),
+                  icon: const Icon(Icons.sync, size: 18),
+                  label: Text(_retrying ? '正在重试…' : '立即重试'),
+                ),
+              ),
             for (final SyncQueueEntry entry in pending)
               ListTile(
                 leading: const Icon(Icons.schedule_outlined),

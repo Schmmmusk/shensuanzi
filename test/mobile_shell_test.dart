@@ -6,6 +6,7 @@
 //
 // 运行：`flutter test`（本机由用户执行）
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -102,7 +103,11 @@ void main() {
   ///
   /// [pairing] 传 `null` = **没配对过**（`pairing.json` 不存在）；
   /// 传值 = 已配对（再带 `lastSyncAt` 才算「同步成功过」）。
-  MobileSyncService syncServiceIn(Directory box, {PairingInfo? pairing}) {
+  MobileSyncService syncServiceIn(
+    Directory box, {
+    PairingInfo? pairing,
+    Transport? transport,
+  }) {
     final PairingStore pairingStore = PairingStore(
       File(p.join(box.path, 'pairing.json')),
     );
@@ -110,6 +115,8 @@ void main() {
     return MobileSyncService(
       mirrorPath: p.join(box.path, 'mirror', 'shensuanzi_mirror.db'),
       pairingStore: pairingStore,
+      // F16 丙：注入假传输 —— 测试里不能真发 HTTP（假时钟下会卡死）
+      transport: transport,
     );
   }
 
@@ -471,6 +478,100 @@ void main() {
     );
     expect(find.textContaining('待同步'), findsNothing);
   });
+
+  // ---------------------------------------------------------------- F16 丙
+  //
+  // 乙（推送后对账）只能救「响应丢了」；电脑上的服务真挂了、局域网彻底断时，
+  // 对账也会失败 —— 用户需要一个**能戳一下的出口**，而不是盯着「待同步 N 条」
+  // 怀疑软件坏了。
+  //
+  // 这条同时钉住用户点名的第二件事：**点完必须当场刷徽标**
+  //（F16 的原始观感就是「要切走再回来才变」，这里不能重演）。
+  testWidgets('F16 丙：三态条点开有「立即重试」，点完徽标当场变', (WidgetTester tester) async {
+    final Directory syncBox = Directory.systemTemp.createTempSync(
+      'shensuanzi_f16c_',
+    );
+    addTearDown(() {
+      try {
+        syncBox.deleteSync(recursive: true);
+      } catch (_) {
+        // 镜像可能还开着 —— 删不掉不影响结论
+      }
+    });
+
+    // 假传输：主机答「我已有这笔」（= 对账成功）
+    final _ReconcileTransport wire = _ReconcileTransport('d-f16c');
+    final MobileSyncService sync = syncServiceIn(
+      syncBox,
+      pairing: PairingInfo.fromPayload(
+        hostId: 'h1',
+        ip: '127.0.0.1',
+        port: 17890,
+        token: 't',
+      ).withLastSyncAt(1700000000000),
+      transport: wire,
+    );
+    // 队列里留一条 pending —— 就是「主机已落库、响应丢了」之后的真实状态
+    SyncQueueDao(sync.openMirror()).enqueue(
+      SyncQueueEntry(
+        id: 'q-f16c',
+        entity: Schema.documents,
+        entityId: 'd-f16c',
+        operation: SyncOpType.createDocument,
+        payload: <String, Object?>{
+          'document': <String, Object?>{'id': 'd-f16c', 'doc_type': 'sale'},
+          'lines': <Object?>[
+            <String, Object?>{'product_id': 'p1', 'quantity': 1},
+          ],
+        },
+        createdAt: 1700000000000,
+      ),
+    );
+
+    await tester.pumpWidget(shellWith(sync));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('待同步 1 条'), findsOneWidget, reason: '前提');
+
+    await tester.tap(find.textContaining('待同步 1 条'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('sync-retry-now')),
+      findsOneWidget,
+      reason: '丙：有待同步时才给这个按钮',
+    );
+
+    await tester.tap(find.byKey(const Key('sync-retry-now')));
+    await tester.pumpAndSettle();
+
+    expect(wire.pushCalls, 1, reason: '点一下就该真去问主机一次');
+    expect(
+      find.text('已同步'),
+      findsOneWidget,
+      reason: '丙：点完必须当场刷徽标（不许「切走再回来才变」）',
+    );
+    expect(find.textContaining('待同步'), findsNothing);
+  });
+}
+
+/// F16 丙 用的假传输：把推送请求答成「主机已经有这笔」（`already_exists`）。
+class _ReconcileTransport implements Transport {
+  _ReconcileTransport(this.entityId);
+
+  final String entityId;
+  int pushCalls = 0;
+
+  @override
+  Future<TransportResponse> send(TransportRequest request) async {
+    pushCalls++;
+    return TransportResponse(
+      statusCode: 200,
+      body: jsonEncode(<String, Object?>{
+        'results': <Object?>[
+          <String, Object?>{'entity_id': entityId, 'status': 'already_exists'},
+        ],
+      }),
+    );
+  }
 }
 
 /// 永不完成的传输桩 —— 重试用例里让「正在推送」成为**确定性状态**。

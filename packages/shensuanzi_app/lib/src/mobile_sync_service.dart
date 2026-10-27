@@ -350,6 +350,17 @@ class MobileSyncService {
       // #48（2026-10-15）：**有界连续推送** —— 从前只推一批（200 条），剩下的
       // 留在队列里却照样报「同步完成」（外测 R09：250 传 200 报完成剩 50）
       final SyncPushReport pushedReport = await client.pushAll();
+      // ---------------------------------------------------------------- F16 乙
+      // **推送后对账**（2026-10-27 用户裁定「乙」）。推完还剩 pending，最常见的
+      // 原因不是"没发出去"，而是**主机已落库、200 响应在路上丢了** —— 那一条
+      // 正处在退避期里，按正常规则要再等几分钟（真机实测卡了 2 分 40 秒）。
+      // 主机是幂等的 ⇒ 忽略退避补问一次，已有的会回 `already_exists` ⇒ 转 sent。
+      //
+      // ⚠️ **只补问一次，不做循环**：弱网下循环重试会把界面拖住（用户否决「甲」的
+      // 理由之一就是"一直在转圈"）。真推不上去的留给「丙」那个手动重试按钮。
+      if (pushedReport.remaining > 0) {
+        await client.reconcilePending();
+      }
       final int now = _clock() ?? DateTime.now().millisecondsSinceEpoch;
       pairingStore.save(pairing.withLastSyncAt(now));
       final int entities = pulled.entities.values.fold(
@@ -559,6 +570,50 @@ class MobileSyncService {
   /// UI 用它决定要不要多说一句「有 N 条单已暂停上传」—— 那几条是用户
   /// 自己开的单，不说清楚他会以为还在自动补传。
   int lastHostSwitchHeldEntries = 0;
+
+  /// **手动重试一次**（F16 丙，2026-10-27 用户裁定）—— 三态条点开后的「立即重试」。
+  ///
+  /// 与 [syncNow] 的区别：只做推送对账，**不拉数据、不比对 schema、不弹遮罩**。
+  /// 用户点它的场景是「徽标一直说待同步」—— 他想要的是「再试一下」，
+  /// 不是再跑一遍完整同步。
+  ///
+  /// 返回值只用来决定提示语：`ok` = 队列已推干净。
+  Future<SyncOutcome> reconcilePending() async {
+    final PairingInfo? pairing = pairingStore.load();
+    if (pairing == null) {
+      return const SyncOutcome(SyncOutcomeKind.notPaired, '还没连接主机 —— 请先扫码配对');
+    }
+    if (_syncing) {
+      return const SyncOutcome(SyncOutcomeKind.error, '上一次同步还在进行中');
+    }
+    _syncing = true;
+    try {
+      final SyncClient client = SyncClient(
+        db: openMirror(),
+        transport: transport ?? HttpTransport(),
+        baseUri: pairing.baseUri,
+        token: pairing.token,
+      );
+      final SyncPushReport report = await client.reconcilePending();
+      final int left = client.queue.counts().pendingCount;
+      if (left == 0) {
+        return const SyncOutcome(SyncOutcomeKind.ok, '重试成功，已经全部传到电脑了');
+      }
+      if (report.attempts == 0) {
+        return const SyncOutcome(SyncOutcomeKind.ok, '队列里没有待传的单');
+      }
+      return SyncOutcome(
+        SyncOutcomeKind.error,
+        '还是没传上去（还有 $left 条）。请确认电脑上的神算子开着、'
+        '手机和电脑连的是同一个 Wi-Fi，过一会儿再试。',
+      );
+    } catch (error, stack) {
+      onError?.call(error, stack, '手动重试失败');
+      return SyncOutcome(SyncOutcomeKind.error, syncFailureMessage(error));
+    } finally {
+      _syncing = false;
+    }
+  }
 
   /// 认证失效（401 / 403）的**唯一处置点**。
   ///

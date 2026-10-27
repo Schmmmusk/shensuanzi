@@ -1,12 +1,19 @@
 # `tool/` 测试脚本
 
-两个供**测试人员在干净机器上**使用的脚本。都是 **Python 3.8+、只用标准库**，
+**六个**供**测试人员在干净机器上**使用的脚本。都是 **Python 3.8+、只用标准库**，
 不需要 Dart / Flutter / pip 包 / 网络。
 
-| 脚本 | 干什么 | 会不会动软件进程 |
-|---|---|---|
-| [`seed_test_data.py`](seed_test_data.py) | 往库里写**测试用数据**（商品 / 往来方 / 账户），可生成 SQL 注入探针数据 | ❌ 不会（只碰库文件） |
-| [`destructive_acceptance.py`](destructive_acceptance.py) | 跑 `docs/desktop_acceptance.md` **第九节（异常与破坏性）** 的现场准备 + 自动验库 + 人工清单 | 仅 9.1 隔离模式启动并强杀本脚本启动的进程 |
+| 脚本 | 干什么 | 会写库吗 | 会不会动软件进程 |
+|---|---|---|---|
+| [`seed_test_data.py`](seed_test_data.py) | 写**测试用主数据**（商品 / 往来方 / 账户），可生成 SQL 注入探针数据 | ✅ 只写指定的测试库 | ❌ 不会 |
+| [`destructive_acceptance.py`](destructive_acceptance.py) | 跑 `docs/desktop_acceptance.md` **第九节（异常与破坏性）** 的现场准备 + 自动验库 + 人工清单 | ✅ | 仅 9.1 隔离模式启动并强杀**它自己启动的**进程 |
+| [`perf_seed.py`](perf_seed.py) | 造一份体量真实、内部自洽的账本（每张流水表 ≥ 10 万行） | ✅ 只写指定的测试库 | ❌ 不会 |
+| [`perf_bench.py`](perf_bench.py) | 15 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN` | ❌ 只读（`mode=ro`） | ❌ 不会 |
+| [`perf_monitor.py`](perf_monitor.py) | 人工实测期间按秒记录进程/文件/探针指标 + 动作计时 | ❌ 只读 | ❌ 不会 |
+| [`gen_schema_snapshot.py`](gen_schema_snapshot.py) | 从 `schema.dart` 生成/校验 `schema_snapshot.json` | ❌ 只写快照文件 | ❌ 不会 |
+
+**分发到测试机时，必须整目录带走**（至少：上面用到的脚本 + `seed_test_data.py` +
+`schema_snapshot.json`）—— 详见 §一·4 与 §七。
 
 > ⚠️ 常规验收不会启动或结束 `shensuanzi.exe`。9.1 的 `--phase watch-write`
 > 是例外：它在系统临时目录创建空账套，使用隔离的 `APPDATA` 启动你指定的测试版，
@@ -276,10 +283,22 @@ python tool/destructive_acceptance.py --phase all --data-dir /tmp/fixture --conf
 | [`perf_monitor.py`](perf_monitor.py) | 人工实测期间按秒记录进程/文件/探针指标 + 动作计时 | ❌ 只读 |
 | [`gen_schema_snapshot.py`](gen_schema_snapshot.py) | 从 `schema.dart` 重新生成 `schema_snapshot.json`（**改 schema 后必跑**） | ❌ 写快照 |
 
-参考基线（开发机实测，默认参数 = 26 万单 / 36.6 万条库存流水 / 476 MB）：
-`stock_group` / `stock_cost` 各约 **1.3 秒**（非覆盖索引，每行回表）、`party_balances` 0.62 秒、
-`list_documents` 0.30 秒、`doc_search` 0.36 秒，而 `pull_*` / `lines_of_page` 均 **< 1 毫秒**。
-测试机的数字本来就更大，用来看「量级对不对」；完整表见手册 §4.5。
+参考基线（开发机实测，默认参数 ≈ 15–26 万单 / 36 万条库存流水 / 450–476 MB）：
+
+| 查询 | **现在（schema v5 之后）** | v5 之前（留作对照） |
+|---|---|---|
+| `stock_group` / `stock_cost` | **30–40 ms** | 1336 / 648 ms |
+| `party_balances` | **约 27 ms** | 620 ms |
+| `recent_products` | 400 ms 量级 | 同 |
+| `doc_search` / `list_documents` | 300 ms 量级 | 同 |
+| `pull_*` / `lines_of_page` | **< 1 ms** | 同 |
+
+> **v5（2026-10-24，§CV·九十八）把 `stock_ledger` / `party_ledger` 的聚合索引加宽成
+> covering**（`idx_stock_covering` / `idx_party_covering`），每行不再回表 ⇒
+> 1336 ms → 35 ms。**若你的 `stock_group` 又回到几百毫秒，先看 `--explain`
+> 是不是退化成了非 covering** —— 那是缺陷，不是机器慢。
+>
+> 测试机的数字本来就更大，用来看「量级对不对」；完整表见手册 §4.5。
 
 三条硬规矩：
 1. **这份数据只能用于性能/容量，不能用于业务正确性验收** —— `perf_seed.py`
@@ -303,3 +322,52 @@ python tool/perf_seed.py --data-dir /tmp/perf --verify
 python tool/perf_bench.py --data-dir /tmp/perf --rounds 5 --explain
 python tool/perf_monitor.py checklist
 ```
+
+---
+
+## 七、schema 快照过期了怎么办（2026-10-27 真踩过）
+
+### 7.1 症状
+
+| 你会看到 | 说明 |
+|---|---|
+| `⛔ 库的 schema 版本是 4，脚本支持 5` | 你手上的 `schema_snapshot.json` 比软件旧 |
+| `⚠️ 随脚本分发的 schema 快照已过期` | **开发机上**才会出现（有源码，脚本改读源码继续跑）；测试机上不会 |
+| 造数跑到一半报 `no such column` | 极可能是快照与软件版本错位 |
+
+### 7.2 一条命令修（在**开发机**上）
+
+```bash
+python tool/gen_schema_snapshot.py          # 重新生成
+python tool/gen_schema_snapshot.py --check  # 只校验（CI / 发版前必跑）
+```
+
+`--check` 一致时打印 `✅ 快照与源码一致：源码 v5 / 40 条语句 / 指纹 …`，不一致时以非 0 退出。
+
+### 7.3 出发前 30 秒自检（在**测试机**上，不需要源码）
+
+```bat
+cd /d D:/perf-tools
+python -c "import json;d=json.load(open('schema_snapshot.json',encoding='utf-8'));print(d['schema_version'],d['fingerprint'])"
+```
+
+**随本仓库分发的快照**（2026-10-27 生成，对应 schema v5）：
+
+```
+schema_version = 5
+fingerprint    = 3265deb2dc442c82
+```
+
+> 这两个数对不上 ⇒ **停下**，回开发机跑一次 `gen_schema_snapshot.py`，别硬着头皮测 ——
+> 用旧结构造出来的库，后面所有数字都不可信。
+
+### 7.4 为什么会过期（写给人看的）
+
+`tool/README.md` 与 `tool/gen_schema_snapshot.py` 都写着「改过 `schema.dart` 就必须重生成快照」，
+但那是**靠人记**。2026-10-24 加了 v5（覆盖索引，见 §六 基线），快照一直没重生成，
+到 10-27 已经**过期 3 天** —— 那天晚上要跑性能测试，第 ② 步会直接以
+`⛔ 库的 schema 版本是 4` 停下。
+
+⇒ **规矩**：凡改 `Schema.version` 或 `createStatements`，同一个提交里跑一次
+`python tool/gen_schema_snapshot.py`，并把 `schema_snapshot.json` 一起提交。
+发版前再跑一次 `--check` 兜底。

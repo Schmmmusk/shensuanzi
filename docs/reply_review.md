@@ -15410,3 +15410,32 @@ SqliteException(1): no such index: idx_documents_occurred
 **建议（未做，等点头）**：给 `gen_schema_snapshot.py` 加一个 `--check`（只校验不写），
 或加一条测试断言「快照版本/指纹 == `Schema.version`/源码 DDL」——
 这次快照从 v5 落地（2026-10-24）到今天已经**过期 3 天**，纯靠人记着跑，迟早还会漏。
+
+### 十八、2026-10-27 F16 裁定「乙+丙」落地 + `tool/README` 更新
+
+**用户裁定**（`docs/reply.md`）：「坚决选 乙+丙」；另提三条工程暗坑：① 不要拉全量、拉实体交集；
+② 对账后必须刷 UI；③ 测试必须造出「丢失的响应」（Mock Transport：主机落库、返回 200 时抛异常）。
+
+| 用户要求 | 落地 |
+|---|---|
+| **乙** 推送后对账 | `SyncQueueDao.due(ignoreBackoff)` · `SyncClient.push(ignoreBackoff)` · **`reconcilePending()`** · `syncNow` 在 `pushAll` 后 `remaining > 0` 时补问一次（**不循环**） |
+| 坑 ①：不拉全量 | 只碰 `pending`，**完全不调 `pull`**。并且**没有**新增「你有没有这些 id」的接口 —— 推送本来就幂等（`already_exists` = 主机有），再推一次就是最直接的「查一下」；新接口是协议变更，**旧电脑 + 新手机 = 404 ⇒ 对账直接失效**，而「电脑上跑的是上一版」是常态 |
+| 坑 ②：对账后刷 UI | 丙走 `_load()`（点完当场刷）；乙走 `syncNow` 末尾既有的 `setState`（`build()` → `_buildHome()` 每次新建 `AppShell`） |
+| 坑 ③：造「响应丢了」 | core：假 Transport「先抛异常、下一次答 `already_exists`」；服务层：`FakeHost.pushBodies` 脚本化（第一次空 results、第二次 already_exists）—— **没拔网线、没真等超时** |
+| **丙** UI 兜底 | 三态条队列面板加「立即重试」（`Key('sync-retry-now')`）→ 服务 `reconcilePending()`（只推不拉、不弹遮罩）→ 关面板 + `_load()` + `showNotice` |
+
+**测试 +6**（core 3 / app 2 / widget 1，全部先红后改）。
+**反向灵敏度三轮**：撤对账接线 ⇒ app 红（`Expected: <2> / Actual: <1>`）；
+撤「忽略退避」⇒ core 两条红（`Expected: <1> / Actual: <0>`）；
+撤按钮 ⇒ widget 红（`Found 0 widgets with key [sync-retry-now]`）。
+**门禁**：root **353** · app **374** · core **722** · host **166** · analyze 0 · format 0。
+
+**另：`tool/README.md` 更新**（用户：「它是我离开开发机后为数不多的能参考的文件」）：
+① 顶部总表从「两个脚本」改成**六个**（补 perf 三件套 + 快照生成器，并加「会写库吗」一列）；
+② §六 参考基线改成 **v5 之后**的值（`stock_group`/`stock_cost` **30–40 ms**，旧值 1336/648 ms 留作对照）——
+原文还写着 1.3 秒，属于「描述与实现不一致」；③ 新增 **§七「schema 快照过期了怎么办」**
+（症状 / 一条命令修 / 出发前 30 秒自检 / 随仓快照的版本与指纹 / 为什么会过期）。
+
+**更正一处我自己的判断**：我曾建议「给 `gen_schema_snapshot.py` 加 `--check`」——
+**它早就有**（`--check` 已跑通：`✅ 快照与源码一致：源码 v5 / 40 条语句 / 指纹 3265deb2dc442c82`）。
+今天快照过期不是缺工具，是**没人跑**。⇒ README §七·4 把规矩写成「改 schema 的同一个提交里跑一次」。

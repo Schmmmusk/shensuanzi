@@ -87,12 +87,23 @@ class SyncQueueDao {
   /// 人工处理完用 [requeue] 放回队列。
   /// #42 甲 · L1：逐行保护 —— 队列里一条**读不出来**的条目不再让设置页 / 三态条炸掉
   /// （两个枚举认不出 ⇒ 该行跳过 + 计数，**不兜底成 `failed`**，见 `sync_queue_entry.dart`）。
-  List<SyncQueueEntry> due(int now, {int limit = 200}) => decodeRows(
+  /// 到点该推的条目（`pending` 且退避已到期）。
+  ///
+  /// [ignoreBackoff] = **不看 `next_retry_at`**，把所有 `pending` 都拿出来 ——
+  /// 只给「推送后对账」用（F16 乙，2026-10-27 裁定）：响应丢了的那条正处在
+  /// 退避期里，按正常规则会**再等几分钟**，而那几分钟正是用户看到
+  /// 「一直待同步」的时间。
+  List<SyncQueueEntry> due(
+    int now, {
+    int limit = 200,
+    bool ignoreBackoff = false,
+  }) => decodeRows(
     _raw.select(
       'SELECT * FROM ${Schema.syncQueue} '
-      "WHERE status = '${SyncQueueStatus.pending.wire}' AND next_retry_at <= ? "
+      "WHERE status = '${SyncQueueStatus.pending.wire}' "
+      '${ignoreBackoff ? '' : 'AND next_retry_at <= ? '}'
       'ORDER BY created_at, id LIMIT ?',
-      <Object?>[now, limit],
+      ignoreBackoff ? <Object?>[limit] : <Object?>[now, limit],
     ),
     SyncQueueEntry.fromRow,
     table: Schema.syncQueue,
