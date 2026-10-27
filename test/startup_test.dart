@@ -617,7 +617,12 @@ class _RecordingBackup extends BackupService {
     final BackupFileName name = BackupFileName(
       manual: false,
       schemaVersion: schemaVersion,
-      time: DateTime(2026, 10, 24, 9, 5),
+      // ⚠️ **不能用写死的日期**（2026-10-27 踩到）：概览橙卡读的是
+      // `needsBackupAttention`，判据是 `now - lastBackup > 3 天`，而 `now`
+      // 是**真实时钟** ⇒ 写死 `DateTime(2026, 10, 24, 9, 5)` 的用例在
+      // 2026-10-27 09:05 之后**自己变红**（「备份成功 → 不该再提醒」失败）。
+      // 这里要表达的是「刚备份完」，那就用 `now`。
+      time: DateTime.now(),
     );
     final File file = File(p.join(backupDirectory, name.fileName));
     if (!file.existsSync()) file.writeAsStringSync('（假备份，只验 UI 口径）');

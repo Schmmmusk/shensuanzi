@@ -39,6 +39,7 @@ class HostServiceSnapshot {
     this.qrAvailable = false,
     this.trafficCount = 0,
     this.lastTrafficAt,
+    this.addressOptions = const <NetAddressOption>[],
   });
 
   final HostServiceState state;
@@ -48,6 +49,16 @@ class HostServiceSnapshot {
 
   /// 局域网 IPv4（二维码里那个地址）。`null` = 没探到合适网卡
   final String? address;
+
+  /// **全部**可用地址（已按优先级排好序，[address] 默认取第一个）。
+  ///
+  /// ## 为什么要把「猜错的地址」也摆出来（2026-10-25 D 批）
+  ///
+  /// 自动挑选永远可能挑错（用户的网卡名千奇百怪：穿透工具、虚拟网卡、
+  /// 公司 VPN…）。挑错时用户看到的现象只有一句「手机连不上」——
+  /// **没有任何自救手段**，只能来找我们。所以把候选全列出来让他点一下换一个，
+  /// 这比继续往黑名单里加名字可靠得多（黑名单是穷举法，天生补不全）。
+  final List<NetAddressOption> addressOptions;
 
   /// **致命**失败的「怎么办」（仅 `state == failed`）
   final String? failureHint;
@@ -129,6 +140,9 @@ class HostServiceSnapshot {
     return '主机地址：$address:$port';
   }
 
+  /// 候选地址不止一个 ⇒ 界面要提示「手机连不上就换一个试试」（D 批）。
+  bool get hasAddressChoice => addressOptions.length > 1;
+
   /// 服务在听时显示的一行；`running` 之外恒为 `null`。
   ///
   /// ⚠️ **不是「已连接设备：N 台」** —— 按设备计数要客户端身份（属 AH-B），
@@ -167,12 +181,18 @@ class HostServiceController {
     required HostIdentityStore identities,
     PortRange ports = PortRange.defaults,
     Future<String?> Function()? detectLocalIp,
+    Future<List<NetAddressOption>> Function()? detectAddresses,
     int Function()? clock,
     this.onInternalError,
   }) : _db = db,
        _identities = identities,
        _ports = ports,
        _detectLocalIp = detectLocalIp ?? LocalIp.detect,
+       // ⚠️ 只注入了 `detectLocalIp`（测试里都是这样）⇒ **不做真扫网卡**。
+       // 否则单测会去摸真实网卡，候选列表随开发机变化，用例不可重复。
+       _detectAddresses =
+           detectAddresses ??
+           (detectLocalIp == null ? LocalIp.detectAll : null),
        // ⚠️ 括号不能省：初始化列表里 `?? ` 后面直接跟 `() => ...` 会被解析成
        // 「构造函数带返回类型」而报错（Dart 的已知歧义）
        _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch);
@@ -187,6 +207,9 @@ class HostServiceController {
   final HostIdentityStore _identities;
   final PortRange _ports;
   final Future<String?> Function() _detectLocalIp;
+
+  /// 探测**全部**候选地址（D 批）。`null` = 只走单地址探测，候选列表为空。
+  final Future<List<NetAddressOption>> Function()? _detectAddresses;
   final int Function() _clock;
 
   HostHttpServer? _server;
@@ -199,6 +222,9 @@ class HostServiceController {
   HostIdentity? _identity;
 
   String? _address;
+
+  /// 本次启动探到的全部候选（[selectAddress] 只能在里面挑）
+  List<NetAddressOption> _addressOptions = const <NetAddressOption>[];
   int _trafficCount = 0;
   int? _lastTrafficAt;
 
@@ -214,6 +240,7 @@ class HostServiceController {
     qrAvailable: _state == HostServiceState.running && pairingPayload != null,
     trafficCount: _trafficCount,
     lastTrafficAt: _lastTrafficAt,
+    addressOptions: _addressOptions,
   );
 
   /// 手里是否有**明文**令牌（判断依据是 `HostIdentity.plaintextToken`）
@@ -317,7 +344,13 @@ class HostServiceController {
       // 直接 `load() ?? reset()` 会把 [resetToken] 刚生成的明文丢掉 ——
       // 因为 `load()` 只读得到哈希。
       _identity ??= _identities.load() ?? _identities.reset(now: _clock());
-      _address = await _detectLocalIp();
+      // 先探**全部**候选（已按优先级排序），取第一个作默认地址。
+      // 探不到任何候选时才退回单地址探测 —— 两条路都走完仍为 null 才是真没有。
+      _addressOptions =
+          await _detectAddresses?.call() ?? const <NetAddressOption>[];
+      _address = _addressOptions.isNotEmpty
+          ? _addressOptions.first.address
+          : await _detectLocalIp();
       if (_address == null) {
         _addressHint = '找不到局域网地址。请先把电脑连上路由器或手机热点，再关掉重开这个服务。';
       }
@@ -350,11 +383,35 @@ class HostServiceController {
     if (server != null) await server.close(force: true);
     _state = HostServiceState.stopped;
     _address = null;
+    _addressOptions = const <NetAddressOption>[];
     _failureHint = null;
     _addressHint = null;
     _trafficCount = 0;
     _lastTrafficAt = null;
     return snapshot;
+  }
+
+  /// **手动换一个地址**（2026-10-25 D 批）—— 自动挑选猜错时用户的唯一自救手段。
+  ///
+  /// 只允许在本次启动探到的候选里挑（不接受的地址返回 `false`）：
+  /// 让用户随手填一个 IP 会把他引向「二维码看着正常、手机连不上」，
+  /// 而那个故障比现在这个更难查。真正的「随便填」由**手机端**兜底
+  ///（扫码页的手动输入，那边有令牌可以校验）。
+  ///
+  /// 换地址**不用重启服务**：服务绑的是 `0.0.0.0`，地址只影响二维码内容
+  /// 与界面上那行提示 ⇒ 换完把监听者叫醒重画即可。
+  bool selectAddress(String address) {
+    if (!_addressOptions.any(
+      (NetAddressOption option) => option.address == address,
+    )) {
+      return false;
+    }
+    if (_address == address) return true;
+    _address = address;
+    // 换完就不再是「探不到地址」的状态了（原来那条提示要撤掉）
+    _addressHint = null;
+    _notifyListeners();
+    return true;
   }
 
   void _noteTraffic() {
@@ -366,6 +423,11 @@ class HostServiceController {
   /// 让界面自己决定什么时候重读（开单页会推迟，见 `AppShell`）。
   void _noteDataApplied(int appliedCount) {
     _dataAppliedCount += appliedCount;
+    _notifyListeners();
+  }
+
+  /// 叫醒所有界面订阅者（落库了 / 换了地址）。
+  void _notifyListeners() {
     // 复制一份再遍历：监听者可能在回调里 remove（比如页面被销毁）
     for (final void Function() listener in List<void Function()>.of(
       _dataListeners,

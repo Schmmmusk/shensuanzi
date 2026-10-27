@@ -68,6 +68,20 @@ class PairingInfo {
     token: token,
     lastSyncAt: millis,
   );
+
+  /// **只换地址**，`hostId` / 令牌 / 上次同步时间原样保留（2026-10-25 D 批）。
+  ///
+  /// 用途：二维码里的 IP 是电脑自动挑的，挑错时（穿透网卡抢了 WiFi）
+  /// 用户在手机上手填一个正确地址。**身份没变** ⇒ 不该触发「换主机」的
+  /// 归档重建（那条判据是 `hostId`，见 `pairFromCode` 的 F14 注释）。
+  PairingInfo withAddress({required String ip, required int port}) =>
+      PairingInfo(
+        hostId: hostId,
+        ip: ip,
+        port: port,
+        token: token,
+        lastSyncAt: lastSyncAt,
+      );
 }
 
 /// `pairing.json` 的读写（整文件读写，没有并发写入方 —— 同步按钮互斥）。

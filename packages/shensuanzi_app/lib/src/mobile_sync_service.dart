@@ -49,6 +49,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart'
 import 'http_transport.dart';
 import 'sync_failure_message.dart';
 import 'mirror_archive.dart';
+import 'pairing_address.dart';
 import 'pairing_store.dart';
 
 /// 一次 `syncNow()` 的结果。
@@ -515,6 +516,40 @@ class MobileSyncService {
 
     // 身份写到镜像上（情形 C 的空镜像也在这里落身份，下次就能判 A / B）
     meta.writeHostId(info.hostId);
+    pairingStore.save(info);
+    return info;
+  }
+
+  /// **只换地址**（2026-10-25 D 批）—— 二维码里的 IP 挑错时的手动兜底。
+  ///
+  /// ## 为什么不复用 [pairFromCode]
+  ///
+  /// 那条路径要一整段 `shensuanzi://pair?...`（含 `host_id` 与令牌）。
+  /// 用户手上只有一个地址时，两样都无从得知 —— 令牌是鉴权凭据，编不出来。
+  /// 所以这条路径的**前提是「之前配对过」**：身份与令牌沿用
+  /// `pairing.json` 里那份，只把 `ip` / `port` 换掉。
+  ///
+  /// ## 为什么这里**不**走 F14 的归档重建
+  ///
+  /// F14 的判据是 `hostId` 变了（换了另一台电脑）。这里 `hostId` **原样保留**，
+  /// 只换地址 ⇒ 同一台主机换了条路进来，镜像、游标、队列都还有效。
+  /// 若这里也归档重建，用户只是填错一次地址就会丢掉整份镜像数据。
+  ///
+  /// 没配对过 ⇒ 抛 [FormatException]（消息给用户看）。
+  PairingInfo pairFromAddress(String raw) {
+    final ({String ip, int? port}) parsed = PairingAddress.parse(raw);
+    final PairingInfo? previous = pairingStore.load();
+    if (previous == null) {
+      throw const FormatException(
+        '这台手机还没连过电脑，光填地址不够（还缺配对令牌）。'
+        '请扫一次电脑上的二维码；扫不了码就把二维码下面那段配对码文字整段粘进来。',
+      );
+    }
+    final PairingInfo info = previous.withAddress(
+      ip: parsed.ip,
+      // 用户没写端口 ⇒ 沿用上次配对里的端口（大多数情况就是它）
+      port: parsed.port ?? previous.port,
+    );
     pairingStore.save(info);
     return info;
   }

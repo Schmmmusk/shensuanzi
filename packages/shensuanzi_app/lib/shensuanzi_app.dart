@@ -64,6 +64,7 @@ export 'src/mobile_guidance.dart'
         mirrorEmptyMessage,
         mobileGuideMessage,
         mobileGuideTitle;
+export 'src/pairing_address.dart' show PairingAddress;
 export 'src/pairing_store.dart' show PairingInfo, PairingStore;
 export 'src/data_marker.dart' show DataMarker, DirectoryContents, contentsOf;
 export 'src/dialog_model.dart'

@@ -27,6 +27,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'app_colors.dart';
 // §BL·一：`PairingPayload` 是**同步协议**的 wire 格式，已迁进 `shensuanzi_core`
 // —— host 只是 re-export。这里**直接依赖源头**（`import_guard` 会要求）：
@@ -100,9 +101,13 @@ class _HostServicePanelState extends State<HostServicePanel> {
     if (payload == null) return;
     await showDialog<void>(
       context: context,
+      // D 批：对话框直接吃 controller —— 换地址时码要当场重画（见 `_PairingDialog`）
       builder: (BuildContext context) =>
-          _PairingDialog(payload: payload, addressLine: _snapshot.addressLine),
+          _PairingDialog(controller: widget.controller),
     );
+    // 对话框里可能换过地址 ⇒ 关掉后把面板刷新一次（地址行要跟着变）
+    if (!mounted) return;
+    setState(() => _snapshot = widget.controller.snapshot);
   }
 
   /// 重新生成配对码 —— **会作废所有已配对的手机**，所以先要一次确认。
@@ -215,6 +220,13 @@ class _HostServicePanelState extends State<HostServicePanel> {
               snapshot.addressLine!,
               style: TextStyle(height: 1.6, color: secondary),
             ),
+          // D 批：候选不止一个 ⇒ 提前告诉用户「可以换」，别等他连不上再去找
+          if (snapshot.hasAddressChoice)
+            Text(
+              '手机连不上？点「显示二维码」可以换一个网卡地址'
+              '（这台电脑有 ${snapshot.addressOptions.length} 个）。',
+              style: TextStyle(height: 1.6, color: secondary),
+            ),
           if (traffic != null)
             Text(traffic, style: TextStyle(height: 1.6, color: secondary)),
           const SizedBox(height: 8),
@@ -300,16 +312,29 @@ class _HostServicePanelState extends State<HostServicePanel> {
 /// 扫码对话框。
 ///
 /// ⚠️ 内容必须**可滚动**（项目铁律：缩放调到 200% 时固定高度会把主按钮顶出屏幕）。
-class _PairingDialog extends StatelessWidget {
-  const _PairingDialog({required this.payload, this.addressLine});
+///
+/// ## 为什么它是 StatefulWidget 且直接吃 controller（2026-10-25 D 批）
+///
+/// 对话框里多了一块「换一个地址」—— 用户点另一个网卡时，**二维码必须当场重画**。
+/// 从前这里收的是 `PairingPayload` 快照，换地址后码不会变
+///（「换了但没生效」比不能换更糟）。现在每次 build 都从 controller 现取，
+/// 换完 `setState` 即可；`_QrView` 自己的 `didUpdateWidget` 会比对 `uri` 重新编码。
+class _PairingDialog extends StatefulWidget {
+  const _PairingDialog({required this.controller});
 
-  final PairingPayload payload;
-  final String? addressLine;
+  final HostServiceController controller;
 
+  @override
+  State<_PairingDialog> createState() => _PairingDialogState();
+}
+
+class _PairingDialogState extends State<_PairingDialog> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final Color secondary = theme.textTheme.bodySmall?.color ?? theme.hintColor;
+    final HostServiceSnapshot snapshot = widget.controller.snapshot;
+    final PairingPayload? payload = widget.controller.pairingPayload;
 
     return AlertDialog(
       title: const Text('手机扫码连接'),
@@ -320,7 +345,10 @@ class _PairingDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Center(child: _QrView(payload: payload)),
+              if (payload == null)
+                const Text('二维码暂时画不出来，请关掉再打开一次同步服务。')
+              else
+                Center(child: _QrView(payload: payload)),
               const SizedBox(height: 12),
               Center(
                 child: Text(
@@ -328,7 +356,7 @@ class _PairingDialog extends StatelessWidget {
                   style: const TextStyle(height: 1.6),
                 ),
               ),
-              if (addressLine != null) ...<Widget>[
+              if (snapshot.addressLine != null) ...<Widget>[
                 const SizedBox(height: 12),
                 Text(
                   '扫不出来就手动填这个地址：',
@@ -336,7 +364,54 @@ class _PairingDialog extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 // 可选中：用户要能复制走
-                SelectableText(addressLine!),
+                SelectableText(snapshot.addressLine!),
+              ],
+              // 扫码 / 手填地址都不行时，还有最后一条路：把码的文字整段带过去。
+              // ⚠️ 没有这个按钮，手机端「粘配对码」那条路**根本拿不到码**
+              //（电脑上只显示了 `主机地址：ip:port`，不含身份与令牌）。
+              if (payload != null) ...<Widget>[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  key: const Key('host-copy-pairing-code'),
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: payload.uri));
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('配对码已复制 —— 去手机上「手动填地址」整段粘进去'),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.copy, size: 18),
+                  label: const Text('复制配对码文字'),
+                ),
+              ],
+              // ---------------------------------------------------- D 批
+              // 自动挑的地址可能挑错（穿透工具 / 虚拟网卡 / 公司 VPN）。
+              // 挑错时用户看到的只有「手机连不上」，从前**毫无自救手段** ——
+              // 这里把候选全摆出来，点一下换一个，码当场重画。
+              if (snapshot.hasAddressChoice) ...<Widget>[
+                const SizedBox(height: 16),
+                Text(
+                  '手机连不上？换一个地址试试'
+                  '（这台电脑有 ${snapshot.addressOptions.length} 个网卡地址）：',
+                  style: const TextStyle(height: 1.6),
+                ),
+                const SizedBox(height: 4),
+                for (final NetAddressOption option in snapshot.addressOptions)
+                  _AddressChoice(
+                    key: Key('host-address-option-${option.address}'),
+                    option: option,
+                    selected: option.address == snapshot.address,
+                    onTap: () {
+                      widget.controller.selectAddress(option.address);
+                      setState(() {});
+                    },
+                  ),
+                Text(
+                  '换完要用手机重新扫一次上面的码。',
+                  style: TextStyle(height: 1.6, color: secondary),
+                ),
               ],
             ],
           ),
@@ -352,6 +427,50 @@ class _PairingDialog extends StatelessWidget {
           child: const Text('收起'),
         ),
       ],
+    );
+  }
+}
+
+/// 候选地址的一行（D 批）：`✓ 10.102.43.94（WLAN）`
+///
+/// 点整行 = 选中。**必须显示网卡名** —— 只给 IP 的话用户认不出哪个是自己家的 WiFi，
+/// 而这一块存在的意义正是「让用户用他自己的知识补上机器的知识」。
+class _AddressChoice extends StatelessWidget {
+  const _AddressChoice({
+    super.key,
+    required this.option,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final NetAddressOption option;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        // 44 高：`ui_principles.md` §二 的触控目标下限
+        padding: const EdgeInsets.symmetric(vertical: 11),
+        child: Row(
+          children: <Widget>[
+            Icon(
+              selected ? Icons.check_circle : Icons.circle_outlined,
+              size: 18,
+              color: selected
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.outline,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(option.label, style: const TextStyle(height: 1.6)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

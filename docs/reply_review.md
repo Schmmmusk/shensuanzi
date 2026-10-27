@@ -15295,3 +15295,25 @@ SqliteException(1): no such index: idx_documents_occurred
 **F18 真机验收（2026-10-26 23:20，界面大小 = 超大）**：客户 y=458 / 日期 y=809 ⇒ **上下两行**；
 `2026-10-26` 是**一个整节点、整行宽**（不再断成 `2026-1` / `0-26`）；
 收款区「现金」独占一行、**金额（元）整行宽且下划线贯穿**（不再是那条缝）。✅ 两条都兑现。
+
+### 十五、2026-10-27 D 批落地（`LocalIp` 双端兜底）—— 用户「先处理 D 批，手机不方便」
+
+| 端 | 改了什么 |
+|---|---|
+| **主机 · `LocalIp`** | 根因比原判更具体：`virtualMarkers` 是穷举法，`natpierce` 不在名单里，而规则 ① 是「私有 + 非虚拟」⇒ 隧道地址 `10.6.22.1` 直接命中。修法 = **正向规则**（`realMarkers`：wlan/wifi/无线/以太网/ethernet… 优先）+ **黑名单补 30 个**已知隧道/VPN/拨号名。`choose` 改成 `rank` 排序取第一个（**排序唯一来源**，纪律 18），另加 `detectAll()` 供界面列候选 |
+| **主机 · 控制器/UI** | `addressOptions` + `hasAddressChoice` + `selectAddress(ip)`（**只接受候选内的地址**）；二维码对话框改 `StatefulWidget` 吃 `controller`（换地址码**当场重画**，从前收快照换了等于没换）；每行显示 `地址（网卡名）`；新增「复制配对码文字」（否则手机「粘配对码」那条路拿不到码） |
+| **手机 · 扫码页** | 加「扫不了码 / 连不上？手动填地址」；新增 `PairingAddress.parse`（只收 IPv4，错误消息是给用户看的中文）+ `MobileSyncService.pairFromAddress`（**只换地址**，`hostId`/令牌/上次同步时间不动，**不走 F14 归档重建**）；`_pair` 拆出 `_firstSync()` 两条路共用；`ManualAddressDialog` 只配对不联网 |
+
+**测试 +21**：host +7（D-1 先红：`Actual: '10.6.22.1'`）· 面板 +1 · app +9 · 手机 widget +4 · selfcheck +5。
+**反向灵敏度三轮**：撤掉「正向规则 + natpierce/pierce」⇒ D-1 红（单独撤一条**不红**，正是两道保险的设计）；
+`pairFromAddress` 退化为 no-op ⇒ app `+8 -1`；`selectAddress` 退化为 no-op ⇒ host `+32 -1`。
+
+**门禁**：root **349**（+5）· app **371**（+9）· core **719** · host **166**（+7）· 自检 **81/81**（+5）· analyze 0 · format 0。
+
+**⚠️ 顺手修掉一个「测试定时炸弹」**（不是 D 批的产物，但今天把它引爆了）：
+`test/startup_test.dart` 的 `_RecordingBackup` 把假备份时间写死成 `DateTime(2026, 10, 24, 9, 5)`，
+而概览橙卡的判据是 `needsBackupAttention(now - lastBackup > 3 天)`、`now` 是**真实时钟**
+⇒ 2026-10-27 09:05 之后「场景 8：备份成功 → 不该再提醒」**自己变红**。
+已改成 `DateTime.now()`（它要表达的就是"刚备份完"）。**已用 git stash 验证：不带本轮改动它也红**。
+
+**状态**：✅ 已落地；⏸ 真机验收待手机接回（验收动作见提案 §三之三·五）。

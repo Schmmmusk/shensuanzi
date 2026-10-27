@@ -89,8 +89,32 @@ class _PairingScanPageState extends State<PairingScanPage> {
     }
     // 首拉：成功才回设置页；失败把原因留在页面上（配对信息已存，
     // 用户可以回设置页直接「立即同步」重试，不用再扫一次）。
-    // ⚠️ syncNow 的结果保证不抛（服务内全兜底），但这里再兜一层 ——
-    // 转圈永远停不下来比报错糟糕一万倍（真机踩过：§BL·落地·补 1）
+    await _firstSync();
+  }
+
+  /// **手动填地址**（2026-10-25 D 批）—— 扫码扫不了、或扫了连不上时的兜底。
+  ///
+  /// 对话框里已经完成配对（校验 + 落盘），这里只做首拉 —— 与扫码路径共用
+  /// [_firstSync]，两条路的「连上之后干什么」必须一模一样。
+  Future<void> _manual() async {
+    final bool? paired = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) =>
+          ManualAddressDialog(service: widget.service),
+    );
+    if (paired != true || !mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    await _firstSync();
+  }
+
+  /// 配对已完成（扫码 / 手动填）⇒ 拉第一次。
+  ///
+  /// ⚠️ syncNow 的结果保证不抛（服务内全兜底），但这里再兜一层 ——
+  /// 转圈永远停不下来比报错糟糕一万倍（真机踩过：§BL·落地·补 1）
+  Future<void> _firstSync() async {
     SyncOutcome outcome;
     try {
       outcome = await widget.service.syncNow();
@@ -249,9 +273,131 @@ class _PairingScanPageState extends State<PairingScanPage> {
                     icon: const Icon(Icons.qr_code_scanner),
                     label: const Text('开始扫码'),
                   ),
+                  const SizedBox(height: 8),
+                  // D 批（2026-10-25）：**零兜底 → 有兜底**。
+                  // 现场是电脑挑错了网卡（穿透工具抢了 WLAN），二维码扫得到、
+                  // 手机连不上，而从前这一页只有「开始扫码」——用户没有出路。
+                  OutlinedButton.icon(
+                    key: const Key('pairing-manual-entry'),
+                    onPressed: _manual,
+                    icon: const Icon(Icons.keyboard_alt_outlined),
+                    label: const Text('扫不了码 / 连不上？手动填地址'),
+                  ),
                 ],
               ),
             ),
+    );
+  }
+}
+
+/// 「手动填地址」对话框（2026-10-25 D 批）。
+///
+/// ## 两种输入都收（分流见 `PairingAddress`）
+///
+/// | 粘进来的 | 结果 |
+/// |---|---|
+/// | 完整配对码 `shensuanzi://pair?...` | 等同扫码，**能完成配对**（含身份与令牌） |
+/// | 光一个地址 `192.168.1.5:17890` | **只换地址**（前提：之前配对过，令牌沿用） |
+///
+/// ## 为什么它只配对、**不联网**
+///
+/// 首拉（`syncNow`）由调用方做。两个原因：
+/// ① 对话框里转圈时用户不知道在等什么，错误也没地方显示；
+/// ② 它因此能被 widget 测试**直接钉住**（不碰网络就不会在假时钟下卡死）。
+///
+/// 格式错误的提示留在对话框里（红字），用户能当场改 —— 不用关掉重开。
+class ManualAddressDialog extends StatefulWidget {
+  const ManualAddressDialog({super.key, required this.service});
+
+  final MobileSyncService service;
+
+  @override
+  State<ManualAddressDialog> createState() => _ManualAddressDialogState();
+}
+
+class _ManualAddressDialogState extends State<ManualAddressDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  /// 格式/前置条件错误（红字，留在对话框里）
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final String raw = _controller.text;
+    try {
+      if (PairingAddress.isPairingCode(raw)) {
+        widget.service.pairFromCode(raw);
+      } else {
+        widget.service.pairFromAddress(raw);
+      }
+    } on FormatException catch (error) {
+      // `FormatException.message` 就是给人看的中文（见 `PairingAddress.parse`）
+      setState(() => _error = error.message);
+      return;
+    }
+    Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('手动填地址'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text(
+                '填电脑上的局域网地址，例如 192.168.1.5:17890。'
+                '不知道的话，在电脑「设置 → 多设备同步」里能看到。',
+                style: TextStyle(height: 1.6),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '也可以把电脑上那段配对码文字整段粘进来（没连过电脑时只能这样）。',
+                style: TextStyle(
+                  height: 1.6,
+                  color: theme.textTheme.bodySmall?.color,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('manual-address-field'),
+                controller: _controller,
+                autofocus: true,
+                keyboardType: TextInputType.url,
+                decoration: InputDecoration(
+                  labelText: '电脑地址',
+                  hintText: '192.168.1.5:17890',
+                  isDense: true,
+                  errorText: _error,
+                  errorMaxLines: 4,
+                ),
+                onSubmitted: (_) => _submit(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const Key('manual-address-ok'),
+          onPressed: _submit,
+          child: const Text('连接'),
+        ),
+      ],
     );
   }
 }

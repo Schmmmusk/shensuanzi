@@ -97,6 +97,50 @@ Future<void> main() async {
   );
   check('一块网卡都没有 ⇒ null', LocalIp.choose(<NetCandidate>[]) == null);
 
+  // ---------------------------------------------------------------- D 批
+  // 复跑现场：`natpierce` 穿透网卡（10.6.22.1）排在 WLAN 之前 ⇒ 二维码里写了隧道地址，
+  // 手机 http=000 5 秒超时。两道保险：真网卡名优先（正向）+ 隧道名黑名单。
+  check(
+    'D：natpierce 隧道不许抢 WLAN（隧道在前）',
+    LocalIp.choose(<NetCandidate>[
+          const NetCandidate('natpierce', <String>['10.6.22.1']),
+          const NetCandidate('WLAN', <String>['10.102.43.94']),
+        ]) ==
+        '10.102.43.94',
+  );
+  check(
+    'D：natpierce 隧道不许抢 WLAN（真网卡在前，结果与顺序无关）',
+    LocalIp.choose(<NetCandidate>[
+          const NetCandidate('WLAN', <String>['10.102.43.94']),
+          const NetCandidate('natpierce', <String>['10.6.22.1']),
+        ]) ==
+        '10.102.43.94',
+  );
+  check(
+    'D：只有隧道时仍给一个地址（不退化成 null）',
+    LocalIp.choose(<NetCandidate>[
+          const NetCandidate('natpierce', <String>['10.6.22.1']),
+        ]) ==
+        '10.6.22.1',
+  );
+  final List<NetAddressOption> ranked = LocalIp.rank(<NetCandidate>[
+    const NetCandidate('natpierce', <String>['10.6.22.1']),
+    const NetCandidate('WLAN', <String>['10.102.43.94']),
+  ]);
+  check(
+    'D：rank 把真网卡排前面，并带着网卡名（界面要显示）',
+    ranked.length == 2 &&
+        ranked.first.address == '10.102.43.94' &&
+        ranked.first.label.contains('WLAN'),
+  );
+  check(
+    'D：detectAll 扫不动 ⇒ 空列表（不上抛）',
+    (await LocalIp.detectAll(
+          scan: () async => throw const SocketException('no nic'),
+        )).isEmpty &&
+        (await LocalIp.detectAll(scan: () async => <NetCandidate>[])).isEmpty,
+  );
+
   section('LocalIp.detect 的接缝（扫网卡可注入 ⇒ 兜底分支可断言）');
   check(
     '扫到空 ⇒ null',

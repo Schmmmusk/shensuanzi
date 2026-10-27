@@ -33,11 +33,13 @@ void main() {
     HostIdentityStore? identities,
     PortRange ports = testPorts,
     Future<String?> Function()? detectLocalIp,
+    Future<List<NetAddressOption>> Function()? detectAddresses,
   }) => HostServiceController(
     db: db,
     identities: identities ?? store,
     ports: ports,
     detectLocalIp: detectLocalIp ?? () async => fakeIp,
+    detectAddresses: detectAddresses,
     clock: now,
   );
 
@@ -88,6 +90,53 @@ void main() {
           const NetCandidate('Wi-Fi', <String>['192.168.1.7']),
         ]),
         '192.168.1.7',
+      );
+    });
+
+    // ---------------------------------------------------------------- D-1
+    // 复跑现场（2026-10-25）：机器上装了 `natpierce` 穿透工具，多出一块
+    // `natpierce` 网卡（10.6.22.1）。Windows 的枚举顺序把它排在 `WLAN` 之前，
+    // 而 `virtualMarkers` 是**穷举法**、名单里没有它 ⇒ 规则 ① 直接命中隧道地址，
+    // 手机 `http=000` 5 秒超时 —— 整组同步测试卡了半小时。
+    //
+    // 修法 = **正向规则**（真网卡名优先）+ 补齐已知隧道名，两道都要有：
+    // 只补名单，将来换了别的穿透工具又会踩；只加正向规则，纯隧道环境仍会挑错。
+    test('D-1：natpierce 隧道网卡不许抢 WLAN（两种枚举顺序都要对）', () {
+      // ① 隧道在前（现场就是这一种，Windows 的实际顺序）
+      expect(
+        LocalIp.choose(<NetCandidate>[
+          const NetCandidate('natpierce', <String>['10.6.22.1']),
+          const NetCandidate('WLAN', <String>['10.102.43.94']),
+        ]),
+        '10.102.43.94',
+        reason: '规则 ① 从前是"私有 + 非虚拟"，而 natpierce 不在虚拟名单里 ⇒ 直接挑错',
+      );
+      // ② 真网卡在前（不许因为顺序变了就换答案 —— 选择结果必须与枚举顺序无关）
+      expect(
+        LocalIp.choose(<NetCandidate>[
+          const NetCandidate('WLAN', <String>['10.102.43.94']),
+          const NetCandidate('natpierce', <String>['10.6.22.1']),
+        ]),
+        '10.102.43.94',
+      );
+    });
+
+    test('D-1 护栏：只有隧道网卡时仍返回它（不许退化成 null）', () {
+      // 「全部候选都是虚拟网卡」是**既有行为**：返回一个总比返回 null 好 ——
+      // null 会让二维码画不出来，用户连"猜一个地址"的机会都没有。
+      expect(
+        LocalIp.choose(<NetCandidate>[
+          const NetCandidate('natpierce', <String>['10.6.22.1']),
+        ]),
+        '10.6.22.1',
+      );
+      expect(
+        LocalIp.choose(<NetCandidate>[
+          const NetCandidate('Tailscale', <String>['100.64.1.1']),
+          const NetCandidate('natpierce', <String>['10.6.22.1']),
+        ]),
+        isNotNull,
+        reason: '两个都是隧道 ⇒ 仍要给一个地址，不能 null',
       );
     });
 
@@ -146,6 +195,92 @@ void main() {
         ),
         isNull,
       );
+    });
+  });
+
+  group('LocalIp.detectAll / rank（D 批：把候选列出来让人自己挑）', () {
+    test('排序：真网卡私有地址在前，隧道垫底', () {
+      final List<NetAddressOption> ranked = LocalIp.rank(<NetCandidate>[
+        const NetCandidate('natpierce', <String>['10.6.22.1']),
+        const NetCandidate('WLAN', <String>['10.102.43.94']),
+        const NetCandidate('以太网', <String>['192.168.1.7']),
+      ]);
+      expect(
+        <String>[for (final NetAddressOption o in ranked) o.address],
+        <String>['10.102.43.94', '192.168.1.7', '10.6.22.1'],
+      );
+      expect(ranked.first.name, 'WLAN', reason: '界面要显示网卡名，用户才认得出哪个是自己家的 WiFi');
+      expect(ranked.first.label, contains('10.102.43.94'));
+      expect(ranked.first.label, contains('WLAN'));
+    });
+
+    test('同档内保持枚举顺序（不用 sort —— Dart 的 sort 不保证稳定）', () {
+      final List<NetAddressOption> ranked = LocalIp.rank(<NetCandidate>[
+        const NetCandidate('WLAN', <String>['10.0.0.2']),
+        const NetCandidate('以太网', <String>['10.0.0.1']),
+      ]);
+      expect(
+        <String>[for (final NetAddressOption o in ranked) o.address],
+        <String>['10.0.0.2', '10.0.0.1'],
+      );
+    });
+
+    test('detectAll：扫不动 ⇒ 空列表，**不上抛**（与 detect 同口径）', () async {
+      expect(
+        await LocalIp.detectAll(scan: () async => <NetCandidate>[]),
+        isEmpty,
+      );
+      expect(
+        await LocalIp.detectAll(
+          scan: () async => throw const SocketException('no nic'),
+        ),
+        isEmpty,
+      );
+    });
+  });
+
+  group('selectAddress（D 批：自动挑选猜错时的自救）', () {
+    test('能在候选里换地址，二维码跟着变；不在候选里的拒绝', () async {
+      final HostServiceController c = build(
+        detectAddresses: () async => const <NetAddressOption>[
+          NetAddressOption(name: 'WLAN', address: '10.102.43.94'),
+          NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
+        ],
+      );
+      addTearDown(c.stop);
+      int woke = 0;
+      c.addDataListener(() => woke++);
+
+      final HostServiceSnapshot started = await c.start();
+      expect(started.address, '10.102.43.94', reason: '默认取排好序的第一个');
+      expect(started.addressOptions.length, 2);
+      expect(started.hasAddressChoice, isTrue);
+      expect(c.pairingPayload!.ip, '10.102.43.94');
+
+      expect(c.selectAddress('10.6.22.1'), isTrue);
+      expect(c.snapshot.address, '10.6.22.1');
+      expect(
+        c.pairingPayload!.ip,
+        '10.6.22.1',
+        reason: '二维码必须跟着换 —— 换了地址但码没变，等于没换',
+      );
+      expect(woke, greaterThan(0), reason: '界面要重画（否则用户以为没生效）');
+
+      expect(
+        c.selectAddress('1.2.3.4'),
+        isFalse,
+        reason: '不在候选里的地址不接受 —— 手填错 IP 会变成"码看着正常、就是连不上"',
+      );
+      expect(c.snapshot.address, '10.6.22.1');
+    });
+
+    test('只有一块网卡时没有选择项（不摆一个假的"换地址"）', () async {
+      final HostServiceController c = build();
+      addTearDown(c.stop);
+      final HostServiceSnapshot started = await c.start();
+      expect(started.addressOptions, isEmpty);
+      expect(started.hasAddressChoice, isFalse);
+      expect(started.address, fakeIp, reason: '退回单地址探测，行为与从前一致');
     });
   });
 
