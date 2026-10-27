@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "statements": [
     "CREATE TABLE products (\nid TEXT PRIMARY KEY,\ncode TEXT NOT NULL UNIQUE,\nname TEXT NOT NULL,\nbarcode TEXT,\nunit TEXT NOT NULL DEFAULT '件',\ncost_price INTEGER NOT NULL DEFAULT 0,\nsell_price INTEGER NOT NULL DEFAULT 0,\nsafety_stock INTEGER NOT NULL DEFAULT 0,\ncategory TEXT,\nis_active INTEGER NOT NULL DEFAULT 1,\nremark TEXT,\npackage_note TEXT,\npackage_unit TEXT,\npackage_size INTEGER,\ncreated_at INTEGER NOT NULL,\nupdated_at INTEGER NOT NULL,\nsync_version INTEGER NOT NULL DEFAULT 0\n);",
     "CREATE INDEX idx_products_barcode ON products(barcode);",
@@ -20,7 +20,8 @@
     "CREATE INDEX idx_lines_document ON document_lines(document_id);",
     "CREATE INDEX idx_lines_product ON document_lines(product_id);",
     "CREATE TABLE stock_ledger (\nid TEXT PRIMARY KEY,\nproduct_id TEXT NOT NULL,\ndocument_id TEXT NOT NULL,\nquantity INTEGER NOT NULL,\nunit_cost INTEGER NOT NULL DEFAULT 0,\ntotal_cost INTEGER NOT NULL DEFAULT 0,\nseq_no INTEGER NOT NULL,\noccurred_at INTEGER NOT NULL,\ntime_estimated INTEGER NOT NULL DEFAULT 0,\ncreated_at INTEGER NOT NULL,\nFOREIGN KEY (product_id) REFERENCES products(id),\nFOREIGN KEY (document_id) REFERENCES documents(id)\n);",
-    "CREATE INDEX idx_stock_product_seq ON stock_ledger(product_id, seq_no);",
+    "CREATE INDEX idx_stock_covering ON stock_ledger(;",
+    "product_id, seq_no, quantity, total_cost);",
     "CREATE INDEX idx_stock_document ON stock_ledger(document_id);",
     "CREATE UNIQUE INDEX idx_stock_seq ON stock_ledger(seq_no);",
     "CREATE TABLE money_ledger (\nid TEXT PRIMARY KEY,\naccount_id TEXT NOT NULL,\ndocument_id TEXT NOT NULL,\namount INTEGER NOT NULL,\nseq_no INTEGER NOT NULL,\noccurred_at INTEGER NOT NULL,\ntime_estimated INTEGER NOT NULL DEFAULT 0,\nexternal_ref TEXT,\ncreated_at INTEGER NOT NULL,\nFOREIGN KEY (account_id) REFERENCES accounts(id),\nFOREIGN KEY (document_id) REFERENCES documents(id)\n);",
@@ -28,7 +29,7 @@
     "CREATE INDEX idx_money_document ON money_ledger(document_id);",
     "CREATE UNIQUE INDEX idx_money_seq ON money_ledger(seq_no);",
     "CREATE TABLE party_ledger (\nid TEXT PRIMARY KEY,\nparty_id TEXT NOT NULL,\ndocument_id TEXT NOT NULL,\namount INTEGER NOT NULL,\nseq_no INTEGER NOT NULL,\noccurred_at INTEGER NOT NULL,\ntime_estimated INTEGER NOT NULL DEFAULT 0,\ncreated_at INTEGER NOT NULL,\nFOREIGN KEY (party_id) REFERENCES parties(id),\nFOREIGN KEY (document_id) REFERENCES documents(id)\n);",
-    "CREATE INDEX idx_party_ledger_party_seq ON party_ledger(party_id, seq_no);",
+    "CREATE INDEX idx_party_covering ON party_ledger(party_id, seq_no, amount);",
     "CREATE INDEX idx_party_ledger_document ON party_ledger(document_id);",
     "CREATE UNIQUE INDEX idx_party_ledger_seq ON party_ledger(seq_no);",
     "CREATE TABLE settlements (\nid TEXT PRIMARY KEY,\nreceipt_doc_id TEXT NOT NULL,\ntarget_doc_id TEXT,\namount INTEGER NOT NULL,\nseq_no INTEGER NOT NULL,\ntime_estimated INTEGER NOT NULL DEFAULT 0,\ncreated_at INTEGER NOT NULL,\nFOREIGN KEY (receipt_doc_id) REFERENCES documents(id),\nFOREIGN KEY (target_doc_id) REFERENCES documents(id)\n);",
@@ -41,5 +42,5 @@
     "CREATE TABLE clock_offset (\nid INTEGER PRIMARY KEY CHECK (id = 1),\noffset_ms INTEGER NOT NULL DEFAULT 0,\nupdated_at INTEGER NOT NULL\n);",
     "CREATE TABLE sync_cursor (\nentity TEXT PRIMARY KEY,\ncursor TEXT NOT NULL,\nupdated_at INTEGER NOT NULL\n);"
   ],
-  "fingerprint": "8d1b4835fabe4cfc"
+  "fingerprint": "3265deb2dc442c82"
 }
