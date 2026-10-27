@@ -33,14 +33,57 @@ class PairingAddress {
 
   /// 用户粘进来的是不是一整段配对码。
   static bool isPairingCode(String raw) =>
-      raw.trim().toLowerCase().startsWith(codeScheme);
+      normalize(raw).toLowerCase().startsWith(codeScheme);
+
+  /// **把中文输入法的全角字符掰回半角**（2026-10-27 真机实测）。
+  ///
+  /// 现场：用中文输入法在手机上手打 `10.102.43.94:17890`，落到输入框里是
+  /// `10。102。43。94：17890` —— 句号变「。」、冒号变「：」。
+  ///
+  /// **这不是用户打错**，是输入法的默认行为，而且中老年用户基本躲不开。
+  /// 若解析层直接回一句「格式不对」，等于把输入法的锅甩给用户 ——
+  /// 他会以为自己不会用这个功能（正是 D 批要消灭的那种处境）。
+  ///
+  /// 只处理**确定等价**的字符，不做花哨猜测：
+  ///
+  /// | 全角 | 半角 | 说明 |
+  /// |---|---|---|
+  /// | `。` `．` | `.` | 句号 / 全角句点（IP 里只会是点） |
+  /// | `：` | `:` | 全角冒号（端口分隔） |
+  /// | `／` | `/` | 全角斜杠（去掉路径用） |
+  /// | `０`–`９` | `0`–`9` | 全角数字 |
+  /// | 全角空格 | 半角空格 | `\u3000` |
+  static String normalize(String raw) {
+    final StringBuffer out = StringBuffer();
+    for (final int code in raw.trim().runes) {
+      if (code >= 0xFF10 && code <= 0xFF19) {
+        // ０-９ ⇒ 0-9
+        out.writeCharCode(code - 0xFF10 + 0x30);
+      } else if (code == 0x3002 || code == 0xFF0E) {
+        // 。．
+        out.write('.');
+      } else if (code == 0xFF1A) {
+        // ：
+        out.write(':');
+      } else if (code == 0xFF0F) {
+        // ／
+        out.write('/');
+      } else if (code == 0x3000) {
+        // 全角空格
+        out.write(' ');
+      } else {
+        out.writeCharCode(code);
+      }
+    }
+    return out.toString().trim();
+  }
 
   /// 解析 `ip` / `ip:port` / `http://ip:port`。
   ///
   /// `port` 为 `null` = 用户没写端口，调用方沿用上次配对里的端口。
   /// 格式不对抛 [FormatException]，**消息直接给用户看**（中文、说清怎么写）。
   static ({String ip, int? port}) parse(String raw) {
-    String text = raw.trim();
+    String text = normalize(raw);
     if (text.isEmpty) {
       throw const FormatException('请填电脑上的地址，例如 192.168.1.5:17890');
     }

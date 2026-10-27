@@ -346,6 +346,7 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final Color secondary = theme.textTheme.bodySmall?.color ?? theme.hintColor;
     return AlertDialog(
       title: const Text('手动填地址'),
       content: SizedBox(
@@ -355,25 +356,17 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              const Text(
-                '填电脑上的局域网地址，例如 192.168.1.5:17890。'
-                '不知道的话，在电脑「设置 → 多设备同步」里能看到。',
-                style: TextStyle(height: 1.6),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '也可以把电脑上那段配对码文字整段粘进来（没连过电脑时只能这样）。',
-                style: TextStyle(
-                  height: 1.6,
-                  color: theme.textTheme.bodySmall?.color,
-                ),
-              ),
-              const SizedBox(height: 12),
+              // ⚠️ **输入框必须放在最上面**（2026-10-27 真机验收发现）：
+              // 特大字号下这段说明占掉对话框大半高度，输入框会落到接近底部，
+              // 键盘一弹就被盖住 —— 用户以为"这里不能输入"。
+              // 放最上面之后，键盘最多盖住下面的说明文字（那部分盖住也无所谓）。
               TextField(
                 key: const Key('manual-address-field'),
                 controller: _controller,
-                autofocus: true,
+                // ⚠️ **不要 autofocus**：一进对话框就弹键盘，用户还没看清
+                // 该填什么，输入框先被盖住了。让他点一下再弹。
                 keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
                   labelText: '电脑地址',
                   hintText: '192.168.1.5:17890',
@@ -382,6 +375,16 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
                   errorMaxLines: 4,
                 ),
                 onSubmitted: (_) => _submit(),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '在电脑「设置 → 多设备同步」里能看到这个地址。',
+                style: TextStyle(height: 1.6, color: secondary),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '没连过电脑的，把电脑上那段配对码文字整段粘进来。',
+                style: TextStyle(height: 1.6, color: secondary),
               ),
             ],
           ),

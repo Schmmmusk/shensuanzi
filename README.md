@@ -116,6 +116,7 @@ D:\神算子数据\                     ← 有非系统盘时优先（重装系
 ## 反馈与联系
 
 - **GitHub Issues（推荐，能贴截图）**：<https://github.com/Schmmmusk/shensuanzi/issues>
+- **Gitee Issues （国内用户备选项）**: <https://gitee.com/fdatps/shensuanzi/issues>
 - **邮箱**：cedarandjoy@163.com
 
 提交问题时请附上软件「帮助」页最下方的**版本号**，能更快定位。

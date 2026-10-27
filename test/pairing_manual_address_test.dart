@@ -152,4 +152,81 @@ void main() {
     expect(saved.hostId, 'h-1', reason: '还是同一台电脑 —— 换的是路，不是身份');
     expect(saved.token, 'tok', reason: '令牌必须留着，否则鉴权过不去');
   });
+
+  // ---------------------------------------------------------------- D 批真机发现
+  //
+  // 用户原话（2026-10-27 真机）：「更准确地讲，是**键盘压缩空间 + 缩放挤压**
+  // 导致看不见输入框」—— 特大字号下说明文字把对话框撑满，输入框落到接近底部，
+  // 键盘一弹就被压出可视区 ⇒ 用户以为「这里根本不能输入」。
+  //
+  // 这条用例把两头都模拟出来：**键盘**（`viewInsets`）+ **特大字号**（1.8），
+  // 然后断言输入框**整个**在键盘上方、且高度仍 ≥44。
+  testWidgets('键盘弹起 + 特大字号：输入框必须仍然看得见', (WidgetTester tester) async {
+    // 手机逻辑尺寸 393×872（1220×2712 / dpr 3.1）
+    tester.view.physicalSize = const Size(1220, 2712);
+    tester.view.devicePixelRatio = 3.1;
+    // 键盘占底部 1400 物理像素 ≈ 452 逻辑像素（约半个屏高：大字号下输入法
+    // 还会带一条候选/工具条，真机就是这个量级）
+    tester.view.viewInsets = const FakeViewPadding(bottom: 1400);
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (BuildContext context, Widget? child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2.0)),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: Builder(
+            builder: (BuildContext context) => TextButton(
+              onPressed: () => showDialog<bool>(
+                context: context,
+                builder: (BuildContext _) =>
+                    ManualAddressDialog(service: service),
+              ),
+              child: const Text('打开'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('打开'));
+    await tester.pumpAndSettle();
+
+    final Rect field = tester.getRect(
+      find.byKey(const Key('manual-address-field')),
+    );
+    final double screenH = 2712 / 3.1;
+    final double keyboardTop = screenH - 1400 / 3.1;
+
+    expect(
+      field.bottom,
+      lessThanOrEqualTo(keyboardTop),
+      reason:
+          '输入框被键盘盖住了（bottom=${field.bottom}，键盘顶=$keyboardTop）'
+          '—— 用户会以为"这里不能输入"',
+    );
+    expect(
+      field.height,
+      greaterThanOrEqualTo(44),
+      reason: 'ui_principles.md §二：触控目标 ≥44',
+    );
+    // 根因断言（与键盘高度无关）：说明文字**不许压在输入框上面** ——
+    // 它一多就把输入框顶到底部，键盘再压一下就没了。
+    final double tipY = tester.getTopLeft(find.textContaining('多设备同步')).dy;
+    expect(
+      field.top,
+      lessThan(tipY),
+      reason: '说明文字跑到了输入框上面（field.top=${field.top}，说明 y=$tipY）',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('manual-address-field')))
+          .autofocus,
+      isFalse,
+      reason: '一进来就弹键盘 = 用户还没看清该填什么，输入框先被盖住了',
+    );
+  });
 }

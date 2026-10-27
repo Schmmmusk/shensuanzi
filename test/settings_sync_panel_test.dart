@@ -130,4 +130,54 @@ void main() {
     expect(productRows(), 0, reason: '重建 = 清镜像，等下次同步全量重拉');
     expect(service.archives(), hasLength(1), reason: '重建前必须先归档（用户的数据不能凭空消失）');
   });
+
+  // ------------------------------------------------------------ D 批（2026-10-27）
+  //
+  // 真机验收时发现的**设计漏洞**：`pairFromAddress`（只换地址）只有**未配对**时
+  // 能进（扫码页），而它要救的场景恰恰是「扫码成功、但电脑挑错了网卡 ⇒ 连不上」——
+  // 那时手机是**已配对**状态，设置页只有「立即同步 / 忘记主机」，
+  // **根本进不去扫码页**。所以已配对态也必须给一个入口。
+  testWidgets('D 批：已配对时有「手动换地址」，且只换地址不动身份', (WidgetTester tester) async {
+    service.pairFromCode(
+      'shensuanzi://pair?host_id=h-1&ip=10.6.22.1&port=17890&token=tok&v=1',
+    );
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('已连接主机（10.6.22.1:17890）'),
+      findsOneWidget,
+      reason: '前提：这就是现场 —— 配对着，但地址是穿透网卡的',
+    );
+
+    await tapKey(tester, 'mobile-manual-address');
+    expect(find.text('手动填地址'), findsOneWidget, reason: '点开的是同一个对话框');
+
+    await tester.enterText(
+      find.byKey(const Key('manual-address-field')),
+      '10.102.43.94:17890',
+    );
+    await tester.tap(find.byKey(const Key('manual-address-ok')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('手动填地址'), findsNothing, reason: '换好了就关掉');
+    expect(
+      find.textContaining('已连接主机（10.102.43.94:17890）'),
+      findsOneWidget,
+      reason: '面板那一行要跟着变 —— 否则用户以为没生效',
+    );
+    final PairingInfo saved = service.pairingStore.load()!;
+    expect(saved.hostId, 'h-1');
+    expect(saved.token, 'tok', reason: '只换地址，令牌不能动（否则要重新扫码）');
+  });
+
+  testWidgets('D 批护栏：未配对时给的是「扫码」，不是「手动换地址」', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('mobile-manual-address')),
+      findsNothing,
+      reason: '没配对过就没有令牌可沿用 —— 那时该走扫码 / 粘配对码',
+    );
+  });
 }

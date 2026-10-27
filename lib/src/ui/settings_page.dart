@@ -32,6 +32,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 
 import 'host_service_section.dart';
+import 'pairing_scan_page.dart';
 import 'notice.dart';
 
 /// 设置页。
@@ -645,6 +646,20 @@ class _MobileSyncPanel extends StatefulWidget {
 }
 
 class _MobileSyncPanelState extends State<_MobileSyncPanel> {
+  /// 已配对时**只换地址**（D 批）：复用扫码页那个对话框，身份与令牌沿用。
+  Future<void> _manualAddress() async {
+    final bool? paired = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) =>
+          ManualAddressDialog(service: widget.service),
+    );
+    if (paired != true || !mounted) return;
+    // 地址换了 ⇒ 立刻试一次：成功就是「连上了」，失败也有中文原因可看
+    await widget.onSyncNow?.call();
+    // 刷新「已连接主机（ip:port）」那一行
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -731,6 +746,18 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
               child: const Text('忘记这台主机'),
             ),
           ],
+        ),
+        const SizedBox(height: 8),
+        // ------------------------------------------------ D 批（2026-10-27 真机验收发现）
+        // **这条路径只有这里能进。** 「只换地址」要救的场景是
+        // 「扫码成功、但电脑挑错了网卡 ⇒ 连不上」—— 那时手机是**已配对**状态，
+        // 而扫码页只在**未配对**时出现 ⇒ `pairFromAddress` 在它本该起作用的
+        // 场景里根本进不去（真机验收时发现的：设置页只有「立即同步 / 忘记主机」）。
+        OutlinedButton.icon(
+          key: const Key('mobile-manual-address'),
+          onPressed: _manualAddress,
+          icon: const Icon(Icons.keyboard_alt_outlined, size: 18),
+          label: const Text('连不上？手动换地址'),
         ),
         // ------------------------------------------------ F14（2026-10-25）
         // ① 归档可见：换主机时自动把上一台主机的镜像存起来，这里给出口；
