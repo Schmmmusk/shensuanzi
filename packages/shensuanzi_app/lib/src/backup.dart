@@ -4,8 +4,12 @@
 ///
 /// - **AE-1 核心（WAL）**：`PRAGMA wal_checkpoint(TRUNCATE)` 后再拷，
 ///   否则副本缺最新事务（数据库是 WAL 模式，`database.dart`）
-/// - **AE-1 加固**：副本 `PRAGMA integrity_check` 通过才算成功——
-///   把「看起来成功的备份」变成「确实能用的备份」；失败删残件
+/// - **AE-1 加固**：副本 `PRAGMA quick_check` 通过才算成功——
+///   把「看起来成功的备份」变成「确实能用的备份」；失败删残件。
+///   （2026-10-28：`integrity_check` → `quick_check`。478 MB 库实测
+///   3105 ms vs 850 ms，而这段在主 isolate 上跑 ⇒ 前者就是真机那次
+///   「备份时界面假死」。校验对象是刚拷出的副本，主要风险是拷贝不完整，
+///   `quick_check` 能抓住；索引逐条比对那 2.2 秒对逐字节拷贝不是风险点。）
 /// - **遗漏 4 原子性**：先写 `.tmp` → 校验 → rename；每次顺带清理 `.tmp` 残留
 /// - **遗漏 2 可写探测**：建目录 + 写删探针文件；失败给「怎么办」
 ///   （与导出**共用** `fs.dart` 的 `ensureWritableDirectory`，§AF 建议 1）
@@ -418,11 +422,21 @@ class BackupService {
 
       // AE-1 加固：打开**副本**做完整性校验 —— 「看起来成功的备份」变成
       // 「确实能用的备份」；失败删残件，不留假备份
+      //
+      // ⚠️ 2026-10-28：**`integrity_check` → `quick_check`**。
+      // 真机实测（478 MB 库）：`integrity_check` **3105 ms**、`quick_check` **850 ms**。
+      // 而这一段跑在**主 isolate** 上（`Db.open` 不能跨 isolate），
+      // 3105 ms 正好对上真机那次「备份时界面假死」。
+      //
+      // 为什么 `quick_check` 够用：校验对象是**刚拷出来的副本**，最可能的故障是
+      // 「拷贝不完整 / 文件被截断」—— `quick_check` 会走遍所有页、验证 B 树结构，
+      // 能抓住这类问题。它少做的是「索引与表内容逐条比对」（那是慢的 2.2 秒），
+      // 而索引一致性对一份**逐字节拷贝**来说不是风险点（源库自己跑着没问题）。
       Db? check;
       try {
         check = Db.open(tmp);
         final List<Map<String, Object?>> rows = check.raw.select(
-          'PRAGMA integrity_check',
+          'PRAGMA quick_check',
         );
         final Object? verdict = rows.isEmpty ? null : rows.first.values.first;
         if ('$verdict' != 'ok') {

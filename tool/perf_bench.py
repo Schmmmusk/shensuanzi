@@ -35,7 +35,9 @@
 | `today_summary` | 概览「今日销售」 |
 | `recent_products` | 开单页商品选择器的「最近使用」 |
 | `pull_*` | 手机同步一次 pull 的分页 + 最近更新窗口 |
-| `doc_count` | 概览「有没有单据」、列表计数 |
+| `doc_count` | 概览「有没有单据」（**裸 COUNT，不是页面跑的**） |
+| `count_roots` | 单据页「共 N 条」= `countDocuments(rootsOnly)` —— **每帧都跑** |
+| `list_roots` | 单据页首屏 = `listDocuments(rootsOnly)` —— **每帧都跑** |
 
 ## 安全
 
@@ -254,6 +256,52 @@ def q_doc_count(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
     return ("SELECT COUNT(*) FROM documents", ())
 
 
+# ---------------------------------------------------------------------------
+# 下面两条是**单据页每帧真正跑的东西**（2026-10-28 补）。
+#
+# 为什么必须单独列出来：`doc_count` 是裸 `COUNT(*)`（3.5 ms），可单据页跑的是
+# `countDocuments(rootsOnly: true)` —— 带两个全表聚合 + 逐行 `COUNT(DISTINCT)`
+# 子查询。真机实测 **267 ms**，而 bench 报 3.5 ms ⇒ 报告里一片绿，页面上 2 秒。
+# 这个盲区让我们在上一轮把「页面卡」误判成「界面重建慢」。
+#
+# SQL 与 `DocumentDao._docFrom` / `_docFilter` **逐字一致**（改了那边要同步这里，
+# 否则又变成「测的不是跑的」）。
+#: 根单据的过滤条件（`rootsOnly: true`）——与 `DocumentDao._docFilter` 同源。
+_DOC_ROOTS = (
+    "WHERE d.ref_doc_id IS NULL AND NOT ("
+    "d.doc_type IN ('receipt','payment') AND ("
+    "SELECT COUNT(DISTINCT s.target_doc_id) FROM settlements s "
+    "WHERE s.receipt_doc_id = d.id AND s.target_doc_id IS NOT NULL) = 1)"
+)
+
+#: `_docFrom` 的三个 join（当事人名 / 退货汇总 / 已收已付汇总）。
+_DOC_FROM = (
+    "FROM documents d "
+    "LEFT JOIN parties pa ON pa.id = d.party_id "
+    "LEFT JOIN (SELECT ref_doc_id AS ref, SUM(total_amount) AS rsum, COUNT(*) AS rcnt "
+    "FROM documents WHERE ref_doc_id IS NOT NULL AND "
+    "doc_type IN ('sale_return','purchase_return') GROUP BY ref_doc_id) r ON r.ref = d.id "
+    "LEFT JOIN (SELECT target_doc_id AS tgt, SUM(amount) AS psum FROM settlements "
+    "WHERE target_doc_id IS NOT NULL GROUP BY target_doc_id) s ON s.tgt = d.id "
+)
+
+
+def q_count_roots(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
+    """单据页的「共 N 条」（`countDocuments(rootsOnly: true)`）。"""
+    return ("SELECT COUNT(*) AS c " + _DOC_FROM + _DOC_ROOTS, ())
+
+
+def q_list_roots(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
+    """单据页首屏（`listDocuments(rootsOnly: true, limit: 200)`）。"""
+    return (
+        "SELECT d.*, pa.name AS party_name, COALESCE(r.rsum,0) AS returned_sum, "
+        "COALESCE(r.rcnt,0) AS returned_count, COALESCE(s.psum,0) AS paid_sum "
+        + _DOC_FROM + _DOC_ROOTS +
+        " ORDER BY d.created_at DESC, d.id DESC LIMIT ?",
+        (limit,),
+    )
+
+
 QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]], ...] = (
     ("stock_group", "库存合计（每商品）", q_stock_group),
     ("stock_cost", "成本余值（每商品）", q_stock_cost),
@@ -270,6 +318,8 @@ QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]],
     ("pull_documents", "同步 pull：单据一页", q_pull_documents),
     ("pull_window", "同步 pull：最近更新窗口", q_pull_window),
     ("doc_count", "单据总数", q_doc_count),
+    ("count_roots", "单据页「共 N 条」（rootsOnly，每帧都跑）", q_count_roots),
+    ("list_roots", "单据页首屏（rootsOnly + LIMIT，每帧都跑）", q_list_roots),
 )
 
 

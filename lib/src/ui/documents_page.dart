@@ -99,6 +99,58 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
   final TextEditingController _searchController = TextEditingController();
 
+  /// **查询结果缓存**（2026-10-28，性能实测后改）。
+  ///
+  /// 从前 `countDocuments` + `listDocuments` 直接写在 `build()` 里 —— 任何一次
+  /// 重建（切页、父级 setState、字号/主题变化）都要重跑一遍。26 万单的库上
+  /// 实测 **≈227 ms/次**（计数 64 + 列表 159），而 `build()` 一次切页会跑不止一次。
+  ///
+  /// 现在：只在**筛选条件变化**时重查，`_applyFilters` 是唯一入口。
+  /// ⚠️ 新增筛选条件时**必须**走 `_applyFilters`，否则界面会显示旧数据（比慢更糟）。
+  int _total = 0;
+  List<DocumentSummary> _rows = const <DocumentSummary>[];
+
+  /// 查一次并写进缓存（**不** setState —— 由调用方决定要不要刷）。
+  void _loadInto() {
+    final String query = _query.trim();
+    final bool hasQuery = query.isNotEmpty;
+    _total = widget.dao.countDocuments(
+      types: _types,
+      statusViews: _statusViews,
+      sinceMillis: _sinceMillis,
+      untilMillis: _untilMillis,
+      includeDerived: _includeDerived,
+      query: hasQuery ? query : null,
+      rootsOnly: !_includeDerived,
+    );
+    _rows = widget.dao.listDocuments(
+      types: _types,
+      statusViews: _statusViews,
+      sinceMillis: _sinceMillis,
+      untilMillis: _untilMillis,
+      limit: 200,
+      includeDerived: _includeDerived,
+      rootsOnly: !_includeDerived,
+      query: hasQuery ? query : null,
+    );
+  }
+
+  /// **改筛选 + 重查**（唯一入口）：一次 setState 里把状态和结果一起换掉，
+  /// 不会闪一帧「新筛选 + 旧数据」。
+  void _applyFilters(VoidCallback mutate) {
+    setState(() {
+      mutate();
+      _loadInto();
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // 首屏：build 之前查一次（不在 build 里查）
+    _loadInto();
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -107,7 +159,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
   /// 搜索框变化：更新词；首次输入时把范围切到「全部」并记下原档位。
   void _onQueryChanged(String value) {
-    setState(() {
+    _applyFilters(() {
       _query = value;
       if (value.trim().isNotEmpty && _range != _TimeRange.all) {
         _autoSwitchedFrom = _range;
@@ -130,7 +182,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
   /// 搜索文字由 [ListHeader] 负责清（它顺便把 `_query` 置空），
   /// 这里只管**筛选状态本身**。
   void _clearAllFilters() {
-    setState(() {
+    _applyFilters(() {
       _types.clear();
       _statusViews.clear();
       _range = _TimeRange.last30;
@@ -222,7 +274,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
       initialDateRange: _customRange,
     );
     if (picked == null || !mounted) return;
-    setState(() {
+    _applyFilters(() {
       _customRange = picked;
       _range = _TimeRange.custom;
       // 手选范围 ⇒ 搜索的「已切到全部」说明不再成立
@@ -249,8 +301,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
         ),
       ),
     );
-    // 详情里可能核销过 —— 回来重查列表（`build` 会重新查 dao）
-    if (mounted) setState(() {});
+    // 详情里可能核销过 —— 回来重查列表（**显式重查**：查询已不在 build 里了）
+    if (mounted) _applyFilters(() {});
   }
 
   @override
@@ -264,30 +316,11 @@ class _DocumentsPageState extends State<DocumentsPage> {
     final bool hasQuery = query.isNotEmpty;
     // §审查 2026-10-05：退货冲减额由 `_summaries` 一次 JOIN 带出（`returnedCents`）
     // —— 不再单独发一条批量查询
-    // 批 3 第 16 条：真实总数 —— 与列表**同一份过滤条件**（见 `_docFilter`）
-    final int total = widget.dao.countDocuments(
-      types: _types,
-      statusViews: _statusViews,
-      sinceMillis: since,
-      untilMillis: until,
-      includeDerived: _includeDerived,
-      query: hasQuery ? query : null,
-      rootsOnly: !_includeDerived,
-    );
-
-    final List<DocumentSummary> rows = widget.dao.listDocuments(
-      types: _types,
-      statusViews: _statusViews,
-      sinceMillis: since,
-      untilMillis: until,
-      limit: 200,
-      // 明确按「退货 / 收付款」类目筛时，把派生单据放出来（否则一片空白）
-      includeDerived: _includeDerived,
-      // **一笔生意一行**（#26 批 3 甲案）：默认只列「根」，退货 / 收付款折进去；
-      // 用户明确筛了子类目时平铺（`_includeDerived`），否则筛「收款」会一片空白。
-      rootsOnly: !_includeDerived,
-      query: hasQuery ? query : null,
-    );
+    // ⚠️ **build 里不查库**（2026-10-28）：结果来自 `_loadInto()` 的缓存，
+    // 只在筛选变化时刷新（见 `_applyFilters`）。从前这两条查询写在这里，
+    // 任何一次重建都要重跑 ≈227 ms。
+    final int total = _total;
+    final List<DocumentSummary> rows = _rows;
 
     return Scaffold(
       body: SafeArea(
@@ -417,7 +450,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                           // 日期范围选择器要 await —— 不能在 setState 里做
                           unawaited(_pickCustomRange());
                         } else if (selected) {
-                          setState(() {
+                          _applyFilters(() {
                             _range = range;
                             // 用户**自己**选了范围 ⇒ 不再替他解释（说明行收起）
                             _autoSwitchedFrom = null;
@@ -438,7 +471,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                       key: Key('doc-type-${type.wire}'),
                       label: Text(type.label),
                       selected: _types.contains(type),
-                      onSelected: (bool selected) => setState(() {
+                      onSelected: (bool selected) => _applyFilters(() {
                         if (selected) {
                           _types.add(type);
                         } else {
@@ -460,7 +493,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
                       key: Key('doc-status-${view.name}'),
                       label: Text(view.label),
                       selected: _statusViews.contains(view),
-                      onSelected: (bool selected) => setState(() {
+                      onSelected: (bool selected) => _applyFilters(() {
                         if (selected) {
                           _statusViews.add(view);
                         } else {

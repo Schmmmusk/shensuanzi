@@ -1062,4 +1062,37 @@ void main() {
       reason: '同一行（视觉上是一组）',
     );
   });
+
+  // ------------------------------------------------------------ 真实总数（2026-10-27）
+  //
+  // 现实用户暴雷：商品过 200 个后页面一直显示「共 200 个商品」。
+  // 库存页比商品页更严重 —— 它的**整个列表**都来自 `products.list()`
+  // （默认 `limit: 200`），第 201 个商品在这里**根本不出现**。
+  testWidgets('商品超过 200 个：库存页显示真实总数（不再停在 200）', (WidgetTester tester) async {
+    final int t = 1700000000000;
+    // setUp 已有 1 个 ⇒ 补 249 个，共 250 个启用商品
+    for (int i = 0; i < 249; i++) {
+      ProductDao(db).insert(
+        Product(
+          id: 'bulk$i',
+          code: 'B${i.toString().padLeft(4, '0')}',
+          name: '批量商品$i',
+          unit: '个',
+          sellPrice: 100,
+          costPrice: 80,
+          createdAt: t,
+          updatedAt: t,
+        ),
+      );
+    }
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('共 250 个商品'),
+      findsOneWidget,
+      reason: '必须说真实总数 —— 停在 200 会让用户以为后 50 个商品不存在',
+    );
+  });
 }

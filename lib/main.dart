@@ -33,6 +33,9 @@ import 'src/app.dart';
 /// 跟随配置文件：`%APPDATA%\神算子\日志\神算子-日志.txt`
 /// （**不放在数据目录** —— 那里是用户会拷来拷去的经营数据，见 `log.dart` 文件头）
 void main() {
+  // 启动埋点 T0：**必须是第一行**（它同时启动计时器，所以 T0 恒为 0 ms）。
+  // 开关关着时这句被编译期折叠成空 —— 正式包零开销。
+  StartupTrace.mark('T0_main');
   // §BH·五 B1b（2026-10-04 裁定）：Android 的 config/log 要先定位到**应用私有
   // 目录**（path_provider，异步）才能建，而 %APPDATA% 在 Android 上不存在 ——
   // 走独立引导。桌面路径**一字不改**（Windows 行为零变化，§BH B1 待确认 2）。
@@ -70,6 +73,7 @@ Future<void> _mainMobile() async {
 
       _installErrorBoundary(log);
 
+      StartupTrace.mark('T1_run_app');
       runApp(
         ShensuanziApp(
           configStore: store,
@@ -77,6 +81,11 @@ Future<void> _mainMobile() async {
           dataRoot: support.path,
         ),
       );
+      WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+        StartupTrace.mark('T4_first_frame');
+        // 不立刻写：本 App 的数据库是首帧之后才开的，立刻写会漏 T2/T3
+        StartupTrace.flushAfterFirstFrame();
+      });
     },
     (Object error, StackTrace stack) {
       log.crash(error, stack);
@@ -123,7 +132,18 @@ void _mainDesktop() {
 
       _installErrorBoundary(log);
 
+      // T1：`runApp` 之前 —— 这一段是绑定初始化 + 日志 + 环境探测
+      StartupTrace.mark('T1_run_app');
       runApp(const ShensuanziApp());
+
+      // T4：**首帧绘制完**才算「界面真的出来了」。
+      // ⚠️ 这里才落盘（异步），**绝不在上面同步写文件** —— 那会把 I/O
+      // 加进被测的启动路径里，测出来的 4 秒有一半是埋点自己造成的。
+      WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+        StartupTrace.mark('T4_first_frame');
+        // 不立刻写：本 App 的数据库是首帧之后才开的，立刻写会漏 T2/T3
+        StartupTrace.flushAfterFirstFrame();
+      });
     },
     (Object error, StackTrace stack) {
       log.crash(error, stack);

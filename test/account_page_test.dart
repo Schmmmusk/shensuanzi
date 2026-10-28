@@ -535,4 +535,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('现金'), findsOneWidget);
   });
+
+  // ------------------------------------------------------------ 真实总数（2026-10-27）
+  //
+  // 与商品页同源的问题：`AccountService.listVisible` 用的是 `findAll`
+  // （默认 `limit: 200`），而计数写的是这个列表的长度 ⇒ 账户过 200 个后
+  // 永远显示「共 200 个」。账户通常不多，但「停用但还有钱」的账户被条数
+  // 上限挤掉，就是 OBS-05 那种「幽灵账」。
+  testWidgets('账户超过 200 个：显示真实总数', (WidgetTester tester) async {
+    final int t = 1700000000000;
+    for (int i = 0; i < 250; i++) {
+      AccountDao(db).insert(
+        Account(
+          id: 'acc$i',
+          name: '账户${i.toString().padLeft(3, '0')}',
+          type: AccountType.cash,
+          createdAt: t,
+          updatedAt: t,
+        ),
+      );
+    }
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('共 250 个'),
+      findsOneWidget,
+      reason: '必须说真实总数 —— 停在 200 会让用户以为后 50 个账户没了',
+    );
+  });
 }

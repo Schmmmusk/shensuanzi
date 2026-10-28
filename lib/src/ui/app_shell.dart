@@ -18,6 +18,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 import 'scaled.dart';
+import 'traced_page.dart';
 
 import 'nav_icons.dart';
 import 'overview_page.dart';
@@ -503,7 +504,18 @@ Widget appShellPage(
   } else {
     page = _PendingPage(destination: destination);
   }
-  return page;
+  // T5：切页计时（2026-10-28）。**只在埋点包里套这一层** ——
+  // `kStartupTrace` 是编译期常量，正式包里这句折叠成 `page`，
+  // widget 树与从前逐字相同（多一层 StatefulWidget 会改变 rebuild 行为，不能留）。
+  // ⚠️ `key` 必须带上 destination.id：同类型 widget 在同一位置会**复用 State**，
+  // `initState` 不重跑 ⇒ 只记得到第一页（2026-10-28 第一次跑就只记到 overview）。
+  return kStartupTrace
+      ? TracedPage(
+          key: ValueKey<String>(destination.id),
+          name: destination.id,
+          child: page,
+        )
+      : page;
 }
 
 class _AppShellState extends State<AppShell> {

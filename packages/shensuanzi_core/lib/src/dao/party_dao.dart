@@ -56,6 +56,39 @@ class PartyDao {
   List<Party> findAll({PartyRole? role, bool? active, int limit = 200}) =>
       _select(role: role, active: active, limit: limit);
 
+  /// **真实总数**（与 [findAll] 同口径，但不受 `limit` 截断）。
+  ///
+  /// 为什么必须有它（2026-10-27，现实用户暴雷）：`findAll` 默认 `limit: 200`，
+  /// 往来方页把 `visible.length` 当成「共 N 个」⇒ 过 200 个后**永远显示 200**。
+  ///
+  /// [role] 非空时只能取回再过滤 —— `roles` 是 JSON 文本，SQL 里精确匹配会误伤
+  /// （`"supplier"` 命中 `"supplier_x"`）。往来方量级本来就小，这里不带 `limit`。
+  int countAll({PartyRole? role, bool? active}) {
+    if (role != null) {
+      return _select(role: role, active: active, limit: null).length;
+    }
+    final ({String where, List<Object?> args}) filter = _where(active);
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT COUNT(*) AS c FROM ${Schema.parties}${filter.where}',
+      filter.args,
+    );
+    return (rows.first['c'] as int?) ?? 0;
+  }
+
+  /// 过滤条件 + 参数的**唯一来源**（[findAll] 与 [countAll] 共用）。
+  ({String where, List<Object?> args}) _where(bool? active) {
+    final List<String> conditions = <String>[];
+    final List<Object?> args = <Object?>[];
+    if (active != null) {
+      conditions.add('is_active = ?');
+      args.add(active ? 1 : 0);
+    }
+    return (
+      where: conditions.isEmpty ? '' : ' WHERE ${conditions.join(' AND ')}',
+      args: args,
+    );
+  }
+
   /// **导出用**：不分页（§AF-5）。
   ///
   /// ⚠️ `active` 默认 `null` = **含停用** —— 一个**已停用但还欠着钱**的客户
@@ -64,15 +97,9 @@ class PartyDao {
       _select(role: role, active: active, limit: null);
 
   List<Party> _select({PartyRole? role, bool? active, required int? limit}) {
-    final List<String> conditions = <String>[];
-    final List<Object?> args = <Object?>[];
-    if (active != null) {
-      conditions.add('is_active = ?');
-      args.add(active ? 1 : 0);
-    }
-    final String where = conditions.isEmpty
-        ? ''
-        : ' WHERE ${conditions.join(' AND ')}';
+    final ({String where, List<Object?> args}) filter = _where(active);
+    final String where = filter.where;
+    final List<Object?> args = filter.args;
     final String tail = limit == null ? '' : ' LIMIT ?';
     if (limit != null) args.add(limit);
     // #42 甲 · L1：逐行保护 —— **一条坏行不再让整张往来方页打不开**

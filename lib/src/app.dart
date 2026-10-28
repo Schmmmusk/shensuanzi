@@ -807,6 +807,15 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     }
     try {
       final Db db = _service.open(location);
+      // T2：开库 + 迁移都已完成（`Db.open` 内部跑完迁移链才返回）
+      StartupTrace.mark('T2_db_open');
+      // 记下「这次测的是哪个库」—— 不然两轮数据分不清（小库 vs 478 MB 库）
+      StartupTrace.noteDatabase(
+        location.databasePath,
+        File(location.databasePath).existsSync()
+            ? File(location.databasePath).lengthSync() / (1024 * 1024)
+            : null,
+      );
       // 打开即迁移完毕 —— 之后的自动备份内容是这个版本的格式，
       // 文件名（AE-4）必须标它，不能标标记文件里可能过时的版本
       final int schemaVersion = db.schemaVersion;
@@ -903,9 +912,16 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         _brokenDirectory = null;
         _alreadyRunning = false;
       });
+      // T3：服务全部装配完（**在**自动备份之前 —— 备份是异步的，
+      // 不该算进启动耗时；把它算进来会让首启数字随库大小漂）
+      StartupTrace.mark('T3_services');
       // 先把状态读出来（设置页/概览页首帧就得有「上次备份」），
       // 再异步跑自动备份 —— **不 await**：用户马上要用软件
       _refreshBackupStatus();
+      // T3b：备份状态读完（**同步**扫备份目录 + 一次 `SELECT 1`）。
+      // 2026-10-28 实测：T3(14 ms) → 首屏开始构建(1.02 s) 之间空了 1 秒，
+      // 最可能就是这一段在等磁盘（F: 若是机械盘/外置，首次访问要等它转起来）。
+      StartupTrace.mark('T3b_backup_status');
       unawaited(_autoBackup());
     } catch (error, stack) {
       // §AG-5：**启动失败要留现场** —— 用户只会说「打不开了」，

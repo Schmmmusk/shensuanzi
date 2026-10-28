@@ -251,13 +251,17 @@ def _strip_sql_comments(sql: str) -> str:
     return "\n".join(line for line in lines if line)
 
 
-def _dart_string_literals(text: str) -> List[Tuple[int, str, bool]]:
+def _dart_string_literals(text: str) -> List[Tuple[int, int, str, bool]]:
     """取 Dart 源码里的字符串字面量。
 
-    返回 `(起始偏移, 内容, 是否 raw)` 的列表。支持 `'` / `"` / `'''` / `\"\"\"`，
+    返回 `(起始偏移, 结束偏移, 内容, 是否 raw)` 的列表。支持 `'` / `"` / `'''` / `\"\"\"`，
     跳过 `\\` 转义（raw 串不转义）。注释必须先被 [_strip_comments] 抹掉。
+
+    ⚠️ **结束偏移是必须的**（2026-10-27 补）：Dart 里**相邻字面量是拼接**
+    （`'a' 'b'` == `'ab'`），而列表元素之间才有逗号。只拿起始偏移无法区分这两种，
+    见 [load_ddl_from_schema_source] 里的 `joins_previous`。
     """
-    found: List[Tuple[int, str, bool]] = []
+    found: List[Tuple[int, int, str, bool]] = []
     i = 0
     n = len(text)
     while i < n:
@@ -288,7 +292,7 @@ def _dart_string_literals(text: str) -> List[Tuple[int, str, bool]]:
         body = "".join(buf)
         if not raw:
             body = _unescape_dart(body)
-        found.append((start, body, raw))
+        found.append((start, i, body, raw))
     return found
 
 
@@ -421,17 +425,38 @@ def load_ddl_from_schema_source(schema_source: Optional[str] = None) -> Tuple[Li
         raise SchemaSourceError("createStatements 列表没有闭合的 `]`")
 
     body = source[open_bracket + 1 : close_bracket]
-    statements: List[str] = []
-    for start, literal, _raw in _dart_string_literals(body):
+    # ⚠️ **相邻字面量是拼接，不是两个列表元素**（2026-10-27 修的缺陷）。
+    # v5 的覆盖索引就是这么写的：
+    #     'CREATE INDEX idx_stock_covering ON $stockLedger('
+    #         'product_id, seq_no, quantity, total_cost)',
+    # 从前「每个字面量 = 一条语句」⇒ 拆出 `...stock_ledger(;` 与 `product_id, ...);`
+    # 两条残句，空库建表直接 `near ";": syntax error`，而且快照里存的也是残句。
+    # 判据只看**源码里两个字面量之间的那段文本**：有逗号 = 两个元素；只有空白 = 拼接。
+    pieces: List[str] = []
+    prev_end: Optional[int] = None
+    for start, end, literal, _raw in _dart_string_literals(body):
         text = _interpolate_dart(literal, SCHEMA_TABLE_CONSTANTS)
         text = _strip_sql_comments(text)
+        joins_previous = (
+            bool(pieces) and prev_end is not None and "," not in body[prev_end:start]
+        )
+        prev_end = end
+        if joins_previous:
+            pieces[-1] += text
+        elif text:
+            pieces.append(text)
+
+    statements: List[str] = []
+    for piece in pieces:
+        text = piece.strip()
         if not text:
             continue
-        if not text.rstrip().endswith(";"):
-            text = text.rstrip() + ";"
+        if not text.endswith(";"):
+            text += ";"
         statements.append(text)
     if not statements:
         raise SchemaSourceError("createStatements 里一条语句都没解析出来")
+    check_statement_shape(statements)
 
     check_table_name_consistency(statements)
     if os.path.abspath(schema_source) == os.path.abspath(default_schema_source()):
@@ -494,6 +519,54 @@ def _object_name(statement: str) -> str:
     if not m:
         raise SchemaSourceError("无法从建表语句里取对象名：%r" % statement[:80])
     return m.group(1)
+
+
+def check_statement_shape(statements: Sequence[str]) -> None:
+    """校验每条「语句」真的是一条完整语句，而不是被切碎的残句。
+
+    ## 为什么需要这道检查（2026-10-27 实测）
+
+    Dart 里**相邻字符串字面量是拼接**。`schema.dart` 的 v5 覆盖索引写成
+
+        'CREATE INDEX idx_stock_covering ON $stockLedger('
+            'product_id, seq_no, quantity, total_cost)',
+
+    旧解析器「一个字面量 = 一条语句」，于是切出两条：
+
+        CREATE INDEX idx_stock_covering ON stock_ledger(;     ← 残句
+        product_id, seq_no, quantity, total_cost);            ← 尾巴
+
+    后果是**空库建表必然失败**（`near ";": syntax error`），而且
+    `schema_snapshot.json` 里存的也是这两条残句 —— 测试机同样炸。
+    更坏的是 `gen_schema_snapshot.py --check` 会**假绿**：源码侧与快照侧
+    用同一个坏解析器，指纹当然一致。
+
+    ⇒ 判据不依赖解析器自己：**每条都必须以 DDL 关键字开头、以 `;` 结尾**。
+    切成残句时开头是列名（`product_id`）或结尾缺 `;`，这里立刻停住。
+    """
+    allowed = (
+        "CREATE ",
+        "DROP ",
+        "ALTER ",
+        "INSERT ",
+        "PRAGMA ",
+        "UPDATE ",
+        "DELETE ",
+    )
+    for index, stmt in enumerate(statements):
+        head = stmt.lstrip().upper()
+        if not head.startswith(allowed):
+            raise SchemaSourceError(
+                "从 schema.dart 解析出的第 %d 条不是完整语句（很可能是被切碎的残句）：\n"
+                "  %r\n"
+                "常见原因：Dart 的**相邻字面量拼接**没被合并"
+                "（如 'CREATE INDEX ... (' 换行 'col_a, col_b)'）。"
+                % (index + 1, stmt[:120])
+            )
+        if not stmt.rstrip().endswith(";"):
+            raise SchemaSourceError(
+                "从 schema.dart 解析出的第 %d 条没有以 `;` 结尾：%r" % (index + 1, stmt[:120])
+            )
 
 
 def check_table_name_consistency(statements: Sequence[str]) -> None:

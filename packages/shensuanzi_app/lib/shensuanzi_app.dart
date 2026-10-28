@@ -42,6 +42,8 @@ export 'src/data_directory.dart'
 export 'src/data_directory_service.dart' show DataDirectoryService;
 export 'src/data_migrator.dart'
     show DataMigrationResult, DataMigrator, MigrationPlan, MigrationProgress;
+export 'src/startup_trace.dart'
+    show StartupTrace, kStartupTrace, startupLine, pageLine, settledLine;
 export 'src/instance_lock.dart'
     show InstanceLock, InstanceLockResult, instanceLockFileName;
 export 'src/http_transport.dart' show HttpTransport;

@@ -5,7 +5,8 @@
 // ## 为什么需要它
 //
 // `packages/shensuanzi_core` 与 `packages/shensuanzi_app` 是纯 Dart 包，
-// `tool/typecheck.dart` 在那里是真门禁（把所有入口 import 一遍，编译不过就报）。
+// 那两个包里的真门禁是 `dart analyze`（纯 Dart，起得来；把所有入口 import 一遍，
+// 编译不过就报）。
 // 但根 `lib/` 与 `test/` 的文件都 import `package:flutter`：
 //
 // - `dart run` 编译不了它们（`dart:ui is not available on this platform`）

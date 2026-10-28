@@ -770,4 +770,33 @@ void main() {
       reason: '往来流水页在 2.0 档下溢出（附录 B 点名：固定宽度 / 顶部 Row）',
     );
   });
+
+  // ------------------------------------------------------------ 真实总数（2026-10-27）
+  //
+  // 商品页暴雷后逐页排查：往来方页**本来就对** —— `listVisible` 走的是
+  // `findAllForExport`（不分页），因为「停用但还欠钱的客户」不能被条数上限
+  // 挤掉（OBS-05 的幽灵账）。这条钉住它，免得以后有人图省事改回 `findAll`。
+  testWidgets('往来方超过 200 个：显示真实总数（本来就不该封顶）', (WidgetTester tester) async {
+    final int t = 1700000000000;
+    for (int i = 0; i < 250; i++) {
+      PartyDao(db).insert(
+        Party(
+          id: 'bulk-party$i',
+          name: '客户${i.toString().padLeft(3, '0')}',
+          roles: const <PartyRole>[PartyRole.customer],
+          createdAt: t,
+          updatedAt: t,
+        ),
+      );
+    }
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('共 250 个'),
+      findsOneWidget,
+      reason: '往来方页显示口径不分页 —— 计数必须是真实总数',
+    );
+  });
 }

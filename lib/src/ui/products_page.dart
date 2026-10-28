@@ -66,10 +66,59 @@ class _ProductsPageState extends State<ProductsPage> {
   /// 全部主数据写（建档 / 编辑 / 停用）都走它，与「一处出口」的纪律一致。
   MasterDataSink get _masterDataSink => ServiceMasterSink(_service);
 
-  List<Product> get _rows => _service.list(
-    query: _search.text.trim().isEmpty ? null : _search.text.trim(),
-    active: _showInactive ? null : true,
-  );
+  /// 搜索词（空 = 不筛）。列表与计数**共用**，避免两处口径漂移。
+  String? get _queryText {
+    final String q = _search.text.trim();
+    return q.isEmpty ? null : q;
+  }
+
+  /// **查询结果缓存**（2026-10-28，与单据页同款）。
+  ///
+  /// 从前 `_rows` / `_total` 是 **getter**，`build()` 里每次取都现查库。
+  /// 后果：只要有任何东西让页面重绘，就等于**重查一次库**。
+  /// 真机实测（第五轮埋点）商品页出现 **110 帧 / 2.7 秒**的尾段 ——
+  /// 每一帧都在重跑这两条查询，把一次几毫秒的查询放大成了 2.7 秒。
+  ///
+  /// ⚠️ 新增筛选条件时必须走 `_applyFilters`，否则界面显示旧数据。
+  List<Product> _rows = const <Product>[];
+
+  /// **真实总数**（同筛选口径，不受列表 `limit: 200` 截断）。
+  ///
+  /// 2026-10-27 现实用户暴雷：从前计数写 `rows.length`，商品过 200 个后
+  /// 页面永远显示「共 200 种」—— 用户拿它对账，以为自己只有 200 个商品。
+  int _total = 0;
+
+  /// 查一次并写进缓存（**不** setState —— 由调用方决定要不要刷）。
+  ///
+  /// ⚠️ **库没就绪时直接返回**：`widget.service == null` 时页面显示「怎么办」
+  /// （`_NotReady`），此时碰 `_service!` 会直接抛 —— 2026-10-28 实测把
+  /// `widget_test.dart` 的三条壳层用例炸红（`initState` 里无条件查库导致）。
+  void _loadInto() {
+    if (widget.service == null) return;
+    _rows = _service.list(
+      query: _queryText,
+      active: _showInactive ? null : true,
+    );
+    _total = _service.count(
+      query: _queryText,
+      active: _showInactive ? null : true,
+    );
+  }
+
+  /// **改筛选 + 重查**（唯一入口）：一次 setState 里把状态和结果一起换掉。
+  void _applyFilters(VoidCallback mutate) {
+    setState(() {
+      mutate();
+      _loadInto();
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // 首屏：build 之前查一次（不在 build 里查）
+    _loadInto();
+  }
 
   Future<void> _create() async {
     final Product? saved = await showProductFormDialog(
@@ -79,7 +128,7 @@ class _ProductsPageState extends State<ProductsPage> {
     );
     if (!mounted || saved == null) return;
     _announce('已保存，编码 ${saved.code}');
-    setState(() {});
+    _applyFilters(() {});
   }
 
   Future<void> _edit(Product product) async {
@@ -91,14 +140,14 @@ class _ProductsPageState extends State<ProductsPage> {
     );
     if (!mounted || saved == null) return;
     _announce('已保存，编码 ${saved.code}');
-    setState(() {});
+    _applyFilters(() {});
   }
 
   /// 停用 / 恢复，并给一次**撤销**机会
   void _toggleActive(Product product) {
     final bool wasActive = product.isActive;
     _masterDataSink.setProductActive(product.id, !wasActive);
-    setState(() {});
+    _applyFilters(() {});
 
     showSnack(
       context,
@@ -112,7 +161,7 @@ class _ProductsPageState extends State<ProductsPage> {
           onPressed: () {
             if (!mounted) return;
             _masterDataSink.setProductActive(product.id, wasActive);
-            setState(() {});
+            _applyFilters(() {});
           },
         ),
       ),
@@ -145,7 +194,7 @@ class _ProductsPageState extends State<ProductsPage> {
               Expanded(
                 child: TextField(
                   controller: _search,
-                  onChanged: (_) => setState(() {}),
+                  onChanged: (_) => _applyFilters(() {}),
                   decoration: InputDecoration(
                     labelText: '搜商品',
                     hintText: '商品名 / 编码 / 条码',
@@ -159,7 +208,7 @@ class _ProductsPageState extends State<ProductsPage> {
                             icon: const Icon(Icons.clear),
                             onPressed: () {
                               _search.clear();
-                              setState(() {});
+                              _applyFilters(() {});
                             },
                           ),
                     border: const OutlineInputBorder(),
@@ -188,22 +237,38 @@ class _ProductsPageState extends State<ProductsPage> {
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Checkbox(
-                value: _showInactive,
-                onChanged: (bool? value) =>
-                    setState(() => _showInactive = value ?? false),
+              Row(
+                children: <Widget>[
+                  Checkbox(
+                    value: _showInactive,
+                    onChanged: (bool? value) =>
+                        _applyFilters(() => _showInactive = value ?? false),
+                  ),
+                  // 文字标签必须在（中老年用户不看纯图标）
+                  const Text('显示已停用的商品'),
+                ],
               ),
-              // 文字标签必须在（中老年用户不看纯图标）
-              const Text('显示已停用的商品'),
-              const Spacer(),
-              // 批 3 第 16 条：**真实总数**（商品页无分页，rows 就是全量）
-              Text(
-                '共 ${rows.length} 种',
-                style: TextStyle(
-                  height: 1.6,
-                  color: theme.textTheme.bodySmall?.color,
+              // 计数行：**真实总数**，且被 `limit: 200` 截断时说清「只展示了多少」
+              // 与「去哪儿看其余的」。
+              // ⚠️ 从前是 `共 ${rows.length} 种` 且塞在上一行的 `Row` 里：
+              // ① 数字错（`rows` 被 limit 截断）；② 长文案在 2.0 档会把 Row 撑溢出。
+              // 所以**单独一行**（`Expanded` 宽度、可换行）。
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  countWithLimitText(
+                    shown: rows.length,
+                    total: _total,
+                    unit: '种',
+                    searching: _queryText != null,
+                  ),
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
                 ),
               ),
             ],

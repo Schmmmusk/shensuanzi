@@ -166,6 +166,23 @@ void main() {
         ),
       );
 
+  // ---------------------------------------------------------------- 相对日期
+  //
+  // ⚠️ **夹具里不许写死日期**（2026-10-28 真踩过）：页面默认时间范围是
+  // 「最近 30 天」，而本文件原来写死 `2026-09-27` —— 到了 10-28 它正好是
+  // 第 31 天，掉出范围 ⇒ 列表空 ⇒ 三条用例一起红。前一天还是绿的。
+  // 同 `startup_test.dart` 那颗定时炸弹是一个病。
+  String dayStr(int daysAgo) {
+    final DateTime d = DateTime.now().subtract(Duration(days: daysAgo));
+    return '${d.year}-${d.month.toString().padLeft(2, '0')}-'
+        '${d.day.toString().padLeft(2, '0')}';
+  }
+
+  DateTime daysAgoAt(int daysAgo, int hour, int minute) {
+    final DateTime d = DateTime.now().subtract(Duration(days: daysAgo));
+    return DateTime(d.year, d.month, d.day, hour, minute);
+  }
+
   testWidgets('空范围给空态提示', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -176,8 +193,8 @@ void main() {
   testWidgets('列出单据：对方名 + 散客显示；日期倒序', (WidgetTester tester) async {
     // ⚠️ 日期刻意错开：occurred_at 相同时排序只靠 created_at 兜底，
     // 断言会变成赌 SQLite 的排序实现
-    buy(date: '2026-09-27', qty: 10, partyId: 'pt1'); // 采购，王老板
-    sell(date: '2026-09-28', qty: 2); // 散客销售
+    buy(date: dayStr(2), qty: 10, partyId: 'pt1'); // 采购，王老板
+    sell(date: dayStr(1), qty: 2); // 散客销售
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -190,7 +207,7 @@ void main() {
     expect(find.textContaining('散客'), findsWidgets, reason: 'SC-6：无对方显示文字不是空白');
     expect(find.textContaining('XS'), findsWidgets, reason: '销售单号出现');
 
-    // 日期倒序：09-28 的散客销售在 09-27 的采购前面 —— 用坐标验证
+    // 日期倒序：较晚那张（dayStr(1)）的散客销售在较早那张（dayStr(2)）的采购前面 —— 用坐标验证
     final double ySale = tester.getTopLeft(find.textContaining('散客').first).dy;
     final double yBuy = tester.getTopLeft(find.textContaining('王老板').first).dy;
     expect(ySale < yBuy, isTrue, reason: '后发生的在前');
@@ -199,8 +216,8 @@ void main() {
   testWidgets('类型 chips：**多选**（可同时看销售与采购，§审查 2026-10-05）', (
     WidgetTester tester,
   ) async {
-    buy(date: '2026-09-28', qty: 10, partyId: 'pt1');
-    sell(date: '2026-09-28', qty: 2, partyId: 'pt2');
+    buy(date: dayStr(1), qty: 10, partyId: 'pt1');
+    sell(date: dayStr(1), qty: 2, partyId: 'pt2');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -252,8 +269,8 @@ void main() {
   testWidgets('状态 chips：未结清只留还欠钱的单（§审查 2026-10-05）', (
     WidgetTester tester,
   ) async {
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2'); // 欠 ¥10
-    sell(date: '2026-09-28', qty: 4, partyId: 'pt2'); // 当场结清
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2'); // 欠 ¥10
+    sell(date: dayStr(1), qty: 4, partyId: 'pt2'); // 当场结清
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -275,7 +292,7 @@ void main() {
   });
 
   testWidgets('点行打开单据详情（1a 起；复制单号挪到详情页）', (WidgetTester tester) async {
-    buy(date: '2026-09-28', qty: 10, partyId: 'pt1');
+    buy(date: dayStr(1), qty: 10, partyId: 'pt1');
     await tester.pumpWidget(page(withSettlement: true));
     await tester.pumpAndSettle();
 
@@ -292,7 +309,7 @@ void main() {
   });
 
   testWidgets('没接核销服务 → 行不可点（与其他可选服务同款判定）', (WidgetTester tester) async {
-    buy(date: '2026-09-28', qty: 10, partyId: 'pt1');
+    buy(date: dayStr(1), qty: 10, partyId: 'pt1');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -308,7 +325,7 @@ void main() {
     sales.create(
       SaleDraft(
         partyId: 'pt2',
-        date: '2026-09-28',
+        date: dayStr(1),
         lines: <SaleLineDraft>[
           SaleLineDraft(
             productId: 'p1',
@@ -350,8 +367,8 @@ void main() {
   testWidgets('导出按钮：导**当前筛选**、不写磁盘、列是中文（§AF-2 / AF-5）', (
     WidgetTester tester,
   ) async {
-    buy(date: '2026-09-27', qty: 10, partyId: 'pt1'); // 采购入库（王老板）
-    sell(date: '2026-09-28', qty: 2); // 散客销售
+    buy(date: dayStr(2), qty: 10, partyId: 'pt1'); // 采购入库（王老板）
+    sell(date: dayStr(1), qty: 2); // 散客销售
     final FakeExport fake = FakeExport();
     await tester.pumpWidget(page(exports: fake));
     await tester.pumpAndSettle();
@@ -447,7 +464,7 @@ void main() {
   testWidgets('#26② 行内层级：对方 + 金额在第一行，单号降到第二行（仍可见）', (
     WidgetTester tester,
   ) async {
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2'); // 李姐 ¥10.00
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2'); // 李姐 ¥10.00
     final String docNo = dao.listDocuments().single.document.docNo;
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -492,7 +509,7 @@ void main() {
         updatedAt: t,
       ),
     );
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt-long');
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt-long');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -512,14 +529,14 @@ void main() {
   });
 
   testWidgets('#26① 时间：主单只印日期（不印假的 00:00），收款单印到分', (WidgetTester tester) async {
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2');
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2');
     final String saleId = dao.listDocuments().single.document.id;
     // 手记收款：`occurred_at` = 真实时刻（`settlement_service` 的 `stamp`）
     settlements.settle(
       targetDocId: saleId,
       accountId: 'a1',
       amountCents: 1000,
-      now: DateTime(2026, 9, 28, 16, 48).millisecondsSinceEpoch,
+      now: daysAgoAt(1, 16, 48).millisecondsSinceEpoch,
     );
 
     await tester.pumpWidget(page());
@@ -527,13 +544,13 @@ void main() {
 
     // §BG 回归：主单 occurred_at 是当天 00:00 ⇒ **不许印 00:00**
     expect(find.textContaining('00:00'), findsNothing);
-    expect(find.textContaining('2026-09-28'), findsWidgets);
+    expect(find.textContaining(dayStr(1)), findsWidgets);
 
     // 点「收款」类目 ⇒ 派生单据放出来，必须带时分（否则同一天多张单分不出先后）
     await tester.tap(find.byKey(const Key('doc-type-receipt')));
     await tester.pumpAndSettle();
     expect(
-      find.textContaining('2026-09-28 16:48'),
+      find.textContaining('${dayStr(1)} 16:48'),
       findsOneWidget,
       reason: '有真时刻的单据要印到分（#26① Q3 乙）',
     );
@@ -542,8 +559,8 @@ void main() {
   // ------------------------------------------------------- #26 批 2：搜索（2026-10-18）
 
   testWidgets('#26 搜索：按对方名筛掉别的行（不是「空态」）', (WidgetTester tester) async {
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2'); // 李姐
-    buy(date: '2026-09-27', qty: 10, partyId: 'pt1'); // 王老板
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2'); // 李姐
+    buy(date: dayStr(2), qty: 10, partyId: 'pt1'); // 王老板
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -567,7 +584,7 @@ void main() {
   });
 
   testWidgets('#26 搜索：无结果时说的是「没找到」而不是「这个范围没有单」', (WidgetTester tester) async {
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2');
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -579,7 +596,7 @@ void main() {
   });
 
   testWidgets('#26 搜索：首次输入自动切「全部」并说明；清空后不切回', (WidgetTester tester) async {
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2');
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -609,8 +626,8 @@ void main() {
   });
 
   testWidgets('#26 搜索：导出带同一个搜索词（AF-5：行数与列表一致）', (WidgetTester tester) async {
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2'); // 李姐
-    buy(date: '2026-09-27', qty: 10, partyId: 'pt1'); // 王老板
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2'); // 李姐
+    buy(date: dayStr(2), qty: 10, partyId: 'pt1'); // 王老板
     final FakeExport fake = FakeExport();
     await tester.pumpWidget(page(exports: fake));
     await tester.pumpAndSettle();
@@ -715,7 +732,7 @@ void main() {
   });
 
   testWidgets('#26 批 3：没有关联的单不显示摘要行（反向灵敏度）', (WidgetTester tester) async {
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2');
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2');
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
@@ -796,7 +813,7 @@ void main() {
   testWidgets('#26 批 3：赊账销售 + 详情页收款 ⇒ 列表只剩一行（用户复跑的场景）', (
     WidgetTester tester,
   ) async {
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2'); // 李姐 ¥10.00
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2'); // 李姐 ¥10.00
     final String saleId = dao.listDocuments().single.document.id;
     // 用户真实路径：详情页点 [收款] ⇒ `settle` 生成的收款单 **ref_doc_id 是 NULL**，
     // 它与销售单的关联只在 `settlements` 里 —— 只看 ref_doc_id 就会漏折。
@@ -824,7 +841,7 @@ void main() {
   });
 
   testWidgets('#26 批 3：详情页「核销去向」上移，且能点开那张收款单再返回', (WidgetTester tester) async {
-    sellOnCredit(date: '2026-09-28', qty: 2, partyId: 'pt2');
+    sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2');
     final String saleId = dao.listDocuments().single.document.id;
     settlements.settle(
       targetDocId: saleId,
@@ -909,4 +926,102 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('已切到「全部」'), findsNothing);
   });
+
+  // ------------------------------------------------------------ 查询不在 build 里（2026-10-28）
+  //
+  // 性能实测：`countDocuments` + `listDocuments` 从前写在 `build()` 里，
+  // 26 万单的库上 ≈227 ms/次 —— **任何一次重建**（切页、父级 setState、
+  // 字号变化）都要重跑一遍。现在只在筛选变化时查（`_applyFilters` 唯一入口）。
+  // 这条用计数 DAO 钉住两个方向：重建不许查、换筛选必须查。
+  testWidgets('build 里不查库：只重建不换筛选，不产生新查询', (WidgetTester tester) async {
+    sell(date: dayStr(1), qty: 2);
+    final _CountingDao counting = _CountingDao(db);
+    late StateSetter rebuild;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (BuildContext context, StateSetter setState) {
+              rebuild = setState;
+              return DocumentsPage(dao: counting);
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final int afterMount = counting.queries;
+    expect(afterMount, greaterThan(0), reason: '首屏必须查一次（否则页面是空的）');
+
+    rebuild(() {}); // 只重建，不改任何筛选
+    await tester.pumpAndSettle();
+    expect(
+      counting.queries,
+      afterMount,
+      reason: '重建又查库 = 227 ms 白花一次；查询只能待在 _loadInto 里',
+    );
+
+    // 反过来：改筛选**必须**重查（否则界面显示旧数据 —— 比慢更糟）
+    await tester.tap(find.byKey(const Key('doc-status-unsettled')));
+    await tester.pumpAndSettle();
+    expect(
+      counting.queries,
+      greaterThan(afterMount),
+      reason: '换了筛选就必须重查，否则「筛了没反应」',
+    );
+  });
+}
+
+/// 只数「查了几次库」的 DAO —— 钉住「查询不在 build 里」这条结构。
+class _CountingDao extends DocumentDao {
+  _CountingDao(super.db);
+
+  int queries = 0;
+
+  @override
+  int countDocuments({
+    Set<DocType> types = const <DocType>{},
+    Set<DocumentStatusView> statusViews = const <DocumentStatusView>{},
+    int? sinceMillis,
+    int? untilMillis,
+    bool includeDerived = false,
+    String? query,
+    bool? rootsOnly,
+  }) {
+    queries++;
+    return super.countDocuments(
+      types: types,
+      statusViews: statusViews,
+      sinceMillis: sinceMillis,
+      untilMillis: untilMillis,
+      includeDerived: includeDerived,
+      query: query,
+      rootsOnly: rootsOnly,
+    );
+  }
+
+  @override
+  List<DocumentSummary> listDocuments({
+    Set<DocType> types = const <DocType>{},
+    Set<DocumentStatusView> statusViews = const <DocumentStatusView>{},
+    int? sinceMillis,
+    int? untilMillis,
+    int limit = 200,
+    bool includeDerived = false,
+    String? query,
+    bool? rootsOnly,
+  }) {
+    queries++;
+    return super.listDocuments(
+      types: types,
+      statusViews: statusViews,
+      sinceMillis: sinceMillis,
+      untilMillis: untilMillis,
+      limit: limit,
+      includeDerived: includeDerived,
+      query: query,
+      rootsOnly: rootsOnly,
+    );
+  }
 }

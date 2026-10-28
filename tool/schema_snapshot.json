@@ -20,8 +20,7 @@
     "CREATE INDEX idx_lines_document ON document_lines(document_id);",
     "CREATE INDEX idx_lines_product ON document_lines(product_id);",
     "CREATE TABLE stock_ledger (\nid TEXT PRIMARY KEY,\nproduct_id TEXT NOT NULL,\ndocument_id TEXT NOT NULL,\nquantity INTEGER NOT NULL,\nunit_cost INTEGER NOT NULL DEFAULT 0,\ntotal_cost INTEGER NOT NULL DEFAULT 0,\nseq_no INTEGER NOT NULL,\noccurred_at INTEGER NOT NULL,\ntime_estimated INTEGER NOT NULL DEFAULT 0,\ncreated_at INTEGER NOT NULL,\nFOREIGN KEY (product_id) REFERENCES products(id),\nFOREIGN KEY (document_id) REFERENCES documents(id)\n);",
-    "CREATE INDEX idx_stock_covering ON stock_ledger(;",
-    "product_id, seq_no, quantity, total_cost);",
+    "CREATE INDEX idx_stock_covering ON stock_ledger(product_id, seq_no, quantity, total_cost);",
     "CREATE INDEX idx_stock_document ON stock_ledger(document_id);",
     "CREATE UNIQUE INDEX idx_stock_seq ON stock_ledger(seq_no);",
     "CREATE TABLE money_ledger (\nid TEXT PRIMARY KEY,\naccount_id TEXT NOT NULL,\ndocument_id TEXT NOT NULL,\namount INTEGER NOT NULL,\nseq_no INTEGER NOT NULL,\noccurred_at INTEGER NOT NULL,\ntime_estimated INTEGER NOT NULL DEFAULT 0,\nexternal_ref TEXT,\ncreated_at INTEGER NOT NULL,\nFOREIGN KEY (account_id) REFERENCES accounts(id),\nFOREIGN KEY (document_id) REFERENCES documents(id)\n);",
@@ -42,5 +41,5 @@
     "CREATE TABLE clock_offset (\nid INTEGER PRIMARY KEY CHECK (id = 1),\noffset_ms INTEGER NOT NULL DEFAULT 0,\nupdated_at INTEGER NOT NULL\n);",
     "CREATE TABLE sync_cursor (\nentity TEXT PRIMARY KEY,\ncursor TEXT NOT NULL,\nupdated_at INTEGER NOT NULL\n);"
   ],
-  "fingerprint": "3265deb2dc442c82"
+  "fingerprint": "96443aa85b0552bb"
 }

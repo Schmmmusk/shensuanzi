@@ -105,6 +105,20 @@ class ProductDao {
   List<Product> findAll({String? query, bool? active, int limit = 200}) =>
       _select(query: query, active: active, limit: limit);
 
+  /// **真实总数**（与 [findAll] 同口径，但不受 `limit` 截断）。
+  ///
+  /// 为什么必须有它（2026-10-27，现实用户暴雷）：`findAll` 默认 `limit: 200`，
+  /// 而商品页把 `rows.length` 当成「共 N 种」⇒ 商品过 200 个后页面**永远显示
+  /// 200**。用户拿这个数对账，会以为自己只有 200 个商品 —— 是数据可信度问题。
+  int countAll({String? query, bool? active}) {
+    final ({String where, List<Object?> args}) filter = _where(query, active);
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT COUNT(*) AS c FROM ${Schema.products}${filter.where}',
+      filter.args,
+    );
+    return (rows.first['c'] as int?) ?? 0;
+  }
+
   /// **导出用**：不分页（§AF-5）。
   ///
   /// ⚠️ `active` 默认 `null` = **含停用** —— 与页面列表（默认只看启用）**不同**：
@@ -112,7 +126,11 @@ class ProductDao {
   List<Product> findAllForExport({String? query, bool? active}) =>
       _select(query: query, active: active, limit: null);
 
-  List<Product> _select({String? query, bool? active, required int? limit}) {
+  /// 过滤条件 + 参数的**唯一来源**。
+  ///
+  /// [findAll] 与 [countAll] 都从这里取 —— 两处各写一遍，改一处漏一处，
+  /// 「列表里有、计数里没有」这种谎就会回来（同 `DocumentDao._docFilter` 的口径）。
+  ({String where, List<Object?> args}) _where(String? query, bool? active) {
     final List<String> conditions = <String>[];
     final List<Object?> args = <Object?>[];
     if (active != null) {
@@ -124,9 +142,16 @@ class ProductDao {
       final String like = '%$query%';
       args.addAll(<Object?>[like, like, like]);
     }
-    final String where = conditions.isEmpty
-        ? ''
-        : ' WHERE ${conditions.join(' AND ')}';
+    return (
+      where: conditions.isEmpty ? '' : ' WHERE ${conditions.join(' AND ')}',
+      args: args,
+    );
+  }
+
+  List<Product> _select({String? query, bool? active, required int? limit}) {
+    final ({String where, List<Object?> args}) filter = _where(query, active);
+    final String where = filter.where;
+    final List<Object?> args = filter.args;
     final String tail = limit == null ? '' : ' LIMIT ?';
     if (limit != null) args.add(limit);
     return decodeRows(

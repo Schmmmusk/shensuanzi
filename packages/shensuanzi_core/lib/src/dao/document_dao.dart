@@ -192,7 +192,10 @@ class DocumentDao {
       rootsOnly: rootsOnly ?? !includeDerived,
     );
     final List<Map<String, Object?>> rows = _raw.select(
-      'SELECT COUNT(*) AS c $_docFrom${filter.where}',
+      // ⚠️ 用 `_fromFor`（只带 WHERE 引用的表），**不是** `_docFrom`。
+      // `COUNT(*)` 用不到「退货汇总 / 核销汇总」那两个派生表，带上它们会被
+      // 整表物化：实测 300 ms vs 61 ms（2026-10-28，26 万单库）。
+      'SELECT COUNT(*) AS c ${_fromFor(filter)}${filter.where}',
       filter.args,
     );
     return (rows.first['c'] as int?) ?? 0;
@@ -464,7 +467,32 @@ class DocumentDao {
     final String where = conditions.isEmpty
         ? ''
         : 'WHERE ${conditions.join(' AND ')} ';
-    return _DocFilter(where: where, args: args);
+    return _DocFilter(
+      where: where,
+      args: args,
+      // 「按内容找单」那四路里有一路是 `pa.name LIKE ?`
+      needsParties: query != null && query.trim().isNotEmpty,
+      // 「未结清」筛选是唯一引用派生表 `r.` / `s.` 的分支
+      needsAggregates: statusViews.contains(DocumentStatusView.unsettled),
+    );
+  }
+
+  /// 按需拼 FROM：**只带 WHERE 真正引用的表**。
+  ///
+  /// 2026-10-28（性能实测后修）：`countDocuments` 从前无条件用 [docFrom]（三个 join），
+  /// 而 `COUNT(*)` 只需要 `WHERE`。实测 26 万单 + 10 万核销的库上：
+  /// 带全套 join **300 ms** → 只带必需的表 **61 ms**（4.9 倍）。
+  static String _fromFor(_DocFilter filter) {
+    final StringBuffer buffer = StringBuffer('FROM ${Schema.documents} d ');
+    if (filter.needsParties) {
+      buffer.write('LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id ');
+    }
+    if (filter.needsAggregates) {
+      buffer
+        ..write(_returnsJoin)
+        ..write(_settledJoin);
+    }
+    return buffer.toString();
   }
 
   /// 共用的 FROM/JOIN（列表与计数**同一份**，否则计数会漏 JOIN 而报错或数错）。
@@ -597,17 +625,13 @@ class DocumentDao {
     }
 
     // ---- 第一段：只取 id ----
-    // `unsettled` 是唯一引用 `r` / `s` 别名的筛选（见 `_docFilter`）。
-    final bool needsAggregates = statusViews.contains(
-      DocumentStatusView.unsettled,
-    );
+    // 派生表只在「未结清」筛选时才需要 —— 由 `_fromFor(filter)` 按需拼
+    //（`filter.needsAggregates` 就是 `statusViews.contains(unsettled)`）。
     final List<String> ids = <String>[
       for (final Map<String, Object?> row in _raw.select(
+        // 同样按需拼：没有「按对方名搜」就不 join parties，没有「未结清」就不带派生表
         'SELECT d.id '
-        'FROM ${Schema.documents} d '
-        'LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id '
-        // 未结清筛选要用派生表；其余筛选不带（省 190 ms）
-        '${needsAggregates ? '$_returnsJoin$_settledJoin' : ''}'
+        '${_fromFor(filter)}'
         '${filter.where}'
         '$_listOrder'
         'LIMIT ?',
@@ -834,8 +858,24 @@ enum DocumentStatusView {
 
 /// 列表 / 计数共用的过滤结果（见 `DocumentDao._docFilter`）。
 class _DocFilter {
-  const _DocFilter({required this.where, required this.args});
+  const _DocFilter({
+    required this.where,
+    required this.args,
+    this.needsParties = false,
+    this.needsAggregates = false,
+  });
 
   final String where;
   final List<Object?> args;
+
+  /// `WHERE` 里引用了 `pa.`（「按对方名搜单」那条）。
+  ///
+  /// 2026-10-28：`countDocuments` 从前无条件带上 `_docFrom` 的三个 join，
+  /// 而 `COUNT(*)` 只用到 `WHERE` —— 那两个派生表（退货汇总 26 万行 /
+  /// 核销汇总 10 万行）被**整表物化**却一行都没用上，实测 **300 ms**。
+  /// 这里把「WHERE 到底引用了谁」显式记下来，调用方按需拼 FROM。
+  final bool needsParties;
+
+  /// `WHERE` 里引用了派生表 `r.` / `s.`（「未结清」筛选）。
+  final bool needsAggregates;
 }

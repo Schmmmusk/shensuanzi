@@ -200,4 +200,106 @@ void main() {
       reason: '商品页在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
     );
   });
+
+  // ------------------------------------------------------------ 真实总数（2026-10-27）
+  //
+  // 现实用户暴雷：商品过 200 个后，页面上一直显示「共 200 种」。
+  // 根因：`ProductService.list()` 的 `limit` 默认 200，而计数行写的是
+  // `rows.length` —— 把「这一屏取到多少」当成「总共有多少」。
+  // 这不是美观问题：用户拿它对账，会以为自己只有 200 个商品。
+  testWidgets('商品超过 200 个：显示真实总数，并说清只展示了前 200 种', (WidgetTester tester) async {
+    final int t = 1700000000000;
+    // setUp 里已有 1 个启用 + 1 个停用 ⇒ 再补 249 个启用，共 250 个启用
+    for (int i = 0; i < 249; i++) {
+      ProductDao(db).insert(
+        Product(
+          id: 'bulk$i',
+          code: 'B${i.toString().padLeft(4, '0')}',
+          name: '批量商品$i',
+          unit: '个',
+          sellPrice: 100,
+          costPrice: 80,
+          createdAt: t,
+          updatedAt: t,
+        ),
+      );
+    }
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('共 250 种'),
+      findsOneWidget,
+      reason: '必须说真实总数 —— 显示 200 会让用户以为自己只有 200 个商品',
+    );
+    expect(
+      find.textContaining('当前仅展示前 200 种'),
+      findsOneWidget,
+      reason: '截断必须说出来，否则用户找不到第 201 个还以为数据丢了',
+    );
+    expect(
+      find.textContaining('要具体的请用上方搜索'),
+      findsOneWidget,
+      reason: '光说「只展示 200」不给出口，用户还是不知道怎么办',
+    );
+  });
+
+  // ------------------------------------------------------------ 查询不在 build 里（2026-10-28）
+  //
+  // 第五轮埋点：商品页首帧只有 7 ms，却要 **2.7 秒 / 110 帧**才稳定。
+  // 根因之一：`_rows` / `_total` 是 getter，`build()` 每次取都现查库 ——
+  // 任何一次重绘都等于重查一次。这条用例钉住「重建不许查库」。
+  testWidgets('build 里不查库：只重建不换筛选，不产生新查询', (WidgetTester tester) async {
+    final _CountingService counting = _CountingService(db);
+    late StateSetter rebuild;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (BuildContext context, StateSetter setState) {
+              rebuild = setState;
+              return ProductsPage(service: counting);
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final int afterMount = counting.queries;
+    expect(afterMount, greaterThan(0), reason: '首屏必须查一次');
+
+    rebuild(() {});
+    await tester.pumpAndSettle();
+    expect(
+      counting.queries,
+      afterMount,
+      reason: '重建又查库 = 110 帧就查 110 次（真机 2.7 秒的成因）',
+    );
+
+    // 反过来：换筛选必须重查
+    await tester.tap(find.byType(Checkbox).first);
+    await tester.pumpAndSettle();
+    expect(counting.queries, greaterThan(afterMount), reason: '换筛选必须重查');
+  });
+}
+
+/// 只数「查了几次库」的服务（钉住「查询不在 build 里」）。
+class _CountingService extends ProductService {
+  _CountingService(super.db);
+
+  int queries = 0;
+
+  @override
+  List<Product> list({String? query, bool? active = true, int limit = 200}) {
+    queries++;
+    return super.list(query: query, active: active, limit: limit);
+  }
+
+  @override
+  int count({String? query, bool? active = true}) {
+    queries++;
+    return super.count(query: query, active: active);
+  }
 }

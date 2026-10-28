@@ -1,0 +1,15 @@
+{
+  "label": "新电脑-第2轮",
+  "started": "2026-10-28T09:30:12",
+  "duration_s": 1065.1,
+  "samples": 3214,
+  "actions": [],
+  "interval_s": 0.5,
+  "process": "shensuanzi.exe",
+  "pid": 0,
+  "app_version": "0.6.5",
+  "session_note": "CPU/内存/磁盘类型/系统缩放/应用界面大小/杀毒软件",
+  "db": "F:\\ssz\\shensuanzi.db",
+  "db_mb": 478.09,
+  "wal_mb": 0.0
+}

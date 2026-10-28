@@ -254,7 +254,11 @@ class _StockPageState extends State<StockPage> {
     }
 
     // 商品全集（含停用的？—— 不，库存页只看启用中的商品）
-    final List<Product> all = widget.products.list();
+    // ⚠️ 必须用 `listForExport`（不分页）而不是 `list()`（默认 `limit: 200`）：
+    // 库存页的**整个列表**都来自这里 —— 用 `list()` 时第 201 个商品在库存页
+    // **根本不出现**（2026-10-27 现实用户暴雷，同源问题：商品过 200 个后
+    // 「共 N 种」也停在 200）。库存页要的是「全部商品的库存」，不能有上限。
+    final List<Product> all = widget.products.listForExport(active: true);
 
     // C2·§CC 裁定七：库存叠加 —— 一次遍历队列算全部未同步影响，
     // 行内只查 map；点开拆解才逐商品取 contributors（IO 不进常驻路径）

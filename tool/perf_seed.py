@@ -518,6 +518,43 @@ class Emitter:
         self.docs_since_commit = 0
 
 
+def retune_line_amount(line: Dict[str, Any]) -> None:
+    """改过 `amount` 之后**回算 `unit_price`**，让这一行仍然自洽。
+
+    ## 为什么必须有它（2026-10-27 实测）
+
+    `document_lines` 里 `amount` 与 `unit_price` 是同一行的两个字段，关系是
+
+        amount = quantity * unit_price - discount_amount
+
+    造数时为了满足业务约束（「退货不超原单」「拒收按原单全额」）经常要压 `amount`，
+    从前只改 `amount` ⇒ 关系当场破裂。`db_audit` 的 **INV-1b** 查的就是这个，
+    满量实测 2272 条异常。`unit_price` 本就是**派生值**（见 `docs/data_model.md`），
+    所以正确做法是回算它，而不是改数量（改数量会连带动库存流水）。
+
+    容差是「±半件」（`|差| * 2 ≤ 数量`），`round` 之后天然满足。
+
+    ## 为什么用「向上取整 + 让价吸收余数」而不是四舍五入
+
+    四舍五入能过「±半件」的容差检查（INV-1b），但过不了**严格相等**
+    （INV-1b*）—— 满量实测还会剩几条 ⚠️。把 `unit_price` 取成
+    `ceil(amount / quantity)`、让 `discount_amount` 吸收那点余数，等式就**逐字成立**：
+
+        amount = quantity * unit_price - discount_amount      （余数 < quantity）
+
+    这也更像真实数据：标价稍高、再让价，正是开单时的写法。
+    """
+    qty = int(line.get("quantity") or 0)
+    if qty <= 0:
+        return
+    amount = int(line["amount"])
+    price = -((-amount) // qty)  # ceil(amount / qty)，不用浮点
+    if price < 1:
+        price = 1
+    line["unit_price"] = price
+    line["discount_amount"] = qty * price - amount
+
+
 def build_doc(
     *,
     rnd: random.Random,
@@ -538,6 +575,10 @@ def build_doc(
     total = 0
     for p in lines:
         qty = rnd.choice((1, 1, 2, 2, 3, 5, 10, 12, 24))
+        # 退货行带 `max_qty`（= 原单该行的数量）：不许退得比原单还多
+        cap = p.get("max_qty")
+        if cap:
+            qty = max(1, min(qty, int(cap)))
         unit_price = p["sell_price"] if doc_type in ("sale", "delivery") else p["cost_price"]
         unit_price = max(1, int(unit_price * rnd.uniform(0.92, 1.06)))
         amount = qty * unit_price
@@ -773,14 +814,21 @@ def generate(
 
             original_id = None
             original = None
+            lines_from_original = False
             if doc_type in ("sale_return", "purchase_return"):
-                # 退货必须有原单：从「可退原单」缓存里挑一张；一单都没造过就退化成销售
-                if not originals:
+                # 退货必须有原单，而且**原单还有可退余额**（RULE-007：累计退货不超原单金额）。
+                # 从前只判 `if not originals` ⇒ 同一张原单被反复退，累计会突破原单金额
+                #（满量实测 72 条 INV-7 违规）。
+                usable = [
+                    o for o in originals if o.get("returned", 0) < o["total_amount"]
+                ]
+                if not usable:
                     doc_type = "sale"
                 else:
-                    original = originals[rnd.randrange(len(originals))]
+                    original = usable[rnd.randrange(len(usable))]
                     original_id = original["id"]
-                    # 退货按原单的商品与售价（不是当前档案价）—— 与 RULE-007 的成本口径同向
+                    # 退货按原单的商品与售价（不是当前档案价）—— 与 RULE-007 的成本口径同向。
+                    # ⚠️ `max_qty` 必须带上：`build_doc` 默认随机 1~24 件，很容易退得比原单还多。
                     lines = [
                         {
                             "id": pid,
@@ -788,12 +836,16 @@ def generate(
                             "cost_price": price,
                             "package_size": None,
                             "package_unit": None,
+                            "max_qty": max(1, int(orig_qty)),
                         }
-                        for (pid, _qty, price) in original["lines"][:2]
+                        for (pid, orig_qty, price) in original["lines"][:2]
                     ]
-            if doc_type not in ("sale_return", "purchase_return"):
-                lines = choose_lines(rnd, products, line_count)
-            else:
+                    lines_from_original = True
+            # ⚠️ 这一句从前是 `if ... else: lines = choose_lines(...)` ——
+            # **两个分支都执行 choose_lines**，把上面按原单构造的 lines 整段覆盖掉
+            #（死代码）。后果：退货单的 ref_doc_id 指向原单，但商品与单价全对不上，
+            # 累计退货也就无从判断 ⇒ INV-1b 2272 条、INV-7 72 条（2026-10-27 满量实测）。
+            if not lines_from_original:
                 lines = choose_lines(rnd, products, line_count)
 
             party_id = customer_ids[rnd.randrange(len(customer_ids))]
@@ -811,12 +863,20 @@ def generate(
                 status=status,
             )
 
-            # 退货总额不得超过原单（否则往来账会被「退出一笔更大的钱」）
-            if original is not None and doc["total_amount"] > original["total_amount"]:
-                if doc_lines:
-                    diff = doc["total_amount"] - original["total_amount"]
-                    doc_lines[-1]["amount"] -= diff
-                    doc["total_amount"] = original["total_amount"]
+            # 退货总额不得超过**原单剩余可退额**（否则往来账会被「退出一笔更大的钱」，
+            # 多次退货累计还会突破 RULE-007）。
+            if original is not None:
+                remaining = original["total_amount"] - original.get("returned", 0)
+                if doc["total_amount"] > remaining and doc_lines:
+                    diff = doc["total_amount"] - remaining
+                    last = doc_lines[-1]
+                    last["amount"] -= diff
+                    # ⚠️ 只改 `amount` 会让「行金额 = 数量 × 单价 − 让价」当场不成立
+                    #（`db_audit` 的 INV-1b 就是这么查的，2026-10-27 实测 2272 条）
+                    retune_line_amount(last)
+                    doc["total_amount"] = remaining
+                # 记账：这张原单已经退掉多少（下一次退货只能退剩下的）
+                original["returned"] = original.get("returned", 0) + doc["total_amount"]
 
             emitter.add("documents", doc)
             for line in doc_lines:
@@ -830,6 +890,8 @@ def generate(
                         "doc_type": doc_type,
                         "party_id": party_id,
                         "total_amount": doc["total_amount"],
+                        # 已退累计（退货时累加，判 RULE-007 用）
+                        "returned": 0,
                         "lines": [
                             (l["product_id"], l["quantity"], l["unit_price"]) for l in doc_lines
                         ],
@@ -1025,6 +1087,14 @@ def generate(
                 if ret_lines:
                     diff = doc["total_amount"] - sum(l["amount"] for l in ret_lines)
                     ret_lines[-1]["amount"] += diff
+                    # ⚠️ 同款坑的第二处（2026-10-27）：只改 amount 不回算单价 ⇒ INV-1b
+                    retune_line_amount(ret_lines[-1])
+                # 拒收 = **全量**退回 ⇒ 这张送货单没有可退余额了，标满防止再被退一次
+                #（否则「拒收 + 普通退货」累计会突破原单金额 ⇒ INV-7）
+                for snapshot in originals:
+                    if snapshot["id"] == doc["id"]:
+                        snapshot["returned"] = snapshot["total_amount"]
+                        break
                 emitter.add("documents", ret_doc)
                 for line in ret_lines:
                     emitter.add("document_lines", line)

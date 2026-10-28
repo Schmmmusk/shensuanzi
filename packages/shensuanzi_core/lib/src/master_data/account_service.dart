@@ -126,13 +126,16 @@ class AccountService {
   /// [includeInactiveWithoutBalance] = `true`（勾上开关）⇒ **所有**停用账户都列，
   /// 包括余额为 0 的空账户。
   List<Account> listVisible({bool includeInactiveWithoutBalance = false}) {
-    final List<Account> inactive = _dao.findAll(active: false);
+    // ⚠️ 用 `findAllForExport`（不分页）而不是 `findAll`（默认 `limit: 200`）：
+    // 账户页的计数写的是这个列表的长度，过 200 个账户后会**永远显示 200**
+    //（2026-10-27 与商品页同源的问题）。账户量级本来就小，不分页没有代价。
+    final List<Account> inactive = _dao.findAllForExport(active: false);
     if (includeInactiveWithoutBalance) {
-      return <Account>[..._dao.findAll(active: true), ...inactive];
+      return <Account>[..._dao.findAllForExport(active: true), ...inactive];
     }
     final Map<String, int> byAccount = balances();
     return <Account>[
-      ..._dao.findAll(active: true),
+      ..._dao.findAllForExport(active: true),
       ...inactive.where((Account account) => (byAccount[account.id] ?? 0) != 0),
     ];
   }

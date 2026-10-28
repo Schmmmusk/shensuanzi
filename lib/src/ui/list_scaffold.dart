@@ -22,6 +22,36 @@ import 'package:flutter/material.dart';
 
 import 'scaled.dart';
 
+/// 计数行文案：**说真实总数**，被 `limit` 截断时把话说明白。
+///
+/// ## 为什么必须有它（2026-10-27，现实用户暴雷）
+///
+/// 商品页原来写 `共 ${rows.length} 种`，而 `ProductService.list()` 的 `limit`
+/// 默认 200 ⇒ **商品过 200 个后页面永远显示「共 200 种」**。用户拿它对账，
+/// 会以为自己只有 200 个商品 —— 这是数据可信度问题，不是美观问题
+/// （同 `documents_page` 早先修过的那条）。
+///
+/// ## 三件事必须同时说
+///
+/// | # | 说什么 | 为什么 |
+/// |---|---|---|
+/// | ① | **真实总数**（「共 348 种」） | 用户要的是「我有多少」 |
+/// | ② | **只展示了多少**（「当前仅展示前 200 种」） | 不说 ⇒ 用户以为数据丢了 |
+/// | ③ | **怎么看到其余的**（「要具体的请用上方搜索」） | 只说①②等于告诉他「你看不全」却不给出路 |
+///
+/// [shown] 是**当前真的渲染了几条**，[total] 是**同口径的真实总数**。
+/// 两者相等（没被截断）时只输出一句干净的「共 N 种」，不吓人。
+String countWithLimitText({
+  required int shown,
+  required int total,
+  required String unit,
+  bool searching = false,
+}) {
+  final String head = searching ? '找到 $total $unit' : '共 $total $unit';
+  if (shown >= total) return head;
+  return '$head（当前仅展示前 $shown $unit，要具体的请用上方搜索）';
+}
+
 /// 列表头：搜索（常驻）+ × 清空 + 额外筛选 + 计数行。
 ///
 /// **搜索是常驻的**（不是点开才有）：`ui_principles.md` §1.1 —— 要用户先找到

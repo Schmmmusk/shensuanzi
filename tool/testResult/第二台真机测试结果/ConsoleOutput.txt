@@ -1,0 +1,245 @@
+F:\shensuanzi>python perf_seed.py --data-dir "F:\ssz" --dry-run
+性能数据造数 —— 计划（--dry-run，未写任何数据）
+  目标库      F:\ssz\shensuanzi.db
+  schema 版本 5
+Active code page: 65001
+
+F:\shensuanzi>python perf_seed.py --data-dir "F:\ssz" --dry-run
+性能数据造数 —— 计划（--dry-run，未写任何数据）
+  目标库      F:\ssz\shensuanzi.db
+  schema 版本 5
+  目标行数    每张流水表 ≥ 100000
+  主数据      商品 300 / 往来方 200 / 账户 4
+  时间轴      730 天（最近 7 天加密）
+  抽样比例    立即收付 65% / 采购 12% / 送货 10% / 退货 3% / 拒收 3%
+
+  预计需要单据约 153846 张，全部行约 1285118 条，库约 450 MB，造数约 257 秒
+  （估算只用于心里有数；真实值以跑完的汇总为准）
+
+F:\shensuanzi>python perf_seed.py --data-dir "F:\ssz"
+主数据：商品 300 / 往来方 200 / 账户 4
+开始造单（每张流水表目标 ≥ 100000 行）……
+  造单 完成，用时 71.4s
+  补收付款 完成，用时 1.2s
+规整缓存字段（paid_amount / status 由流水反算）……
+checkpoint（把 WAL 归并回主库，便于量文件大小）……
+
+自检（硬性）
+  ✅ B4 paid_amount = SUM(settlements)      通过
+  ✅ B5 Σ明细金额 = 单据金额                        通过
+  ✅ 核销额未超单据总额（同目标求和）                       通过
+  ✅ 单号唯一                                   通过
+  ✅ seq_no 无重复（四张流水）                       通过
+  ✅ seq_no 无空洞（四张流水）                       通过
+  ✅ money_ledger 只挂在收付款单下                  通过
+  ✅ 收付款单都有 account_id / party_id           通过
+  ✅ entry_quantity / entry_unit 成对         通过
+
+行数（本次只查自洽性，不卡体量）
+  products                300
+  parties                 200
+  accounts                  4
+  documents            263042
+  document_lines       364452
+  stock_ledger         364452
+  money_ledger         100000
+  party_ledger         263042
+  settlements          100000
+
+文件：F:\ssz\shensuanzi.db = 478.1 MB（WAL 0.0 MB / SHM 0.1 MB）
+
+参考信息（不算违规）
+  负库存商品数           0
+  有库存的商品数          297
+  单据类型分布           263042
+  作废单数             500
+  在途送货单数           14377
+  未结清单据数           85229
+
+性能数据 —— 造数完成（用时 82 秒）
+  停止原因：达标；生成单据 147708 张
+  库文件：478.1 MB（WAL 已归并）
+
+下一步：
+  1) 基线（软件不要开）：python tool/perf_bench.py --db "F:\ssz\shensuanzi.db" --csv baseline-before.csv
+  2) 人工实测：        python tool/perf_monitor.py run --db "F:\ssz\shensuanzi.db" --out D:\perf-run1
+
+结论：✅ 自检全过，可以用作性能基线。
+
+F:\shensuanzi>python perf_bench.py --db "F:\ssz\" --csv baseline-before.csv --explain > before-explain.txt
+⛔ 找不到库文件：F:\ssz" --csv baseline-before.csv --explain
+
+F:\shensuanzi>python perf_bench.py --db "F:\ssz" --csv baseline-before.csv --explain > before-explain.txt
+⛔ 找不到库文件：F:\ssz
+
+F:\shensuanzi>python perf_bench.py --db "F:\ssz\shensuanzi.db" --csv baseline-before.csv --explain > before-explain.txt
+
+F:\shensuanzi>python perf_monitor.py selftest
+自动识别自检（合成序列，不需要软件）
+
+— 进程自动发现 —
+  ✅ 窗口标题优先（exe 名不对也能找到）：期望 PID 1000，实际 1000（依据：窗口标题含「神算子」）
+  ✅ 标题里带后缀也认（「神算子 - 销售开单」）：期望 PID 1000，实际 1000（依据：窗口标题含「神算子」）
+  ✅ 没有窗口 ⇒ 退回 exe 名：期望 PID 777，实际 777（依据：进程名 shensuanzi.exe）
+  ✅ 都没有 ⇒ 0（不许瞎挂）：期望 PID （找不到），实际 （找不到）
+
+— 动作识别 —
+  ✅ A 一次读突发 ⇒ 1 个「读库」事件：期望 1 个（读库），实际 1 个（读库/界面重建）
+        用时 0.40 秒 · 峰值 CPU 80% · 读 13.67 MB · 写 0.00 MB
+  ✅ B 一次写突发 ⇒ 1 个「写库」事件：期望 1 个（写库），实际 1 个（写库）
+        用时 0.20 秒 · 峰值 CPU 60% · 读 0.00 MB · 写 0.88 MB
+  ✅ C 两次突发、中间空闲够久 ⇒ 2 个事件：期望 2 个（读库 / 读库），实际 2 个（读库/界面重建 / 读库/界面重建）
+        用时 0.40 秒 · 峰值 CPU 80% · 读 9.77 MB · 写 0.00 MB
+        用时 0.40 秒 · 峰值 CPU 80% · 读 9.77 MB · 写 0.00 MB
+  ✅ D 两次突发、中间只空 0.4 秒 ⇒ 合并成 1 个（用户连点两下 = 一个动作）：期望 1 个（读库），实际 1 个（读库/界面重建）
+        用时 0.80 秒 · 峰值 CPU 80% · 读 9.77 MB · 写 0.00 MB
+  ✅ E 全程空闲 ⇒ 0 个事件（不许无中生有）：期望 0 个，实际 0 个
+  ✅ F 单个 200 ms 尖峰、无读写 ⇒ 丢掉（噪声，不是操作）：期望 0 个，实际 0 个
+
+✅ 全过：自动识别在这些场景下的行为符合预期。
+
+F:\shensuanzi>python perf_monitor.py run --data-dir "F:\ssz" --out "F:\shensuanzi\test_result" ^ --label "新电脑-第2轮" --app-version 0.6.5 ^ --se
+ssion-note
+usage: perf_monitor.py run [-h] [--db DB] [--data-dir DATA_DIR] [--window-title WINDOW_TITLE] [--process PROCESS] [--pid PID]
+                           [--interval INTERVAL] [--fast-interval FAST_INTERVAL] [--fast-hold FAST_HOLD] [--no-adapt]
+                           [--probe-interval PROBE_INTERVAL] [--rowcount-every ROWCOUNT_EVERY] [--window-days WINDOW_DAYS] [--duration DURATION]
+                           [--no-input] [--busy-cpu BUSY_CPU] [--busy-read-kb BUSY_READ_KB] [--busy-write-kb BUSY_WRITE_KB]
+                           [--idle-gap IDLE_GAP] [--slow-action SLOW_ACTION] [--cpu-busy CPU_BUSY] [--rss-growth RSS_GROWTH] [--out OUT]
+                           [--label LABEL] [--session-note SESSION_NOTE] [--app-version APP_VERSION] [--spool SPOOL] [--html] [--quiet]
+perf_monitor.py run: error: argument --session-note: expected one argument
+
+F:\shensuanzi>python perf_monitor.py run --data-dir "F:\ssz" --out "F:\shensuanzi\test_result" ^ --label "新电脑-第2轮" --app-version 0.6.5 ^ --se
+ssion-note "CPU/内存/磁盘类型/系统缩放/应用界面大小/杀毒软件"
+⚠️ 没找到软件窗口（标题含「神算子」）—— 先把软件打开；之后每次采样会再找。
+
+性能实测记录开始
+  输出目录  F:\shensuanzi\test_result
+  库文件    F:\ssz\shensuanzi.db
+  进程      shensuanzi.exe
+  采样      0.5 秒/次
+  ⚠️ 请保持本窗口开着；结束时按 q（会自动写报告）
+
+命令（**都不用按也能出数据** —— 脚本自己识别操作，下面这些是可选的补充）：
+  s <动作名>        开始计时（例：s 保存销售单）
+  e [观感] [备注]    结束计时；观感 1=顺畅 2=一般 3=卡顿 4=明显卡顿 5=无响应
+  m <备注>          记一条观察（不计时）
+  p                立即跑一次探针
+  r                打印当前摘要
+  c                打印标准测试清单
+  q                结束并生成报告
+
+  ⭐ 自动识别已开启：你只管用软件，动作耗时自己会记下来；
+     敲 s/e 只是为了给动作**贴名字**、填**观感**（这两样脚本猜不出来）。
+
+perf> 已挂接进程（PID 4976，依据：进程名 shensuanzi.exe）
+  · 自动识别 #1：4.01 秒（读库/界面重建，峰值 CPU 120%）
+  · 自动识别 #2：0.53 秒（读库/界面重建，峰值 CPU 26%）
+  · 自动识别 #3：2.36 秒（读库/界面重建，峰值 CPU 53%）
+  · 自动识别 #4：5.93 秒（读库/界面重建，峰值 CPU 154%）
+  · 自动识别 #5：3.07 秒（读库/界面重建，峰值 CPU 138%）
+c
+
+标准动作清单（按顺序做；耗时脚本自己记，想贴名字再敲 s / e）：
+   1. 冷启动        双击打开软件 → 进到主界面（第一次打开，page cache 是空的）
+   2. 概览页        看「今日销售 / 要留心」三张卡是否立刻出来
+   3. 库存页        进库存页，等列表出来（商品多时最吃力）
+   4. 库存页搜索      在库存页搜索框连打 5 个字符
+   5. 单据页首屏      进单据页，默认范围，等列表出来
+   6. 单据页搜索      在单据页搜索框连打 5 个字符
+   7. 单据详情       点开一张有明细的单
+   8. 商品页搜索      进商品页，连打 5 个字符
+   9. 往来方页       进往来方页（余额列要算）
+  10. 账户页        进账户页 → 点开一个账户的流水
+  11. 销售开单       销售开单：选客户 → 选 3 个商品 → 改数量 → 保存
+  12. 采购开单       采购入库：选商品 → 填进价 → 保存
+  13. 送货开单       送货：选客户 → 保存（会扣库存）
+  14. 收款核销       单据详情 → 收款 → 确认
+  15. 退货         单据详情 → 退货 → 填数量 → 保存
+  16. 导出 CSV     单据页 → 导出
+  17. 立即备份       概览/设置 → 立即备份
+  18. 二次冷启动      关掉软件再打开（这次 page cache 是热的）
+
+  · CPU 0.0% / 内存 163.7 MB / WAL 0.0 MB
+perf>   · 自动识别 #6：0.88 秒（读库/界面重建，峰值 CPU 129%）
+  · 自动识别 #7：1.58 秒（读库/界面重建，峰值 CPU 53%）
+  · 自动识别 #8：0.66 秒（读库/界面重建，峰值 CPU 171%）
+  · 自动识别 #9：2.00 秒（读库/界面重建，峰值 CPU 78%）
+  · 自动识别 #10：2.25 秒（读库/界面重建，峰值 CPU 120%）
+  · 自动识别 #11：0.47 秒（读库/界面重建，峰值 CPU 33%）
+  · 自动识别 #12：0.52 秒（读库/界面重建，峰值 CPU 48%）
+  · 自动识别 #13：1.13 秒（读库/界面重建，峰值 CPU 100%）
+  · 自动识别 #14：0.53 秒（读库/界面重建，峰值 CPU 35%）
+  · 自动识别 #15：1.10 秒（读库/界面重建，峰值 CPU 136%）
+  · 自动识别 #16：0.46 秒（读库/界面重建，峰值 CPU 40%）
+  · 自动识别 #17：11.46 秒（读库/界面重建，峰值 CPU 278%）
+e 4 账户流水页面直接拖拽进度条至底部发生明显卡顿
+（还没有开始计时的动作：先 s <动作名>）
+  · CPU 0.0% / 内存 156.5 MB / WAL 0.0 MB
+perf>   · 自动识别 #18：2.45 秒（读库/界面重建，峰值 CPU 100%）
+  · 自动识别 #19：4.71 秒（读库/界面重建，峰值 CPU 40%）
+  · 自动识别 #20：0.88 秒（读库/界面重建，峰值 CPU 64%）
+  · 自动识别 #21：1.59 秒（读库/界面重建，峰值 CPU 33%）
+  · 自动识别 #22：2.25 秒（读库/界面重建，峰值 CPU 36%）
+  · 自动识别 #23：0.44 秒（读库/界面重建，峰值 CPU 36%）
+  · 自动识别 #24：1.10 秒（读库/界面重建，峰值 CPU 88%）
+  · 自动识别 #25：3.37 秒（读库/界面重建，峰值 CPU 100%）
+  · 自动识别 #26：0.53 秒（读库/界面重建，峰值 CPU 44%）
+  · 自动识别 #27：0.44 秒（读库/界面重建，峰值 CPU 78%）
+  · 自动识别 #28：2.87 秒（读库/界面重建，峰值 CPU 129%）
+  · 自动识别 #29：1.78 秒（读库/界面重建，峰值 CPU 43%）
+  · 自动识别 #30：2.67 秒（读库/界面重建，峰值 CPU 36%）
+  · 自动识别 #31：0.53 秒（读库/界面重建，峰值 CPU 18%）
+  · 自动识别 #32：1.12 秒（读库/界面重建，峰值 CPU 36%）
+  · 自动识别 #33：0.66 秒（读库/界面重建，峰值 CPU 36%）
+  · 自动识别 #34：0.44 秒（读库/界面重建，峰值 CPU 46%）
+  · 自动识别 #35：0.45 秒（读库/界面重建，峰值 CPU 27%）
+  · 自动识别 #36：0.52 秒（读库/界面重建，峰值 CPU 12%）
+  · 自动识别 #37：0.88 秒（读库/界面重建，峰值 CPU 71%）
+  · 自动识别 #38：0.89 秒（读库/界面重建，峰值 CPU 43%）
+  · 自动识别 #39：0.23 秒（读库/界面重建，峰值 CPU 66%）
+  · 自动识别 #40：0.53 秒（读库/界面重建，峰值 CPU 24%）
+  · 自动识别 #41：1.82 秒（读库/界面重建，峰值 CPU 93%）
+  · 自动识别 #42：0.44 秒（读库/界面重建，峰值 CPU 50%）
+  · 自动识别 #43：0.69 秒（读库/界面重建，峰值 CPU 57%）
+  · 自动识别 #44：0.55 秒（写库，峰值 CPU 54%）
+  · 自动识别 #45：2.24 秒（读库/界面重建，峰值 CPU 93%）
+  · 自动识别 #46：4.04 秒（读库/界面重建，峰值 CPU 43%）
+  · 自动识别 #47：3.77 秒（读库/界面重建，峰值 CPU 143%）
+  · 自动识别 #48：5.99 秒（写库，峰值 CPU 164%）
+  · 自动识别 #49：2.02 秒（读库/界面重建，峰值 CPU 157%）
+  · 自动识别 #50：1.81 秒（读库/界面重建，峰值 CPU 60%）
+  · 自动识别 #51：10.18 秒（写库，峰值 CPU 150%）
+  · 自动识别 #52：0.94 秒（读库/界面重建，峰值 CPU 60%）
+  · 自动识别 #53：4.17 秒（写库，峰值 CPU 100%）
+  · 自动识别 #54：0.55 秒（读库/界面重建，峰值 CPU 47%）
+  · 自动识别 #55：2.01 秒（读库/界面重建，峰值 CPU 67%）
+  · 自动识别 #56：3.56 秒（读库/界面重建，峰值 CPU 100%）
+  · 自动识别 #57：1.81 秒（读库/界面重建，峰值 CPU 107%）
+  · 自动识别 #58：3.52 秒（读库/界面重建，峰值 CPU 50%）
+  · 自动识别 #59：0.88 秒（读库/界面重建，峰值 CPU 100%）
+  · 自动识别 #60：1.34 秒（读库/界面重建，峰值 CPU 126%）
+  · 自动识别 #61：2.27 秒（读库/界面重建，峰值 CPU 50%）
+  · 自动识别 #62：4.00 秒（读库/界面重建，峰值 CPU 50%）
+  · 自动识别 #63：0.53 秒（读库/界面重建，峰值 CPU 73%）
+m 商品、库存、单据、往来方、账户五大板块在长时间使用的条件下，点开都有明显卡顿
+  · 已记录：商品、库存、单据、往来方、账户五大板块在长时间使用的条件下，点开都有明显卡顿
+  · CPU 0.0% / 内存 123.8 MB / WAL 0.0 MB
+perf>   · 自动识别 #64：1.10 秒（读库/界面重建，峰值 CPU 59%）
+  · 自动识别 #65：1.10 秒（读库/界面重建，峰值 CPU 62%）
+  · 自动识别 #66：2.66 秒（读库/界面重建，峰值 CPU 143%）
+  · 自动识别 #67：4.21 秒（读库/界面重建，峰值 CPU 158%）
+m 随机快速切换页面卡顿明显
+  · 已记录：随机快速切换页面卡顿明显
+  · CPU 0.0% / 内存 121.7 MB / WAL 0.0 MB
+perf>   · 自动识别 #68：0.52 秒（读库/界面重建，峰值 CPU 27%）
+q
+
+已写出：
+  F:\shensuanzi\test_result\report.md
+  F:\shensuanzi\test_result\samples.csv
+  F:\shensuanzi\test_result\events.csv
+  F:\shensuanzi\test_result\session.json
+
+F:\shensuanzi>python perf_bench.py --data-dir "F:\ssz" --csv after.csv --explain > after-explain.txt
+
+F:\shensuanzi>

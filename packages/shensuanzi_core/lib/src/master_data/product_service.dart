@@ -48,6 +48,13 @@ class ProductService {
   List<Product> list({String? query, bool? active = true, int limit = 200}) =>
       _products.findAll(query: query, active: active, limit: limit);
 
+  /// **真实总数**（与 [list] 同口径，但不受 `limit` 截断）。
+  ///
+  /// 页面必须用它算「共 N 种」—— 用 `list().length` 会在超过 200 个商品后
+  /// 永远显示 200（2026-10-27 现实用户暴雷）。
+  int count({String? query, bool? active = true}) =>
+      _products.countAll(query: query, active: active);
+
   /// **导出用**：不分页、**默认含停用**（§AF-5 / AF-12）。
   ///
   /// 页面拿不到「全部商品」是故意的（列表有 200 上限、默认只看启用），

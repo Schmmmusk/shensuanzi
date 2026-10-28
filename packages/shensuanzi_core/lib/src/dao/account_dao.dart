@@ -47,20 +47,46 @@ class AccountDao {
     return found.isEmpty ? null : found.first;
   }
 
-  List<Account> findAll({bool? active, int limit = 200}) {
+  List<Account> findAll({bool? active, int limit = 200}) =>
+      _select(active: active, limit: limit);
+
+  /// **导出 / 显示用**：不分页（与 `PartyDao.findAllForExport` 同口径）。
+  ///
+  /// ⚠️ 显示口径不能用 `findAll`（默认 200 条）—— 一个**停用但还有钱**的账户
+  /// 被条数上限挤掉，用户会以为钱丢了（同 OBS-05 的「幽灵账」）。
+  List<Account> findAllForExport({bool? active}) =>
+      _select(active: active, limit: null);
+
+  List<Account> _select({bool? active, required int? limit}) {
     final String where = active == null
         ? ''
         : ' WHERE is_active = ${active ? 1 : 0}';
+    final String tail = limit == null ? '' : ' LIMIT ?';
     return decodeRows(
       _raw.select(
-        'SELECT * FROM ${Schema.accounts}$where ORDER BY name LIMIT ?',
-        <Object?>[limit],
+        'SELECT * FROM ${Schema.accounts}$where ORDER BY name$tail',
+        <Object?>[?limit],
       ),
       (Map<String, Object?> row) =>
           Account.fromRow(row, failures: db.readFailures),
       table: Schema.accounts,
       failures: db.readFailures,
     );
+  }
+
+  /// **真实总数**（与 [findAll] 同口径，但不受 `limit` 截断）。
+  ///
+  /// 为什么必须有它（2026-10-27，现实用户暴雷）：`findAll` 默认 `limit: 200`，
+  /// 账户页把 `visible.length` 当成「共 N 个」⇒ 过 200 个后**永远显示 200**。
+  int countAll({bool? active}) {
+    final String where = active == null
+        ? ''
+        : ' WHERE is_active = ${active ? 1 : 0}';
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT COUNT(*) AS c FROM ${Schema.accounts}$where',
+      const <Object?>[],
+    );
+    return (rows.first['c'] as int?) ?? 0;
   }
 
   void update(Account account) {

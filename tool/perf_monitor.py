@@ -122,6 +122,12 @@ SAMPLE_COLUMNS: Tuple[str, ...] = (
     "probe_stock_ms",
     "probe_list_ms",
     "probe_window_ms",
+    # ---- 自动识别用（2026-10-27）：增量按「本采样区间」算，不依赖累计值
+    "read_kb",
+    "write_kb",
+    "busy",
+    "event_id",
+    "fg_title",
     "pid",
     "note",
 )
@@ -134,7 +140,257 @@ EVENT_COLUMNS: Tuple[str, ...] = (
     "duration_s",
     "feel",
     "note",
+    # ---- 2026-10-27：`source` 区分「脚本自己发现的」与「人按的」，
+    # 报告里两者分开展示，绝不把推断冒充成人工确认。
+    "source",
+    "peak_cpu",
+    "read_mb",
+    "write_mb",
 )
+
+
+# --------------------------------------------------------------------------- 窗口发现
+
+#: 主窗口标题（`windows/runner/main.cpp` 里写死的那一个）。
+#: 找进程时**优先按它匹配**，不靠 exe 名 —— 测试机上软件可能被改名。
+WINDOW_KEYWORD = "神算子"
+
+
+class _WindowsWindow:
+    """按**窗口标题**找应用进程，并读「前台窗口是谁」。
+
+    ## 为什么不能只靠 exe 名（2026-10-27 实地反馈）
+
+    测试机上软件可能被改名（绿色版 / 换个名字分发），`--process shensuanzi.exe`
+    找不到就**静默没有进程指标**，测试人员只看到一列 `—`，还以为脚本坏了。
+    窗口标题是唯一稳定信号：主窗口标题恒为「神算子」。
+
+    顺带提供前台窗口标题 —— 用来判断「这段时间人是不是在软件里」，
+    避免把「用户切去回微信」算成软件卡。
+    """
+
+    def __init__(self) -> None:
+        self.user32 = ctypes.WinDLL("user32", use_last_error=True)
+        self.user32.GetForegroundWindow.restype = ctypes.c_void_p
+        self.user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+        self.user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+        self.user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+        self.user32.GetWindowThreadProcessId.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_ulong),
+        ]
+
+    def _title(self, hwnd: int) -> str:
+        length = self.user32.GetWindowTextLengthW(hwnd)
+        if not length or length <= 0:
+            return ""
+        buf = ctypes.create_unicode_buffer(length + 1)
+        self.user32.GetWindowTextW(hwnd, buf, length + 1)
+        return buf.value
+
+    def foreground_title(self) -> str:
+        """当前前台窗口的标题（拿不到就是空串）。"""
+        hwnd = self.user32.GetForegroundWindow()
+        return self._title(hwnd) if hwnd else ""
+
+    def top_windows(self) -> List[Tuple[int, int, str]]:
+        """`[(hwnd, pid, title)]`，只含**可见且有标题**的顶层窗口。"""
+        found: List[Tuple[int, int, str]] = []
+        enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+        def _callback(hwnd: Any, _lparam: Any) -> bool:
+            if not self.user32.IsWindowVisible(hwnd):
+                return True
+            title = self._title(hwnd)
+            if not title:
+                return True
+            pid = ctypes.c_ulong(0)
+            self.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            found.append((int(hwnd or 0), int(pid.value), title))
+            return True
+
+        self.user32.EnumWindows(enum_proc(_callback), 0)
+        return found
+
+
+def discover_app(
+    proc: Optional["_WindowsProcess"],
+    window: Optional["_WindowsWindow"],
+    keyword: str,
+    exe_hint: str,
+) -> Tuple[int, str, str]:
+    """找软件进程。返回 `(pid, 依据, 窗口标题)`；找不到 = `(0, "", "")`。
+
+    顺序：**① 窗口标题含关键词**（最可靠，不怕改名）→ ② exe 名（兜底，
+    比如软件最小化到托盘、窗口标题被临时改掉）。
+    """
+    if window is not None and keyword:
+        hits = [w for w in window.top_windows() if keyword in w[2]]
+        if hits:
+            _hwnd, pid, title = hits[0]
+            return pid, "窗口标题含「%s」" % keyword, title
+    if proc is not None and exe_hint:
+        pid = proc.find_by_name(exe_hint)
+        if pid:
+            return pid, "进程名 %s" % exe_hint, ""
+    return 0, "", ""
+
+
+# --------------------------------------------------------------------------- 动作自动识别
+
+
+class ActionDetector:
+    """从采样序列里**自动识别「用户做了一次操作」**，不靠人按键。
+
+    ## 为什么要它（2026-10-27 实地反馈）
+
+    用户原话：「不能自动记录用户操作，导致大部分性能数据都要测试人员手动记录，
+    出来的数据基本不可信」。手动 `s`/`e` 有两个硬伤：
+
+    1. 人按秒表的误差本身就有 0.3–0.5 秒，跟要测的 200 ms 卡顿**同量级**；
+    2. 一紧张就忘了按，事后补记的时间是**编的**。
+
+    ## 它看什么信号
+
+    软件窗口标题是固定的（「神算子」），**看不出在哪个页面**。所以这里不猜页面名，
+    只认「**机器在忙**」这一段：用户点了一下，页面要读库、要重建，CPU 与读字节
+    就会跳；保存单据会写库。
+
+    | 信号 | 含义 |
+    |---|---|
+    | `cpu_pct` ≥ `busy_cpu` | 在算（重建列表 / 聚合） |
+    | `read_kb` ≥ `read_kb` | 在读库（页面加载） |
+    | `write_kb` ≥ `write_kb` | 在写库（保存 / 开单 / 备份） |
+
+    连续「忙」的采样段 = 一次操作；中间空闲 ≥ `idle_gap` 秒才算两次
+    （用户连点两下本来就是一个动作）。
+
+    ## 诚实边界
+
+    它给的是「**这段时间机器在忙**」，不是「用户点了库存页」。所以报告里标
+    「自动识别」，**不冒充**人工确认的动作名；想贴名字仍可 `s <动作名>`，
+    报告会把两者对齐并给出偏差（§二之一）。
+
+    这个类是**纯逻辑**（只吃 dict、只吐 dict），所以 `selftest` 能用合成序列
+    直接钉住它 —— 不用真开软件。
+    """
+
+    def __init__(
+        self,
+        busy_cpu: float = 25.0,
+        read_kb: float = 2048.0,
+        write_kb: float = 256.0,
+        idle_gap: float = 1.5,
+        min_duration: float = 0.10,
+    ) -> None:
+        self.busy_cpu = busy_cpu
+        self.read_kb = read_kb
+        self.write_kb = write_kb
+        self.idle_gap = idle_gap
+        self.min_duration = min_duration
+        self._open: Optional[Dict[str, Any]] = None
+        self._last_busy_ms = 0
+        self._seq = 0
+        self.events: List[Dict[str, Any]] = []
+
+    @property
+    def in_burst(self) -> bool:
+        """当前是不是正处在一个「忙」段里（采样循环据此切到快速档）。"""
+        return self._open is not None
+
+    @property
+    def current_id(self) -> int:
+        """当前这段忙会被记成几号事件（写进 samples.csv 的 `event_id`）。"""
+        return self._seq + 1 if self._open is not None else 0
+
+    def is_busy(self, sample: Dict[str, Any]) -> bool:
+        cpu = sample.get("cpu_pct")
+        read_kb = sample.get("read_kb") or 0
+        write_kb = sample.get("write_kb") or 0
+        return bool(
+            (isinstance(cpu, (int, float)) and float(cpu) >= self.busy_cpu)
+            or float(read_kb) >= self.read_kb
+            or float(write_kb) >= self.write_kb
+        )
+
+    def feed(self, sample: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """喂一个采样点；返回**刚刚闭合**的事件（0 或 1 个）。"""
+        closed: List[Dict[str, Any]] = []
+        ms = int(sample.get("epoch_ms") or 0)
+        cpu = sample.get("cpu_pct")
+        read_kb = float(sample.get("read_kb") or 0)
+        write_kb = float(sample.get("write_kb") or 0)
+        busy = self.is_busy(sample)
+        sample["busy"] = 1 if busy else 0
+
+        if busy:
+            if self._open is None:
+                self._open = {
+                    "start_ms": ms,
+                    "end_ms": ms,
+                    "last_interval_ms": int(sample.get("interval_ms") or 0),
+                    "peak_cpu": float(cpu) if isinstance(cpu, (int, float)) else 0.0,
+                    "read_kb": read_kb,
+                    "write_kb": write_kb,
+                    "samples": 1,
+                }
+            else:
+                self._open["end_ms"] = ms
+                self._open["last_interval_ms"] = int(sample.get("interval_ms") or 0)
+                if isinstance(cpu, (int, float)):
+                    self._open["peak_cpu"] = max(self._open["peak_cpu"], float(cpu))
+                self._open["read_kb"] += read_kb
+                self._open["write_kb"] += write_kb
+                self._open["samples"] += 1
+            self._last_busy_ms = ms
+            return closed
+
+        if self._open is not None and (ms - self._last_busy_ms) / 1000.0 >= self.idle_gap:
+            event = self._close()
+            if event is not None:
+                closed.append(event)
+        return closed
+
+    def flush(self) -> List[Dict[str, Any]]:
+        """收尾：把还开着的那个事件闭合。"""
+        event = self._close()
+        return [] if event is None else [event]
+
+    def _close(self) -> Optional[Dict[str, Any]]:
+        item = self._open
+        self._open = None
+        if not item:
+            return None
+        # 结束时刻取「最后一个忙采样 + 该采样的间隔」—— 否则 300 ms 的动作
+        # 在 200 ms 采样下会被算成 200 ms（少一个间隔）。
+        span_ms = int(item["end_ms"]) - int(item["start_ms"]) + int(item["last_interval_ms"])
+        duration = max(0.0, span_ms / 1000.0)
+        # 噪声过滤：**只有一个采样点、且没有任何读写证据** ⇒ 丢掉。
+        # 依据：真实操作（点一下页面 / 保存）必然读库或写库；纯 CPU 的单点尖峰
+        # 多半是 GC、杀软扫描、采样抖动 —— 当成操作会把「次数」灌水（自检场景 F）。
+        if item["samples"] <= 1 and item["read_kb"] < self.read_kb and item["write_kb"] < self.write_kb:
+            return None
+        if duration < self.min_duration:
+            return None
+        self._seq += 1
+        kind = (
+            "写库"
+            if item["write_kb"] >= self.write_kb
+            else "读库/界面重建"
+        )
+        event = {
+            "id": self._seq,
+            "start_ms": int(item["start_ms"]),
+            "end_ms": int(item["end_ms"]),
+            "duration_s": round(duration, 2),
+            "kind": kind,
+            "peak_cpu": round(item["peak_cpu"], 1),
+            "read_mb": round(item["read_kb"] / 1024.0, 2),
+            "write_mb": round(item["write_kb"] / 1024.0, 2),
+            "samples": int(item["samples"]),
+        }
+        self.events.append(event)
+        return event
 
 
 # --------------------------------------------------------------------------- 进程指标
@@ -273,7 +529,10 @@ class _WindowsProcess:
         if self._last_cpu is not None and self._last_wall is not None:
             delta_cpu = now_cpu - self._last_cpu
             delta_wall = max(1e-6, now_wall - self._last_wall)
-            pct = 100.0 * delta_cpu / delta_wall
+            # ⚠️ 进程重启 / 换了句柄 ⇒ 累计 CPU 归零 ⇒ 差值是负数。
+            # 2026-10-28 实测跑出过 -1895.8%（报告里那个「最小 CPU」）。
+            # 负值没有任何物理意义，夹到 0。
+            pct = max(0.0, 100.0 * delta_cpu / delta_wall)
         self._last_cpu = now_cpu
         self._last_wall = now_wall
         return pct
@@ -311,6 +570,23 @@ class _WindowsProcess:
             counters.ReadTransferCount / (1024.0 * 1024.0),
             counters.WriteTransferCount / (1024.0 * 1024.0),
         )
+
+    STILL_ACTIVE = 259
+
+    def alive(self) -> bool:
+        """进程还在不在（**用来发现「用户重启了软件」**）。
+
+        ⚠️ 用 `GetExitCodeProcess` 而不是 `WaitForSingleObject`：
+        后者要求句柄带 `SYNCHRONIZE` 权限，而 `open()` 没申请它 ⇒ 调用失败、
+        恒返回「已退出」⇒ 采样循环每轮都重新挂接、把 IO 增量清零
+        （2026-10-27 实测：`read_kb` 一直是 0，就是这条引起的）。
+        """
+        if not self._handle:
+            return False
+        code = ctypes.c_ulong(0)
+        if not self.kernel32.GetExitCodeProcess(self._handle, ctypes.byref(code)):
+            return False
+        return code.value == self.STILL_ACTIVE
 
     def threads(self) -> Optional[int]:
         snapshot = self.kernel32.CreateToolhelp32Snapshot(self.TH32CS_SNAPTHREAD, 0)
@@ -428,8 +704,26 @@ class Session:
         self._spool_buf = ""
         self.notes: List[str] = []
         self.proc = _WindowsProcess() if os.name == "nt" else None
+        self.window = _WindowsWindow() if os.name == "nt" else None
         self.pid = 0
         self._proc_warned = False
+        # ---- 自动识别（2026-10-27）
+        self.detector = ActionDetector(
+            busy_cpu=args.busy_cpu,
+            read_kb=args.busy_read_kb,
+            write_kb=args.busy_write_kb,
+            idle_gap=args.idle_gap,
+        )
+        self.auto_events: List[Dict[str, Any]] = []
+        self.attach_reason = ""
+        self.window_title = ""
+        # 挂接过的 PID 历史（换过就说明重启过）—— 报告用它，而不是「此刻的 pid」
+        self.pid_history: List[int] = []
+        self._prev_io: Optional[Tuple[float, float]] = None
+        self._fast_until = 0.0
+        # 「没找到窗口」限流：每 30 秒最多说一次（每轮都刷会把终端冲掉）
+        self._last_warn = 0.0
+        self._last_probe = 0.0
         self._attach()
 
     # -- 进程挂接
@@ -437,21 +731,56 @@ class Session:
         if self.args.pid:
             if self.proc and self.proc.open(int(self.args.pid)):
                 self.pid = int(self.args.pid)
+                self.attach_reason = "--pid 指定"
             else:
                 print("⚠️ 打不开 PID %s 的进程（权限？）—— 进程指标将为 —" % self.args.pid)
             return
-        if self.proc is None:
+        if self.proc is None and self.window is None:
             return
-        pid = self.proc.find_by_name(self.args.process)
-        if pid is None:
-            print("⚠️ 没找到进程 %s —— 先把软件打开；之后每次采样会再试。" % self.args.process)
-            return
-        if self.proc.open(pid):
-            self.pid = pid
-            print("已挂接进程 %s（PID %d）" % (self.args.process, pid))
-        else:
-            print("⚠️ 找到了 %s（PID %d）但打不开（试试以管理员身份运行本脚本）—— 进程指标将为 —"
-                  % (self.args.process, pid))
+        self._try_discover(announce=True)
+
+    def _try_discover(self, announce: bool) -> bool:
+        """自动找软件进程（窗口标题优先，exe 名兜底）。
+
+        2026-10-27：从前只按 `--process shensuanzi.exe` 找，测试机上软件一改名
+        就**静默没有进程指标**，测试人员只看到一列 `—`。
+        """
+        pid, reason, title = discover_app(
+            self.proc, self.window, self.args.window_title, self.args.process
+        )
+        if not pid:
+            if announce and time.monotonic() - self._last_warn >= 30.0:
+                self._last_warn = time.monotonic()
+                print(
+                    "⚠️ 没找到软件窗口（标题含「%s」）—— 先把软件打开；之后每次采样会再找。"
+                    % self.args.window_title
+                )
+            return False
+        if self.proc is None or not self.proc.open(pid):
+            if announce:
+                print(
+                    "⚠️ 找到了 %s（PID %d）但打不开（试试以管理员身份运行本脚本）—— 进程指标将为 —"
+                    % (reason, pid)
+                )
+            return False
+        restarted = self.pid not in (0, pid)
+        if pid not in self.pid_history:
+            self.pid_history.append(pid)
+        self.pid = pid
+        self.attach_reason = reason
+        self.window_title = title
+        # 换了进程 ⇒ IO 计数器归零，**不能跨进程求差**（否则第一次是负数）
+        self._prev_io = None
+        if restarted:
+            self.record_event(
+                "process_restart",
+                "软件重启（PID 换成 %d）" % pid,
+                source="auto",
+                note="重启期间的数据要单独看：page cache 是冷的",
+            )
+        if announce or restarted:
+            print("已挂接进程（PID %d，依据：%s）%s" % (pid, reason, "；检测到重启" if restarted else ""))
+        return True
 
     # -- 采样
     def sample_once(self) -> Dict[str, Any]:
@@ -463,12 +792,18 @@ class Session:
             gap_ms = interval_ms - expected
         self._last_sample_wall = wall
 
-        if self.proc is not None and self.pid == 0 and not self._proc_warned:
-            pid = self.proc.find_by_name(self.args.process)
-            if pid and self.proc.open(pid):
-                self.pid = pid
-                self._proc_warned = True
-                print("（已自动挂接 PID %d）" % pid)
+        # 进程掉了 / 还没找到 ⇒ 每轮都重试自动发现（用户可能刚打开软件）
+        if self.proc is not None:
+            if self.pid and not self.proc.alive():
+                self.record_event(
+                    "process_exit", "软件已退出（PID %d）" % self.pid, source="auto"
+                )
+                self.pid = 0
+                self._prev_io = None
+            if not self.pid:
+                self._try_discover(announce=not self._proc_warned)
+                if self.pid:
+                    self._proc_warned = True
 
         row: Dict[str, Any] = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -496,6 +831,15 @@ class Session:
             row["threads"] = "" if threads is None else threads
             row["io_read_mb"] = "" if io_read is None else round(io_read, 1)
             row["io_write_mb"] = "" if io_write is None else round(io_write, 1)
+            # 本采样区间的**增量**（KB）—— 自动识别只看增量，累计值没法比阈值
+            read_kb = write_kb = 0.0
+            if io_read is not None and io_write is not None:
+                if self._prev_io is not None:
+                    read_kb = max(0.0, (io_read - self._prev_io[0]) * 1024.0)
+                    write_kb = max(0.0, (io_write - self._prev_io[1]) * 1024.0)
+                self._prev_io = (io_read, io_write)
+            row["read_kb"] = round(read_kb, 1)
+            row["write_kb"] = round(write_kb, 1)
 
         row["db_mb"] = mb(self.db_path)
         row["wal_mb"] = mb(self.db_path + "-wal")
@@ -507,12 +851,45 @@ class Session:
             row["rows_stock_ledger"] = counts.get("stock_ledger", "")
             row["rows_settlements"] = counts.get("settlements", "")
 
-        if self.args.probe_interval and len(self.samples) % max(1, int(self.args.probe_interval / self.args.interval)) == 0:
+        # 探针按**真实时间**调度：自适应采样下「每 N 个采样点」会随快慢漂掉
+        if self.args.probe_interval and time.monotonic() - self._last_probe >= self.args.probe_interval:
+            self._last_probe = time.monotonic()
             probes = run_probes(self.db_path, max(1, self.args.window_days) * 86400000)
             row["probe_stock_ms"] = "" if probes.get("stock") is None else probes["stock"]
             row["probe_list_ms"] = "" if probes.get("list") is None else probes["list"]
             row["probe_window_ms"] = "" if probes.get("window") is None else probes["window"]
+
+        # 前台窗口标题：判断「这段时间人是不是在软件里」
+        row["fg_title"] = self.window.foreground_title() if self.window is not None else ""
+
+        # ---- 自动识别（2026-10-27）：喂给探测器，闭合成事件就记一条
+        for event in self.detector.feed(row):
+            self._on_auto_event(event)
+        row["event_id"] = self.detector.current_id or ""
+        if row.get("busy"):
+            # 忙过之后的一小段时间保持快速档 —— 用户通常连着做几个动作
+            self._fast_until = time.monotonic() + self.args.fast_hold
         return row
+
+    def _on_auto_event(self, event: Dict[str, Any]) -> None:
+        """把探测器识别出的一段「忙」记成事件（**标 source=auto，不冒充人工**）。"""
+        self.auto_events.append(event)
+        self.record_event(
+            "auto_action",
+            "自动识别 #%d %s" % (event["id"], event["kind"]),
+            duration_s=event["duration_s"],
+            note="峰值 CPU %.0f%%；读 %.2f MB；写 %.2f MB；%d 个采样点"
+            % (event["peak_cpu"], event["read_mb"], event["write_mb"], event["samples"]),
+            source="auto",
+            peak_cpu=event["peak_cpu"],
+            read_mb=event["read_mb"],
+            write_mb=event["write_mb"],
+        )
+        if not self.args.quiet:
+            print(
+                "  · 自动识别 #%d：%.2f 秒（%s，峰值 CPU %.0f%%）"
+                % (event["id"], event["duration_s"], event["kind"], event["peak_cpu"])
+            )
 
     def _row_counts(self) -> Dict[str, int]:
         out: Dict[str, int] = {}
@@ -542,6 +919,10 @@ class Session:
         duration_s: Optional[float] = None,
         feel: Optional[int] = None,
         note: str = "",
+        source: str = "manual",
+        peak_cpu: Optional[float] = None,
+        read_mb: Optional[float] = None,
+        write_mb: Optional[float] = None,
     ) -> None:
         event = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -551,6 +932,12 @@ class Session:
             "duration_s": "" if duration_s is None else round(duration_s, 2),
             "feel": "" if feel is None else feel,
             "note": note,
+            # `source` 区分「脚本自己发现的」与「人按的」—— 报告分开展示，
+            # 绝不把推断冒充成人工确认（2026-10-27）
+            "source": source,
+            "peak_cpu": "" if peak_cpu is None else peak_cpu,
+            "read_mb": "" if read_mb is None else read_mb,
+            "write_mb": "" if write_mb is None else write_mb,
         }
         with self.lock:
             self.events.append(event)
@@ -561,7 +948,8 @@ class Session:
 
     # -- 人工动作
     def action_start(self, name: str) -> None:
-        self.actions[name] = time.monotonic()
+        # 同时记 monotonic（算时长）与 wall（与自动识别的事件对齐）
+        self.actions[name] = (time.monotonic(), int(time.time() * 1000))
         self.record_event("action_start", name)
         print("  ▶ 开始计时：%s" % name)
 
@@ -570,8 +958,17 @@ class Session:
             print("（还没有开始计时的动作：先 s <动作名>）")
             return
         name = list(self.actions.keys())[-1]
-        duration = time.monotonic() - self.actions.pop(name)
-        self.action_records.append({"name": name, "duration_s": duration, "feel": feel, "note": note})
+        started_mono, started_ms = self.actions.pop(name)
+        duration = time.monotonic() - started_mono
+        self.action_records.append(
+            {
+                "name": name,
+                "duration_s": duration,
+                "feel": feel,
+                "note": note,
+                "start_ms": started_ms,
+            }
+        )
         self.record_event("action_end", name, duration_s=duration, feel=feel, note=note)
         extra = "" if feel is None else "，观感 %d（%s）" % (feel, FEEL_LABEL.get(feel, "?"))
         print("  ■ %s 用时 %.2f 秒%s%s" % (name, duration, extra, ("；" + note) if note else ""))
@@ -617,6 +1014,8 @@ class Session:
                         "duration_s": float(duration),
                         "feel": feel if isinstance(feel, int) else None,
                         "note": note,
+                        # 另一窗口自报的用时：开始时刻倒推
+                        "start_ms": int(time.time() * 1000) - int(float(duration) * 1000),
                     }
                 )
                 self.record_event(
@@ -630,6 +1029,19 @@ class Session:
             self.record_event("mark", action, note=note)
             print("  · [另一窗口] %s%s" % (action, ("：" + note) if note else ""))
 
+    def _interval(self) -> float:
+        """当前该用多慢的采样间隔。
+
+        空闲用 `--interval`（默认 0.5 秒），**刚忙过**就切到 `--fast-interval`
+        （默认 0.2 秒）保持 `--fast-hold` 秒 —— 用户通常连着做几个动作，
+        这样 200 ms 级的卡顿也能测出边界，不用人按秒表。
+        """
+        if self.args.no_adapt:
+            return self.args.interval
+        if time.monotonic() < self._fast_until:
+            return min(self.args.fast_interval, self.args.interval)
+        return self.args.interval
+
     # -- 采样线程
     def sampler_loop(self) -> None:
         while not self.stop.is_set():
@@ -639,11 +1051,16 @@ class Session:
             except Exception as exc:  # 采样失败不该让整轮测试崩掉
                 self.record_event("sample_error", "采样失败", note=str(exc))
             self.poll_spool()
-            self.stop.wait(self.args.interval)
+            self.stop.wait(self._interval())
 
     # -- 收尾
     def close(self) -> None:
         self.stop.set()
+        try:
+            for event in self.detector.flush():
+                self._on_auto_event(event)
+        except Exception:
+            pass
         time.sleep(min(0.5, self.args.interval))
         try:
             self._sample_file.close()
@@ -709,11 +1126,23 @@ def build_report(session: Session) -> str:
     add("|---|---|")
     add("| 开始时间 | %s |" % session.started_iso)
     add("| 持续时长 | %.1f 分钟 |" % (duration / 60.0))
-    add("| 采样点 | %d（每 %.1f 秒） |" % (len(samples), args.interval))
+    add(
+        "| 采样点 | %d（空闲 %.2f 秒 / 忙时 %.2f 秒，自适应%s） |"
+        % (len(samples), args.interval, args.fast_interval, "已关闭" if args.no_adapt else "")
+    )
     add("| 数据目录 | `%s` |" % os.path.dirname(session.db_path))
     add("| 库文件 | `%s`（结束时 %.1f MB） |" % (session.db_path, db_now))
-    add("| 挂接进程 | %s |"
-        % (("PID %d" % session.pid) if session.pid else "%s（未挂接，进程指标为 —）" % args.process))
+    # ⚠️ 用**历史**而不是「此刻的 pid」：测试结束时用户往往先把软件关了，
+    # 那一刻 pid 是 0 —— 从前会误报「未挂接」，可整轮明明采到了 CPU/内存
+    #（2026-10-28 真机数据里就出现了这一条）。
+    history = session.pid_history
+    if history:
+        label = "PID %d" % history[0] if len(history) == 1 else (
+            "PID %s（**重启过 %d 次**）" % (" → ".join(str(p) for p in history), len(history) - 1)
+        )
+        add("| 挂接进程 | %s（%s） |" % (label, session.attach_reason or "自动发现"))
+    else:
+        add("| 挂接进程 | **未挂接**（进程指标为 —）—— 见下方「为什么没挂上」 |")
     add("| 软件版本 | %s |" % (args.app_version or "未填写（`--app-version`）"))
     add("| 本机 | %s / %s / %s 核 / Python %s |"
         % (platform.node(), platform.platform(), os.cpu_count(), platform.python_version()))
@@ -721,6 +1150,84 @@ def build_report(session: Session) -> str:
     add("")
 
     # ---- 人工动作
+    # ------------------------------------------------ 自动识别的操作事件（2026-10-27）
+    add("## 二之一、自动识别的操作事件（脚本自己发现的，**不用按键**）")
+    add("")
+    auto = session.auto_events
+    if not auto:
+        add("> 这一轮**没识别到操作**。常见原因（按可能性排）：")
+        add("> ① 进程没挂上（看 §一「挂接进程」是不是 `未挂接`）⇒ 没有 CPU/读写信号；")
+        add("> ② 阈值太高：默认 CPU ≥ %.0f%%、单次读 ≥ %.0f KB；低配机上跑不动大查询时会偏低，"
+            % (args.busy_cpu, args.busy_read_kb))
+        add(">    可以加 `--busy-cpu 10 --busy-read-kb 512` 重测；")
+        add("> ③ 全程只是看着不动（那本来就没有操作）。")
+    else:
+        add(
+            "> 判据：CPU ≥ %.0f%% 或 单次采样读 ≥ %.0f KB 或 写 ≥ %.0f KB；"
+            "连续「忙」算一次操作，空闲 ≥ %.1f 秒才断开。"
+            % (args.busy_cpu, args.busy_read_kb, args.busy_write_kb, args.idle_gap)
+        )
+        add("")
+        add("| # | 开始 | 用时 | 类型 | 峰值 CPU | 读 | 写 | 采样点 |")
+        add("|---|---|---|---|---|---|---|---|")
+        for e in auto:
+            start = time.strftime("%H:%M:%S", time.localtime(e["start_ms"] / 1000.0))
+            add(
+                "| %d | %s | **%.2f 秒** | %s | %.0f%% | %.2f MB | %.2f MB | %d |"
+                % (
+                    e["id"],
+                    start,
+                    e["duration_s"],
+                    e["kind"],
+                    e["peak_cpu"],
+                    e["read_mb"],
+                    e["write_mb"],
+                    e["samples"],
+                )
+            )
+        slow = [e for e in auto if e["duration_s"] >= args.slow_action]
+        add("")
+        add(
+            "**合计 %d 次操作；其中 ≥ %.1f 秒的 %d 次**（明细见 `events.csv` 里 `source=auto` 的行）。"
+            % (len(auto), args.slow_action, len(slow))
+        )
+        if slow:
+            worst = max(auto, key=lambda e: e["duration_s"])
+            add("")
+            add(
+                "最慢一次 **%.2f 秒**（%s，峰值 CPU %.0f%%，读 %.2f MB）—— 这一条要对着现场回想："
+                "当时在做什么？" % (worst["duration_s"], worst["kind"], worst["peak_cpu"], worst["read_mb"])
+            )
+
+    # 与人工记录对齐（有就对齐，没有就跳过）—— 让测试人员能**验证**自动识别准不准
+    if auto and session.action_records:
+        pairs = []
+        for rec in session.action_records:
+            start_ms = rec.get("start_ms")
+            if not start_ms:
+                continue
+            nearest = min(auto, key=lambda e: abs(e["start_ms"] - start_ms))
+            if abs(nearest["start_ms"] - start_ms) <= 5000:
+                pairs.append((rec, nearest))
+        if pairs:
+            add("")
+            add("### 自动识别 vs 人工计时（对得上的那几次）")
+            add("")
+            add("| 动作 | 人工用时 | 自动识别 | 偏差 |")
+            add("|---|---|---|---|")
+            for rec, e in pairs:
+                delta = rec["duration_s"] - e["duration_s"]
+                add(
+                    "| %s | %.2f 秒 | %.2f 秒 | %+.2f 秒 |"
+                    % (rec["name"], rec["duration_s"], e["duration_s"], delta)
+                )
+            add("")
+            add(
+                "> 偏差主要来自**人工按秒表本身**（±0.3–0.5 秒是常态）。"
+                "这也是这一版改成自动识别的理由 —— 人按不准。"
+            )
+
+    add("")
     add("## 二、人工动作（脚本计时，不用秒表）")
     add("")
     if session.action_records:
@@ -899,12 +1406,35 @@ def build_parser() -> argparse.ArgumentParser:
     target.add_argument("--db", help="库文件路径")
     target.add_argument("--data-dir", help="数据目录（库名固定 %s）" % DATA_FILE_NAME)
 
-    proc = run.add_argument_group("挂接哪个进程")
-    proc.add_argument("--process", default="shensuanzi.exe", help="进程名（默认 %(default)s）")
-    proc.add_argument("--pid", default=None, help="直接指定 PID（优先级高于 --process）")
+    proc = run.add_argument_group("挂接哪个进程（默认**自动发现**，不用手填）")
+    proc.add_argument(
+        "--window-title",
+        default=WINDOW_KEYWORD,
+        help="主窗口标题关键词（默认「%(default)s」）—— **优先按它找**，"
+        "软件被改名也能找到；找不到才退回 --process",
+    )
+    proc.add_argument("--process", default="shensuanzi.exe", help="exe 名（兜底用，默认 %(default)s）")
+    proc.add_argument("--pid", default=None, help="直接指定 PID（优先级最高）")
 
     how = run.add_argument_group("采样")
-    how.add_argument("--interval", type=float, default=5.0, help="采样间隔秒（默认 %(default)s）")
+    how.add_argument(
+        "--interval",
+        type=float,
+        default=0.5,
+        help="**空闲时**的采样间隔秒（默认 %(default)s）。0.5 秒是权衡："
+        "再慢就跟 200 ms 级卡顿同量级，测不出边界",
+    )
+    how.add_argument(
+        "--fast-interval", type=float, default=0.2,
+        help="**刚忙过**的采样间隔秒（默认 %(default)s）—— 自适应，专为测准操作耗时",
+    )
+    how.add_argument(
+        "--fast-hold", type=float, default=6.0,
+        help="忙过之后保持快速档的秒数（默认 %(default)s）",
+    )
+    how.add_argument(
+        "--no-adapt", action="store_true", help="关掉自适应（一律用 --interval）"
+    )
     how.add_argument(
         "--probe-interval", type=float, default=0.0,
         help="探针间隔秒（默认 0=关闭）；开它会增加 I/O，人工实测时建议 60",
@@ -916,6 +1446,24 @@ def build_parser() -> argparse.ArgumentParser:
     how.add_argument("--window-days", type=int, default=7, help="同步窗口天数（探针用，默认 %(default)s）")
     how.add_argument("--duration", type=float, default=0.0, help="跑多少分钟后自动停（默认 0=手动 q 结束）")
     how.add_argument("--no-input", action="store_true", help="不读键盘（只采样；动作靠 --spool）")
+
+    detect = run.add_argument_group("自动识别操作的阈值（默认值在开发机上验过）")
+    detect.add_argument(
+        "--busy-cpu", type=float, default=25.0,
+        help="CPU 高于多少算「忙」（默认 %(default)s%%，单核=100%%）",
+    )
+    detect.add_argument(
+        "--busy-read-kb", type=float, default=2048.0,
+        help="单次采样读多少 KB 算「在加载」（默认 %(default)s）",
+    )
+    detect.add_argument(
+        "--busy-write-kb", type=float, default=256.0,
+        help="单次采样写多少 KB 算「在写库」（默认 %(default)s）",
+    )
+    detect.add_argument(
+        "--idle-gap", type=float, default=1.5,
+        help="空闲多少秒算两个动作的分界（默认 %(default)s）",
+    )
 
     judge = run.add_argument_group("判读门槛（报告里按它标⚠️）")
     judge.add_argument(
@@ -951,6 +1499,7 @@ def build_parser() -> argparse.ArgumentParser:
     mark.add_argument("--mark", action="store_true", help="只记一条观察（不计时）")
 
     sub.add_parser("checklist", help="打印标准动作清单")
+    sub.add_parser("selftest", help="自检：用合成采样序列钉住「动作自动识别」（不需要软件）")
     return parser
 
 
@@ -958,7 +1507,7 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     # 无子命令时默认 run（少一次打字）
-    if not argv or argv[0] not in ("run", "mark", "checklist", "-h", "--help"):
+    if not argv or argv[0] not in ("run", "mark", "checklist", "selftest", "-h", "--help"):
         argv = ["run"] + argv
     args = parser.parse_args(argv)
     if args.cmd is None:
@@ -968,7 +1517,7 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
 
 def print_help_commands() -> None:
     print("")
-    print("命令：")
+    print("命令（**都不用按也能出数据** —— 脚本自己识别操作，下面这些是可选的补充）：")
     print("  s <动作名>        开始计时（例：s 保存销售单）")
     print("  e [观感] [备注]    结束计时；观感 1=顺畅 2=一般 3=卡顿 4=明显卡顿 5=无响应")
     print("  m <备注>          记一条观察（不计时）")
@@ -977,11 +1526,14 @@ def print_help_commands() -> None:
     print("  c                打印标准测试清单")
     print("  q                结束并生成报告")
     print("")
+    print("  ⭐ 自动识别已开启：你只管用软件，动作耗时自己会记下来；")
+    print("     敲 s/e 只是为了给动作**贴名字**、填**观感**（这两样脚本猜不出来）。")
+    print("")
 
 
 def print_checklist() -> None:
     print("")
-    print("标准动作清单（按顺序做；每项用 s / e 记一次）：")
+    print("标准动作清单（按顺序做；耗时脚本自己记，想贴名字再敲 s / e）：")
     for i, (name, hint) in enumerate(CHECKLIST, 1):
         print("  %2d. %-10s %s" % (i, name, hint))
     print("")
@@ -1149,6 +1701,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "interval_s": args.interval,
         "process": args.process,
         "pid": session.pid,
+    "pid_history": list(session.pid_history),
         "app_version": args.app_version,
         "session_note": args.session_note,
         "db": db_path,
@@ -1173,6 +1726,236 @@ def cmd_run(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def cmd_selftest() -> int:
+    """用**合成采样序列**钉住 [ActionDetector]，不需要真开软件。
+
+    为什么必须有它：识别逻辑一旦改坏（阈值写反、间隔判断写错），现场跑一轮
+    才发现就白测了。这里用 6 个场景把「该报的」与「不该报的」分开，
+    跑一次两秒钟。
+
+    退出码：0 = 全过；1 = 有失败。
+    """
+    cases: List[Tuple[str, List[Dict[str, Any]], int, List[str]]] = []
+
+    def series(rows: List[Tuple[int, Optional[float], float, float]]) -> List[Dict[str, Any]]:
+        """(相对毫秒, CPU%, 读 KB, 写 KB) → 采样 dict 序列。"""
+        out: List[Dict[str, Any]] = []
+        for offset, cpu, read_kb, write_kb in rows:
+            out.append(
+                {
+                    "epoch_ms": 1_700_000_000_000 + offset,
+                    "interval_ms": 200,
+                    "cpu_pct": cpu,
+                    "read_kb": read_kb,
+                    "write_kb": write_kb,
+                }
+            )
+        return out
+
+    cases.append(
+        (
+            "A 一次读突发 ⇒ 1 个「读库」事件",
+            series(
+                [
+                    (0, 2.0, 0, 0),
+                    (200, 2.0, 0, 0),
+                    (400, 80.0, 8000, 0),
+                    (600, 70.0, 6000, 0),
+                    (800, 3.0, 0, 0),
+                    (1000, 2.0, 0, 0),
+                    (1200, 2.0, 0, 0),
+                    (1400, 2.0, 0, 0),
+                    (1600, 2.0, 0, 0),
+                    (1800, 2.0, 0, 0),
+                    (2000, 2.0, 0, 0),
+                ]
+            ),
+            1,
+            ["读库"],
+        )
+    )
+    cases.append(
+        (
+            "B 一次写突发 ⇒ 1 个「写库」事件",
+            series(
+                [
+                    (0, 2.0, 0, 0),
+                    (200, 60.0, 0, 900),
+                    (400, 2.0, 0, 0),
+                    (600, 2.0, 0, 0),
+                    (800, 2.0, 0, 0),
+                    (1000, 2.0, 0, 0),
+                    (1200, 2.0, 0, 0),
+                    (1400, 2.0, 0, 0),
+                    (1600, 2.0, 0, 0),
+                    (1800, 2.0, 0, 0),
+                ]
+            ),
+            1,
+            ["写库"],
+        )
+    )
+    cases.append(
+        (
+            "C 两次突发、中间空闲够久 ⇒ 2 个事件",
+            series(
+                [
+                    (0, 80.0, 5000, 0),
+                    (200, 80.0, 5000, 0),
+                    (400, 2.0, 0, 0),
+                    (600, 2.0, 0, 0),
+                    (800, 2.0, 0, 0),
+                    (1000, 2.0, 0, 0),
+                    (1200, 2.0, 0, 0),
+                    (1400, 2.0, 0, 0),
+                    (1600, 2.0, 0, 0),
+                    (1800, 2.0, 0, 0),
+                    (2000, 80.0, 5000, 0),
+                    (2200, 80.0, 5000, 0),
+                    (2400, 2.0, 0, 0),
+                    (2600, 2.0, 0, 0),
+                    (2800, 2.0, 0, 0),
+                    (3000, 2.0, 0, 0),
+                    (3200, 2.0, 0, 0),
+                    (3400, 2.0, 0, 0),
+                    (3600, 2.0, 0, 0),
+                    (3800, 2.0, 0, 0),
+                ]
+            ),
+            2,
+            ["读库", "读库"],
+        )
+    )
+    cases.append(
+        (
+            "D 两次突发、中间只空 0.4 秒 ⇒ 合并成 1 个（用户连点两下 = 一个动作）",
+            series(
+                [
+                    (0, 80.0, 5000, 0),
+                    (200, 2.0, 0, 0),
+                    (400, 2.0, 0, 0),
+                    (600, 80.0, 5000, 0),
+                    (800, 2.0, 0, 0),
+                    (1000, 2.0, 0, 0),
+                    (1200, 2.0, 0, 0),
+                    (1400, 2.0, 0, 0),
+                    (1600, 2.0, 0, 0),
+                    (1800, 2.0, 0, 0),
+                    (2000, 2.0, 0, 0),
+                ]
+            ),
+            1,
+            ["读库"],
+        )
+    )
+    cases.append(
+        (
+            "E 全程空闲 ⇒ 0 个事件（不许无中生有）",
+            series([(i * 200, 1.0, 0, 0) for i in range(15)]),
+            0,
+            [],
+        )
+    )
+    cases.append(
+        (
+            "F 单个 200 ms 尖峰、无读写 ⇒ 丢掉（噪声，不是操作）",
+            series(
+                [
+                    (0, 1.0, 0, 0),
+                    (200, 90.0, 0, 0),
+                    (400, 1.0, 0, 0),
+                    (600, 1.0, 0, 0),
+                    (800, 1.0, 0, 0),
+                    (1000, 1.0, 0, 0),
+                    (1200, 1.0, 0, 0),
+                    (1400, 1.0, 0, 0),
+                    (1600, 1.0, 0, 0),
+                    (1800, 1.0, 0, 0),
+                ]
+            ),
+            0,
+            [],
+        )
+    )
+
+    # ---- 进程自动发现（合成窗口列表，不需要真软件）
+    failed_discover = False
+
+    class _FakeWindow:
+        def __init__(self, titles):
+            self._titles = titles
+
+        def top_windows(self):
+            return [(i + 1, 1000 + i, t) for i, t in enumerate(self._titles)]
+
+    class _FakeProc:
+        def __init__(self, pid):
+            self._pid = pid
+
+        def find_by_name(self, _name):
+            return self._pid
+
+    discover_cases = [
+        ("窗口标题优先（exe 名不对也能找到）", _FakeWindow(["神算子", "记事本"]), _FakeProc(9), 1000),
+        ("标题里带后缀也认（「神算子 - 销售开单」）", _FakeWindow(["神算子 - 销售开单"]), _FakeProc(9), 1000),
+        ("没有窗口 ⇒ 退回 exe 名", _FakeWindow(["记事本"]), _FakeProc(777), 777),
+        ("都没有 ⇒ 0（不许瞎挂）", _FakeWindow(["记事本"]), _FakeProc(0), 0),
+    ]
+
+    print("自动识别自检（合成序列，不需要软件）")
+    print("")
+    print("— 进程自动发现 —")
+    for name, window, proc, want in discover_cases:
+        pid, reason, _title = discover_app(proc, window, WINDOW_KEYWORD, "shensuanzi.exe")
+        ok = pid == want
+        if not ok:
+            failed_discover = True
+        print(
+            "  %s %s：期望 PID %s，实际 %s%s"
+            % ("✅" if ok else "❌", name, want or "（找不到）", pid or "（找不到）",
+               ("（依据：%s）" % reason) if reason else "")
+        )
+    print("")
+    print("— 动作识别 —")
+    failed = 0
+    for name, rows, want_count, want_kinds in cases:
+        detector = ActionDetector()
+        got: List[Dict[str, Any]] = []
+        for row in rows:
+            got.extend(detector.feed(row))
+        got.extend(detector.flush())
+        ok = len(got) == want_count and all(
+            want in event["kind"] for event, want in zip(got, want_kinds)
+        )
+        if not ok:
+            failed += 1
+        print(
+            "  %s %s：期望 %d 个%s，实际 %d 个%s"
+            % (
+                "✅" if ok else "❌",
+                name,
+                want_count,
+                ("（" + " / ".join(want_kinds) + "）") if want_kinds else "",
+                len(got),
+                ("（" + " / ".join(e["kind"] for e in got) + "）") if got else "",
+            )
+        )
+        for event in got:
+            print(
+                "        用时 %.2f 秒 · 峰值 CPU %.0f%% · 读 %.2f MB · 写 %.2f MB"
+                % (event["duration_s"], event["peak_cpu"], event["read_mb"], event["write_mb"])
+            )
+    print("")
+    if failed or failed_discover:
+        print(
+            "❌ %d 个场景不通过%s —— 识别逻辑改坏了，别拿去现场测。"
+            % (failed, "（另有进程发现用例失败）" if failed_discover else "")
+        )
+        return 1
+    print("✅ 全过：自动识别在这些场景下的行为符合预期。")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         try:
@@ -1185,6 +1968,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if args.cmd == "mark":
         return cmd_mark(args)
+    if args.cmd == "selftest":
+        return cmd_selftest()
     return cmd_run(args)
 
 

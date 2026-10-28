@@ -228,6 +228,26 @@ void main() {
       );
     });
 
+    // 2026-10-28（性能实测后修）：`countDocuments` 从前无条件复用列表的
+    // 三个 join，`COUNT(*)` 用不到「退货汇总 / 核销汇总」两个派生表却把它们
+    // 整表物化 —— 26 万单库上实测 **300 ms**。只带 WHERE 需要的表后 **64 ms**。
+    // 这条钉住「计数不许再出现 MATERIALIZE」。
+    test('计数（rootsOnly）不许物化派生表', () {
+      final String p = plan(
+        // document_dao.dart: countDocuments → _fromFor + _docFilter
+        'SELECT COUNT(*) AS c FROM documents d '
+        'WHERE d.ref_doc_id IS NULL AND NOT ('
+        "d.doc_type IN ('receipt', 'payment') AND ("
+        'SELECT COUNT(DISTINCT s.target_doc_id) FROM settlements s '
+        'WHERE s.receipt_doc_id = d.id AND s.target_doc_id IS NOT NULL) = 1)',
+      );
+      expect(
+        p,
+        isNot(contains('MATERIALIZE')),
+        reason: '计数带上派生表会从 64 ms 变 300 ms：$p',
+      );
+    });
+
     test('4c recentParties 同样走 idx_documents_occurred', () {
       final String p = plan(
         // query_dao.dart: recentParties()

@@ -950,6 +950,140 @@ void main() {
     expect(documents.countDocuments(includeDerived: true), 2);
     expect(documents.listDocuments(includeDerived: true).length, 2);
   });
+
+  // ------------------------------------------------------------ 计数的 FROM 精简（2026-10-28）
+  //
+  // 性能实测查出：`countDocuments` 无条件用了列表那套三个 join，而 `COUNT(*)`
+  // 只需要 WHERE —— 两个派生表（退货汇总 26 万行 / 核销汇总 10 万行）被整表
+  // 物化却一行没用上，实测 **300 ms**（26 万单库）。
+  //
+  // 改成「只带 WHERE 引用的表」后 64 ms。**风险是漏 join**：WHERE 里一旦引用了
+  // `pa.` / `r.` / `s.` 而 FROM 里没带，SQL 会直接报错或数错。
+  // 下面三条按「用到哪些别名」逐个钉住：默认 / 按对方名 / 未结清。
+  group('计数与列表同口径（FROM 精简后不许漏 join）', () {
+    /// 摆一份「有收付款单、有退货、有往来方」的小现场。
+    void seedForCount() {
+      insertParty(db.raw, 'p-1', name: '王记老板');
+      insertParty(db.raw, 'p-2', name: '李家记');
+      // 主单（根）
+      insertDocument(
+        db.raw,
+        'd-sale',
+        docNo: 'XS20261020-001',
+        docType: 'sale',
+        totalAmount: 1000,
+        partyId: 'p-1',
+        occurredAt: at(2026, 10, 20),
+        createdAt: at(2026, 10, 20, 9),
+      );
+      // 退货（挂主单 ⇒ 不是根）
+      insertDocument(
+        db.raw,
+        'd-ret',
+        docNo: 'XT20261020-001',
+        docType: 'sale_return',
+        totalAmount: 100,
+        refDocId: 'd-sale',
+        partyId: 'p-1',
+        occurredAt: at(2026, 10, 20, 10),
+      );
+      // 收款单：**只核销一张** ⇒ 不算根（折进那笔生意）
+      insertDocument(
+        db.raw,
+        'd-rcv-1',
+        docNo: 'SK20261020-001',
+        docType: 'receipt',
+        totalAmount: 300,
+        partyId: 'p-1',
+        occurredAt: at(2026, 10, 20, 11),
+      );
+      insertSettlement(
+        db.raw,
+        's-1',
+        receiptDoc: 'd-rcv-1',
+        targetDoc: 'd-sale',
+        amount: 300,
+      );
+      // 另一张收款单：核销**两张** ⇒ 它是根（归不到任何一笔生意）
+      insertDocument(
+        db.raw,
+        'd-rcv-2',
+        docNo: 'SK20261020-002',
+        docType: 'receipt',
+        totalAmount: 200,
+        partyId: 'p-2',
+        occurredAt: at(2026, 10, 20, 12),
+      );
+      insertSettlement(
+        db.raw,
+        's-2',
+        receiptDoc: 'd-rcv-2',
+        targetDoc: 'd-sale',
+        amount: 100,
+      );
+      insertDocument(
+        db.raw,
+        'd-sale-2',
+        docNo: 'XS20261020-002',
+        docType: 'sale',
+        totalAmount: 500,
+        partyId: 'p-2',
+        occurredAt: at(2026, 10, 20),
+        createdAt: at(2026, 10, 20, 13),
+      );
+      insertSettlement(
+        db.raw,
+        's-3',
+        receiptDoc: 'd-rcv-2',
+        targetDoc: 'd-sale-2',
+        amount: 100,
+      );
+    }
+
+    test('默认（无搜索、无筛选）：计数 == 列表条数', () {
+      seedForCount();
+      final int total = documents.countDocuments(rootsOnly: true);
+      final int listed = documents
+          .listDocuments(rootsOnly: true, limit: 100)
+          .length;
+      expect(
+        total,
+        listed,
+        reason: '计数与列表必须同一口径 —— 漏 join 会数错（这正是精简 FROM 的风险）',
+      );
+      // 根 = 两张主单 + 那张核销两张的收款单；只核销一张的那张不算根
+      expect(total, 3, reason: '根的定义：主单 2 张 + 多目标收款单 1 张');
+    });
+
+    test('按对方名搜（WHERE 引用 pa.name）：计数 == 列表条数', () {
+      seedForCount();
+      final int total = documents.countDocuments(rootsOnly: true, query: '王记');
+      final int listed = documents
+          .listDocuments(rootsOnly: true, query: '王记', limit: 100)
+          .length;
+      expect(
+        total,
+        listed,
+        reason: '`needsParties` 判错就会漏 join parties ⇒ 报错或数错',
+      );
+      expect(total, 1, reason: '「王记老板」名下只有一张根单（XS…001）');
+    });
+
+    test('未结清筛选（WHERE 引用派生表 r./s.）：计数 == 列表条数', () {
+      seedForCount();
+      const Set<DocumentStatusView> unsettled = <DocumentStatusView>{
+        DocumentStatusView.unsettled,
+      };
+      final int total = documents.countDocuments(
+        rootsOnly: true,
+        statusViews: unsettled,
+      );
+      final int listed = documents
+          .listDocuments(rootsOnly: true, statusViews: unsettled, limit: 100)
+          .length;
+      expect(total, listed, reason: '`needsAggregates` 判错就会漏两个派生表 ⇒ 报错或数错');
+    });
+  });
 }
 
 /// 把「逐行查」的两个入口改成抛错：列表路径一旦退化成 N+1 就立刻失败。

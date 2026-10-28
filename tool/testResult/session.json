@@ -1,0 +1,15 @@
+{
+  "label": "第一轮",
+  "started": "2026-10-27T21:02:15",
+  "duration_s": 777.4,
+  "samples": 154,
+  "actions": [],
+  "interval_s": 5.0,
+  "process": "shensuanzi.exe",
+  "pid": 2352,
+  "app_version": "0.6.5",
+  "session_note": "CPU/内存/磁盘类型/系统缩放/应用界面大小/杀软",
+  "db": "F:\\smz\\shensuanzi.db",
+  "db_mb": 477.3,
+  "wal_mb": 0.0
+}

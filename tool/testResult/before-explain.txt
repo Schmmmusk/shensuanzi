@@ -1,0 +1,59 @@
+查询基线 —— 只读，不启动软件
+  库        F:\smz\shensuanzi.db
+  schema    v5；477.3 MB（WAL 0.0 MB）
+  数据量    products=300  parties=200  accounts=4  documents=262603  document_lines=363448  stock_ledger=363448  money_ledger=100000  party_ledger=262603  settlements=100000
+  每项      20 轮（预热 3）
+
+查询                  p50(ms)    p95(ms)    max(ms)       行数       说明
+-------------------------------------------------------------------
+stock_group           43.46      44.42      46.34      300       ok
+    · SCAN TABLE stock_ledger USING COVERING INDEX idx_stock_covering
+stock_cost            44.13      50.43      50.98      300       ok
+    · SCAN TABLE stock_ledger USING COVERING INDEX idx_stock_covering
+in_transit            93.00     104.57     106.58      300       ok
+    · SEARCH TABLE documents AS d USING INDEX idx_documents_type_status (doc_type=? AND status=?)
+    · SEARCH TABLE document_lines AS dl USING INDEX idx_lines_document (document_id=?)
+    · USE TEMP B-TREE FOR GROUP BY
+list_documents       176.17     187.30     189.68      200       ok
+    · （多步查询，逐段计划见下方 *_stage 键）
+doc_search           488.54     515.63     535.38      200       ok
+    · SCAN TABLE documents AS d
+    · SEARCH TABLE parties AS pa USING INDEX sqlite_autoindex_parties_1 (id=?)
+    · CORRELATED SCALAR SUBQUERY 1
+    · SEARCH TABLE document_lines AS l USING INDEX idx_lines_document (document_id=?)
+    · SEARCH TABLE products AS p USING INDEX sqlite_autoindex_products_1 (id=?)
+    · USE TEMP B-TREE FOR ORDER BY
+lines_of_page          0.70       0.73       0.75      280       ok
+    · SEARCH TABLE document_lines AS l USING INDEX idx_lines_document (document_id=?)
+    · LIST SUBQUERY 1
+    · SCAN TABLE documents USING COVERING INDEX idx_documents_created
+    · USE TEMP B-TREE FOR ORDER BY
+settled_counts         0.15       0.22       0.26       63       ok
+    · SEARCH TABLE settlements USING COVERING INDEX idx_settle_target (target_doc_id=?)
+    · LIST SUBQUERY 1
+    · SCAN TABLE documents USING COVERING INDEX idx_documents_created
+party_balances        35.03      39.14      40.61      200       ok
+    · SCAN TABLE party_ledger USING COVERING INDEX idx_party_covering
+account_balances      71.63      79.89      84.31        4       ok
+    · SCAN TABLE accounts AS a USING INDEX sqlite_autoindex_accounts_1
+    · SEARCH TABLE money_ledger AS m USING INDEX idx_money_account_seq (account_id=?)
+today_summary        313.15     339.18     343.55        7       ok
+    · SCAN TABLE documents USING INDEX idx_documents_type_status
+recent_products       10.23      11.94      12.42     4729       ok
+    · MATERIALIZE 1
+    · SCAN TABLE documents USING INDEX idx_documents_occurred
+    · SCAN SUBQUERY 1 AS d
+    · SEARCH TABLE document_lines AS dl USING INDEX idx_lines_document (document_id=?)
+    · SEARCH TABLE products AS p USING INDEX sqlite_autoindex_products_1 (id=?)
+    · USE TEMP B-TREE FOR ORDER BY
+pull_stock             0.92       0.97       1.02      500       ok
+    · SEARCH TABLE stock_ledger USING INDEX idx_stock_seq (seq_no>?)
+pull_documents         1.35       1.46       1.50      500       ok
+    · SCAN TABLE documents USING INDEX idx_documents_created
+pull_window            1.36       1.80       2.70      500       ok
+    · SEARCH TABLE documents USING INDEX idx_documents_updated (updated_at>?)
+doc_count              4.14       5.63       6.02        1       ok
+    · SCAN TABLE documents USING COVERING INDEX idx_documents_occurred
+
+最慢三条（p95）：doc_search 515.6 ms，today_summary 339.2 ms，list_documents 187.3 ms
+已写出 baseline-before.csv

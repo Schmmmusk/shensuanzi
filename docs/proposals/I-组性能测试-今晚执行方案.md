@@ -19,7 +19,7 @@
 **已重新生成**（2026-10-27）：
 
 ```
-源码 v5 / 40 条语句 / 指纹 3265deb2dc442c82
+源码 v5 / 39 条语句 / 指纹 96443aa85b0552bb
 回读校验：✅ 指纹一致
 ```
 
@@ -30,7 +30,7 @@ cd /d D:\perf-tools
 python -c "import json;d=json.load(open('schema_snapshot.json',encoding='utf-8'));print(d['schema_version'],d['fingerprint'])"
 ```
 
-期望输出：`5 3265deb2dc442c82`
+期望输出：`5 96443aa85b0552bb`
 
 > v5 就是那次「库存查询 1.3 秒 → 35 ms」的覆盖索引版本（§CV·九十八）。
 > **今晚最有价值的一条，就是验证它在新机器上没退化** —— 见 §三·重点 A。
@@ -143,13 +143,20 @@ python perf_bench.py --data-dir "D:\perf-data" --csv before.csv --explain > befo
 **开两个窗口**：一个开软件（最大化，别最小化——最小化会停绘制），一个跑记录器：
 
 ```bat
-python perf_monitor.py run --data-dir "D:\perf-data" --out D:\perf-run1 ^
+python perf_monitor.py selftest     &:: 两秒钟：确认「自动发现 + 自动识别」没坏
+python perf_monitor.py run --data-dir "D://perf-data" --out D://perf-run1 ^
   --label "新电脑-第1轮" --app-version 0.6.5 ^
-  --session-note "CPU/内存/磁盘类型/系统缩放/应用界面大小/杀软" ^
-  --spool D:\perf-run1\events.jsonl --probe-interval 60 --interval 5
+  --session-note "CPU/内存/磁盘类型/系统缩放/应用界面大小/杀软"
 ```
 
 > `--session-note` 里把 §2.2 那四件事写全 —— 少了它，这些数字以后没法用。
+
+**这一版不用按键**（2026-10-27 改）：脚本按窗口标题「神算子」**自动找进程**，
+按 CPU / 读库 / 写库**自动识别操作**（空闲 0.5 秒一采、忙时 0.2 秒，误差就是采样间隔）。
+照清单用软件就行，耗时自己会记下来。
+
+想贴名字再敲 `s 库存页` … `e 3 有点卡`（可选）；**观感 1–5 只能人给**，
+所以挑 3–5 个关键动作按一次 `e` 就够了，其余交给自动识别。
 
 按 `c` 打印清单，逐项走。**规则**：
 
@@ -287,7 +294,7 @@ in), and what counts as pass/fail.
 **Blocking fix made today.** The distributed `schema_snapshot.json` was still **v4** while the code is
 **v5**. On a test machine (no source), `perf_seed.py` can only read that snapshot, so step ② would have
 failed immediately with `⛔ schema 版本是 4`. Regenerated: `v5 / 40 statements / fingerprint
-3265deb2dc442c82`, round-trip verified. §〇 gives a 10-second pre-flight check.
+96443aa85b0552bb`, round-trip verified. §〇 gives a 10-second pre-flight check.
 
 **Three things this round specifically looks at** (0.6.5-specific):
 
