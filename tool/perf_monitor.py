@@ -61,6 +61,8 @@ import ctypes
 import json
 import os
 import platform
+
+import machine_info
 import sqlite3
 import statistics
 import sys
@@ -1144,8 +1146,16 @@ def build_report(session: Session) -> str:
     else:
         add("| 挂接进程 | **未挂接**（进程指标为 —）—— 见下方「为什么没挂上」 |")
     add("| 软件版本 | %s |" % (args.app_version or "未填写（`--app-version`）"))
-    add("| 本机 | %s / %s / %s 核 / Python %s |"
-        % (platform.node(), platform.platform(), os.cpu_count(), platform.python_version()))
+    # 机器配置：**多路兜底**采集（注册表 / ctypes / 子进程），受限机器上逐项降级。
+    # 2026-10-28 用户实测：从前只报 node/platform/核数，两台机器的数据事后没法对照；
+    # 更糟的是受限机器上「人工手段也拿不到配置」—— 所以这里必须自己采。
+    # ⚠️ 采一次就够：`cmd_run` 里已经采好挂在 session 上（报告与 session.json 用同一份），
+    # 只有单独调 build_report 时才现场采。
+    machine = getattr(session, "machine", None) or machine_info.collect()
+    add("| 本机 | %s |" % machine_info.summary(machine))
+    add("| 采集来源 | %s |" % ("、".join(
+        "%s=%s" % (k, v) for k, v in sorted(machine.get("sources", {}).items())
+    ) or "—"))
     add("| 备注 | %s |" % (args.session_note or "—"))
     add("")
 
@@ -1682,6 +1692,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     finally:
         session.close()
 
+    # 机器配置：**采一次**，报告与 session.json 共用（两处各采一次会不一致）
+    session.machine = machine_info.collect()
     report = build_report(session)
     report_path = os.path.join(session.out_dir, "report.md")
     with open(report_path, "w", encoding="utf-8") as fh:
@@ -1704,6 +1716,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     "pid_history": list(session.pid_history),
         "app_version": args.app_version,
         "session_note": args.session_note,
+        # 完整机器配置（含 blocked / sources）：事后对比两台机器只靠它
+        "machine": getattr(session, "machine", None),
         "db": db_path,
         "db_mb": mb(db_path),
         "wal_mb": mb(db_path + "-wal"),

@@ -747,8 +747,12 @@ class _SalePageState extends State<SalePage> {
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: _date,
-      firstDate: _date.subtract(const Duration(days: 730)),
-      lastDate: _date.add(const Duration(days: 365)),
+      // 2026-10-28 用户实测：原先是 ±730 / +365 天，导致日期选择器**只能选到
+      // 2024–2027 年**（他原话「为何只能选到 2024 到 2027」）。补录老单 / 选未来
+      // 送货日都够不着。取 20 年前 ~ 10 年后：覆盖个体户全部合理场景，又不至于
+      // 让年份列表从 1826 年开始（那反而难选）。
+      firstDate: _date.subtract(const Duration(days: 7300)),
+      lastDate: _date.add(const Duration(days: 3650)),
       helpText: '选择销售日期',
     );
     if (picked == null) return;

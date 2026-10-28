@@ -283,6 +283,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(counting.queries, greaterThan(afterMount), reason: '换筛选必须重查');
   });
+
+  // ------------------------------------------------------------ 带按钮的 SnackBar 会自己退（2026-10-28）
+  //
+  // 用户实测 P2：「弹出的消息不自动退下，容易以为软件坏了」。
+  // 根因在 SDK：Flutter 3.38+ 的 M3 规范把 `persist` 默认成 `action != null`
+  // （`snack_bar.dart:303`）—— **带按钮的 SnackBar 永远不退**，只能被下一条挤下去。
+  // 修法是显式写 `persist: false`；这条用例钉住「6 秒后它真的没了」。
+  testWidgets('停用后的「撤销」提示会自己退（persist: false）', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // 第一行（可乐，启用中）的「停用」按钮
+    await tester.tap(find.widgetWithText(TextButton, '停用').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('撤销'), findsOneWidget, reason: '提示先要出来');
+    expect(find.text('已停用「可乐」'), findsOneWidget);
+
+    // 走完 duration(6 秒) + 退场动画
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('撤销'),
+      findsNothing,
+      reason: '带按钮的 SnackBar 默认 persist=true（SDK 的 M3 行为）⇒ 必须显式 persist:false',
+    );
+  });
 }
 
 /// 只数「查了几次库」的服务（钉住「查询不在 build 里」）。

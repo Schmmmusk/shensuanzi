@@ -14,6 +14,8 @@
 
 - 换机器 / 换数据量 / 换版本后，能给出**可比较的数字**（CSV 可以直接贴进表格）；
 - `--explain` 顺手打印 `EXPLAIN QUERY PLAN` —— 索引有没有被用上，一眼可见
+- **性能门禁**：`count_roots` / `list_roots` 的 p95 超过阈值 ⇒ **退出码 4**
+  （这两条是单据页每帧真正跑的；调参时加 `--no-gate` 跳过）
   （例如「单据列表排序用了 `TEMP B-TREE`」就是设计如此，「`pull` 窗口 `SCAN documents`」
   才是真的缺索引）；
 - 与 `perf_monitor.py` 的分工：**它测库，monitor 测整机 + 人**。
@@ -53,6 +55,8 @@ Python 3.8+，只用标准库。退出码：0 正常；1 全部查询失败；2 
 from __future__ import annotations
 
 import argparse
+
+import machine_info as machine_info_module
 import csv
 import json
 import os
@@ -302,6 +306,19 @@ def q_list_roots(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
     )
 
 
+#: **性能门禁**：这些查询的 p95 超过阈值即判红（退出码 4）。
+#:
+#: 为什么只给这两条：它们是**页面每帧真正跑的**（`countDocuments(rootsOnly)` /
+#: `listDocuments(rootsOnly, 200)`）。2026-10-28 真机实测 26 万单库上分别是
+#: 64 ms / 57.6 ms（默认 30 天档）与 267 ms / 131 ms（全部档），阈值取「留一倍余量」。
+#:
+#: ⚠️ 阈值不是性能目标，是**防退化护栏**：谁把 `_docFrom` 的派生表又加回来
+#: （实测会从 64 ms 变成 300 ms），这条立刻红。要放宽就改这里并写明理由。
+GATES: Dict[str, float] = {
+    "count_roots": 120.0,
+    "list_roots": 200.0,
+}
+
 QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]], ...] = (
     ("stock_group", "库存合计（每商品）", q_stock_group),
     ("stock_cost", "成本余值（每商品）", q_stock_cost),
@@ -468,40 +485,24 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--csv-detail", default=None, help="逐次采样写成 CSV（一行一次）")
     out.add_argument("--json-out", default=None, help="结果写成 JSON（含环境信息与执行计划）")
     out.add_argument("--quiet", action="store_true", help="只打印表格，不打印说明")
+    out.add_argument(
+        "--no-gate", action="store_true", help="不做性能门禁判定（只量不判，调参时用）"
+    )
     return parser
 
 
 def machine_info() -> Dict[str, Any]:
-    info: Dict[str, Any] = {
-        "host": platform.node(),
-        "os": platform.platform(),
-        "machine": platform.machine(),
-        "python": platform.python_version(),
-        "cpu_count": os.cpu_count(),
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-    }
-    try:  # Windows 上取物理内存（标准库 + ctypes，零依赖）
-        import ctypes
+    """机器配置 —— **委托给 `tool/machine_info.py`**（单一来源）。
 
-        class MEMORYSTATUSEX(ctypes.Structure):
-            _fields_ = [
-                ("dwLength", ctypes.c_ulong),
-                ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong),
-                ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong),
-                ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong),
-                ("ullAvailVirtual", ctypes.c_ulonglong),
-                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-            ]
-
-        stat = MEMORYSTATUSEX()
-        stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
-            info["ram_gb"] = round(stat.ullTotalPhys / (1024.0 ** 3), 1)
-    except Exception:
-        pass
+    2026-10-28：从前这里与 `perf_monitor.py` 各写一份，两份必然漂移，而且都太薄
+    （这台机器是什么 CPU / 什么盘 / 什么缩放，事后没法对照）。现在统一走共享模块：
+    注册表 → ctypes → 子进程多路兜底，受限机器上逐项降级并记录「哪项被挡了」。
+    """
+    info: Dict[str, Any] = dict(machine_info_module.collect())
+    # 兼容既有 CSV 列名（`machine` / `cpu_count`）
+    info["machine"] = info.get("arch")
+    info["cpu_count"] = info.get("cores_logical")
+    info["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     return info
 
 
@@ -632,6 +633,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if failures:
             print("⚠️ 有 %d 条查询报错（schema 与本脚本不同源？看上面的说明）。" % failures)
 
+        # ---- 性能门禁（2026-10-28，用户裁定 A-2）----
+        breaches: List[Tuple[str, float, float]] = []
+        if not args.no_gate:
+            for r in results:
+                limit = GATES.get(r["key"])
+                if limit is not None and "p95_ms" in r and r["p95_ms"] > limit:
+                    breaches.append((r["key"], r["p95_ms"], limit))
+            if breaches:
+                print("")
+                print("⛔ 性能门禁未通过（p95 超过阈值）：")
+                for key, value, limit in breaches:
+                    print("   %-16s %8.1f ms > %.0f ms" % (key, value, limit))
+                print("   判据见 GATES 表；确属预期就加 --no-gate，并把理由写进提交消息。")
+
         if args.csv:
             with open(args.csv, "w", encoding="utf-8-sig", newline="") as fh:
                 writer = csv.writer(fh)
@@ -670,6 +685,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 json.dump(payload, fh, ensure_ascii=False, indent=2)
             print("已写出 %s" % args.json_out)
 
+        if breaches:
+            return 4
         if failures and failures == len(selected):
             return 1
         if failures and args.strict:

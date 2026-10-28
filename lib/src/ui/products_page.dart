@@ -156,6 +156,11 @@ class _ProductsPageState extends State<ProductsPage> {
           wasActive ? '已停用「${product.name}」' : '已恢复「${product.name}」',
         ),
         duration: const Duration(seconds: 6),
+        // ⚠️ `persist: false` **必须显式写**（2026-10-28 用户实测 P2）：
+        // Flutter 3.38+ 的 M3 规范里 `persist` 默认是 `action != null`
+        // （SDK `snack_bar.dart:303`）—— 带按钮的 SnackBar **永远不退**，
+        // 只能被下一条挤下去。用户原话：「弹出的消息不自动退下，容易以为软件坏了」。
+        persist: false,
         action: SnackBarAction(
           label: '撤销',
           onPressed: () {
