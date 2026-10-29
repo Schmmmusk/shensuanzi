@@ -21,12 +21,12 @@ class DocumentDao {
 
   Database get _raw => db.raw;
 
-  /// 本地时区相对 UTC 的偏移（毫秒，东八区 = +28 800 000）。
-  ///
-  /// 只给 [_summaries] 的「按日分桶」排序用。**刻意不在 SQL 里用 `'localtime'`
-  /// 修饰符** —— 本仓打包的 SQLite 带了 `SQLITE_OMIT_LOCALTIME`，那会返回 `NULL`
-  /// 让排序静默退化（2026-10-18 实测，见该处注释）。
-  int get _localOffsetMillis => DateTime.now().timeZoneOffset.inMilliseconds;
+  // 2026-10-29（v6）：`_localOffsetMillis` 已删 —— 排序键不再是表达式，
+  // 偏移改在**写入时**由 `businessDayOf()` 用一次（见 models/document.dart）。
+  //
+  // ⚠️ 历史教训仍有效：本仓打包的 SQLite 带 `SQLITE_OMIT_LOCALTIME`，
+  // `date(x,'unixepoch','localtime')` 会**静默返回 NULL**。将来若要按本地日分组，
+  // 仍须用整数运算，不能靠那个修饰符。
 
   /// `LIKE` 的转义（配合 SQL 里的 `ESCAPE '\'`）。
   ///
@@ -482,8 +482,15 @@ class DocumentDao {
   /// 2026-10-28（性能实测后修）：`countDocuments` 从前无条件用 [docFrom]（三个 join），
   /// 而 `COUNT(*)` 只需要 `WHERE`。实测 26 万单 + 10 万核销的库上：
   /// 带全套 join **300 ms** → 只带必需的表 **61 ms**（4.9 倍）。
-  static String _fromFor(_DocFilter filter) {
+  static String _fromFor(_DocFilter filter, {bool ordered = false}) {
     final StringBuffer buffer = StringBuffer('FROM ${Schema.documents} d ');
+    // 列表第一段：**硬提示**走排序索引，沿 (business_day DESC, created_at DESC)
+    // 直接取前 200 行，不用把 16 万根单全排一遍。
+    // ⚠️ 硬提示遇到缺索引会直接报错（F19 的教训）⇒ 由建库语句与迁移链共同保证
+    // 它存在，另有测试断言索引确实在（`document_dao_test`）。
+    if (ordered) {
+      buffer.write('INDEXED BY idx_docs_bday_created ');
+    }
     if (filter.needsParties) {
       buffer.write('LEFT JOIN ${Schema.parties} pa ON pa.id = d.party_id ');
     }
@@ -561,11 +568,23 @@ class DocumentDao {
   /// ⚠️ 前提是**单一时区**（个体户单机，`Agents.md` §一）。跨时区同步已在 #32 登记待办；
   /// 有夏令时的时区里，「零点前 1 小时」的单可能被分到相邻一天 —— 中国无夏令时。
   ///
-  /// ⚠️ **不要**试图给这个表达式加索引（4c 已评估并否掉）：索引里必须烘字面量偏移，
-  /// 而偏移来自 `DateTime.now().timeZoneOffset`（运行时可变）⇒ 索引绑死建库时区。
+  /// ⚠️ **v6 起不再是表达式**（2026-10-29，裁定 ③ 乙案）：排序键换成写入时固化的
+  /// `documents.business_day`，命中 `idx_docs_bday_created`。
+  ///
+  /// 4c 当时否掉「给表达式加索引」是对的 —— 索引里必须烘字面量偏移，而偏移来自
+  /// `DateTime.now().timeZoneOffset`（运行时可变）⇒ 索引会绑死建库时区。
+  /// 解法不是给表达式加索引，而是**把值固化到列里**：写入时算一次，索引烘的是
+  /// 普通整数列，且**历史不随时区漂移**（这比性能更值钱）。
+  ///
+  /// ⚠️ 因此本常量**不再带 `?`** —— 调用方的实参列表必须同步去掉 `_localOffsetMillis`
+  /// （留着会让参数错位：LIMIT 拿到偏移量、查询返回全部行。2026-10-28 已踩过一次）。
   static const String _listOrder =
-      'ORDER BY ((d.occurred_at + ?) / 86400000) DESC, '
-      'd.created_at DESC ';
+      'ORDER BY d.business_day DESC, '
+      'd.created_at DESC, '
+      // `id` 兜底：同一业务日 + 同一毫秒录入的单据可能并列，不兜底时它们的
+      // 相对顺序由执行计划决定（实测 200 行里有 6 行会「每次进去位置不一样」）。
+      // 索引也建成三列，所以**加上它不会引入排序**（实测仍 0.1 ms）。
+      'd.id DESC ';
 
   /// 单据列表（**两段查询**，4c / 2026-10-24 / §CV·九十九）。
   ///
@@ -619,7 +638,7 @@ class DocumentDao {
           '$_docFrom'
           '${filter.where}'
           '$_listOrder',
-          <Object?>[...filter.args, _localOffsetMillis],
+          filter.args,
         ),
       );
     }
@@ -631,11 +650,11 @@ class DocumentDao {
       for (final Map<String, Object?> row in _raw.select(
         // 同样按需拼：没有「按对方名搜」就不 join parties，没有「未结清」就不带派生表
         'SELECT d.id '
-        '${_fromFor(filter)}'
+        '${_fromFor(filter, ordered: true)}'
         '${filter.where}'
         '$_listOrder'
         'LIMIT ?',
-        <Object?>[...filter.args, _localOffsetMillis, limit],
+        <Object?>[...filter.args, limit],
       ))
         row['id']! as String,
     ];

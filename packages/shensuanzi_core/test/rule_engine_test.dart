@@ -1083,8 +1083,9 @@ void main() {
       for (int i = 1; i <= 1000; i++) {
         db.raw.execute(
           'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
-          'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
-          'VALUES (?, ?, ?, ?, 0, 0, ?, 0, ?, ?)',
+          'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+          'business_day) '
+          'VALUES (?, ?, ?, ?, 0, 0, ?, 0, ?, ?, ?)',
           <Object?>[
             'p0-1-doc-$i',
             '$prefix${i.toString().padLeft(3, '0')}',
@@ -1093,6 +1094,7 @@ void main() {
             t,
             t,
             t,
+            businessDayOf(t),
           ],
         );
       }

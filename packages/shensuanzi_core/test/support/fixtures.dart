@@ -95,8 +95,8 @@ void insertDocument(
   db.execute(
     'INSERT INTO documents '
     '(id, doc_no, doc_type, status, total_amount, ref_doc_id, party_id, '
-    'occurred_at, created_at, updated_at) '
-    'VALUES (?,?,?,?,?,?,?,?,?,?)',
+    'occurred_at, created_at, updated_at, business_day) '
+    'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     <Object?>[
       id,
       docNo,
@@ -108,6 +108,8 @@ void insertDocument(
       occurred,
       created,
       created,
+      // v6：业务日（与生产代码同一个纯函数，避免夹具自己算错）
+      businessDayOf(occurred),
     ],
   );
 }

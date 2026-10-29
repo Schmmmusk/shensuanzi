@@ -344,7 +344,7 @@ void main() {
         'PRAGMA user_version',
       );
       expect(version.single.values.single, Schema.version);
-      expect(Schema.version, 5, reason: '本测试就是为 v5 写的');
+      expect(Schema.version, 6, reason: '本测试就是为 v6 写的');
       migrated.close();
     });
 
@@ -442,9 +442,9 @@ void main() {
       );
       db.raw.execute(
         'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
-        'occurred_at, created_at, updated_at) '
-        "VALUES ('d-def', 'XS1', 'sale', 'confirmed', 0, ?, ?, ?)",
-        <Object?>[t, t, t],
+        'occurred_at, created_at, updated_at, business_day) '
+        "VALUES ('d-def', 'XS1', 'sale', 'confirmed', 0, ?, ?, ?, ?)",
+        <Object?>[t, t, t, businessDayOf(t)],
       );
       db.raw.execute(
         'INSERT INTO document_lines (id, document_id, product_id, quantity, '
@@ -535,7 +535,7 @@ void main() {
     // 审查意见 §五：「迁移链是**链**，写完一环就该验证一环」——
     // 于是这里不只测「最终到了 v3」，还测「**中间的 v2 那一环真的跑了**」
     // 与「某一环失败时，链停在哪、有没有半个结构」。
-    test('化石升至 v5：**四环都跑**（v1→v2→v3→v4→v5），列 + 索引到齐', () {
+    test('化石升至 v6：**五环都跑**（v1→v2→v3→v4→v5→v6），列 + 索引到齐', () {
       final File fixture = File('test/fixtures/v1_empty.db');
       final Directory box = Directory.systemTemp.createTempSync('sz_ring_ok_');
       addTearDown(() => deleteQuietly(box));
@@ -544,7 +544,7 @@ void main() {
 
       final Db migrated = Db.open(path);
       addTearDown(migrated.close);
-      expect(migrated.schemaVersion, 5);
+      expect(migrated.schemaVersion, 6);
 
       Set<Object?> columnsOf(String table) => migrated.raw
           .select('PRAGMA table_info($table)')
@@ -593,6 +593,19 @@ void main() {
         reason: 'v5 环：窄索引要被换掉',
       );
 
+      // 环级：v5→v6 那一环的产物 —— `business_day` 列 + 排序索引
+      // （化石里根本没有这一列，所以它**只能**由迁移产生）
+      expect(
+        columnsOf(Schema.documents),
+        contains('business_day'),
+        reason: 'v6 环：业务日列要在（单据列表排序键）',
+      );
+      expect(
+        indexes.map((Map<String, Object?> r) => r['name']),
+        contains('idx_docs_bday_created'),
+        reason: 'v6 环：排序索引要在（`INDEXED BY` 是硬提示，缺了整页报错）',
+      );
+
       // 迁移后的库里新列是**活的**（不是只有结构）
       final int t = now();
       migrated.raw.execute(
@@ -602,9 +615,9 @@ void main() {
       );
       migrated.raw.execute(
         'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
-        'occurred_at, created_at, updated_at) '
-        "VALUES ('d-live', 'XS2', 'sale', 'confirmed', 0, ?, ?, ?)",
-        <Object?>[t, t, t],
+        'occurred_at, created_at, updated_at, business_day) '
+        "VALUES ('d-live', 'XS2', 'sale', 'confirmed', 0, ?, ?, ?, ?)",
+        <Object?>[t, t, t, businessDayOf(t)],
       );
       migrated.raw.execute(
         'INSERT INTO document_lines (id, document_id, product_id, quantity, '
@@ -914,6 +927,18 @@ void downgradeToV1(Database raw) {
   // ⚠️ `v` 只到 `version - 1`：`migrationStep(version)` 本身会抛
   //    `MissingMigrationException`（"没有下一步"），不能拿去循环。
   for (int v = 1; v < Schema.version; v++) {
+    // v6（2026-10-29）是**重建表**，下面那套「ALTER ADD COLUMN / CREATE INDEX」
+    // 的正则表达不了它。它的**净效果**只是「加一列 + 加一个索引」，所以这里
+    // 手工做逆操作，保住「降级形状 == 化石」这条前提校验。
+    //
+    // ⚠️ 这与本函数上方「出现重建表就该加新化石」的约定有出入，是**有意的取舍**：
+    // 加一个 v5 化石要往仓库里塞二进制文件、还要维护生成脚本，而这里逆操作
+    // 只有两行且语义明确。**下不为例** —— 再出现重建表就老老实实加化石。
+    if (v == 5) {
+      raw.execute('DROP INDEX IF EXISTS idx_docs_bday_created');
+      raw.execute('ALTER TABLE documents DROP COLUMN business_day');
+      continue;
+    }
     for (final String sql in Schema.migrationStep(v)) {
       final String statement = sql.trim();
       final RegExpMatch? columnMatch = addColumn.firstMatch(statement);

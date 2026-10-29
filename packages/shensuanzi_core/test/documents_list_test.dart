@@ -1084,6 +1084,81 @@ void main() {
       expect(total, listed, reason: '`needsAggregates` 判错就会漏两个派生表 ⇒ 报错或数错');
     });
   });
+
+  // ------------------------------------------------------------ v6 业务日固化（2026-10-29）
+  //
+  // 排序键从「查询时现算的表达式」换成「写入时固化的 `documents.business_day`」。
+  // 这里钉两件事：① 派生值算得对（与纯函数逐字一致）；② 排序索引真的在 ——
+  // DAO 用的是 `INDEXED BY idx_docs_bday_created`（**硬提示**），索引不在会直接报错
+  // （F19 的教训：镜像重建丢了索引 ⇒ 点「选商品」整页变灰）。
+  group('v6：业务日固化', () {
+    test('写入时算出的 business_day 与 businessDayOf 逐字一致', () {
+      final int occurred = at(2026, 10, 20, 13, 45);
+      insertDocument(
+        db.raw,
+        'd-bd',
+        docNo: 'XS20261020-901',
+        docType: 'sale',
+        occurredAt: occurred,
+      );
+      final Object? stored = db.raw
+          .select("SELECT business_day FROM documents WHERE id = 'd-bd'")
+          .first['business_day'];
+      expect(
+        stored,
+        businessDayOf(occurred),
+        reason: '写入路径与纯函数必须是同一口径（否则排序与筛选会各算各的）',
+      );
+    });
+
+    test('businessDayOf：同一天的「零点」与「当晚」落到同一个业务日', () {
+      final int midnight = at(2026, 10, 20);
+      final int evening = at(2026, 10, 20, 23, 59);
+      expect(
+        businessDayOf(midnight),
+        businessDayOf(evening),
+        reason: '主单 occurred_at 是当天 00:00、派生单是精确时刻 —— 必须同一天（#26① 口径）',
+      );
+      expect(
+        businessDayOf(evening) - businessDayOf(at(2026, 10, 19, 23, 59)),
+        1,
+        reason: '跨一天就该差 1',
+      );
+    });
+
+    test('排序索引 idx_docs_bday_created 必须在（INDEXED BY 是硬提示）', () {
+      final Set<Object?> names = db.raw
+          .select('PRAGMA index_list(documents)')
+          .map((Map<String, Object?> r) => r['name'])
+          .toSet();
+      expect(
+        names,
+        contains('idx_docs_bday_created'),
+        reason:
+            'DAO 第一段用 `INDEXED BY idx_docs_bday_created`；索引不在会直接抛错，'
+            '整页变成错误边界（F19 同款）',
+      );
+    });
+
+    test('排序列上的查询计划确实走这条索引（不是全表扫 + 排序）', () {
+      final String plan = db.raw
+          .select(
+            'EXPLAIN QUERY PLAN '
+            'SELECT d.id FROM documents d '
+            'INDEXED BY idx_docs_bday_created '
+            'WHERE d.ref_doc_id IS NULL '
+            'ORDER BY d.business_day DESC, d.created_at DESC, d.id DESC LIMIT 200',
+          )
+          .map((Map<String, Object?> r) => r['detail']! as String)
+          .join('\n');
+      expect(plan, contains('idx_docs_bday_created'), reason: plan);
+      expect(
+        plan,
+        isNot(contains('TEMP B-TREE FOR ORDER BY')),
+        reason: '排序必须由索引顺序直接满足（旧实现这里就是那个 136.8 ms 的临时 B 树）：$plan',
+      );
+    });
+  });
 }
 
 /// 把「逐行查」的两个入口改成抛错：列表路径一旦退化成 N+1 就立刻失败。

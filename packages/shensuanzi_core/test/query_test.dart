@@ -476,8 +476,9 @@ void main() {
       // 直接种一条「文档类型是库外值」的脏数据（模拟 forward-compat）
       db.raw.execute(
         "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
-        'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
-        "VALUES ('d-x', 'XX-1', 'nope', 'confirmed', 0, 0, 1, 0, 1, 1)",
+        'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+        'business_day) '
+        "VALUES ('d-x', 'XX-1', 'nope', 'confirmed', 0, 0, 1, 0, 1, 1, 0)",
       );
       MoneyLedgerDao(db).insert(
         MoneyLedger(

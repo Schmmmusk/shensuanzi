@@ -115,7 +115,7 @@ class Db {
       // WAL 必须在事务外设置；它提升并发读性能，且是断电安全性的基础。
       db.execute('PRAGMA journal_mode = WAL');
       _configure(db, foreignKeys: foreignKeys);
-      _migrate(db, path);
+      _migrate(db, path, foreignKeys: foreignKeys);
       return Db._(db, foreignKeys: foreignKeys);
     } catch (_) {
       // 先关连接：Windows 上文件被占用就写不回去（也决定临时目录删不删得掉）
@@ -168,7 +168,7 @@ class Db {
   /// **不返回任何东西**：备份路径由 [_backupBeforeMigration] 自己写到盘上，
   /// 没有人在此处消费它（曾经返回 `String?` 给「失败后恢复」用 ——
   /// 那条路径走不到，已删；见 [open] 的说明）。
-  static void _migrate(Database db, String? path) {
+  static void _migrate(Database db, String? path, {bool foreignKeys = true}) {
     final int current =
         db.select('PRAGMA user_version').first['user_version']! as int;
     if (current == Schema.version) return;
@@ -214,19 +214,42 @@ class Db {
     // v1 → v3 中途失败时 v1 → v2 的部分保留，重试只跑 v2 → v3（粒度更细）。
     // `migrationStep` 在 BEGIN **之前**取：缺迁移时没有事务要回滚，
     // 也不该留下半个结构（`MissingMigrationException` 在启动即拦）。
-    for (int v = current + 1; v <= Schema.version; v++) {
-      final List<String> steps = Schema.migrationStep(v - 1);
-      db.execute('BEGIN');
-      try {
-        for (final String sql in steps) {
-          db.execute(sql);
+    // ⚠️ **重建父表必须先关外键**（SQLite 官方「12 步重建」的第 1 步）：
+    // v6 要重建 `documents`，而 `document_lines` / `stock_ledger` / `money_ledger` /
+    // `party_ledger` / `settlements` 都有行指向它 —— 外键开着时 `DROP TABLE` 直接报错。
+    //
+    // ⚠️ `PRAGMA foreign_keys` **在事务内是空操作**，所以必须在 `BEGIN` **之前**执行，
+    // 且整条迁移链跑完再恢复（不是每版恢复一次）。
+    db.execute('PRAGMA foreign_keys = OFF');
+    try {
+      for (int v = current + 1; v <= Schema.version; v++) {
+        final List<String> steps = Schema.migrationStep(v - 1);
+        db.execute('BEGIN');
+        try {
+          for (final String sql in steps) {
+            db.execute(sql);
+          }
+          db.execute('PRAGMA user_version = $v');
+          db.execute('COMMIT');
+        } catch (_) {
+          _rollbackQuietly(db);
+          rethrow;
         }
-        db.execute('PRAGMA user_version = $v');
-        db.execute('COMMIT');
-      } catch (_) {
-        _rollbackQuietly(db);
-        rethrow;
       }
+    } finally {
+      db.execute('PRAGMA foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}');
+    }
+
+    // 关过外键就要**复核一遍**：重建表最怕「搬完发现子表指向了不存在的行」，
+    // 而那种损坏在后续读写里表现为「查不到」而不是「报错」，极难定位。
+    final List<Map<String, Object?>> violations = db.select(
+      'PRAGMA foreign_key_check',
+    );
+    if (violations.isNotEmpty) {
+      throw StateError(
+        '迁移后外键校验失败：${violations.length} 处引用不存在的行'
+        '（第一处：${violations.first}）。请从 .before-v$current 恢复并反馈。',
+      );
     }
   }
 

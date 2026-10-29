@@ -463,9 +463,11 @@ void main() {
     final Db db = Db.open(p.join(dir, AppBootstrap.databaseFileName));
     db.raw.execute(
       "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
-      'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+      'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+      'business_day) '
       "VALUES ('d1', 'CG20260928-001', 'purchase', 'confirmed', 0, 0, "
-      '1700000000000, 0, 1700000000000, 1700000000000)',
+      '1700000000000, 0, 1700000000000, 1700000000000, '
+      '${businessDayOf(1700000000000)})',
     );
     db.close();
     return dir;

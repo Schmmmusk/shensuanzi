@@ -636,8 +636,9 @@ void main() {
       // 本地乐观写入的占位单据
       db.raw.execute(
         'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
-        'occurred_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
-        <Object?>['d1', '~local-1', 'purchase', 'confirmed', 0, 1, 1, 1],
+        'occurred_at, created_at, updated_at, business_day) '
+        'VALUES (?,?,?,?,?,?,?,?,?)',
+        <Object?>['d1', '~local-1', 'purchase', 'confirmed', 0, 1, 1, 1, 0],
       );
 
       transport.replyJson(

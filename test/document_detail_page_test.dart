@@ -138,8 +138,9 @@ void main() {
     // 已收满 10.00
     db.raw.execute(
       'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
-      'occurred_at, created_at, updated_at) '
-      "VALUES ('rc1', 'SK1', 'receipt', 'settled', 1000, 0, 0, 0)",
+      'occurred_at, created_at, updated_at, business_day) '
+      "VALUES ('rc1', 'SK1', 'receipt', 'settled', 1000, 0, 0, 0, "
+      '${businessDayOf(0)})',
     );
     db.raw.execute(
       'INSERT INTO settlements (id, receipt_doc_id, target_doc_id, amount, '
@@ -149,9 +150,9 @@ void main() {
     // 之后退了 3.00
     db.raw.execute(
       'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
-      'ref_doc_id, occurred_at, created_at, updated_at) '
-      "VALUES ('rt1', 'XT1', 'sale_return', 'confirmed', 300, ?, 0, 0, 0)",
-      <Object?>[doc.id],
+      'ref_doc_id, occurred_at, created_at, updated_at, business_day) '
+      "VALUES ('rt1', 'XT1', 'sale_return', 'confirmed', 300, ?, 0, 0, 0, ?)",
+      <Object?>[doc.id, businessDayOf(0)],
     );
 
     await tester.pumpWidget(page(doc.id));

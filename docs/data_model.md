@@ -136,8 +136,19 @@
 | `created_at` | INTEGER | |
 | `updated_at` | INTEGER | |
 | `remark` | TEXT NULL | |
+| `business_day` | INTEGER NOT NULL | **v6**：业务日（本地日序号，自 1970-01-01 起）。由 `businessDayOf(occurred_at)` 在**写入时**算好，单据列表的排序键 |
 
 **允许 UPDATE 的字段**：`status`、`paid_amount`、`updated_at`。其余禁止。
+
+**关于 `business_day`（v6，2026-10-29）**：
+
+- **为什么要固化**：列表排序是「业务日倒序 → 日内录入时刻倒序」。从前写成表达式
+  `(occurred_at + 本地偏移) / 86400000`，任何索引都用不上（26 万单上 `TEMP B-TREE` 要 136.8 ms），
+  而且它依赖**查询时**的系统时区 —— 换台电脑或跨时区用一次，历史排序会整体漂移。
+- **固化后**：`ORDER BY business_day DESC, created_at DESC, id DESC` 命中
+  `idx_docs_bday_created`，实测 **136.8 → 0.1 ms**；历史不再随时区变。
+- **它不参与任何计算**（库存/资金/往来仍只看四张流水表），只决定**显示顺序**。
+- 由 `Document.toRow()` 统一写入；同步镜像侧对主机 payload 缺该列时**按同一纯函数补算**。
 
 **doc_type 枚举**：
 
@@ -193,6 +204,10 @@ CREATE INDEX idx_documents_ref         ON documents(ref_doc_id);
 -- 同步拉取游标。documents 没有 seq_no，(created_at, id) 是它的复合游标，
 -- 见 sync_protocol.md §8.2 / R-4 处置
 CREATE INDEX idx_documents_created     ON documents(created_at, id);
+-- v6（2026-10-29）：单据列表的排序索引。三列是为了让「同日同时刻」的并列行
+-- 也有确定顺序（否则每次进去这几行位置会变）；DAO 用 `INDEXED BY` 硬提示它，
+-- 所以**这条索引不能少** —— 缺了会直接报错（F19 同款），不是退化而是崩。
+CREATE INDEX idx_docs_bday_created     ON documents(business_day, created_at, id);
 -- v4（P0-3）：同步「最近更新窗口」按 (updated_at, id) 取
 CREATE INDEX idx_documents_updated     ON documents(updated_at, id);
 ```

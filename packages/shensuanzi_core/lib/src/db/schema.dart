@@ -34,7 +34,7 @@ class Schema {
   /// ⚠️ **本步（段 1a）只动 schema 与迁移**：`document_lines.quantity` 仍
   /// **永远是最小单位**、`amount` 仍是这一行**实际发生金额的真相**；
   /// 引擎 / 草稿 / UI 的口径改动分别在 2a / 2b / 3 段。
-  static const int version = 5;
+  static const int version = 6;
 
   // ---------------------------------------------------------------- 表名
 
@@ -212,7 +212,11 @@ class Schema {
       time_estimated  INTEGER NOT NULL DEFAULT 0,
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL,
-      remark          TEXT
+      remark          TEXT,
+      -- v6（2026-10-29，裁定 ③ 乙案）：**业务日**（本地日序号，自 1970-01-01 起）。
+      -- 由 `businessDayOf(occurred_at)` 在写入时算好 —— 见 models/document.dart。
+      -- NOT NULL 且**不给默认值**：漏填就当场报错，不许静默写 0（那会让排序全乱）。
+      business_day    INTEGER NOT NULL
     )
     ''',
     'CREATE INDEX idx_documents_type_status ON $documents(doc_type, status)',
@@ -222,6 +226,10 @@ class Schema {
     // 同步拉取游标：`documents` 没有 seq_no，用 (created_at, id) 复合游标
     // （见 docs/sync_protocol.md §8.2 / R-4 处置）
     'CREATE INDEX idx_documents_created     ON $documents(created_at, id)',
+    // v6：单据列表的排序键（业务日倒序 + 日内录入时刻倒序）。
+    // 有了它 `ORDER BY business_day DESC, created_at DESC LIMIT 200` 能**走索引
+    // 直接取前 200 行**，不用把 16 万根单全排一遍（实测 136.8 → 0.1 ms）。
+    'CREATE INDEX idx_docs_bday_created     ON $documents(business_day, created_at, id)',
     // v4（P0-3）：同步「最近更新窗口」按 (updated_at, id) 取；主数据游标
     // 同款复合索引（idx_products_updated 等）—— 没有它窗口查询是全表扫
     // + 临时 B 树（EXPLAIN 实测，业务审查 §5.4）。
@@ -463,6 +471,21 @@ class Schema {
     // ⚠️ `IF EXISTS` 是保命符：`DROP INDEX` 遇到不存在的索引会直接抛错，
     // 让整个迁移事务回滚 —— 手工清理过索引的旧库会**开不了机**。
     // ⚠️ `seq_no` 必须排在聚合列之前（理由见建库 DDL 处）。
+    // v5 → v6（2026-10-29，用户裁定 ③ 乙案）：`documents` 加 `business_day`。
+    //
+    // **为什么走「重建表」而不是 `ALTER TABLE ADD COLUMN` + `UPDATE` 回填**：
+    // 纪律 2/3 规定业务数据只插入不更新、`documents` 只许改三个字段。
+    // 加列本身合法，但**回填 26 万行**必须 UPDATE —— 那就开了口子。
+    // 重建表（纪律 14 明确允许的形态）把「加列 + 回填」合并成一次数据搬迁，
+    // 26 万行实测 **0.8 秒**（ALTER 0.01 + 搬迁 0.64 + 建索引 0.15），完全可接受。
+    //
+    // ⚠️ 回填的偏移取**迁移那一刻**的本地时区 —— 与旧查询「按查询时区现算」
+    // 相比，这是把「当时的口径」固化下来。此后时区再变，历史也不动（这正是要的）。
+    //
+    // ⚠️ 本步由 `Db._migrate` 在**外键关闭**的状态下执行（重建父表必须先关，
+    // 否则子表的行会让 `DROP TABLE` 直接报错）；迁移完再 `foreign_key_check` 复核。
+    5 => _rebuildDocumentsV6(),
+
     4 => <String>[
       'DROP INDEX IF EXISTS idx_stock_product_seq',
       'CREATE INDEX idx_stock_covering ON $stockLedger('
@@ -473,6 +496,61 @@ class Schema {
     ],
     _ => throw MissingMigrationException(from),
   };
+
+  /// v5 → v6 的**表重建**（`documents` 加 `business_day`）。
+  ///
+  /// 顺序照 SQLite 官方的「12 步重建」精简版：建新表 → 搬数据（顺带算 business_day）
+  /// → 删旧表 → 改名 → 重建全部索引。**索引一个都不能漏** —— 漏了就是 F19 那种
+  /// 「`INDEXED BY` 硬提示找不到索引，整页变灰」。
+  static List<String> _rebuildDocumentsV6() {
+    // 回填口径：迁移那一刻的本地偏移（毫秒）。负值也要能算（UTC-x）。
+    final int offset = DateTime.now().timeZoneOffset.inMilliseconds;
+    return <String>[
+      '''
+      CREATE TABLE ${documents}_v6 (
+        id              TEXT PRIMARY KEY,
+        doc_no          TEXT NOT NULL UNIQUE,
+        doc_type        TEXT NOT NULL,
+        status          TEXT NOT NULL,
+        party_id        TEXT,
+        account_id      TEXT,
+        total_amount    INTEGER NOT NULL DEFAULT 0,
+        paid_amount     INTEGER NOT NULL DEFAULT 0,
+        ref_doc_id      TEXT,
+        occurred_at     INTEGER NOT NULL,
+        time_estimated  INTEGER NOT NULL DEFAULT 0,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL,
+        remark          TEXT,
+        business_day    INTEGER NOT NULL
+      )
+      ''',
+      // 搬迁：列顺序与上面一一对应，`business_day` 现算。
+      // SQLite 的整数除法是**向零截断**，与 Dart 侧 `floor` 在正数上一致（本系统无 1970 前单据）。
+      '''
+      INSERT INTO ${documents}_v6 (
+        id, doc_no, doc_type, status, party_id, account_id, total_amount,
+        paid_amount, ref_doc_id, occurred_at, time_estimated, created_at,
+        updated_at, remark, business_day
+      )
+      SELECT
+        id, doc_no, doc_type, status, party_id, account_id, total_amount,
+        paid_amount, ref_doc_id, occurred_at, time_estimated, created_at,
+        updated_at, remark, (occurred_at + $offset) / 86400000
+      FROM $documents
+      ''',
+      'DROP TABLE $documents',
+      'ALTER TABLE ${documents}_v6 RENAME TO $documents',
+      // ---- 索引全部重建（一个都不能漏）
+      'CREATE INDEX idx_documents_type_status ON $documents(doc_type, status)',
+      'CREATE INDEX idx_documents_party       ON $documents(party_id)',
+      'CREATE INDEX idx_documents_occurred    ON $documents(occurred_at)',
+      'CREATE INDEX idx_documents_ref         ON $documents(ref_doc_id)',
+      'CREATE INDEX idx_documents_created     ON $documents(created_at, id)',
+      'CREATE INDEX idx_documents_updated     ON $documents(updated_at, id)',
+      'CREATE INDEX idx_docs_bday_created     ON $documents(business_day, created_at, id)',
+    ];
+  }
 }
 
 /// 迁移链缺一步（`Schema.migrationStep` 没有 `from` 那一段）。

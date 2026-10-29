@@ -69,6 +69,32 @@ enum DocStatus {
   }
 }
 
+/// **业务日**：把「发生时刻」折算成本地日的序号（自 1970-01-01 起的第几天）。
+///
+/// 公式与旧查询里的 `(occurred_at + 本地偏移) / 86400000` **逐字等价**，
+/// 只是从「每次查询现算」变成「写入时算一次存下来」（v6 / 2026-10-29）。
+///
+/// ## 为什么要固化
+///
+/// 1. **性能**：旧写法是表达式排序，任何索引都用不上，26 万单上 `TEMP B-TREE`
+///    要 **136.8 ms**；固化后 `ORDER BY business_day DESC, created_at DESC`
+///    正好命中 `idx_docs_bday_created`，实测 **0.1 ms**。
+/// 2. **时区不漂移**：旧写法依赖**查询时**的系统时区 —— 用户换了电脑或跨时区用一次，
+///    全部历史单据的排序会跟着变。固化后历史永远不变（这比性能更值钱）。
+///
+/// ⚠️ 语义仍是「**本地日**」：主单 `occurred_at` 是当天 00:00，派生单是精确时刻，
+/// 两者折到同一天就同一天（#26① 的口径没变）。
+///
+/// ⚠️ 负数（1970 年之前）行为与 SQLite 的整数除法略有差异（Dart 用 `floor`、
+/// SQLite 向零截断）—— 本系统不会有 1970 前的单据，不做兼容。
+int businessDayOf(int occurredAtMillis, {int? offsetMillis}) {
+  final int offset = offsetMillis ??
+      DateTime.fromMillisecondsSinceEpoch(
+        occurredAtMillis,
+      ).timeZoneOffset.inMilliseconds;
+  return ((occurredAtMillis + offset) / 86400000).floor();
+}
+
 /// 单据主表（业务数据）。
 ///
 /// ⚠️ **例外**：`documents` 是唯一的「部分可变」业务表 ——
@@ -190,6 +216,10 @@ class Document extends ImmutableEntity {
     'created_at': createdAt,
     'updated_at': updatedAt,
     'remark': remark,
+    // v6：业务日固化（见 [businessDayOf] 的说明）。
+    // ⚠️ 这里**每次都重算**（而不是从实体取）：`Document` 不持有该字段，
+    // 它是由 `occurred_at` 派生的 —— 多存一份在实体里就多一个能不一致的来源。
+    'business_day': businessDayOf(occurredAt),
   };
 
   /// 复制并替换**白名单内**的字段（`updated_at` 由调用方给，避免隐式取当前时间）

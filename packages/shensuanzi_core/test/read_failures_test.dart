@@ -95,8 +95,8 @@ void main() {
       void insertDoc(String id, String type, String status) => db.raw.execute(
         'INSERT INTO ${Schema.documents} (id, doc_no, doc_type, status, '
         'total_amount, paid_amount, occurred_at, time_estimated, created_at, '
-        'updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        <Object?>[id, 'NO-$id', type, status, 5000, 0, 1, 0, 1, 1],
+        'updated_at, business_day) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        <Object?>[id, 'NO-$id', type, status, 5000, 0, 1, 0, 1, 1, 0],
       );
       insertDoc('doc-ok', 'sale', 'weird_status');
       insertDoc('doc-worse', 'weird_type', 'confirmed');

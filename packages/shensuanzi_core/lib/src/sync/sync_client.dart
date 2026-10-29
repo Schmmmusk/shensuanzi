@@ -6,6 +6,7 @@ import '../dao/sync_dao.dart';
 import '../reject_code.dart';
 import '../db/database.dart';
 import '../db/schema.dart';
+import '../models/document.dart';
 import '../models/sync_queue_entry.dart';
 import 'sync_operation.dart';
 import 'sync_pull.dart';
@@ -633,6 +634,22 @@ class SyncClient {
     final Object? id = row['id'];
     if (id is! String || id.isEmpty) {
       throw FormatException('$table 的行缺少 id：$row');
+    }
+    // v6（2026-10-29）：`documents.business_day` 是**派生列**，主机 payload 里没有
+    // （它不属于 `Document` 实体，是 `occurred_at` 的函数）。
+    // 镜像侧按同一个纯函数补算 —— 与 `Document.toRow()` 逐字一致。
+    //
+    // ⚠️ 为什么不改同步协议让主机下发：协议变更会让「旧电脑 + 新手机」直接失效
+    // （`docs/sync_protocol.md` 的兼容承诺）。而 business_day 只影响**显示顺序**、
+    // 不参与任何计算，重算的偏差仅限「手机与主机不在同一时区」时的跨日边界。
+    if (table == Schema.documents && row['business_day'] == null) {
+      final Object? occurred = row['occurred_at'];
+      if (occurred is int) {
+        row = <String, Object?>{
+          ...row,
+          'business_day': businessDayOf(occurred),
+        };
+      }
     }
     final List<String> columns = row.keys.toList(growable: false);
     final String marks = List<String>.filled(columns.length, '?').join(', ');

@@ -15959,3 +15959,47 @@ overview T0+0.13s(125ms) · stock 332 · documents 221 · parties 201 · account
 **另**：`docs/proposals/51-长远方案调研-数据封存与另两条的反驳.md` 已出（双语）。
 核心结论：数据封存技术可行但**不是现在**（测试库 26.2 万单已是 10 年真实上限的 2.4 倍）；
 拆表与流式**建议划掉**，各有四条硬理由。
+
+### 三十六、2026-10-29 落地 v6：`business_day` 固化（裁定 ③ 乙案）
+
+用户裁定「③ 乙案（重建表）+ 主机端 RuleEngine 补算 + `INDEXED BY` 断言」。今天实施。
+
+**为什么值得做（不只是性能）**：旧排序是表达式 `(occurred_at + 查询时区偏移) / 86400000`，
+**依赖查询时的系统时区** —— 换台电脑或跨时区用一次，历史单据排序会整体漂移。固化后历史永不变。
+性能只是顺带的：**136.8 → 0.1 ms**。
+
+**实现五处**：
+
+| # | 位置 | 做了什么 |
+|---|---|---|
+| 1 | `models/document.dart` | 新增纯函数 `businessDayOf(occurredAt)`；`toRow()` 写入该列（**实体不加字段**，派生值只留一个来源） |
+| 2 | `db/schema.dart` | v6：建表加 `business_day INTEGER NOT NULL`（**无默认值**，漏填当场报错）+ `idx_docs_bday_created(business_day, created_at, id)`；`migrationStep(5)` = **重建表**（建新表 → `INSERT SELECT` 现算 → 删旧表 → 改名 → 重建 7 个索引） |
+| 3 | `db/database.dart` | 迁移链外**关外键**（`PRAGMA` 在事务内是空操作，必须 `BEGIN` 之前）+ 迁移后 `foreign_key_check` 复核，有违例就抛 |
+| 4 | `dao/document_dao.dart` | `_listOrder` 换成固化列 + `id` 兜底；`_fromFor(ordered: true)` 加 `INDEXED BY idx_docs_bday_created`；删掉不再需要的 `_localOffsetMillis` |
+| 5 | `sync/sync_client.dart` | 镜像 upsert 遇到主机 payload 缺该列时**按同一纯函数补算**（不改同步协议 —— 改了「旧电脑+新手机」直接失效） |
+
+**实测（478 MB / 26.2 万单，真实 DAO）**：
+
+| 项 | 改造前 | 改造后 |
+|---|---|---|
+| `listDocuments(rootsOnly, 200)` | 159 ms | **24 ms**（6.6×） |
+| `countDocuments(rootsOnly)` | 64 ms | 63 ms |
+| 一次页面重建 | 227 ms | **87 ms**（2.6×） |
+| 迁移 v5→v6 全程 | — | **3.1 s**（含 478 MB 备份拷贝；纯重建约 0.8 s） |
+| 回填正确性 | — | 与旧表达式**逐行一致**（0 行差异） |
+
+**为什么索引建成三列**：两列时「同一业务日 + 同一毫秒录入」的行会并列，顺序由执行计划决定 ——
+实测 200 行里有 4~6 行**每次进去位置不同**。加 `id` 兜底并建成三列索引后，实测仍 **0.1 ms**，
+顺序变确定。这是「同价换确定性」，不是额外开销。
+
+**测试 +4**（`documents_list_test`）：写入值与纯函数一致、同日零点/当晚同桶、索引必须在、
+计划里**不许出现 `TEMP B-TREE FOR ORDER BY`**。
+
+**夹具同步**（NOT NULL 无默认值 ⇒ 漏填即红，这是刻意的）：core 5 个文件 + root 3 个 + app 1 个
+的直接插入点全部补 `business_day`；`downgradeToV1` 对 v6 手工做逆操作（重建表它表达不了，
+函数注释里写明「下不为例，再出现重建表就加新化石」）。
+
+**另**：`tool/schema_snapshot.json` 重生成（v5 → **v6 / 40 条 / 指纹 `940e2245c291c3ac`**），
+否则 `perf_seed.py` 会以「库的 schema 版本是 5」拒绝造数。`docs/data_model.md` 已同步列定义与索引。
+
+**门禁**：root 360 · app 385 · core **730**（+4）· analyze 0。

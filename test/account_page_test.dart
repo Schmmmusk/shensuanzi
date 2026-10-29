@@ -213,9 +213,11 @@ void main() {
     // 收款单 + 资金流水（规则引擎路径已由 core 测试覆盖，这里直种）
     db.raw.execute(
       "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
-      'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+      'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+      'business_day) '
       "VALUES ('d1', 'SK20260101-001', 'receipt', 'confirmed', 3000, 3000, "
-      '1700000100000, 0, 1700000100000, 1700000100000)',
+      '1700000100000, 0, 1700000100000, 1700000100000, '
+      '${businessDayOf(1700000100000)})',
     );
     MoneyLedgerDao(db).insert(
       MoneyLedger(
@@ -265,9 +267,11 @@ void main() {
     // 种一条资金流水（与 #27 同款；规则引擎路径已由 core 覆盖）
     db.raw.execute(
       "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
-      'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+      'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+      'business_day) '
       "VALUES ('d1', 'SK20260101-001', 'receipt', 'confirmed', 3000, 3000, "
-      '1700000100000, 0, 1700000100000, 1700000100000)',
+      '1700000100000, 0, 1700000100000, 1700000100000, '
+      '${businessDayOf(1700000100000)})',
     );
     MoneyLedgerDao(db).insert(
       MoneyLedger(
@@ -357,9 +361,11 @@ void main() {
     );
     db.raw.execute(
       "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
-      'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+      'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+      'business_day) '
       "VALUES ('d1', 'SK20260101-001', 'receipt', 'confirmed', 3000, 3000, "
-      '1700000100000, 0, 1700000100000, 1700000100000)',
+      '1700000100000, 0, 1700000100000, 1700000100000, '
+      '${businessDayOf(1700000100000)})',
     );
     MoneyLedgerDao(db).insert(
       MoneyLedger(
