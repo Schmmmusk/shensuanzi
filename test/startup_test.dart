@@ -238,11 +238,26 @@ void main() {
 
     expect(find.byType(AppShell), findsNothing, reason: '不许直接进主界面');
     expect(
-      find.textContaining('数据文件（shensuanzi.db）不见了'),
+      find.textContaining('找不到数据文件'),
       findsWidgets,
       reason: '要说清「不见了」而不是「打不开」',
     );
-    expect(find.textContaining('神算子备份'), findsWidgets, reason: '要给出从备份恢复的办法');
+    expect(find.textContaining('备份'), findsWidgets, reason: '要给出从备份恢复的办法');
+    expect(
+      find.textContaining('别担心'),
+      findsWidgets,
+      reason:
+          '2026-10-29 用户补充建议：中老年用户看到「损坏」会以为是自己弄坏了电脑，'
+          '文案必须先安抚，再给退路',
+    );
+    // 用户明确要求：这一屏**不许**出现「损坏 / 数据库」这类词
+    for (final String scary in <String>['损坏', '数据库']) {
+      expect(
+        find.textContaining(scary),
+        findsNothing,
+        reason: '错误页文案里不许出现「$scary」（用户补充建议）',
+      );
+    }
     expect(find.text('新建一本空账'), findsOneWidget, reason: '给一条明确的出路，但由用户点');
     expect(
       dbFile.existsSync(),
@@ -314,7 +329,90 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(dialog, findsNothing);
-    expect(find.textContaining('数据文件打不开'), findsOneWidget);
+    expect(find.textContaining('数据文件暂时打不开'), findsOneWidget);
+  });
+
+  testWidgets('场景 5c：库打不开 → 「找回数据」→ 从备份接回来 → 进主界面', (
+    WidgetTester tester,
+  ) async {
+    // P0（提案 52 §三）：这一屏以前只有「重试 / 更改」，而每日备份就躺在旁边的
+    // 「神算子备份」里 —— 程序认识、用户看不见。这条用例走完整条路：
+    // 坏库 → 体检 → 选中一份 → 确认 → 接回 → 自动重试 → 主界面。
+    final String dataDir = p.join(box.path, 'data');
+    Directory(dataDir).createSync(recursive: true);
+    DataMarker.write(
+      dataDir,
+      schemaVersion: Schema.version,
+      now: 1700000000000,
+    );
+    final File dbFile = File(p.join(dataDir, AppBootstrap.databaseFileName));
+    // 打不开的库（非空、但不是有效 SQLite）
+    dbFile.writeAsStringSync('这不是一个有效的 SQLite 数据库');
+
+    // 备份目录 = 数据目录的**兄弟目录**（与生产同一套算法）
+    final String backupDir = p.join(box.path, '神算子备份');
+    Directory(backupDir).createSync(recursive: true);
+    final String goodPath = p.join(box.path, 'good.db');
+    final Db good = Db.open(goodPath);
+    good.raw.execute(
+      'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+      'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+      'business_day) '
+      "VALUES ('d1', 'XS20261028-001', 'sale', 'confirmed', 1000, 0, "
+      '1700000000000, 0, 1700000000000, 1700000000000, '
+      '${businessDayOf(1700000000000)})',
+    );
+    good.close();
+    File(goodPath).copySync(
+      p.join(backupDir, 'shensuanzi-schema${Schema.version}-20261028-1530.db'),
+    );
+
+    store.save(AppConfig(dataDirectory: dataDir));
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+    expect(find.textContaining('数据文件暂时打不开'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('startup-recovery')));
+    // ⚠️ 不能用 pumpAndSettle：体检期间有一个**无限转圈**的进度指示，
+    // 它会一直有待处理的帧 ⇒ pumpAndSettle 会一直等到超时。
+    await tester.pump(); // 弹出对话框
+    for (int i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      if (find.text('用这一份').evaluate().isNotEmpty) break;
+    }
+
+    expect(find.text('数据体检与恢复'), findsOneWidget);
+    expect(
+      find.textContaining('1 张单据'),
+      findsOneWidget,
+      reason: '要能看出这份里有多少东西 —— 用户靠这一行判断选哪份',
+    );
+    expect(find.textContaining('自动备份'), findsWidgets);
+
+    await tester.tap(find.text('用这一份'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('用这份接回去？'),
+      findsOneWidget,
+      reason: '覆盖数据文件必须先确认，并说清「原来的文件会改名留着」',
+    );
+    expect(find.textContaining('改名保存'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('recovery-confirm-restore')));
+    await tester.pumpAndSettle();
+
+    // 接回成功后自动走「重试」⇒ 这次能开，进主界面
+    expect(find.byType(AppShell), findsOneWidget);
+
+    // 原来那个坏文件被**改名留着**（不是删掉）
+    final List<String> names = Directory(
+      dataDir,
+    ).listSync().map((FileSystemEntity e) => p.basename(e.path)).toList();
+    expect(
+      names.where((String n) => n.contains('.broken-')),
+      isNotEmpty,
+      reason: '用户补充建议：必须告诉他「原来的文件我们帮你留着了」',
+    );
   });
 
   testWidgets('场景 5b：配置里的目录还在、只是库损坏 → **直接错误页**（不弹首启向导）', (
@@ -343,7 +441,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(dialog, findsNothing, reason: '库坏 ≠ 第一次启动（§审查 2026-10-05）');
-    expect(find.textContaining('数据文件打不开'), findsOneWidget);
+    expect(find.textContaining('数据文件暂时打不开'), findsOneWidget);
     expect(
       find.textContaining(dataDir),
       findsOneWidget,
@@ -357,7 +455,7 @@ void main() {
     await tester.tap(find.text('重试'));
     await tester.pumpAndSettle();
     expect(dialog, findsNothing);
-    expect(find.textContaining('数据文件打不开'), findsOneWidget);
+    expect(find.textContaining('数据文件暂时打不开'), findsOneWidget);
     expect(picked, 0, reason: '「重试」不是「换文件夹」');
 
     // **配置一个字节都没被动** —— 这正是真机踩到的那个坑

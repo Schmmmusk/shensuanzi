@@ -84,6 +84,14 @@ export 'src/environment.dart'
         DriveInfo,
         DriveKind;
 export 'src/navigation.dart' show AppNavigation, NavDestination, NavSection;
+export 'src/recovery.dart'
+    show
+        RecoveryCandidate,
+        RecoveryRestoreResult,
+        RecoverySource,
+        RecoveryState,
+        restoreFromCandidate,
+        scanRecoveryCandidates;
 export 'src/backup.dart'
     show
         BackupFileName,

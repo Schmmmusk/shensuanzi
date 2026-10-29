@@ -42,6 +42,7 @@ import 'ui/app_shell.dart';
 import 'ui/data_directory_dialog.dart';
 import 'ui/mobile_shell.dart';
 import 'ui/pairing_scan_page.dart';
+import 'ui/recovery_dialog.dart';
 import 'ui/notice.dart';
 
 class ShensuanziApp extends StatefulWidget {
@@ -667,6 +668,34 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     }
   }
 
+  /// 「找回数据」：体检 + 从备份接回来（P0，提案 52）。
+  ///
+  /// 三条设计（2026-10-29 用户补充建议）：
+  /// 1. 入口叫**找回数据**，不叫「数据体检」「数据库修复」—— 后者像医生下诊断；
+  /// 2. 对话框里先给「有几份、哪份好、里面多少单据」，让用户能判断选哪份；
+  /// 3. 接回时**原来的文件改名留存**（`.broken-<时间>`），并在确认框里明说
+  ///    「我们帮你留着了，随时可以找回来」。
+  Future<void> _openRecovery() async {
+    final String? directory = _brokenDirectory ?? _missingDatabaseDirectory;
+    if (directory == null) return;
+    // ⚠️ 必须用 `_navigatorKey` 的 context：本 State 的 `context` 在
+    // `MaterialApp` **之上**，上面没有 Navigator ⇒ `showDialog` 直接抛。
+    final BuildContext? dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null || !dialogContext.mounted) return;
+    final bool restored = await showRecoveryDialog(
+      dialogContext,
+      dataDirectory: directory,
+      databasePath: p.join(directory, AppBootstrap.databaseFileName),
+      backupDirectory:
+          _config.backupDirectory ??
+          _service.policy.backupDirectoryFor(directory),
+      currentSchemaVersion: Schema.version,
+    );
+    if (!restored || !mounted) return;
+    // 接回来了 ⇒ 走「重试」那条路重新开库（它会清掉错误态再 `_prepare`）
+    await _retry();
+  }
+
   /// 配置**读不懂 / 记不住位置**时的说明（§审查 OBS-15）。
   ///
   /// 要点：① 明说「不是第一次启动」的替代信息 —— 数据没丢；
@@ -677,11 +706,18 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       '忘了也不怕：数据文件叫 shensuanzi.db，'
       '找到那个文件夹、点「更改」选它就回来了。';
 
-  /// 数据文件打不开时的统一说辞（说清**怎么办**，不吓人、不说技术名词）。
+  /// 数据文件打不开时的说辞。
+  ///
+  /// ⚠️ **文案是这一屏最重要的东西**（2026-10-29，用户补充建议）：
+  /// 中老年用户看到「数据库损坏」的第一反应是「我是不是把电脑弄坏了」。
+  /// 所以这里**不出现**「损坏 / 数据库 / 崩溃」这些词，先说「暂时打不开」，
+  /// 再立刻给出**已有的退路**（每天自动备份），最后给一个动作（找回数据）。
   String _brokenDatabaseMessage(String directory) =>
-      '$directory 里的数据文件打不开 —— 可能是文件损坏了，'
-      '也可能是被别的程序占用着。\n'
-      '修好之后点「重试」；也可以点「更改」换个位置。';
+      '这个文件夹里的数据文件暂时打不开 —— 可能是被别的程序占着，'
+      '也可能是文件本身出了点小问题。\n\n'
+      '别担心，软件每天都会自动备份。点「找回数据」，'
+      '从备份里挑一份接回来就行 —— 原来那个文件会改名留着，不会被删掉。\n\n'
+      '（文件夹：$directory）';
 
   /// 数据文件**不见了**时的说辞（2026-10-07，`docs/reply.md` §6 的 #1）。
   ///
@@ -689,15 +725,13 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 所以**先给找回的办法**（备份 + before-vN），最后才提"新建一本空账"，
   /// 且由用户点按钮决定 —— 软件替他建空库就等于让他对着空账簿继续开单。
   String _missingDatabaseMessage(String directory) =>
-      '$directory 里的数据文件（shensuanzi.db）不见了。\n'
-      '常见原因：被误删、被清理软件或杀毒软件删掉、换过盘。\n'
-      '数据多半还能找回来：数据文件夹旁边的「神算子备份」里有自动备份'
-      '（名字形如 shensuanzi-schema3-20261007-0930.db），'
-      '同一个文件夹里也可能有升级前留的 shensuanzi.db.before-v2 这类文件。\n'
-      '把这些文件里的任意一份改名成 shensuanzi.db、放回上面这个文件夹，'
-      '再点「重试」，账就回来了。\n'
-      '如果确实没有备份，点「新建一本空账」—— 注意：那会从零开始，'
-      '里面不会有以前的单据。';
+      '这个文件夹里找不到数据文件（shensuanzi.db）—— '
+      '可能被误删了，也可能被清理软件或杀毒软件删掉了。\n\n'
+      '别担心，软件每天都会自动备份。点「找回数据」，'
+      '从备份里挑一份接回来就行。\n\n'
+      '如果一份备份都没有，才需要点「新建一本空账」—— '
+      '那会从零开始，里面不会有以前的单据。\n\n'
+      '（文件夹：$directory）';
 
   /// 错误页的**重试**（§审查 2026-10-05 真机）。
   ///
@@ -1667,6 +1701,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       final String? missing = _missingDatabaseDirectory;
       return _StartupPage(
         message: _dbFailure!,
+        // 主路（2026-10-29 P0）：先让用户看见自己**有备份**。
+        // 放在最前面 —— 它是这一屏唯一「不用放弃数据」的出路。
+        recoveryLabel: '找回数据',
+        onRecovery: _openRecovery,
         // 术语统一（§CV·八十 Q3）：按钮名与设置页/首启对话框一致，只叫「更改」
         actionLabel: '更改',
         // §审查 BUG-03：**必须强制弹目录选择框** —— 原来重新走 `_prepare()`，
@@ -1965,9 +2003,18 @@ class _StartupPage extends StatelessWidget {
     this.onRetry,
     this.extraLabel,
     this.onExtra,
+    this.recoveryLabel,
+    this.onRecovery,
   });
 
   final String message;
+
+  /// 可选的「找回数据」入口（P0，提案 52）—— 数据文件打不开时才给。
+  ///
+  /// 单独一个字段而不是复用 [extraLabel]：数据文件「不见了」时两条路都要有
+  /// （从备份接回来 / 明确放弃新建空账），复用就只能二选一。
+  final String? recoveryLabel;
+  final VoidCallback? onRecovery;
   final String actionLabel;
   final VoidCallback onAction;
 
@@ -2007,13 +2054,32 @@ class _StartupPage extends StatelessWidget {
                   runSpacing: 8,
                   alignment: WrapAlignment.center,
                   children: <Widget>[
+                    // 「找回数据」放最前面（2026-10-29 P0）：它是唯一
+                    // 「不放弃原有数据」的出路，而用户此刻最怕的就是丢数据。
+                    if (recoveryLabel != null && onRecovery != null)
+                      FilledButton(
+                        key: const Key('startup-recovery'),
+                        onPressed: onRecovery,
+                        child: Text(recoveryLabel!),
+                      ),
                     // 「重试」放前面：它是**代价最小**的那条路（不用重选目录）
                     if (retryLabel != null && onRetry != null)
                       OutlinedButton(
                         onPressed: onRetry,
                         child: Text(retryLabel!),
                       ),
-                    FilledButton(onPressed: onAction, child: Text(actionLabel)),
+                    // 主按钮降为 tonal：有「找回数据」时，不该让「换个文件夹」
+                    // 看起来是最该点的那个
+                    if (recoveryLabel != null && onRecovery != null)
+                      FilledButton.tonal(
+                        onPressed: onAction,
+                        child: Text(actionLabel),
+                      )
+                    else
+                      FilledButton(
+                        onPressed: onAction,
+                        child: Text(actionLabel),
+                      ),
                     if (extraLabel != null && onExtra != null)
                       TextButton(onPressed: onExtra, child: Text(extraLabel!)),
                   ],

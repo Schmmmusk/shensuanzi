@@ -12,6 +12,9 @@ dependencies:
     path: ../shensuanzi_core
   # 路径拼接与规范化（Windows 分隔符 / 盘符语义）
   path: ^1.9.0
+  # 数据抢救（P0 体检）：**只读**打开候选库做 quick_check / 读版本与单据数。
+  # 不走 `Db.open` —— 那会触发迁移（旧备份被就地升级），体检不该改动候选文件。
+  sqlite3: ^2.4.0
 
 dev_dependencies:
   test: ^1.25.0

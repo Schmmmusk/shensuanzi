@@ -78,17 +78,25 @@ void main() {
 
   // ---------------------------------------------------------------- §AE-6
 
-  testWidgets('恢复 FAQ 是六步、写在用户能照做的程度（§AE-6）', (WidgetTester tester) async {
+  testWidgets('恢复 FAQ 写在用户能照做的程度（§AE-6；2026-10-29 改走找回数据）', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(
       page(dataDirectory: r'D:\神算子数据', backupDirectory: r'D:\神算子备份'),
     );
 
     expect(find.textContaining('1. 先关掉神算子'), findsOneWidget);
-    expect(find.textContaining('6. 重新打开神算子'), findsOneWidget);
+    // P0（提案 52）之后主路是点按钮，手工改名降为兜底 —— 但两条都得写
+    expect(find.textContaining('找回数据'), findsWidgets, reason: '主路是那个按钮');
     expect(
-      find.textContaining('shensuanzi.db.bak'),
+      find.textContaining('原来那个文件会改名留着'),
       findsOneWidget,
-      reason: '「先改名成 .bak 再粘贴」是用户的心理安全带，不能省',
+      reason: '用户补充建议：这句是安全感的来源（「数据不会丢」）',
+    );
+    expect(
+      find.textContaining('才需要手工'),
+      findsOneWidget,
+      reason: '按钮也点不了时的兜底步骤不能省（比如整个界面起不来）',
     );
     // 真实路径要插进去 —— 只说「去设置页看」用户照做不下去
     expect(find.textContaining(r'D:\神算子备份'), findsOneWidget);
