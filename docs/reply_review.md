@@ -16003,3 +16003,46 @@ overview T0+0.13s(125ms) · stock 332 · documents 221 · parties 201 · account
 否则 `perf_seed.py` 会以「库的 schema 版本是 5」拒绝造数。`docs/data_model.md` 已同步列定义与索引。
 
 **门禁**：root 360 · app 385 · core **730**（+4）· analyze 0。
+
+### 三十七、2026-10-29 落地「商品名称自动补全」（裁定 2026-10-25，挂了四天）
+
+用户反馈：「三大开单页的商品名输入框没有输入期间自动补全，要点右边按钮开对话框才能搜」。
+查证结果：**不是没做、也不是做了没实装，而是裁定了但从没落地** ——
+提案 `docs/proposals/商品名称自动补全-方案.md` 2026-10-25 已裁定
+（`D1′乙` 前缀豁免 / `D2′甲` 只做桌面 + 选择器加搜索），`proposals/README.md` 状态一直挂「待落地」。
+
+**改动**（4 个文件）：
+
+| 文件 | 改动 |
+|---|---|
+| `lib/src/ui/product_name_autocomplete.dart` | **新增**：`rankProductMatches()` 纯函数 + `productCandidateSubtitle()` + `ProductNameAutocomplete` 组件 |
+| `sale_page.dart` / `purchase_page.dart` / `delivery_page.dart` | 行卡 `TextField` → 组件（各一处）；行控件加 `FocusNode`；页面进页取一次候选池；新增 `_pickCandidate` / `_isTypingTowards` / `_confirmReplaceProduct` |
+
+**三个实现决定**：
+
+1. **候选池进页取一次**（`list(active: null, limit: 5000)`），之后全在内存里筛 ——
+   每次按键查库就是商品页那个 2.7 秒的老路（2026-10-28 实测）。
+2. **`active: null` 含停用**：输入完整名称时也要给出停用商品（否则用户以为它不存在、
+   反手建一个重名的）—— 与 `findByExactName` 同口径。
+3. **`typedBefore` 必须显式传**：`RawAutocomplete` 是**先把输入框改成候选名、再回调**
+   `onSelected`（Flutter 源码 `_RawAutocompleteState._select`）⇒ 在回调里读
+   `controller.text` 永远是候选名，**前缀豁免判定恒为真、覆盖确认永远不弹**。
+   组件因此改成 `StatefulWidget`，记住「选中前的输入」，并把它传给页面。
+
+**同一处还揪出第二个坑**：既然 `RawAutocomplete` 先改文字，那么**取消覆盖时输入框
+已经被改成候选名了** —— 不还回去就是「点了取消，商品却已经被换掉」。
+`_pickCandidate` 在取消分支里 `row.name.text = typedBefore` 复原。
+
+**测试 +22**（root 360 → 382）：
+
+- `test/product_name_autocomplete_test.dart` **18 条**：排序四档（完全 > 前缀 > 包含 > 编码）、
+  前缀优先于包含**且包含项 code 更小**（反向灵敏度逼出来的一条）、停用商品两条、
+  空输入/上限 8/大小写/空白、副标题三条、**防漂移三条**（三页各接一次、`forPurchase` 传对、
+  页面不许自己写 `rankProductMatches`）
+- `test/sale_page_test.dart` **+4 条**：候选出得来、前缀豁免不问、真要换才问且取消恢复、
+  选中后单价按售价预填
+
+**反向灵敏度两轮**：① 废掉「前缀」档 ⇒ 一开始**没变红**（那条用例里前缀项 code 恰好更小），
+补了「前缀项 code 更大」的用例后才 `+14 -1`；② 见上面的 `typedBefore` 问题（测试直接暴露）。
+
+**门禁**：root **382**（+22）· core 730 · app 385 · analyze 0。

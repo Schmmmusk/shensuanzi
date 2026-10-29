@@ -44,6 +44,7 @@ import 'draft_banner.dart';
 import 'submit_error_summary.dart';
 import 'missing_product_dialog.dart';
 import 'product_form_dialog.dart';
+import 'product_name_autocomplete.dart';
 import 'notice.dart';
 
 /// 店内销售开单页。
@@ -141,6 +142,9 @@ class _RowCtl {
   }) : quantity = TextEditingController(text: quantity),
        unitPrice = TextEditingController(text: unitPrice),
        name = TextEditingController(text: productName);
+
+  /// 商品名输入框的焦点（自动补全要用；**每行一个**，不能共用）。
+  final FocusNode nameFocus = FocusNode();
 
   /// 明细行上的**商品名**（② 无缝建档，2026-10-25，§CV·一百零五）。
   ///
@@ -299,6 +303,7 @@ class _RowCtl {
     quantity.dispose();
     unitPrice.dispose();
     name.dispose();
+    nameFocus.dispose();
   }
 }
 
@@ -328,6 +333,9 @@ class _SalePageState extends State<SalePage> {
       (widget.partySink != null ||
           widget.masterDataPolicy != const MasterDataPolicy.mobile());
   List<Account> _accounts = <Account>[];
+
+  /// 自动补全的候选池（进页取一次；见 `initState`）
+  List<Product> _products = const <Product>[];
 
   // ---- 表单状态 ----
   String? _partyId;
@@ -401,6 +409,11 @@ class _SalePageState extends State<SalePage> {
   void initState() {
     super.initState();
     _accounts = widget.service.activeAccounts();
+    // 自动补全的候选池：**进页取一次**，之后全在内存里筛。
+    // 每次按键查库就是商品页那个 2.7 秒的老路（2026-10-28 实测）。
+    // `active: null` = 含停用 —— 停用商品在输入完整名称时也要给出来，
+    // 否则用户会以为它不存在，反手建一个重名的（与 findByExactName 同口径）。
+    _products = widget.productService.list(active: null, limit: 5000);
     // 进页先看有没有上次的草稿（读不懂的直接删掉，不打扰用户）
     final Map<String, Object?>? raw = widget.drafts?.read(DraftKind.sale);
     if (raw != null) {
@@ -1045,6 +1058,72 @@ class _SalePageState extends State<SalePage> {
     setState(() => _invalid = null);
   }
 
+  /// 从**自动补全候选**里选中一条（2026-10-29，提案「商品名称自动补全」）。
+  ///
+  /// 与 [_pickProduct]（对话框选择）只差一件事：**要不要问「覆盖」**。
+  ///
+  /// 裁定 `D1′乙`（前缀豁免）：用户**正在往这个候选搜**（输入是它名称的前缀、
+  /// 或正好是它的编码）就直接填，不问 —— 否则「输入『大』想选『大米』」
+  /// 每次都要点一次确认，会把人烦死。只有「本来写着别的商品、突然要换成它」才问。
+  Future<void> _pickCandidate(
+    _RowCtl row,
+    Product picked, {
+    required String typedBefore,
+  }) async {
+    final String typed = typedBefore.trim();
+    if (typed.isNotEmpty && !_isTypingTowards(typed, picked)) {
+      final bool replace = await _confirmReplaceProduct(typed, picked.name);
+      if (!replace || !mounted) {
+        // ⚠️ 取消必须**把字还回去**：`RawAutocomplete` 在回调之前就已经把输入框
+        // 改成候选名了（Flutter 源码 `_RawAutocompleteState._select`）。
+        // 不还回去就是「点了取消，商品却已经被换掉」—— 比不问更糟。
+        row.name.text = typedBefore;
+        return;
+      }
+    }
+    // 与对话框选择**完全同款**的绑定与预填（见 `_pickProduct` 的注释：
+    // 换商品无条件覆盖价格，`priceTouched` 不是预填守卫）
+    row.attachProduct(picked);
+    row.unitPrice.text = Money.format(picked.sellPrice);
+    setState(() => _invalid = null);
+    // 选中即前进 —— 保持「选完接着填数量」的录入节奏
+    if (mounted) FocusScope.of(context).nextFocus();
+  }
+
+  /// 输入框里的词是不是「正在往这个候选搜」：名称前缀，或编码完全相同。
+  ///
+  /// 这是 `D1′乙` 的判据本身，单独抽出来是为了能直接单测（不用起界面）。
+  bool _isTypingTowards(String typed, Product picked) {
+    final String t = typed.toLowerCase();
+    if (t.isEmpty) return true;
+    return picked.name.trim().toLowerCase().startsWith(t) ||
+        picked.code.trim().toLowerCase() == t;
+  }
+
+  /// 「换掉这一行的商品？」—— 只在 `D1′乙` 判定要问的时候才弹。
+  Future<bool> _confirmReplaceProduct(String from, String to) async {
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('换掉这一行的商品？'),
+        content: Text('原来是「$from」，要换成「$to」吗？'),
+        actions: <Widget>[
+          TextButton(
+            key: const Key('replace-product-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('replace-product-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('换掉'),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
+
   /// 商品选择器（「最近采购」换成**最近销售**，§Z 遗漏对称）
   Future<Product?> _showProductPicker(BuildContext context) {
     return showModalBottomSheet<Product>(
@@ -1305,6 +1384,9 @@ class _SalePageState extends State<SalePage> {
               ? null
               : unsyncedDelta[_rows[i].product!.id],
           enabled: !_saving,
+          products: _products,
+          onPickedProduct: (Product p, {required String typedBefore}) =>
+              _pickCandidate(_rows[i], p, typedBefore: typedBefore),
           // ② 主机出口才能顺手建档（手机 QueueSink 不行）
           allowTypedName: widget.sink.canCreateProducts,
           onPickProduct: () => _pickProduct(i),
@@ -1696,6 +1778,8 @@ class _LineCard extends StatelessWidget {
     this.unsyncedOfProduct,
     required this.enabled,
     required this.allowTypedName,
+    required this.products,
+    required this.onPickedProduct,
     required this.onPickProduct,
     required this.onChanged,
     required this.onRemove,
@@ -1718,6 +1802,16 @@ class _LineCard extends StatelessWidget {
   /// 手机队列出口 `false` —— 它只入队、不建主数据，放开就是「填了名字存不进去」
   /// 的假承诺。手机端仍是原来的「点此选商品」单元格。
   final bool allowTypedName;
+
+  /// 自动补全的候选池（页面进页取一次；**不是**每次按键查库）
+  final List<Product> products;
+
+  /// 选中候选：页面负责绑定商品 + 覆盖确认。
+  ///
+  /// `typedBefore` 是**选中之前**输入框里的字 —— 覆盖确认要用它判「是不是正在搜」，
+  /// 不能读 `row.name.text`（那时已被 `RawAutocomplete` 改成候选名了）。
+  final void Function(Product product, {required String typedBefore})
+  onPickedProduct;
   final VoidCallback onPickProduct;
   final VoidCallback onChanged;
   final VoidCallback? onRemove;
@@ -1751,33 +1845,25 @@ class _LineCard extends StatelessWidget {
                   // ② 桌面：直接手打名字（右边小图标仍能开选择器）；
                   //    手机：保持原来的「点此选商品」单元格（见 allowTypedName）
                   child: allowTypedName
-                      ? TextField(
-                          key: const Key('sale-product-name'),
+                      // 自动补全（2026-10-29 落地，提案「商品名称自动补全」）：
+                      // 组件在 `product_name_autocomplete.dart`，三页共用一份，
+                      // 匹配逻辑**不复制**（纪律 18）。
+                      ? ProductNameAutocomplete(
+                          fieldKey: const Key('sale-product-name'),
+                          pickerKey: const Key('sale-pick-product'),
                           controller: row.name,
+                          focusNode: row.nameFocus,
                           enabled: enabled,
-                          textInputAction: TextInputAction.next,
-                          onSubmitted: (_) =>
-                              FocusScope.of(context).nextFocus(),
-                          onChanged: (String text) {
+                          products: products,
+                          forPurchase: false,
+                          errorText: errors?[SaleLineField.product],
+                          onChangedText: (String text) {
                             // 名字变了 ⇒ 解绑商品（保存时按名字重新匹配 / 建档）
                             row.setName(text);
                             onChanged();
                           },
-                          decoration: InputDecoration(
-                            border: const OutlineInputBorder(),
-                            isDense: true,
-                            hintText: '输入或选商品',
-                            errorText: errors?[SaleLineField.product],
-                            suffixIcon: IconButton(
-                              key: const Key('sale-pick-product'),
-                              tooltip: '从商品列表选',
-                              onPressed: enabled ? onPickProduct : null,
-                              icon: const Icon(
-                                Icons.list_alt_outlined,
-                                size: 20,
-                              ),
-                            ),
-                          ),
+                          onPicked: onPickedProduct,
+                          onPickPressed: onPickProduct,
                         )
                       : InkWell(
                           onTap: enabled ? onPickProduct : null,

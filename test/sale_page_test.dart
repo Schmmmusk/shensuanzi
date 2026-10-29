@@ -1605,6 +1605,111 @@ void main() {
       reason: 'ui_principles.md §二 要求 44×44（实测 48，达标）',
     );
   });
+
+  // ------------------------------------------------------------ 商品名自动补全（2026-10-29）
+  //
+  // 落地依据：`docs/proposals/商品名称自动补全-方案.md`（裁定 D1′乙 前缀豁免 / D2′甲 只做桌面）。
+  // 这里钉三件最容易被改坏的事：候选出得来、前缀豁免不问、真要换才问。
+  group('商品名自动补全', () {
+    /// 再放两个商品，让候选有得选（夹具里原本只有「红富士苹果」）
+    void seedMore() {
+      final int t = 1700000000000;
+      for (final (String code, String name) in <(String, String)>[
+        ('P0002', '大米'),
+        ('P0003', '可口可乐'),
+      ]) {
+        ProductDao(db).insert(
+          Product(
+            id: newId(),
+            code: code,
+            name: name,
+            sellPrice: 1500,
+            createdAt: t,
+            updatedAt: t,
+          ),
+        );
+      }
+    }
+
+    testWidgets('输入部分名称 ⇒ 弹出候选（副标题带售价）', (WidgetTester tester) async {
+      seedMore();
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('sale-product-name')), '大');
+      await tester.pumpAndSettle();
+
+      expect(find.text('大米'), findsWidgets, reason: '「大」应命中「大米」');
+      expect(
+        find.textContaining('售价 ¥15.00'),
+        findsWidgets,
+        reason: '销售页副标题显示售价（采购页显示进价）',
+      );
+    });
+
+    testWidgets('前缀豁免：输入「大」选「大米」**不问**覆盖', (WidgetTester tester) async {
+      seedMore();
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('sale-product-name')), '大');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('大米').last);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('换掉这一行的商品？'),
+        findsNothing,
+        reason: '用户正在搜索（输入是候选的前缀）⇒ 直接填，别烦他（裁定 D1′乙）',
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('sale-product-name')))
+            .controller!
+            .text,
+        '大米',
+      );
+    });
+
+    testWidgets('真要换（输入的不是候选前缀）⇒ 弹确认；取消后原值不变', (WidgetTester tester) async {
+      seedMore();
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      // 「米」是「大米」的**包含**匹配、不是前缀 ⇒ 按裁定 D1′乙 这时要问。
+      // （别用「大」来测：它本来就是「大米」的前缀，按裁定**不该**问。）
+      await tester.enterText(find.byKey(const Key('sale-product-name')), '米');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('大米').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('换掉这一行的商品？'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('replace-product-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('sale-product-name')))
+            .controller!
+            .text,
+        '米',
+        reason: '取消 ⇒ 不换，框里还是用户刚打的字',
+      );
+    });
+
+    testWidgets('选中候选 ⇒ 单价按售价预填', (WidgetTester tester) async {
+      seedMore();
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('sale-product-name')), '大米');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('大米').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('15.00'), findsWidgets, reason: '选中后单价预填该商品售价（¥15.00）');
+    });
+  });
 }
 
 /// 只用来数 `stockSnapshot()` 被调了几次（性能回归的机械判据）
