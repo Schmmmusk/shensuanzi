@@ -10,6 +10,7 @@
 | [`perf_seed.py`](perf_seed.py) | 造一份体量真实、内部自洽的账本（每张流水表 ≥ 10 万行） | ✅ 只写指定的测试库 | ❌ 不会 | 测试机 |
 | [`perf_bench.py`](perf_bench.py) | 15 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN` | ❌ 只读（`mode=ro`） | ❌ 不会 | 测试机 |
 | [`perf_monitor.py`](perf_monitor.py) | 实测期间按 0.2–0.5 秒记录进程/文件指标，并**自动发现进程、自动识别操作**（不用按键） | ❌ 只读 | ❌ 不会 | 测试机 |
+| [`downgrade_to_v5.py`](downgrade_to_v5.py) | 把 v6 库降级成 v5 形状，用来验「老库升级」的迁移路径（机房机器会被还原，发旧包还得再解决旧库造数） | ✅ 只改指定的测试库（有数据要 `--yes`） | ❌ 不会 | 测试机 |
 | [`db_audit.py`](db_audit.py) | **只读审计**账务不变量 INV-1~8（单据金额 / 缓存 / 纪律 11 / 孤儿行 / `seq_no` 唯一 / 退货累计） | ❌ 只读（`mode=ro`） | ❌ 不会（软件开着也能跑） | 测试机 |
 | [`gen_schema_snapshot.py`](gen_schema_snapshot.py) | 从 `schema.dart` 生成/校验 `schema_snapshot.json` | ❌ 只写快照文件 | ❌ 不会 | 开发机 |
 | [`import_guard.dart`](import_guard.dart) | 根层 `lib/` `test/` 的**导入守卫**（缺 import 的桶导出 / 同集公开类型） | ❌ | ❌ | **开发机**（要 Dart SDK） |
@@ -288,6 +289,7 @@ python tool/destructive_acceptance.py --phase all --data-dir /tmp/fixture --conf
 | [`perf_seed.py`](perf_seed.py) | 造一份**体量真实、内部自洽**的账本（每张流水表 ≥ 10 万行） | ✅ 只写指定的测试库 |
 | [`perf_bench.py`](perf_bench.py) | 15 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN` | ❌ 只读（`mode=ro`） |
 | [`perf_monitor.py`](perf_monitor.py) | 实测期间按 0.2–0.5 秒记录进程/文件指标 + **自动发现进程、自动识别操作**（不用按键） | ❌ 只读 |
+| [`downgrade_to_v5.py`](downgrade_to_v5.py) | 把 v6 库降级成 v5 形状，用来验迁移路径 | ✅ 只改指定的测试库 |
 | [`gen_schema_snapshot.py`](gen_schema_snapshot.py) | 从 `schema.dart` 重新生成 `schema_snapshot.json`（**改 schema 后必跑**） | ❌ 写快照 |
 
 参考基线（开发机实测，默认参数 ≈ 15–26 万单 / 36 万条库存流水 / 450–476 MB）：
