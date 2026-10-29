@@ -1710,6 +1710,85 @@ void main() {
       expect(find.text('15.00'), findsWidgets, reason: '选中后单价预填该商品售价（¥15.00）');
     });
   });
+
+  // ------------------------------------------------------------ 回车 ⇒ 立刻建档（2026-10-29）
+  //
+  // 提案 §四·B / 诉求 6：「输入的内容没有匹配项，则询问是否立刻创建新商品」。
+  // 只认**回车**（用户明确表示「名字打完了」）；失焦不触发 —— 失焦时机太多
+  // （点保存、点合计、切窗口），每次都弹比原来的问题更烦。
+  group('回车 ⇒ 立刻建档', () {
+    testWidgets('名字不在库里 ⇒ 回车弹「没找到这个商品」；先不建 ⇒ 不建档', (WidgetTester tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+      final int before = products.count();
+
+      await tester.enterText(
+        find.byKey(const Key('sale-product-name')),
+        '还没建过的商品',
+      );
+      await tester.pumpAndSettle();
+      await tester.testTextInput.receiveAction(TextInputAction.next);
+      await tester.pumpAndSettle();
+
+      expect(find.text('没找到这个商品'), findsOneWidget);
+      expect(find.textContaining('还没建过的商品'), findsWidgets);
+
+      await tester.tap(find.byKey(const Key('missing-product-later')));
+      await tester.pumpAndSettle();
+
+      expect(products.count(), before, reason: '选了「先不建」就不该多出商品');
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('sale-product-name')))
+            .controller!
+            .text,
+        '还没建过的商品',
+        reason: '名字留着 —— 保存时仍由「缺商品」对话框兜底',
+      );
+    });
+
+    testWidgets('名字**已经在库里** ⇒ 回车不弹建档（照旧跳下一格）', (WidgetTester tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('sale-product-name')),
+        '红富士苹果',
+      );
+      await tester.pumpAndSettle();
+      await tester.testTextInput.receiveAction(TextInputAction.next);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('没找到这个商品'),
+        findsNothing,
+        reason: '库里有这个名字 ⇒ 回车就是「往下走」，别打扰',
+      );
+    });
+
+    testWidgets('选「建档」⇒ 打开建档对话框，名字已预填', (WidgetTester tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('sale-product-name')),
+        '新的可乐',
+      );
+      await tester.pumpAndSettle();
+      await tester.testTextInput.receiveAction(TextInputAction.next);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('missing-product-create')));
+      await tester.pumpAndSettle();
+
+      // 建档对话框里名称已预填（复用无缝建档，不是另起一套）
+      expect(
+        find.widgetWithText(TextField, '新的可乐'),
+        findsWidgets,
+        reason: '`showProductFormDialog(initialName:)` 要把名字带过去',
+      );
+    });
+  });
 }
 
 /// 只用来数 `stockSnapshot()` 被调了几次（性能回归的机械判据）

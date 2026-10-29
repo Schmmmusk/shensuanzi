@@ -195,6 +195,35 @@ void main() {
       expect(read('delivery_page.dart'), contains('forPurchase: false'));
     });
 
+    test('三页都接了「回车 ⇒ 立刻建档」，且询问逻辑只有一处', () {
+      for (final String page in <String>[
+        'sale_page.dart',
+        'purchase_page.dart',
+        'delivery_page.dart',
+      ]) {
+        final String src = read(page);
+        expect(src, contains('onCreateRequested:'), reason: '$page 没接回车建档');
+        expect(src, contains('_offerCreate('), reason: '$page 没有 _offerCreate');
+        // 页面只能**调用**，不能自己**定义**询问对话框
+        expect(
+          src,
+          contains('await offerCreateMissingProduct('),
+          reason: '$page 应调用共用函数',
+        );
+        expect(
+          src,
+          isNot(contains('Future<Product?> offerCreateMissingProduct(')),
+          reason: '$page 不该自己写建档询问 —— 那是 `product_name_autocomplete.dart` 的职责',
+        );
+      }
+      expect(
+        File('lib/src/ui/product_name_autocomplete.dart')
+            .readAsStringSync()
+            .contains('Future<Product?> offerCreateMissingProduct('),
+        isTrue,
+      );
+    });
+
     test('匹配与排序只在组件里定义一次（页面不许自己写 rankProductMatches）', () {
       for (final String page in <String>[
         'sale_page.dart',

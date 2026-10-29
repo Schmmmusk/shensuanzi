@@ -818,6 +818,30 @@ class _DeliveryPageState extends State<DeliveryPage> {
     return ok ?? false;
   }
 
+  /// 同一个名字**只问一次**（防重复弹窗）
+  final Set<String> _createOffered = <String>{};
+
+  /// 回车且名字在库里找不到 ⇒ 问「要不要现在建档」（提案 §四·B / 诉求 6）。
+  ///
+  /// 选「先不建」⇒ 该行保持「只有名字」，保存时仍由 `missing_product_dialog`
+  /// 兜底 —— **两条路互不替代**。
+  Future<void> _offerCreate(_RowCtl row, String typedName) async {
+    final String name = typedName.trim();
+    if (name.isEmpty || !_createOffered.add(name)) return;
+    final Product? created = await offerCreateMissingProduct(
+      context,
+      typedName: name,
+      service: widget.productService,
+      sink: widget.masterDataSink,
+      allowOpeningStock: widget.mobileShell,
+    );
+    if (created == null || !mounted) return;
+    // 建好了 ⇒ 直接绑到这一行（与「选商品」同款：无条件预填价格）
+    row.attachProduct(created);
+    row.unitPrice.text = Money.format(created.sellPrice);
+    setState(() => _invalid = null);
+  }
+
   // ------------------------------------------------------------ 选择器
 
   Future<void> _pickProduct(int rowIndex) async {
@@ -1057,6 +1081,10 @@ class _DeliveryPageState extends State<DeliveryPage> {
           products: _products,
           onPickedProduct: (Product p, {required String typedBefore}) =>
               _pickCandidate(_rows[i], p, typedBefore: typedBefore),
+          // 主机出口才能建档；手机 QueueSink 给空回调（不弹假承诺）
+          onCreateRequested: widget.masterDataPolicy.canCreateProducts
+              ? (String typed) => _offerCreate(_rows[i], typed)
+              : (String _) {},
           // ② 主机出口才能顺手建档（手机 QueueSink 不行）
           allowTypedName: widget.sink.canCreateProducts,
           onPickProduct: () => _pickProduct(i),
@@ -1196,6 +1224,7 @@ class _LineCard extends StatelessWidget {
     required this.products,
     required this.onPickedProduct,
     required this.onPickProduct,
+    required this.onCreateRequested,
     required this.onChanged,
     required this.onRemove,
   });
@@ -1223,6 +1252,9 @@ class _LineCard extends StatelessWidget {
   final void Function(Product product, {required String typedBefore})
   onPickedProduct;
   final VoidCallback onPickProduct;
+
+  /// 回车且名字在库里找不到 ⇒ 页面问「要不要现在建档」
+  final ValueChanged<String> onCreateRequested;
   final VoidCallback onChanged;
   final VoidCallback? onRemove;
 
@@ -1273,6 +1305,7 @@ class _LineCard extends StatelessWidget {
                           },
                           onPicked: onPickedProduct,
                           onPickPressed: onPickProduct,
+                          onCreateRequested: onCreateRequested,
                         )
                       : InkWell(
                           onTap: enabled ? onPickProduct : null,

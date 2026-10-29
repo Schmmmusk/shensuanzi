@@ -17,6 +17,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'product_form_dialog.dart';
 
 /// 一条候选的**匹配强度**（数字越小越靠前）。
 enum ProductMatchKind {
@@ -142,6 +143,7 @@ class ProductNameAutocomplete extends StatefulWidget {
     required this.onPicked,
     required this.onChangedText,
     required this.onPickPressed,
+    this.onCreateRequested,
     this.pickerKey,
     this.errorText,
     this.hintText = '输入或选商品',
@@ -171,6 +173,11 @@ class ProductNameAutocomplete extends StatefulWidget {
 
   /// 右侧列表按钮（原 `suffixIcon`）
   final VoidCallback onPickPressed;
+
+  /// **回车且名字在库里找不到**时回调（提案 §四·B / 诉求 6）。
+  ///
+  /// `null` = 这个页面不提供「立刻建档」（手机 `QueueSink` 就是这种情况）。
+  final ValueChanged<String>? onCreateRequested;
   final Key? pickerKey;
 
   final String? errorText;
@@ -228,7 +235,21 @@ class _ProductNameAutocompleteState extends State<ProductNameAutocomplete> {
               focusNode: fieldFocusNode,
               enabled: widget.enabled,
               textInputAction: TextInputAction.next,
-              onSubmitted: (String _) => FocusScope.of(context).nextFocus(),
+              onSubmitted: (String _) {
+                final String typed = fieldController.text.trim();
+                // 名字已经在库里（精确匹配）⇒ 回车就是「往下走」，别打扰
+                final bool known = widget.products.any(
+                  (Product p) =>
+                      p.name.trim().toLowerCase() == typed.toLowerCase(),
+                );
+                if (typed.isNotEmpty &&
+                    !known &&
+                    widget.onCreateRequested != null) {
+                  widget.onCreateRequested!(typed);
+                  return;
+                }
+                FocusScope.of(context).nextFocus();
+              },
               onChanged: (String text) {
                 _lastTyped = text;
                 widget.onChangedText(text);
@@ -315,4 +336,56 @@ class _ProductNameAutocompleteState extends State<ProductNameAutocomplete> {
           },
     );
   }
+}
+
+/// 输入了一个「库里没有」的商品名 ⇒ 问要不要**现在建档**（提案 §四·B / 诉求 6）。
+///
+/// 返回建好的商品；用户选「先不建」或取消建档 ⇒ `null`（该行保持「只有名字」，
+/// 保存时仍由 `missing_product_dialog` 兜底 —— **两条路互不替代**）。
+///
+/// ## 为什么只有「回车」触发，没有做「失焦」触发
+///
+/// 提案里写了「回车**或失焦**」，但失焦的时机太多：点保存、点下一个输入框、
+/// 点合计、切窗口……每一种都会弹一次「没找到，现在建吗？」，比原来的问题更烦。
+/// 回车是用户**明确表示「这个名字我打完了」**的唯一动作，所以只认它。
+/// （这一条偏离提案字面，理由记在这里，不是漏做。）
+Future<Product?> offerCreateMissingProduct(
+  BuildContext context, {
+  required String typedName,
+  required ProductService service,
+  required MasterDataSink sink,
+  bool allowOpeningStock = false,
+}) async {
+  final String name = typedName.trim();
+  if (name.isEmpty) return null;
+
+  final bool? go = await showDialog<bool>(
+    context: context,
+    builder: (BuildContext dialogContext) => AlertDialog(
+      title: const Text('没找到这个商品'),
+      content: Text('「$name」还不在商品档案里，现在建一个吗？'),
+      actions: <Widget>[
+        TextButton(
+          key: const Key('missing-product-later'),
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('先不建'),
+        ),
+        FilledButton(
+          key: const Key('missing-product-create'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('建档'),
+        ),
+      ],
+    ),
+  );
+  if (go != true || !context.mounted) return null;
+
+  // 复用**无缝建档**：名字预填进去，其余字段用户在对话框里补
+  return showProductFormDialog(
+    context,
+    service: service,
+    sink: sink,
+    initialName: name,
+    allowOpeningStock: allowOpeningStock,
+  );
 }
