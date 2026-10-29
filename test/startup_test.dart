@@ -415,6 +415,52 @@ void main() {
     );
   });
 
+  testWidgets('场景 5d：库打不开时有「从坏文件里找回」入口（P1 抢救）', (WidgetTester tester) async {
+    // P1（提案 52 §四·P1）：备份也救不了时的最后手段。这条只测**入口与文案** ——
+    // 真正的抢救流程在包内 `rescue_test.dart` 里跑（真文件、真损坏）。
+    final String dataDir = p.join(box.path, 'data');
+    Directory(dataDir).createSync(recursive: true);
+    DataMarker.write(
+      dataDir,
+      schemaVersion: Schema.version,
+      now: 1700000000000,
+    );
+    File(
+      p.join(dataDir, AppBootstrap.databaseFileName),
+    ).writeAsStringSync('这不是一个有效的 SQLite 数据库');
+    store.save(AppConfig(dataDirectory: dataDir));
+
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+
+    // 入口在，但排在最后（最后手段不该显眼）
+    expect(find.byKey(const Key('startup-rescue')), findsOneWidget);
+    expect(
+      find.byKey(const Key('startup-recovery')),
+      findsOneWidget,
+      reason: '「找回数据」仍是主路，抢救排在它后面',
+    );
+
+    await tester.tap(find.byKey(const Key('startup-rescue')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('从坏掉的文件里尽量找回'), findsOneWidget);
+    expect(
+      find.textContaining('你原来的文件一个字节都不会动'),
+      findsOneWidget,
+      reason: '用户补充建议：先给安全感，再讲能力边界',
+    );
+    expect(
+      find.textContaining('可能不完整'),
+      findsOneWidget,
+      reason: '不许承诺救全 —— 缺明细/流水的单据本来就会少',
+    );
+
+    await tester.tap(find.byKey(const Key('rescue-cancel')));
+    await tester.pumpAndSettle();
+    expect(find.text('从坏掉的文件里尽量找回'), findsNothing);
+  });
+
   testWidgets('场景 5b：配置里的目录还在、只是库损坏 → **直接错误页**（不弹首启向导）', (
     WidgetTester tester,
   ) async {

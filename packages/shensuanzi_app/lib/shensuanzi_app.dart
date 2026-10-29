@@ -84,6 +84,15 @@ export 'src/environment.dart'
         DriveInfo,
         DriveKind;
 export 'src/navigation.dart' show AppNavigation, NavDestination, NavSection;
+export 'src/rescue.dart'
+    show
+        RescueIssue,
+        RescueIssueKind,
+        RescueProgress,
+        RescueReport,
+        RescueTypeStat,
+        rescueDatabase,
+        rescueFileName;
 export 'src/recovery.dart'
     show
         RecoveryCandidate,

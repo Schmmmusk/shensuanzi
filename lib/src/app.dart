@@ -43,6 +43,7 @@ import 'ui/data_directory_dialog.dart';
 import 'ui/mobile_shell.dart';
 import 'ui/pairing_scan_page.dart';
 import 'ui/recovery_dialog.dart';
+import 'ui/rescue_dialog.dart';
 import 'ui/notice.dart';
 
 class ShensuanziApp extends StatefulWidget {
@@ -694,6 +695,30 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     if (!restored || !mounted) return;
     // 接回来了 ⇒ 走「重试」那条路重新开库（它会清掉错误态再 `_prepare`）
     await _retry();
+  }
+
+  /// 「从坏掉的文件里尽量找回」—— P1 抢救（提案 52 §四·P1）。
+  ///
+  /// 只在**备份也救不了**的时候用，所以入口是个低调的文字按钮，且点下去先解释。
+  /// 产物落在「神算子导出」文件夹里（与备份分开：这是用户主动要的文件，
+  /// 不该混进备份的 30 天清理里）。
+  Future<void> _openRescue() async {
+    final String? directory = _brokenDirectory ?? _missingDatabaseDirectory;
+    if (directory == null) return;
+    final BuildContext? dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null || !dialogContext.mounted) return;
+    final String outputDirectory = _service.policy.exportDirectoryFor(
+      directory,
+    );
+    final bool ok = await showRescueFlow(
+      dialogContext,
+      sourcePath: p.join(directory, AppBootstrap.databaseFileName),
+      outputPath: p.join(outputDirectory, rescueFileName(DateTime.now())),
+      outputDirectory: outputDirectory,
+    );
+    // 抢救产物是**另一个文件**，不会自动切过去 —— 用户可能想先看看再决定。
+    // 所以这里什么都不做（报告里已经写清文件在哪）。
+    if (ok) return;
   }
 
   /// 配置**读不懂 / 记不住位置**时的说明（§审查 OBS-15）。
@@ -1705,6 +1730,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         // 放在最前面 —— 它是这一屏唯一「不用放弃数据」的出路。
         recoveryLabel: '找回数据',
         onRecovery: _openRecovery,
+        rescueLabel: '备份都不行？试试从坏文件里找回',
+        onRescue: _openRescue,
         // 术语统一（§CV·八十 Q3）：按钮名与设置页/首启对话框一致，只叫「更改」
         actionLabel: '更改',
         // §审查 BUG-03：**必须强制弹目录选择框** —— 原来重新走 `_prepare()`，
@@ -2005,6 +2032,8 @@ class _StartupPage extends StatelessWidget {
     this.onExtra,
     this.recoveryLabel,
     this.onRecovery,
+    this.rescueLabel,
+    this.onRescue,
   });
 
   final String message;
@@ -2015,6 +2044,13 @@ class _StartupPage extends StatelessWidget {
   /// （从备份接回来 / 明确放弃新建空账），复用就只能二选一。
   final String? recoveryLabel;
   final VoidCallback? onRecovery;
+
+  /// 可选的「从坏文件里抢救」入口（P1，提案 52）。
+  ///
+  /// **刻意做成低调的文字按钮**：它是最后手段，结果不完整。
+  /// 备份能用时不该有人走到这里。
+  final String? rescueLabel;
+  final VoidCallback? onRescue;
   final String actionLabel;
   final VoidCallback onAction;
 
@@ -2082,6 +2118,13 @@ class _StartupPage extends StatelessWidget {
                       ),
                     if (extraLabel != null && onExtra != null)
                       TextButton(onPressed: onExtra, child: Text(extraLabel!)),
+                    // 抢救是最后手段：最不起眼的位置
+                    if (rescueLabel != null && onRescue != null)
+                      TextButton(
+                        key: const Key('startup-rescue'),
+                        onPressed: onRescue,
+                        child: Text(rescueLabel!),
+                      ),
                   ],
                 ),
               ],
