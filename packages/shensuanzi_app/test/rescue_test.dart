@@ -156,6 +156,25 @@ void main() {
     return no;
   }
 
+  /// 把某张表重建成**没有约束**的表（`CREATE TABLE AS` 会丢掉 NOT NULL 与外键）。
+  ///
+  /// ## 为什么要这个
+  ///
+  /// 用户审查 2026-10-30 描述的形态是「流水引用字段被损坏成 NULL」。
+  /// 但 SQLite 的 `NOT NULL` 会挡住 `UPDATE ... SET col = NULL` ——
+  /// 用空串代替又测不到真正的空值分支（空串会被「引用了不存在的 id」先拦下）。
+  ///
+  /// 真实损坏（坏页 / 半写）能产生 NULL，抢救器只 `SELECT`、不看约束，
+  /// 所以这种形态**必须能被复现**，否则「读到空值就跳过」这条漏洞测不出来。
+  void stripConstraints(String path, String table) {
+    final Db db = Db.open(path, foreignKeys: false);
+    db.raw.execute('CREATE TABLE ${table}_tmp AS SELECT * FROM $table');
+    db.raw.execute('DROP TABLE $table');
+    db.raw.execute('CREATE TABLE $table AS SELECT * FROM ${table}_tmp');
+    db.raw.execute('DROP TABLE ${table}_tmp');
+    db.close();
+  }
+
   /// 造一张**盘点单**（用真实规则，不是手写 SQL）。
   ///
   /// [actual] = 盘点出来的实际数量。账面数由库里的流水决定：
@@ -1245,6 +1264,99 @@ void main() {
         contains(stk),
         reason: '盘点没有往来方，多出来的欠款无处可挂',
       );
+    });
+
+    test('往来流水的往来方是 **NULL** ⇒ 不完整（不能靠写库时的 NOT NULL 兜底）', () async {
+      // 用户审查 2026-10-30（P1）：`party_ledger.party_id` 是 NOT NULL，
+      // 读到 NULL 只可能是数据坏了。从前 `if (pid is! String) continue` 把它跳过，
+      // 于是这张单被判完整 ⇒ 写新库时被 NOT NULL 顶回来 ⇒ **整次抢救全失败**，
+      // 用户连其余能救的单据都拿不到。
+      final List<String> ids = makeLedger(source, docs: 1);
+      stripConstraints(source, 'party_ledger');
+      final Db db = Db.open(source, foreignKeys: false);
+      db.raw.execute('UPDATE party_ledger SET party_id = NULL');
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: '不能拖到写库时才炸 —— 那时整次抢救都失败了');
+      expect(report.importedDocuments, 0);
+      expect(report.issues.single.detail, contains('没有往来方'));
+      expect(ids.length, 1);
+    });
+
+    test('资金流水的账户是 **NULL** ⇒ 不完整（不能跳过）', () async {
+      makeLedger(source, docs: 1, paid: true);
+      stripConstraints(source, 'money_ledger');
+      final Db db = Db.open(source, foreignKeys: false);
+      db.raw.execute('UPDATE money_ledger SET account_id = NULL');
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: '不能拖到写库时才炸');
+      expect(report.importedDocuments, 0);
+      expect(
+        report.issues.map((RescueIssue i) => i.detail ?? ''),
+        anyElement(contains('没有账户')),
+      );
+    });
+
+    test('库存流水的商品是 **NULL**（盘点单也一样）⇒ 不完整', () async {
+      // 盘点分支从前也是 `if (pid is! String) continue`，一样会跳过。
+      makeLedger(source, docs: 0);
+      final String stk = makeStocktake(source, actual: 5);
+      stripConstraints(source, 'stock_ledger');
+      final Db db = Db.open(source, foreignKeys: false);
+      db.raw.execute(
+        'UPDATE stock_ledger SET product_id = NULL WHERE document_id = ?',
+        <Object?>[stk],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues.map((RescueIssue i) => i.docId),
+        contains(stk),
+        reason: '盘点流水没有商品 —— 导入它库存会错',
+      );
+    });
+
+    test('**transfer（调拨）**：类型认得、规则层不支持 ⇒ 不导入', () async {
+      // 用户审查 2026-10-30（P1）：`transfer` 能正常解析成 `DocType.transfer`，
+      // 所以不走 `unknownType`；而三种流水方向都是 `absent`、没有明细、
+      // 金额为零 ⇒ 所有判据「通过」，一张本版本没法继续操作的单会被导入。
+      makeLedger(source, docs: 1);
+      final Db db = Db.open(source);
+      final int at = DateTime(2026, 10, 3).millisecondsSinceEpoch;
+      db.raw.execute(
+        'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+        'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+        'business_day) VALUES (?,?,?,?,0,0,?,0,?,?,?)',
+        <Object?>[
+          'transfer-1',
+          'DB20261003-001',
+          'transfer',
+          'confirmed',
+          at,
+          at,
+          at,
+          businessDayOf(at),
+        ],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      final Iterable<RescueIssue> transferIssues = report.issues.where(
+        (RescueIssue i) => i.docId == 'transfer-1',
+      );
+      expect(transferIssues, isNotEmpty, reason: '调拨单必须进待确认');
+      expect(
+        transferIssues.single.kind,
+        RescueIssueKind.unsupportedType,
+        reason: '要区分「不认识」（unknownType）与「认得但不支持」（unsupportedType）',
+      );
+      expect(report.importedDocuments, 1, reason: '只导入那张正常销售单');
     });
 
     test('**核销记录本身**丢失（两端单据都还在）⇒ 两端都被拦下', () async {

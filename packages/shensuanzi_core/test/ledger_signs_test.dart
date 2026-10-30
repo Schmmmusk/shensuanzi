@@ -318,6 +318,18 @@ void main() {
     expectSigns(idOf(ret.docNo), DocType.purchaseReturn);
   });
 
+  test('isSupportedDocType：只有 transfer 明确「不支持」', () {
+    // 规则层 v1 拒绝调拨。抢救器必须据此把它判成「认得但不支持」，
+    // 而不是当成一张普通的、没有流水的空壳单据导进新库。
+    for (final DocType type in DocType.values) {
+      expect(
+        isSupportedDocType(type),
+        type != DocType.transfer,
+        reason: '${type.wire} 的支持性判断错了',
+      );
+    }
+  });
+
   test('盘点：不产生往来与资金流水（符号表给 0）', () {
     final Document doc = Document(
       id: newId(),

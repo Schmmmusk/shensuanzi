@@ -39,6 +39,16 @@ enum DocType {
   }
 }
 
+/// 当前版本**规则层已实现**的单据类型。
+///
+/// `transfer`（调拨）在枚举里存在（为将来预留、老库也可能有），但
+/// `RuleEngine.dispatch()` 明确拒绝它（v1 不实现调拨）。
+///
+/// 所以消费方遇到它时，正确做法是**明说不支持**，而不是按「某种普通单据」
+/// 硬套一套规则 —— 抢救器尤其如此：把一张本版本根本不支持的单据导进新库，
+/// 等于给用户造了一张谁也看不懂、也没法继续操作的账（用户审查 2026-10-30）。
+bool isSupportedDocType(DocType type) => type != DocType.transfer;
+
 /// 单据状态
 enum DocStatus {
   draft('draft'),
@@ -88,7 +98,8 @@ enum DocStatus {
 /// ⚠️ 负数（1970 年之前）行为与 SQLite 的整数除法略有差异（Dart 用 `floor`、
 /// SQLite 向零截断）—— 本系统不会有 1970 前的单据，不做兼容。
 int businessDayOf(int occurredAtMillis, {int? offsetMillis}) {
-  final int offset = offsetMillis ??
+  final int offset =
+      offsetMillis ??
       DateTime.fromMillisecondsSinceEpoch(
         occurredAtMillis,
       ).timeZoneOffset.inMilliseconds;

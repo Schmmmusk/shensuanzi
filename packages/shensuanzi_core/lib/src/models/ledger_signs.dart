@@ -60,13 +60,18 @@ enum LedgerDirection {
 /// | `purchase_return` | [LedgerDirection.negative] | 退货出库 |
 /// | `stocktake` | [LedgerDirection.either] | 差额可正可负 —— **允许有流水** |
 /// | `receipt` / `payment` | [LedgerDirection.absent] | 收付款单不碰库存 |
+/// ⚠️ 下面三个 `switch` **都不写 `_ =>` 兜底**，逐个列出 —— 将来给 `DocType`
+/// 加新类型时，编译器会在这里报「未覆盖」，逼我们明确表态。
+/// 用 `_ => absent` 的话，新类型会**悄悄**被当成「不产生任何流水」，
+/// 而那是所有默认值里最危险的一种（用户审查 2026-10-30）。
 LedgerDirection stockDirectionOf(DocType type) => switch (type) {
   DocType.purchase || DocType.saleReturn => LedgerDirection.positive,
   DocType.sale ||
   DocType.delivery ||
   DocType.purchaseReturn => LedgerDirection.negative,
   DocType.stocktake => LedgerDirection.either,
-  _ => LedgerDirection.absent,
+  DocType.receipt || DocType.payment => LedgerDirection.absent,
+  DocType.transfer => LedgerDirection.absent,
 };
 
 /// 往来流水 `amount` 的方向。
@@ -88,7 +93,7 @@ LedgerDirection partyDirectionOf(DocType type) => switch (type) {
   DocType.purchase ||
   DocType.saleReturn ||
   DocType.receipt => LedgerDirection.negative,
-  _ => LedgerDirection.absent,
+  DocType.stocktake || DocType.transfer => LedgerDirection.absent,
 };
 
 /// 资金流水 `amount` 的方向。
@@ -98,5 +103,11 @@ LedgerDirection partyDirectionOf(DocType type) => switch (type) {
 LedgerDirection moneyDirectionOf(DocType type) => switch (type) {
   DocType.receipt => LedgerDirection.positive,
   DocType.payment => LedgerDirection.negative,
-  _ => LedgerDirection.absent,
+  DocType.purchase ||
+  DocType.sale ||
+  DocType.delivery ||
+  DocType.saleReturn ||
+  DocType.purchaseReturn ||
+  DocType.stocktake ||
+  DocType.transfer => LedgerDirection.absent,
 };

@@ -65,7 +65,7 @@ export 'src/models/base.dart'
 export 'src/models/ledger_signs.dart'
     show LedgerDirection, moneyDirectionOf, partyDirectionOf, stockDirectionOf;
 export 'src/models/document.dart'
-    show DocStatus, DocType, Document, businessDayOf;
+    show DocStatus, DocType, Document, businessDayOf, isSupportedDocType;
 export 'src/models/document_line.dart'
     show DocumentLine, linesAmountAppliesTo, linesAmountMatchesTotal;
 export 'src/models/money_ledger.dart' show MoneyLedger;

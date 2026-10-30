@@ -54,6 +54,9 @@ enum RescueIssueKind {
 
   /// 这个版本的软件不认识这张单的类型（可能是更新版本做的单）
   unknownType,
+
+  /// 类型认得，但**当前版本的规则层不支持恢复**（如 `transfer` 调拨）
+  unsupportedType,
 }
 
 /// 一张不完整的单据。
@@ -92,6 +95,7 @@ class RescueIssue {
     RescueIssueKind.missingMasterData => '引用的商品或往来方没救回来',
     RescueIssueKind.brokenSettlement => '收款或付款记录对不上（账会不平）',
     RescueIssueKind.unknownType => '这个版本不认识这种单据',
+    RescueIssueKind.unsupportedType => '这个版本还不支持这种单据',
   };
 }
 
@@ -798,6 +802,16 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
       detail =
           '这张单的类型（$wire）这个版本的软件不认识 —— 可能是更新版本做的单。'
           '为了不把账弄错，先不导入；用新版本的软件打开，它就能正常恢复。';
+    } else if (!isSupportedDocType(type)) {
+      // 类型**认得**、但规则层没实现（v1 的 `transfer` 调拨）。
+      //
+      // 从前这种单会一路走完所有判据：三种流水方向都是 `absent`、没有明细、
+      // 金额为零 ⇒ 全部「通过」，被当成完整单据导进新库。用户得到的是一张
+      // **本版本根本没法继续操作**的单（用户审查 2026-10-30）。
+      issue = RescueIssueKind.unsupportedType;
+      detail =
+          '这张单是「${type.label}」—— 当前版本的软件还不支持这种单据。'
+          '为了不让账里出现看不懂的东西，先不导入；等支持它的版本再恢复。';
     } else if (expectsLines && myLines.isEmpty) {
       issue = RescueIssueKind.missingLines;
       detail =
@@ -1038,6 +1052,22 @@ String? _stockProblem({
   required List<Map<String, Object?>> stock,
   required DocType type,
 }) {
+  // 商品引用必须是有效值（`document_lines.product_id` 与
+  // `stock_ledger.product_id` 都是 NOT NULL）。从前这里 `if (pid is! String)
+  // continue` 会把坏行悄悄跳过 —— 连盘点分支也一样（用户审查 2026-10-30）。
+  for (final Map<String, Object?> line in lines) {
+    final Object? pid = line['product_id'];
+    if (pid is! String || pid.isEmpty) {
+      return '有一行明细没有商品（数据可能坏了）—— 导入它，金额和库存都会对不上。';
+    }
+  }
+  for (final Map<String, Object?> row in stock) {
+    final Object? pid = row['product_id'];
+    if (pid is! String || pid.isEmpty) {
+      return '有一条库存记录没有商品（数据可能坏了）—— 导入它，库存会错。';
+    }
+  }
+
   final Map<String, int> lineRows = <String, int>{};
   final Map<String, int> lineQty = <String, int>{};
   for (final Map<String, Object?> line in lines) {
@@ -1404,7 +1434,14 @@ String? _ledgerRefProblem({
   }
   for (final Map<String, Object?> row in party) {
     final Object? pid = row['party_id'];
-    if (pid is! String) continue;
+    // ⚠️ **不能 `continue`**（用户审查 2026-10-30）：`party_ledger.party_id`
+    // 在 schema 里是 `NOT NULL`，读到空值只可能是数据坏了。跳过它等于放过，
+    // 而写新库时会被 NOT NULL 顶回来 —— **整次抢救全失败**，
+    // 用户连其余能救的单据都拿不到。
+    if (pid is! String || pid.isEmpty) {
+      return '有一条欠款记录没有往来方（数据可能坏了）—— '
+          '导入它会让整次恢复失败。';
+    }
     if (!partyIds.contains(pid)) {
       return '这条欠款记录挂在一个不存在的往来方（$pid）上 —— 补上它之前不能导入。';
     }
@@ -1418,7 +1455,11 @@ String? _ledgerRefProblem({
       : null;
   for (final Map<String, Object?> row in money) {
     final Object? aid = row['account_id'];
-    if (aid is! String) continue;
+    // 同上：`money_ledger.account_id` 也是 `NOT NULL`
+    if (aid is! String || aid.isEmpty) {
+      return '有一笔资金记录没有账户（数据可能坏了）—— '
+          '导入它会让整次恢复失败。';
+    }
     if (!accountIds.contains(aid)) {
       return '这笔钱记在一个不存在的账户（$aid）上 —— 补上它之前不能导入。';
     }

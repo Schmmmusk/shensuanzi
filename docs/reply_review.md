@@ -16766,3 +16766,50 @@ int moneySignOf(DocType type);   // receipt +1；payment −1
 - `ledger_signs_test` 改为三态语义；`absent` 分支查 `COUNT`。
 - **反向灵敏度**：把三条 `absent` 检查全部停用 ⇒ 四条用例全红。
 - 门禁：root **391** · core **761** · app **439** · analyze 0。
+
+### 五十二、2026-10-30 第七轮审查：引用字段 NULL + `transfer`（第一批结项）
+
+用户指出最后两条边界，都在「schema 说不能为空、代码却在它为空时跳过」这一类里。
+
+#### ① 流水引用字段读到 NULL 被 `continue` 跳过（P1）
+
+`_ledgerRefProblem` 里 `if (pid is! String) continue;`、`_stockProblem` 里
+`if (pid is! String) continue;`（盘点分支同样）—— 本意是「跳过读不懂的值」，
+但在抢救场景里，跳过 = 放过。
+
+危险不在「少查一项」，而在**失败位置**：这张单会被判完整 ⇒ 写新库时被
+`NOT NULL` 顶回来 ⇒ **整次抢救全失败**，用户连其余能救的单据都拿不到。
+
+修法：`party_ledger.party_id` / `money_ledger.account_id` /
+`stock_ledger.product_id` / `document_lines.product_id` 一律要求**非空字符串**。
+
+**测试怎么造出 NULL**：SQLite 的 `NOT NULL` 挡住了 `UPDATE ... SET col = NULL`，
+空串又会被「引用了不存在的 id」先拦下（测不到空值分支）。所以新增
+`stripConstraints()` —— 用 `CREATE TABLE AS` 把表重建一遍（CTAS 丢约束），
+再写 NULL。真实损坏（坏页 / 半写）本来就是这样，抢救器只 `SELECT`、不看约束。
+
+#### ② `transfer` 是已知但不支持的类型（P1）
+
+`transfer` 能解析成 `DocType.transfer` ⇒ 不走 `unknownType`；而三种流水方向都是
+`absent`、没有明细、金额为零 ⇒ 所有判据「通过」，一张本版本没法继续操作的单被导入。
+
+修法：核心包新增 `isSupportedDocType()`；抢救器新增
+`RescueIssueKind.unsupportedType`，与 `unknownType` **分开**
+（「不认识」和「认得但不支持」对用户是两种话）。
+
+顺带按用户建议把符号表三个 `switch` 的 `_ => absent` **删掉**，逐个列出
+`DocType` —— 将来加新类型时编译器会报「未覆盖」，逼我们表态。
+`_ => absent` 是最危险的默认值：新类型会被悄悄当成「不产生任何流水」。
+
+#### 测试与门禁
+
+- `rescue_test` +4（47 条）：往来方 NULL / 账户 NULL / 商品 NULL（盘点）/ `transfer`。
+- `ledger_signs_test` +1（7 条）：`isSupportedDocType` 逐类型核对。
+- **反向灵敏度**：五处退回旧写法 ⇒ 四条全红（含真正的 NULL 路径）。
+- 门禁：root **391** · core **762** · app **443** · analyze 0。
+
+#### 结项
+
+55 第一批（⑥ 退款上限 + ② 业务完整性）到此收口。提案 55 增加「结项状态」一节：
+判据清单 + **两条已知限制**（盘点流水丢失不可判；源文件被改动只能检测不能锁）。
+54 经营图表作为**独立新阶段**开始，不与本轮混在一起。
