@@ -857,6 +857,8 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
         party: myParty,
         partyId: doc['party_id'],
         totalCents: totalCents,
+        // 类型为空的情形已在上一个分支返回，这里必然非空
+        type: type!,
       );
       if (partyProblem != null) {
         issue = RescueIssueKind.missingLedger;
@@ -1027,7 +1029,7 @@ String? _stockProblem({
     if (pid is! String) continue;
     lineRows[pid] = (lineRows[pid] ?? 0) + 1;
     final Object? qty = line['quantity'];
-    if (qty is int) lineQty[pid] = (lineQty[pid] ?? 0) + qty.abs();
+    if (qty is int) lineQty[pid] = (lineQty[pid] ?? 0) + qty;
   }
   final Map<String, int> stockRows = <String, int>{};
   final Map<String, int> stockQty = <String, int>{};
@@ -1036,7 +1038,9 @@ String? _stockProblem({
     if (pid is! String) continue;
     stockRows[pid] = (stockRows[pid] ?? 0) + 1;
     final Object? qty = row['quantity'];
-    if (qty is int) stockQty[pid] = (stockQty[pid] ?? 0) + qty.abs();
+    // ⚠️ **有符号**累加：库存流水的符号就是「进还是出」，
+    // 取绝对值会把「卖了 10 瓶」和「进了 10 瓶」当成同一件事。
+    if (qty is int) stockQty[pid] = (stockQty[pid] ?? 0) + qty;
   }
 
   // ① 流水里有、明细里没有的商品 —— 任何类型都算错
@@ -1073,9 +1077,19 @@ String? _stockProblem({
       return '「$pid」的库存记录条数对不上明细（明细 ${entry.value} 条，'
           '库存记录 ${stockRows[pid] ?? 0} 条）—— 可能少读了几条。';
     }
-    final int want = lineQty[pid] ?? 0;
+    // **方向也要对**（用户审查 2026-10-30，P0）：销售/送货/采购退货是出库（−），
+    // 采购/销售退货是入库（+）。符号由 `stockSignOf()` 统一给出 —— 与规则层
+    // 同一套约定（`ledger_signs_test` 用真引擎对拍）。
+    final int sign = stockSignOf(type);
+    final int want = sign * (lineQty[pid] ?? 0);
     final int got = stockQty[pid] ?? 0;
     if (want != got) {
+      if (want.abs() == got.abs()) {
+        return '「$pid」的库存记录**方向反了**（这张单应该是'
+            '${want > 0 ? '入库' : '出库'} ${want.abs()} 瓶，'
+            '库存记录却是 ${got > 0 ? '入库' : '出库'} ${got.abs()} 瓶）—— '
+            '导入它，库存会朝反方向变。';
+      }
       return '「$pid」的库存数量对不上明细（明细 $want，库存记录 $got）—— '
           '可能有一条流水只读到了一半。';
     }
@@ -1097,6 +1111,7 @@ String? _partyProblem({
   required List<Map<String, Object?>> party,
   required Object? partyId,
   required int totalCents,
+  required DocType type,
 }) {
   // 没有往来方 = 散客当场结清，本来就不写往来流水
   if (partyId is! String || partyId.isEmpty) return null;
@@ -1104,10 +1119,23 @@ String? _partyProblem({
     return '这张单有往来方，但一行欠款记录都没读到 —— '
         '导入它，这位客户/供应商的欠款就凭空消失了。';
   }
+  // 符号也要对（用户审查 2026-10-30，P0）：
+  // 销售/送货/采购退货/付款是**增加**（+），采购/销售退货/收款是**减少**（−）。
+  // 取绝对值会把「客户欠我 100」和「我欠客户 100」当成同一件事 ——
+  // 这不是小误差，是账务方向整个反过来。
+  final int sign = partySignOf(type);
+  if (sign == 0) return null; // 这类单据不产生往来流水（如盘点）
   final int sum = _sumCents(party);
-  if (sum.abs() != totalCents.abs()) {
-    return '这张单的欠款记录金额（${_yuan(sum.abs())}）'
-        '与单据金额（${_yuan(totalCents.abs())}）对不上 —— 欠款会算错。';
+  final int want = sign * totalCents;
+  if (sum != want) {
+    if (sum.abs() == want.abs()) {
+      return '这张单的欠款记录**方向反了**（应该是'
+          '${want > 0 ? '对方欠我方' : '我方欠对方'} ${_yuan(want.abs())}，'
+          '记录里却是 ${sum > 0 ? '对方欠我方' : '我方欠对方'} ${_yuan(sum.abs())}）'
+          '—— 导入它，欠款会记反。';
+    }
+    return '这张单的欠款记录金额（${_yuan(sum)}）'
+        '与单据金额（${_yuan(totalCents)}）对不上 —— 欠款会算错。';
   }
   return null;
 }
@@ -1138,8 +1166,17 @@ String? _moneyProblem({
     if (money.isEmpty) {
       return '这张$name没有任何资金记录 —— 导入它，这笔钱就凭空消失了。';
     }
+    // 符号也要对（用户审查 2026-10-30，P0）：收款（`receipt`）+，付款（`payment`）−。
+    // 取绝对值会把「收进 100」和「付出 100」当成同一件事，恢复出来余额反着走。
     final int sum = _sumCents(money);
-    if (sum.abs() != totalCents.abs()) {
+    final int want = moneySignOf(type!) * totalCents;
+    if (sum != want) {
+      if (sum.abs() == want.abs()) {
+        return '这张$name的资金记录**方向反了**（应该是'
+            '${want > 0 ? '收到' : '付出'} ${_yuan(want.abs())}，'
+            '记录里却是 ${sum > 0 ? '收到' : '付出'} ${_yuan(sum.abs())}）'
+            '—— 导入它，账户余额会反着算。';
+      }
       return '这张$name的资金记录金额与单据金额对不上 —— 账会不平。';
     }
     return null;
@@ -1289,6 +1326,17 @@ String? _ledgerRefProblem({
   final String? docParty = docPartyId is String && docPartyId.isNotEmpty
       ? docPartyId
       : null;
+  // 收付款单**必须**同时有往来方与账户（`rule_engine._settle` 直接 `StateError`）。
+  // 损坏把这两列置空后，下面那些「字段为空就不比」的检查会全部跳过 ⇒
+  // 一张业务上根本不存在的收付款单会被当成完整数据导入（用户审查 2026-10-30，P1）。
+  if (isSettleDoc) {
+    if (docParty == null) {
+      return '这张收付款单没有往来方 —— 钱不知道是谁给的、给谁的，不能导入。';
+    }
+    if (docAccountId is! String || docAccountId.isEmpty) {
+      return '这张收付款单没有账户 —— 钱不知道进出哪个账户，不能导入。';
+    }
+  }
   for (final Map<String, Object?> row in party) {
     final Object? pid = row['party_id'];
     if (pid is! String) continue;

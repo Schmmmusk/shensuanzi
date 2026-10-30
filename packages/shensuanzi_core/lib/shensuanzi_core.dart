@@ -62,6 +62,8 @@ export 'src/user_text.dart' show forbiddenDevTermsInUserText;
 export 'src/models/account.dart' show Account, AccountType;
 export 'src/models/base.dart'
     show ImmutableEntity, MutableEntity, RowReader, boolToInt;
+export 'src/models/ledger_signs.dart'
+    show moneySignOf, partySignOf, stockSignOf;
 export 'src/models/document.dart'
     show DocStatus, DocType, Document, businessDayOf;
 export 'src/models/document_line.dart'

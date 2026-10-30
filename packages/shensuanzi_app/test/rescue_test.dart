@@ -1047,6 +1047,123 @@ void main() {
       );
     });
 
+    test('销售单的库存流水**方向反了**（−1 变 +1）⇒ 不完整', () async {
+      // 用户审查 2026-10-30（P0）：符号不是格式，是业务含义本身。
+      // 卖出 1 瓶 → 库存 −1；坏页把它变成 +1，绝对值一模一样，
+      // 恢复出来却是「卖了 1 瓶、库存还多了 1 瓶」。
+      final List<String> ids = makeLedger(source, docs: 1);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        'UPDATE stock_ledger SET quantity = -quantity WHERE document_id = ?',
+        <Object?>[ids.single],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.importedDocuments, 0, reason: '出库变成入库，账反了');
+      expect(report.issues.single.detail, contains('方向'));
+    });
+
+    test('采购单的库存流水**方向反了**（+10 变 −10）⇒ 不完整', () async {
+      makeMixedLedger(source);
+      final Db db = Db.open(source);
+      final String purchaseId =
+          db.raw.select(
+                'SELECT id FROM documents WHERE doc_type = ? LIMIT 1',
+                <Object?>['purchase'],
+              ).first['id']!
+              as String;
+      db.raw.execute(
+        'UPDATE stock_ledger SET quantity = -quantity WHERE document_id = ?',
+        <Object?>[purchaseId],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues.map((RescueIssue i) => i.docId),
+        contains(purchaseId),
+        reason: '入库变成出库 —— 跟销售单反过来，判据不能只想着一边',
+      );
+    });
+
+    test('销售单的往来流水**方向反了**（+2000 变 −2000）⇒ 不完整', () async {
+      // 客户欠我 ¥20 → 变成我欠客户 ¥20。金额绝对值不变，语义完全相反。
+      final List<String> ids = makeLedger(source, docs: 1);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        'UPDATE party_ledger SET amount = -amount WHERE document_id = ?',
+        <Object?>[ids.single],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.importedDocuments, 0);
+      expect(report.issues.single.detail, contains('方向'));
+    });
+
+    test('收款单的资金流水**方向反了**（+ 变 −）⇒ 不完整', () async {
+      makeLedger(source, docs: 1, paid: true);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        'UPDATE money_ledger SET amount = -amount '
+        "WHERE document_id IN (SELECT id FROM documents WHERE doc_type = 'receipt')",
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.importedDocuments, 0, reason: '收款记成付款，账户余额会反着算');
+    });
+
+    test('付款单的资金流水**方向反了**（− 变 +）⇒ 不完整', () async {
+      makeMixedLedger(source);
+      final Db db = Db.open(source);
+      final String paymentId =
+          db.raw.select(
+                'SELECT id FROM documents WHERE doc_type = ? LIMIT 1',
+                <Object?>['payment'],
+              ).first['id']!
+              as String;
+      db.raw.execute(
+        'UPDATE money_ledger SET amount = -amount WHERE document_id = ?',
+        <Object?>[paymentId],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues.map((RescueIssue i) => i.docId),
+        contains(paymentId),
+        reason: '付款记成收款 —— 与收款单方向相反',
+      );
+    });
+
+    test('收款单**缺往来方 / 账户** ⇒ 不完整（规则层本来就要求必填）', () async {
+      // 用户审查 2026-10-30（P1）：`_settle()` 明确要求收付款单必须同时有
+      // `account_id` 与 `party_id`。损坏把这两列置空之后：
+      //   · `_firstMissingRef` 不会把 NULL 当缺失
+      //   · `_ledgerRefProblem` 因为单据字段为空，不做一致性比较
+      //   · `_partyProblem` 把「没有往来方」当成「散客，不适用」
+      // ⇒ 一张违反规则层必填约束的收款单可能被导入。
+      makeLedger(source, docs: 1, paid: true);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        "UPDATE documents SET party_id = NULL, account_id = NULL "
+        "WHERE doc_type = 'receipt'",
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.importedDocuments, 0, reason: '收付款单没有往来方和账户，业务上根本不存在这种单');
+      expect(report.issues, isNotEmpty);
+    });
+
     test('**核销记录本身**丢失（两端单据都还在）⇒ 两端都被拦下', () async {
       // 用户审查 2026-10-30 §三：传播靠「读到的核销关系」，所以某条核销
       // **本身没读出来**时，传播这条路走不通 —— 得靠各端自己的核对：
