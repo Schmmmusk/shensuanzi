@@ -149,7 +149,7 @@ List<RevenuePoint> buildRevenueSeries({
   // ③ 按桶起点排序 —— 图从左到右就是这个顺序
   final List<int> starts = buckets.keys.toList()..sort();
   return <RevenuePoint>[
-    for (final int start in starts) buckets[start]!.freeze(),
+    for (final int start in starts) buckets[start]!.freeze(fromDay),
   ];
 }
 
@@ -206,8 +206,10 @@ class _MutableBucket {
     inTransitCount += data.inTransitCount;
   }
 
-  RevenuePoint freeze() => RevenuePoint(
-    startDay: startDay,
+  /// [fromDay] 用来把桶的起点**夹进窗口**：窗口的第一周/第一月可能不是从
+  /// 日历边界开始的，标一个「10/19」但实际只统计了 10/24 起，会骗人。
+  RevenuePoint freeze(int fromDay) => RevenuePoint(
+    startDay: math.max(startDay, fromDay),
     endDay: endDay,
     saleCents: saleCents,
     deliveryCents: deliveryCents,

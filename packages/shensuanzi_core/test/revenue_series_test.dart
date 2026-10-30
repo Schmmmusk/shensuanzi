@@ -94,8 +94,33 @@ void main() {
         bucket: RevenueBucket.month,
       );
       expect(months.length, 2);
-      expect(months.first.startDay, monthStartDay(end));
-      expect(months.last.startDay, monthStartDay(start));
+      expect(
+        months.first.startDay,
+        end,
+        reason:
+            '窗口从 10-31 开始 ⇒ 第一个桶的起点要**夹到窗口内**，'
+            '否则标签会写「10 月」而实际只统计了一天',
+      );
+      expect(months.first.endDay, end);
+      expect(months.last.startDay, start);
+    });
+
+    test('窗口不从周一开始时，第一个周桶的起点夹到窗口内', () {
+      final int wednesday = dayOf(2026, 10, 28); // 周三
+      expect(dayToDate(wednesday).weekday, DateTime.wednesday);
+
+      final List<RevenuePoint> weeks = buildRevenueSeries(
+        rows: <RevenueDay>[RevenueDay(day: wednesday, saleCents: 500)],
+        fromDay: wednesday,
+        toDay: wednesday + 2,
+        bucket: RevenueBucket.week,
+      );
+      expect(
+        weeks.single.startDay,
+        wednesday,
+        reason: '标 10/26（周一）会让用户以为这周从周一开始统计 —— 其实只有周三起',
+      );
+      expect(weeks.single.endDay, wednesday + 2);
     });
 
     test('窗口外的数据被忽略；from > to ⇒ 空列表', () {

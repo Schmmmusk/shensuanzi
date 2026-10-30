@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/overview_page.dart';
+import 'package:shensuanzi/src/ui/revenue_chart.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
@@ -510,5 +511,141 @@ void main() {
     // 不传 ⇒ 不显示（既有装配没有这个能力时不该露一个死按钮）
     await tester.pumpWidget(page(onNavigate: (_) {}));
     expect(find.byKey(const Key('overview-go-price')), findsNothing);
+  });
+
+  // ============================================================ 经营图表（提案 54 第二批）
+  group('经营图表', () {
+    testWidgets('有销售 ⇒ 出现柱状图、一句人话总结，且金额写在图上', (tester) async {
+      final QueryDao q = await seedBiz(
+        todayMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      await tester.pumpWidget(page(queries: q));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('overview-revenue-chart')), findsOneWidget);
+      expect(
+        find.byKey(const Key('overview-revenue-summary')),
+        findsOneWidget,
+        reason: '规则 4：图下面必有一句人话总结，不让人自己比',
+      );
+      expect(find.textContaining('最近 30 天合计'), findsOneWidget);
+      // 柱子是自绘的 —— 断言 painter 在，而不是断言「有个图」
+      expect(
+        find.byWidgetPredicate(
+          (Widget w) => w is CustomPaint && w.painter is RevenueBarPainter,
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('展开「看每天的数字」⇒ 每天一行，读屏也读得到', (tester) async {
+      final int nowMs = DateTime.now().millisecondsSinceEpoch;
+      final QueryDao q = await seedBiz(todayMs: nowMs);
+      await tester.pumpWidget(page(queries: q));
+      await tester.pumpAndSettle();
+
+      final Finder toggle = find.byKey(
+        const Key('overview-revenue-daily-toggle'),
+      );
+      // 折叠线以下的控件点不动（2026-10-26 踩过）⇒ 先滚到可见
+      await tester.ensureVisible(toggle);
+      await tester.pumpAndSettle();
+      expect(find.text('看每天的数字'), findsOneWidget);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+
+      expect(find.text('收起每天的数字'), findsOneWidget);
+      // 今天的日期行必须出现（明细是按天列的纯文本 ⇒ 读屏天然可读）
+      final DateTime today = DateTime.fromMillisecondsSinceEpoch(nowMs);
+      final String label =
+          '${today.year}-${today.month.toString().padLeft(2, '0')}'
+          '-${today.day.toString().padLeft(2, '0')}';
+      expect(find.text(label), findsWidgets);
+    });
+
+    testWidgets('只有应收、没有应付 ⇒ 只画一条横条', (tester) async {
+      final QueryDao q = await seedBiz(
+        todayMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      await tester.pumpWidget(page(queries: q));
+      await tester.pumpAndSettle();
+
+      // 夹具：采购已全额付款（应付 0）、送货未签收（应收 > 0）
+      expect(find.byKey(const Key('overview-balance-bars')), findsOneWidget);
+      expect(
+        find.byKey(const Key('overview-balance-receivable')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('overview-balance-payable')),
+        findsNothing,
+        reason: '没有应付就不要画一条空条',
+      );
+    });
+
+    // 提案 54 §三要求「先做原型，在窄窗 / 1280 / 手机三种条件下看挤不挤」。
+    // 自动化版：三种尺寸各渲染一次，**不许有溢出**（溢出在测试里是异常）。
+    for (final Size size in <Size>[
+      const Size(900, 700), // 窄窗
+      const Size(1280, 720), // 默认桌面
+      const Size(390, 844), // 手机壳
+    ]) {
+      testWidgets('窗口 ${size.width.toInt()}×${size.height.toInt()} 下不溢出', (
+        tester,
+      ) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        final QueryDao q = await seedBiz(
+          todayMs: DateTime.now().millisecondsSinceEpoch,
+        );
+        await tester.pumpWidget(
+          page(queries: q, mobileShell: size.width < 500),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          tester.takeException(),
+          isNull,
+          reason:
+              '${size.width.toInt()} 宽下布局溢出了 —— '
+              '要么调聚合粒度，要么调间距，别缩字号',
+        );
+        expect(find.byKey(const Key('overview-revenue-chart')), findsOneWidget);
+      });
+    }
+
+    testWidgets('**卡片之间必须留间距**（2026-10-20「两张卡叠在一起」的回归钉）', (tester) async {
+      final QueryDao q = await seedBiz(
+        todayMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      await tester.pumpWidget(page(queries: q));
+      await tester.pumpAndSettle();
+
+      final Rect care = tester.getRect(
+        find.byKey(const Key('overview-card-care')),
+      );
+      final Rect chart = tester.getRect(
+        find.byKey(const Key('overview-revenue-chart')),
+      );
+      final Rect balance = tester.getRect(
+        find.byKey(const Key('overview-balance-bars')),
+      );
+
+      // 两个 `Card` 都是 `margin: EdgeInsets.zero` —— 间距全靠外层 `SizedBox`。
+      // 谁把它删了，这里立刻红。
+      expect(
+        chart.top - care.bottom,
+        greaterThanOrEqualTo(8),
+        reason: '经营卡与图表卡贴在一起了',
+      );
+      expect(
+        balance.top - chart.bottom,
+        greaterThanOrEqualTo(8),
+        reason: '图表卡与欠款卡贴在一起了',
+      );
+    });
   });
 }

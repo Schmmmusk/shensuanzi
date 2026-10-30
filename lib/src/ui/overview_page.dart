@@ -19,7 +19,9 @@ import 'dart:io' show Process;
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'balance_bars.dart';
 import 'notice.dart';
+import 'revenue_chart.dart';
 
 /// 提醒橙 —— **不用错误红**（可以不拦人的提醒一律橙色，
 /// `docs/ui_principles.md` §1.3；与 `product_form_dialog.dart` 的内联提示同色）
@@ -123,6 +125,15 @@ class _OverviewPageState extends State<OverviewPage> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final String? reminder = widget.backupReminder;
+
+    // 应收/应付**只查一次**：`receivablesSummary()` 在 26 万单的库上要 20~30 ms，
+    // 「要留心」卡与「欠款一览」条都要用，查两遍是白花钱。
+    final QueryDao? q = widget.queries;
+    final bool hasDocs = q?.hasAnyDocument() ?? false;
+    final ReceivablesSummary? receivables = hasDocs
+        ? q!.receivablesSummary()
+        : null;
+    final PayablesSummary? payables = hasDocs ? q!.payablesSummary() : null;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -275,14 +286,18 @@ class _OverviewPageState extends State<OverviewPage> {
         // 概览页先回答「数据在哪、能不能用、从哪开始」，经营数字是**第二眼**的东西。
         // ⚠️ 必须带顶部间距：手机壳这里是 `Column` 竖排三卡，
         // 紧贴上一段文字会看起来「卡片边缘叠在一起」（用户 2026-10-20 报的现象）。
-        if (widget.queries != null &&
-            widget.queries!.hasAnyDocument()) ...<Widget>[
+        if (receivables != null && payables != null) ...<Widget>[
           const SizedBox(height: 20),
-          _businessCards(theme),
+          _businessCards(theme, receivables: receivables, payables: payables),
+          // 图表放在经营卡**下面**（用户 2026-10-30：中老年看不出营收，
+          // 「真相在流水」里翻不出来）。间距必须显式给 —— `_bizCard` 是
+          // `margin: EdgeInsets.zero`，紧贴会看起来像「两张卡叠在一起」
+          // （用户 2026-10-20 报过的那个现象）。
+          const SizedBox(height: 12),
+          _charts(theme, receivables: receivables, payables: payables),
         ],
         // 2026-10-22（§CV·八十三 批 2 第 12 条）：**空库也要有入口**
-        if (widget.onNavigate != null &&
-            !(widget.queries?.hasAnyDocument() ?? false)) ...<Widget>[
+        if (widget.onNavigate != null && !hasDocs) ...<Widget>[
           const SizedBox(height: 12),
           _entriesCard(theme),
         ],
@@ -350,14 +365,16 @@ class _OverviewPageState extends State<OverviewPage> {
   /// **#32**：经营速览三卡。桌面横排（各 1/3，裁定⑥）；手机紧凑竖排
   ///（padding 收窄 + 入口一行图标）。卡片**不可点**（裁定⑦：先做静态，
   /// 带筛选跳转超范围）。金额 `formatGrouped`（界面带千分位，裁定⑧）。
-  Widget _businessCards(ThemeData theme) {
-    final QueryDao queries = widget.queries!;
-    final OverviewSummary today = queries.todaySummary(_dayStart());
-    final ReceivablesSummary receivables = queries.receivablesSummary();
+  Widget _businessCards(
+    ThemeData theme, {
+    required ReceivablesSummary receivables,
     // F13（2026-10-25 复跑）：从前「要留心」只看应收 —— 欠着供应商的钱一个字都不说，
     // 边界上还会显示「目前没有要留心的事」。应付（我欠人）与应收同权重，且**排在前面**：
     // 要还出去的钱比要收进来的更急。
-    final PayablesSummary payables = queries.payablesSummary();
+    required PayablesSummary payables,
+  }) {
+    final QueryDao queries = widget.queries!;
+    final OverviewSummary today = queries.todaySummary(_dayStart());
     final int transitCount = queries.deliveryInTransitCount();
     final int negativeStock = queries
         .stockByProduct()
@@ -479,6 +496,36 @@ class _OverviewPageState extends State<OverviewPage> {
         Expanded(child: careCard),
         const SizedBox(width: 12),
         Expanded(child: _entriesCard(theme)),
+      ],
+    );
+  }
+
+  /// 图表区（提案 54 第二批）：近 30 天柱状图 + 欠款横条。
+  ///
+  /// 两张卡之间**必须显式留间距**：两边的 `Card` 都是 `margin: EdgeInsets.zero`，
+  /// 紧贴会看起来像「叠在一起」（用户 2026-10-20 报过）。
+  Widget _charts(
+    ThemeData theme, {
+    required ReceivablesSummary receivables,
+    required PayablesSummary payables,
+  }) {
+    final bool hasBalance =
+        receivables.totalCents > 0 || payables.totalCents > 0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        RevenueChartCard(
+          queries: widget.queries!,
+          mobileShell: widget.mobileShell,
+        ),
+        if (hasBalance) ...<Widget>[
+          const SizedBox(height: 12),
+          BalanceBarsCard(
+            receivables: receivables,
+            payables: payables,
+            mobileShell: widget.mobileShell,
+          ),
+        ],
       ],
     );
   }
