@@ -743,34 +743,85 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
     String? detail;
 
     // 该有明细吗？收付款单没有明细（它们只有资金流水）
+    // ⚠️ **判据按业务类型分**（2026-10-30 用户裁定补充 ②）。
+    //
+    // 从前只问「有没有任意一条流水」—— 一张 5 行明细的销售单丢了 4 条库存流水，
+    // 剩下 1 条也照样判「完整」，导进去库存就少减 4 行，账错了还没人知道。
+    //
+    // 用户举的反例更狠：同一商品两行明细（可乐 10 + 可乐 20），丢一条之后
+    // 「流水里还有可乐」—— 按 `product_id` 看有没有的判据照样通过。
+    // 所以必须**按商品核对行数**，再核对**金额**。
     final bool expectsLines =
         type != null && type != DocType.receipt && type != DocType.payment;
-    final bool expectsLedger =
-        myStock.isNotEmpty || myMoney.isNotEmpty || myParty.isNotEmpty;
+    final int totalCents = doc['total_amount'] is int
+        ? doc['total_amount']! as int
+        : 0;
+    final int paidCents = doc['paid_amount'] is int
+        ? doc['paid_amount']! as int
+        : 0;
+
+    // 判据顺序：**越具体越靠前**。
+    // 「引用的商品 ghost 没救回来」比「库存记录条数对不上」更可操作 ——
+    // 前者告诉用户缺什么，后者只告诉他数字不匹配。所以外键检查排在流水检查之前。
+    final String? missingRef = _firstMissingRef(
+      doc: doc,
+      lines: myLines,
+      settle: settle[id] ?? const [],
+      productIds: productIds,
+      partyIds: partyIds,
+      accountIds: accountIds,
+    );
 
     if (expectsLines && myLines.isEmpty) {
       issue = RescueIssueKind.missingLines;
       detail =
           '这张单的明细一行都没读到。导入它会让单据金额对不上明细，'
           '库存和往来也可能少算。';
-    } else if (!expectsLedger && type != DocType.stocktake) {
-      // 盘点只改数量、不产生资金流水，所以它没有流水是正常的
+    } else if (missingRef != null) {
+      issue = RescueIssueKind.missingMasterData;
+      detail = '这张单引用的「$missingRef」没有救回来。补上它之前，这张单不能导入。';
+    } else if (expectsLines &&
+        type != DocType.stocktake &&
+        _hasMissingStockRows(myLines, myStock) != null) {
+      // 库存流水：**按商品核对行数**。盘点单跳过（数量无变化的行不产生流水）。
       issue = RescueIssueKind.missingLedger;
-      detail = '这张单没有任何库存或往来记录。导入它会让库存、欠款不准。';
-    } else {
-      // 外键检查：明细引用的商品、单据引用的往来方/账户有没有救回来
-      final String? missing = _firstMissingRef(
-        doc: doc,
-        lines: myLines,
-        settle: settle[id] ?? const [],
-        productIds: productIds,
-        partyIds: partyIds,
-        accountIds: accountIds,
-      );
-      if (missing != null) {
-        issue = RescueIssueKind.missingMasterData;
-        detail = '这张单引用的「$missing」没有救回来。补上它之前，这张单不能导入。';
-      }
+      detail =
+          '「${_hasMissingStockRows(myLines, myStock)}」的库存记录条数对不上明细 —— '
+          '可能少读了几条。导入它会让库存少减或少加。';
+    } else if (expectsLines &&
+        type != DocType.stocktake &&
+        // ⚠️ 必须写 `== true`，不能写 `!= null`：
+        // 这个函数返回 `bool?`（`null` = 不适用、`false` = 相符），
+        // 而 `false != null` 是 **true** —— 那样会把「相符」当成「不符」，全判不完整。
+        _ledgerAmountMismatch(
+              party: myParty,
+              partyId: doc['party_id'],
+              totalCents: totalCents,
+            ) ==
+            true) {
+      // 往来流水：金额必须等于单据金额（挂账时冲减的就是这张单）。
+      issue = RescueIssueKind.missingLedger;
+      detail = '这张单的欠款记录金额与单据金额对不上 —— 欠款会算错。';
+    } else if (_moneyAmountMismatch(myMoney, paidCents)) {
+      // 资金流水：金额必须等于已收/已付。
+      issue = RescueIssueKind.missingLedger;
+      detail = '这张单收到的钱与资金记录对不上 —— 账会不平。';
+    } else if (!expectsLines &&
+        type != null &&
+        _settlementMismatch(
+          settle: settle[id] ?? const [],
+          totalCents: totalCents,
+        )) {
+      // 收付款单：核销出去的总额必须等于本单金额。
+      issue = RescueIssueKind.missingLedger;
+      detail = '这张收付款单核销出去的钱与单据金额对不上 —— 账会不平。';
+    } else if (!expectsLines &&
+        type != null &&
+        myMoney.isEmpty &&
+        myParty.isEmpty) {
+      // 收付款单连一条资金/往来流水都没有 ⇒ 它什么都没做
+      issue = RescueIssueKind.missingLedger;
+      detail = '这张收付款单没有任何资金记录 —— 它可能是空的。';
     }
 
     final Map<String, Object?> meta = _meta(doc, label);
@@ -859,6 +910,82 @@ Set<String> _ids(List<Map<String, Object?>> rows) => <String>{
   for (final Map<String, Object?> row in rows)
     if (row['id'] is String) row['id']! as String,
 };
+
+/// 库存流水**按商品核对行数**：明细里某商品有 N 行，流水里同一商品也必须有 N 行。
+///
+/// 返回第一个对不上的商品 id（给报告用），全对返回 `null`。
+///
+/// ## 为什么不能只看「这个商品在流水里出现过」
+///
+/// 用户举的反例：同一商品两行明细（可乐 10 + 可乐 20），丢一条流水之后
+/// 流水里**仍然有「可乐」** —— 按 `product_id` 看有没有的判据会直接放过。
+/// 行数才是「每条明细都落了流水」的证据。
+///
+/// ⚠️ 不比**数量合计**：同一商品多行明细在流水里是逐条写的（`rule_engine` 逐行插入），
+/// 数量符号也按业务类型相反；比行数已经能抓住「整批丢一条」，再叠数量容易误报。
+String? _hasMissingStockRows(
+  List<Map<String, Object?>> lines,
+  List<Map<String, Object?>> stock,
+) {
+  final Map<String, int> lineRows = <String, int>{};
+  for (final Map<String, Object?> line in lines) {
+    final Object? pid = line['product_id'];
+    if (pid is String) lineRows[pid] = (lineRows[pid] ?? 0) + 1;
+  }
+  final Map<String, int> stockRows = <String, int>{};
+  for (final Map<String, Object?> row in stock) {
+    final Object? pid = row['product_id'];
+    if (pid is String) stockRows[pid] = (stockRows[pid] ?? 0) + 1;
+  }
+  for (final MapEntry<String, int> entry in lineRows.entries) {
+    if ((stockRows[entry.key] ?? 0) != entry.value) return entry.key;
+  }
+  return null;
+}
+
+/// 往来流水金额必须等于单据金额（**绝对值比对**，不依赖业务类型的正负号）。
+///
+/// 返回 `true` = 对不上。
+bool? _ledgerAmountMismatch({
+  required List<Map<String, Object?>> party,
+  required Object? partyId,
+  required int totalCents,
+}) {
+  // 没有往来方 = 散客当场结清，本来就不写往来流水
+  if (partyId is! String || partyId.isEmpty) return null;
+  if (party.isEmpty) return null; // 「一条都没有」由前面的分支处理
+  int sum = 0;
+  for (final Map<String, Object?> row in party) {
+    final Object? amount = row['amount'];
+    if (amount is int) sum += amount;
+  }
+  return sum.abs() != totalCents.abs();
+}
+
+/// 资金流水金额必须等于已收/已付金额（绝对值比对）。
+bool _moneyAmountMismatch(List<Map<String, Object?>> money, int paidCents) {
+  if (money.isEmpty) return false; // 没有立即收付 ⇒ 不写资金流水，正常
+  int sum = 0;
+  for (final Map<String, Object?> row in money) {
+    final Object? amount = row['amount'];
+    if (amount is int) sum += amount;
+  }
+  return sum.abs() != paidCents.abs();
+}
+
+/// 收付款单核销出去的总额必须等于本单金额。
+bool _settlementMismatch({
+  required List<Map<String, Object?>> settle,
+  required int totalCents,
+}) {
+  if (settle.isEmpty) return totalCents != 0;
+  int sum = 0;
+  for (final Map<String, Object?> row in settle) {
+    final Object? amount = row['amount'];
+    if (amount is int) sum += amount;
+  }
+  return sum != totalCents;
+}
 
 /// 找出「这张单引用了、但主数据没救回来」的第一个名字（人话）。
 String? _firstMissingRef({
