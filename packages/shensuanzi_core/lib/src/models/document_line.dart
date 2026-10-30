@@ -134,13 +134,22 @@ class DocumentLine extends ImmutableEntity {
 /// `amount = quantity × unit_price`** —— 让价（`discount_amount`）使行级乘积
 /// 不再成立（`data_model.md` §3.2 第 5 条 / §AY·一 解除严格约束）。
 /// 消费端**不许**用 `unit_price` 重算金额（导出取 `amount`，见 §BD·四）。
-bool linesAmountMatchesTotal(Document doc, int linesAmount) {
-  switch (doc.docType) {
+/// 「明细金额合计 = 单据总额」这条不变量**适不适用**这类单据。
+///
+/// 抽出来是为了让**只有一个地方**定义那三个例外（抢救器也要用它 ——
+/// 它手里是原始行、不是 `Document`，不能直接调 [linesAmountMatchesTotal]）。
+bool linesAmountAppliesTo(DocType type) {
+  switch (type) {
     case DocType.stocktake:
     case DocType.receipt:
     case DocType.payment:
-      return true;
+      return false;
     default:
-      return linesAmount == doc.totalAmount;
+      return true;
   }
+}
+
+bool linesAmountMatchesTotal(Document doc, int linesAmount) {
+  if (!linesAmountAppliesTo(doc.docType)) return true;
+  return linesAmount == doc.totalAmount;
 }

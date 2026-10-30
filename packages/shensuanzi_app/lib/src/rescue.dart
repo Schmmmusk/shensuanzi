@@ -51,6 +51,9 @@ enum RescueIssueKind {
 
   /// 核销关系的另一端缺失或不完整（`receipt` ↔ 被核销单）
   brokenSettlement,
+
+  /// 这个版本的软件不认识这张单的类型（可能是更新版本做的单）
+  unknownType,
 }
 
 /// 一张不完整的单据。
@@ -88,6 +91,7 @@ class RescueIssue {
     RescueIssueKind.orphanLines => '单据本身没读到，只有明细',
     RescueIssueKind.missingMasterData => '引用的商品或往来方没救回来',
     RescueIssueKind.brokenSettlement => '收款或付款记录对不上（账会不平）',
+    RescueIssueKind.unknownType => '这个版本不认识这种单据',
   };
 }
 
@@ -782,7 +786,19 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
       accountIds: accountIds,
     );
 
-    if (expectsLines && myLines.isEmpty) {
+    if (type == null) {
+      // 用户审查 2026-10-30（P1）：**不认识的类型一律进待确认**。
+      //
+      // 从前 `type == null` ⇒ `expectsLines == false` ⇒ 明细 / 库存 / 核销
+      // 三项检查全部跳过，而收付款单那几条又都带 `type != null` 条件 ——
+      // 于是一张空壳单据（没有明细、没有往来、金额为零）可能一路绿灯被导入。
+      //
+      // 抢救器不知道新类型的业务语义，就不该擅自替用户判断它「完整」。
+      issue = RescueIssueKind.unknownType;
+      detail =
+          '这张单的类型（$wire）这个版本的软件不认识 —— 可能是更新版本做的单。'
+          '为了不把账弄错，先不导入；用新版本的软件打开，它就能正常恢复。';
+    } else if (expectsLines && myLines.isEmpty) {
       issue = RescueIssueKind.missingLines;
       detail =
           '这张单的明细一行都没读到。导入它会让单据金额对不上明细，'
@@ -790,6 +806,22 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
     } else if (missingRef != null) {
       issue = RescueIssueKind.missingMasterData;
       detail = '这张单引用的「$missingRef」没有救回来。补上它之前，这张单不能导入。';
+    } else if (linesAmountAppliesTo(type) &&
+        _linesAmountMismatch(myLines, totalCents)) {
+      // **明细金额合计 = 单据总额**（用户审查 2026-10-30 的 P0）。
+      //
+      // 这条不变量规则层本来就在守（`_requireLinesTotalMatches` /
+      // `linesAmountMatchesTotal`），抢救器必须复核同一个东西。
+      //
+      // 为什么行数 + 数量不够：两行各 ¥10 的销售单，第一行明细**和**它的
+      // 库存流水一起没救出来时，剩下的「1 行明细 + 1 条流水 + 数量 1」
+      // 局部完全自洽，往来 ¥20 = 单据 ¥20、核销也对得上 —— 四项全过，
+      // 可单据 ¥20 只剩 ¥10 的明细。**只有这条不变量抓得住。**
+      issue = RescueIssueKind.missingLines;
+      detail =
+          '这张单的明细加起来是 ${_yuan(_sumCents(myLines))}，'
+          '但单据金额是 ${_yuan(totalCents)} —— 少了一行（或几行）明细。'
+          '导入它等于把金额改小了。';
     } else if (expectsLines) {
       final String? stockProblem = _stockProblem(
         lines: myLines,
@@ -799,6 +831,23 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
       if (stockProblem != null) {
         issue = RescueIssueKind.missingLedger;
         detail = stockProblem;
+      }
+    }
+
+    // 流水**自己**的引用（往来方 / 账户）—— 用户审查 2026-10-30（P1）
+    if (issue == null) {
+      final String? ledgerRef = _ledgerRefProblem(
+        party: myParty,
+        money: myMoney,
+        docPartyId: doc['party_id'],
+        docAccountId: doc['account_id'],
+        partyIds: partyIds,
+        accountIds: accountIds,
+        isSettleDoc: !expectsLines && type != null,
+      );
+      if (ledgerRef != null) {
+        issue = RescueIssueKind.missingLedger;
+        detail = ledgerRef;
       }
     }
 
@@ -1057,9 +1106,8 @@ String? _partyProblem({
   }
   final int sum = _sumCents(party);
   if (sum.abs() != totalCents.abs()) {
-    return '这张单的欠款记录金额（${Money.formatGrouped(sum.abs())} 分）'
-        '与单据金额（${Money.formatGrouped(totalCents.abs())} 分）对不上 —— '
-        '欠款会算错。';
+    return '这张单的欠款记录金额（${_yuan(sum.abs())}）'
+        '与单据金额（${_yuan(totalCents.abs())}）对不上 —— 欠款会算错。';
   }
   return null;
 }
@@ -1099,8 +1147,8 @@ String? _moneyProblem({
 
   // 主单：真实收付款在 `settlements`，不在自己的 `money_ledger` 上
   if (settledCents != paidCents) {
-    return '这张单记着已收/已付 ${Money.formatGrouped(paidCents)} 分，'
-        '但实际核销记录只有 ${Money.formatGrouped(settledCents)} 分 —— '
+    return '这张单记着已收/已付 ${_yuan(paidCents)}，'
+        '但实际核销记录只有 ${_yuan(settledCents)} —— '
         '钱和单对不上，导入它账会不平。';
   }
   return null;
@@ -1206,6 +1254,67 @@ RescueIssue _settlementIssue(
         : '这张单的收款/付款记录没救回来（或者那条记录本身不完整）。'
               '单独导入它，欠款会对不上。',
   );
+}
+
+/// 分 → 「¥1,234.56」。报告里一律用这个，不写「1234.56 分」。
+String _yuan(int cents) => '¥${Money.formatGrouped(cents)}';
+
+/// 明细金额合计 ≠ 单据总额。
+///
+/// ⚠️ **用 `amount` 之和**，**不许**用 `unit_price × quantity` 重算：
+/// 让价体现在 `amount` 里（`document_line.dart` 的注释），重算必然误报。
+///
+/// 哪些类型不适用由 `linesAmountAppliesTo()` 决定 —— 与规则层
+/// `linesAmountMatchesTotal()` 共用同一个定义，不在这里复制例外清单。
+bool _linesAmountMismatch(List<Map<String, Object?>> lines, int totalCents) =>
+    _sumCents(lines) != totalCents;
+
+/// 流水**自己**的引用是否站得住（用户审查 2026-10-30，P1）。
+///
+/// 为什么单据级的外键检查不够：`_firstMissingRef` 只看单据自己的
+/// `party_id` / `account_id`。而损坏完全可以把**流水那一行**的引用改成
+/// 另一个仍然存在的往来方 —— 金额照样对得上，欠款却被记到了别人名下。
+///
+/// 账户不存在的情况更糟：目标库有外键，写库时会直接抛错 ⇒ **整次抢救失败**，
+/// 用户连其余能救的单据都拿不到。所以必须在这里就把它变成「待确认」。
+String? _ledgerRefProblem({
+  required List<Map<String, Object?>> party,
+  required List<Map<String, Object?>> money,
+  required Object? docPartyId,
+  required Object? docAccountId,
+  required Set<String> partyIds,
+  required Set<String> accountIds,
+  required bool isSettleDoc,
+}) {
+  final String? docParty = docPartyId is String && docPartyId.isNotEmpty
+      ? docPartyId
+      : null;
+  for (final Map<String, Object?> row in party) {
+    final Object? pid = row['party_id'];
+    if (pid is! String) continue;
+    if (!partyIds.contains(pid)) {
+      return '这条欠款记录挂在一个不存在的往来方（$pid）上 —— 补上它之前不能导入。';
+    }
+    if (docParty != null && pid != docParty) {
+      return '这条欠款记录挂的往来方（$pid）和单据上的（$docParty）不是同一个 —— '
+          '导入它会把欠款记到别人名下。';
+    }
+  }
+  final String? docAccount = docAccountId is String && docAccountId.isNotEmpty
+      ? docAccountId
+      : null;
+  for (final Map<String, Object?> row in money) {
+    final Object? aid = row['account_id'];
+    if (aid is! String) continue;
+    if (!accountIds.contains(aid)) {
+      return '这笔钱记在一个不存在的账户（$aid）上 —— 补上它之前不能导入。';
+    }
+    if (isSettleDoc && docAccount != null && aid != docAccount) {
+      return '这笔钱的账户（$aid）和收付款单上的（$docAccount）不是同一个 —— '
+          '导入它账会对不上。';
+    }
+  }
+  return null;
 }
 
 int _sumCents(List<Map<String, Object?>> rows) {

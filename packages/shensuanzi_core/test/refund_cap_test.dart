@@ -622,6 +622,60 @@ void main() {
       expect(outcome.reason, contains('只收到'));
     });
 
+    test('**采购退货**：一张收款单核销同一原单的两张退货单 ⇒ 合计超额拒绝', () {
+      // 用户审查 2026-10-30：多目标聚合目前只被「销售退货的付款方向」钉住。
+      // 资金方向相反，留一条回归钉 —— 代码是通用的，但方向相反的业务
+      // 正是最容易在将来被改坏的地方。
+      final String purchaseId = buy(
+        qty: 100,
+        paidCents: 50000,
+      ); // ¥1000，实付 ¥500
+      final String a = idOf(
+        doReturn(
+          refDocId: purchaseId,
+          originalType: DocType.purchase,
+          qty: 40,
+          refundCents: 0,
+        ).docNo,
+      );
+      final String b = idOf(
+        doReturn(
+          refDocId: purchaseId,
+          originalType: DocType.purchase,
+          qty: 40,
+          refundCents: 0,
+        ).docNo,
+      );
+
+      final int stamp = now();
+      final RuleOutcome outcome = engine.dispatch(
+        document: Document(
+          id: newId(),
+          docNo: 'TEST-REC-${++paySeq}',
+          docType: DocType.receipt,
+          status: DocStatus.confirmed,
+          partyId: supplierId,
+          accountId: accountId,
+          totalAmount: 80000,
+          occurredAt: stamp,
+          createdAt: stamp,
+          updatedAt: stamp,
+        ),
+        allocations: <Allocation>[
+          Allocation(targetDocId: a, amount: 40000),
+          Allocation(targetDocId: b, amount: 40000),
+        ],
+        now: stamp,
+      );
+
+      expect(
+        outcome.status,
+        isNot(RuleStatus.applied),
+        reason: '两张各 ¥400 合计 ¥800 > 实付 ¥500 —— 逐张都不超，合计超了',
+      );
+      expect(outcome.reason, contains('只付出去过'));
+    });
+
     test('两张退货单属于**不同原单** ⇒ 各自算额度，不合并（不误杀）', () {
       final String s1 = sell(qty: 250, paidCents: 100000);
       final String s2 = sell(qty: 250, paidCents: 100000);

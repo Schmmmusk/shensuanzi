@@ -938,6 +938,115 @@ void main() {
       );
     });
 
+    test('**明细与对应流水一起丢** ⇒ 不完整（明细金额合计 ≠ 单据总额）', () async {
+      // 用户审查 2026-10-30（P0）的复现场景：两行各 ¥10 的销售单，
+      // 第一行明细**和**它的库存流水一起没救出来。剩下的数据「局部完全自洽」：
+      //   明细 1 行 / 流水 1 行、数量 1 / 1、往来 ¥20 = 单据 ¥20、核销也对得上
+      // ⇒ 行数、数量、往来、资金四项全过，但单据 ¥20 只剩 ¥10 的明细。
+      //
+      // 只有「明细金额合计 = 单据总额」这条不变量能抓住它。
+      final List<String> ids = makeLedger(source, docs: 1);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        'DELETE FROM document_lines WHERE id = '
+        '(SELECT id FROM document_lines WHERE document_id = ? '
+        ' ORDER BY id LIMIT 1)',
+        <Object?>[ids.single],
+      );
+      db.raw.execute(
+        'DELETE FROM stock_ledger WHERE id = '
+        '(SELECT id FROM stock_ledger WHERE document_id = ? '
+        ' ORDER BY id LIMIT 1)',
+        <Object?>[ids.single],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.importedDocuments,
+        0,
+        reason: '单据 ¥20、明细只剩 ¥10 —— 导入它就是把金额改小了一半',
+      );
+      expect(report.issues.single.kind, RescueIssueKind.missingLines);
+      expect(report.issues.single.detail, contains('金额'));
+    });
+
+    test('未知单据类型 ⇒ 进待确认，**不导入**', () async {
+      // 抢救器不知道新类型的业务语义，就不该擅自把它当成已恢复完整的业务记录。
+      // 从前 `type == null` ⇒ `expectsLines = false` ⇒ 明细/库存/核销三项检查
+      // 全部跳过，一张空壳单据可能被当成「完整」导进新库。
+      makeLedger(source, docs: 1);
+      final Db db = Db.open(source);
+      final int at = DateTime(2026, 10, 2).millisecondsSinceEpoch;
+      db.raw.execute(
+        'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+        'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+        'business_day) VALUES (?,?,?,?,0,0,?,0,?,?,?)',
+        <Object?>[
+          'future-1',
+          'FUTURE-1',
+          'future_type',
+          'confirmed',
+          at,
+          at,
+          at,
+          businessDayOf(at),
+        ],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues.map((RescueIssue i) => i.docId),
+        contains('future-1'),
+        reason: '不认识的类型必须让用户自己判断',
+      );
+      expect(report.importedDocuments, 1, reason: '只导入那张正常的销售单');
+    });
+
+    test('往来流水的**往来方**与单据不一致 ⇒ 不完整（欠款挂错人）', () async {
+      makeLedger(source, docs: 1);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        "INSERT INTO parties (id, name, roles, created_at, updated_at) "
+        "VALUES ('p2', '客户乙', '[\"customer\"]', 0, 0)",
+      );
+      // 模拟损坏把往来方改成了另一个**仍然存在**的客户：
+      // 金额仍然对得上，`_firstMissingRef` 只看单据自己的 party_id ⇒ 全过。
+      db.raw.execute("UPDATE party_ledger SET party_id = 'p2'");
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.importedDocuments, 0, reason: '这笔欠款会被记到另一个客户名下 —— 比丢数据更糟');
+      expect(report.issues.single.kind, RescueIssueKind.missingLedger);
+    });
+
+    test('资金流水的**账户**不存在 ⇒ 不完整（不能等写库时外键报错）', () async {
+      makeLedger(source, docs: 1, paid: true);
+      // 关外键：这个 UPDATE 本身就会被外键拦住 —— 而坏页不管外键，
+      // 它只会把字节改掉。这正是「抢救要自己复核引用」的理由。
+      final Db db = Db.open(source, foreignKeys: false);
+      db.raw.execute("UPDATE money_ledger SET account_id = 'ghost-account'");
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(
+        report.ok,
+        isTrue,
+        reason:
+            '不能让它拖到写新库时被外键顶回来 —— 那时整次抢救都失败了，'
+            '用户连其余能救的单据都拿不到',
+      );
+      expect(
+        report.issues.map((RescueIssue i) => i.docId),
+        isNotEmpty,
+        reason: '账户不存在的收付款单必须进待确认',
+      );
+    });
+
     test('**核销记录本身**丢失（两端单据都还在）⇒ 两端都被拦下', () async {
       // 用户审查 2026-10-30 §三：传播靠「读到的核销关系」，所以某条核销
       // **本身没读出来**时，传播这条路走不通 —— 得靠各端自己的核对：
@@ -1012,7 +1121,9 @@ void main() {
         raw.execute(
           'INSERT INTO document_lines (id, document_id, product_id, quantity, '
           'unit_price, amount) VALUES (?,?,?,?,?,?)',
-          <Object?>['$did-l0', did, 'prod1', 1, 1000, 1000],
+          // ⚠️ 明细金额必须 = 单据总额（2000）：新加的「明细金额合计」
+          // 判据会正确地判它不完整，断言 120 就会失败 —— 而原因是夹具不完整。
+          <Object?>['$did-l0', did, 'prod1', 1, 2000, 2000],
         );
         raw.execute(
           'INSERT INTO stock_ledger (id, product_id, document_id, quantity, '

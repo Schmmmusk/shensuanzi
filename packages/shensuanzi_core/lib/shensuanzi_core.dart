@@ -65,7 +65,7 @@ export 'src/models/base.dart'
 export 'src/models/document.dart'
     show DocStatus, DocType, Document, businessDayOf;
 export 'src/models/document_line.dart'
-    show DocumentLine, linesAmountMatchesTotal;
+    show DocumentLine, linesAmountAppliesTo, linesAmountMatchesTotal;
 export 'src/models/money_ledger.dart' show MoneyLedger;
 export 'src/models/party.dart' show Party, PartyRole;
 export 'src/models/party_ledger.dart' show PartyLedger;
