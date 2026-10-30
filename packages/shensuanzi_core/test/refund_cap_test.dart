@@ -494,6 +494,167 @@ void main() {
       expect(rows, 0, reason: '拒绝时不该留下核销记录');
     });
 
+    /// 建一张**收款单**核销退货单（采购退货的延迟收款方向）。
+    RuleOutcome collectReturn(String returnId, int cents) {
+      final int stamp = now();
+      return engine.dispatch(
+        document: Document(
+          id: newId(),
+          docNo: 'TEST-REC-${++paySeq}',
+          docType: DocType.receipt,
+          status: DocStatus.confirmed,
+          partyId: supplierId,
+          accountId: accountId,
+          totalAmount: cents,
+          occurredAt: stamp,
+          createdAt: stamp,
+          updatedAt: stamp,
+        ),
+        allocations: <Allocation>[
+          Allocation(targetDocId: returnId, amount: cents),
+        ],
+        now: stamp,
+      );
+    }
+
+    /// 一张收付款单核销多个目标。
+    RuleOutcome payMany(List<(String, int)> targets) {
+      final int stamp = now();
+      int total = 0;
+      for (final (String, int) t in targets) {
+        total += t.$2;
+      }
+      return engine.dispatch(
+        document: Document(
+          id: newId(),
+          docNo: 'TEST-PAY-${++paySeq}',
+          docType: DocType.payment,
+          status: DocStatus.confirmed,
+          partyId: customerId,
+          accountId: accountId,
+          totalAmount: total,
+          occurredAt: stamp,
+          createdAt: stamp,
+          updatedAt: stamp,
+        ),
+        allocations: <Allocation>[
+          for (final (String, int) t in targets)
+            Allocation(targetDocId: t.$1, amount: t.$2),
+        ],
+        now: stamp,
+      );
+    }
+
+    test('**采购退货**用收款单延迟退款，也受累计上限约束（用户审查 P0）', () {
+      // 销售退货走 `payment`（钱流出），采购退货走 `receipt`（钱流入）——
+      // 方向相反。从前上限检查写成 `if (moneyOut && …)`，于是**采购退货整类漏检**：
+      // 每张退货单单独看都不超本单金额，累计却超过实际付出去的钱。
+      final String purchaseId = buy(
+        qty: 100,
+        paidCents: 50000,
+      ); // ¥1000，实付 ¥500
+      final String a = idOf(
+        doReturn(
+          refDocId: purchaseId,
+          originalType: DocType.purchase,
+          qty: 40,
+          refundCents: 0,
+        ).docNo,
+      );
+      final String b = idOf(
+        doReturn(
+          refDocId: purchaseId,
+          originalType: DocType.purchase,
+          qty: 40,
+          refundCents: 0,
+        ).docNo,
+      );
+
+      expect(
+        collectReturn(a, 40000).status,
+        RuleStatus.applied,
+        reason: '收回 ¥400 ≤ 实付 ¥500，这一笔合法',
+      );
+
+      final RuleOutcome second = collectReturn(b, 40000);
+      expect(
+        second.status,
+        isNot(RuleStatus.applied),
+        reason: '再收回 ¥400 就累计 ¥800，而只付出去过 ¥500',
+      );
+      expect(
+        second.reason,
+        contains('只付出去过'),
+        reason: '采购退货的措辞要跟方向走 —— 说「没收到过钱」会让用户莫名其妙',
+      );
+    });
+
+    test('一张付款单同时核销**同一原单的两张**退货单 ⇒ 合计超额拒绝', () {
+      // 逐目标检查读到的都是同一份历史累计（本次核销还没落库）：
+      // A 看 0+600 ≤ 600 通过，B 看 0+600 ≤ 600 也通过 —— 合计 ¥1200 却超了 ¥1000。
+      final String saleId = sell(qty: 250, paidCents: 100000); // ¥2500，实收 ¥1000
+      final String a = idOf(
+        doReturn(
+          refDocId: saleId,
+          originalType: DocType.sale,
+          qty: 60,
+          refundCents: 0,
+        ).docNo,
+      );
+      final String b = idOf(
+        doReturn(
+          refDocId: saleId,
+          originalType: DocType.sale,
+          qty: 60,
+          refundCents: 0,
+        ).docNo,
+      );
+
+      final RuleOutcome outcome = payMany(<(String, int)>[
+        (a, 60000),
+        (b, 60000),
+      ]);
+      expect(
+        outcome.status,
+        isNot(RuleStatus.applied),
+        reason: '两张各 ¥600 合计 ¥1200 > 实收 ¥1000，不能因为逐张都不超就放过',
+      );
+      expect(outcome.reason, contains('只收到'));
+    });
+
+    test('两张退货单属于**不同原单** ⇒ 各自算额度，不合并（不误杀）', () {
+      final String s1 = sell(qty: 250, paidCents: 100000);
+      final String s2 = sell(qty: 250, paidCents: 100000);
+      final String a = idOf(
+        doReturn(
+          refDocId: s1,
+          originalType: DocType.sale,
+          qty: 60,
+          refundCents: 0,
+        ).docNo,
+      );
+      final String b = idOf(
+        doReturn(
+          refDocId: s2,
+          originalType: DocType.sale,
+          qty: 60,
+          refundCents: 0,
+        ).docNo,
+      );
+
+      final RuleOutcome outcome = payMany(<(String, int)>[
+        (a, 60000),
+        (b, 60000),
+      ]);
+      expect(
+        outcome.status,
+        RuleStatus.applied,
+        reason:
+            '两张退货单各自的原单都收过 ¥1000，各退 ¥600 都合法 —— '
+            '按原单分组，不能把两笔额度并成一张 ¥1000 的额度',
+      );
+    });
+
     test('只收到 ¥1000、退 ¥1000 ⇒ 正好用光，通过（不误杀）', () {
       final String saleId = sell(qty: 250, paidCents: 100000);
       final String a = idOf(

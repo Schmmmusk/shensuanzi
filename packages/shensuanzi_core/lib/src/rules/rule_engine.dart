@@ -512,12 +512,21 @@ class RuleEngine {
       );
     }
 
-    // ②③ 原单真实收款与累计已退
+    // ②③ 原单实际结算额与累计已退
+    //
+    // ⚠️ 措辞跟资金方向走：采购退货是「供应商把钱退给我们」，
+    // 用户要看的是「我付了多少」，说成「没收到过钱」他根本对不上。
     final int received = _settlements.settledAmountOf(original.id);
+    final bool wePaid = original.docType == DocType.purchase;
     if (received <= 0) {
-      throw const RuleRejection(
-        '这张单还没收到过钱，所以没有可退的款。'
-        '如果确实要退钱给客户，请先在原单上收款；或者这次选「不立即退钱、冲减欠款」。',
+      throw RuleRejection(
+        wePaid
+            ? '这张单还没付过款，所以没有可退的款。'
+                  '如果确实要让供应商退钱，请先在原单上付款；'
+                  '或者这次选「不立即收退款、冲减欠款」。'
+            : '这张单还没收到过钱，所以没有可退的款。'
+                  '如果确实要退钱给客户，请先在原单上收款；'
+                  '或者这次选「不立即退钱、冲减欠款」。',
         code: RejectCode.ruleValidationFailed,
       );
     }
@@ -525,10 +534,67 @@ class RuleEngine {
     if (alreadyRefunded + thisRefund > received) {
       final int left = received - alreadyRefunded;
       throw RuleRejection(
-        '这张单只收到过 ¥${_yuan(received)}，'
-        '之前已经退过 ¥${_yuan(alreadyRefunded)}，'
-        '这次最多还能退 ¥${_yuan(left < 0 ? 0 : left)}。',
+        wePaid
+            ? '这张单只付出去过 ¥${_yuan(received)}，'
+                  '之前已经收回 ¥${_yuan(alreadyRefunded)}，'
+                  '这次最多还能收回 ¥${_yuan(left < 0 ? 0 : left)}。'
+            : '这张单只收到过 ¥${_yuan(received)}，'
+                  '之前已经退过 ¥${_yuan(alreadyRefunded)}，'
+                  '这次最多还能退 ¥${_yuan(left < 0 ? 0 : left)}。',
         code: RejectCode.ruleValidationFailed,
+      );
+    }
+  }
+
+  /// 退货单作为核销目标时的上限：**按原单聚合本次全部 allocation**。
+  ///
+  /// 判据（销售、采购两个方向同一条思想）：
+  ///
+  /// ```text
+  /// 原单历史累计退回 + 本次这张收付款单里属于该原单的合计
+  ///   ≤ 原单实际结算金额（销售=实收，采购=实付）
+  /// ```
+  ///
+  /// [incoming] 是「目标 → 本次请求核销的合计」，已在主循环里按目标累加过，
+  /// 所以同一目标拆成多条 allocation 不会被漏算。
+  void _requireReturnSettlementWithinCap(Map<String, int> incoming) {
+    // 原单 id → 本次要退出去（或收回来）的合计
+    final Map<String, int> byOriginal = <String, int>{};
+    for (final MapEntry<String, int> entry in incoming.entries) {
+      final Document? target = _docs.findById(entry.key);
+      if (target == null || !SettlementService.isReturnType(target.docType)) {
+        continue;
+      }
+      final String? originalId = target.refDocId;
+      if (originalId == null) continue;
+      byOriginal[originalId] = (byOriginal[originalId] ?? 0) + entry.value;
+    }
+
+    for (final MapEntry<String, int> entry in byOriginal.entries) {
+      final Document? original = _docs.findById(entry.key);
+      // 原单缺失时不在这里判：退货单已经指着空气，那是另一个问题。
+      if (original == null) continue;
+      final int settled = _settlements.settledAmountOf(original.id);
+      final int already = _refundedAgainst(original.id);
+      if (already + entry.value <= settled) continue;
+      final int left = settled - already < 0 ? 0 : settled - already;
+      // 措辞必须跟资金方向走：采购退货是「供应商把钱退给我们」，
+      // 说成「没收到过钱」会让用户完全摸不着头脑（他要看的是「我付了多少」）。
+      final bool wePaid = original.docType == DocType.purchase;
+      throw RuleRejection(
+        wePaid
+            ? '「${original.docNo}」只付出去过 ${Money.format(settled)} 元，'
+                  '之前已经收回 ${Money.format(already)} 元，'
+                  '这次最多还能收回 ${Money.format(left)} 元。'
+                  '请把金额改小 —— 退回来的钱不能超过实际付出去的钱。'
+            : '「${original.docNo}」只收到过 ${Money.format(settled)} 元，'
+                  '之前已经退过 ${Money.format(already)} 元，'
+                  '这次最多还能退 ${Money.format(left)} 元。'
+                  '请把金额改小 —— 退款不能超过实际收到过的钱。',
+        code: RejectCode.ruleValidationFailed,
+        detail:
+            '退货核销超上限：原单 ${original.docNo} 结算 $settled，'
+            '已退 $already，本次（含同单其他分配）$entry.value',
       );
     }
   }
@@ -835,46 +901,19 @@ class RuleEngine {
               ' / 总额 ${target.totalAmount}，本次请求 ${entry.value}',
         );
       }
-
-      // ⚠️ **延迟退款上限**（用户审查 2026-10-30，P0）。
-      //
-      // 退货时选「不立即退钱」是常见操作，钱以后再退 —— 那条路走的是
-      // **独立的付款单核销退货单**，根本不经过 `_return()` 里的
-      // `_requireRefundWithinCap`。而上面那条判据只校验
-      // 「已核销 + 本次 ≤ **本单金额**」：
-      //
-      //   原单只收到 ¥1000 → 退货单 A ¥750（挂账）→ 退货单 B ¥750（挂账）
-      //   → 付款核销 A ¥750（750 ≤ 750，通过）→ 付款核销 B ¥750（750 ≤ 750，通过）
-      //   ⇒ 累计退出去 ¥1500，比收到过的钱多 ¥500，**凭空付出去一笔**。
-      //
-      // 所以退货单作为核销目标时，上限要回到**原单的真实收款**（走 settlements），
-      // 与 `_requireRefundWithinCap` 同一条口径。
-      if (moneyOut && SettlementService.isReturnType(target.docType)) {
-        final String? originalId = target.refDocId;
-        final Document? original = originalId == null
-            ? null
-            : _docs.findById(originalId);
-        // 原单缺失时不做这项判断：退货单已经指着空气了，那是另一个问题
-        //（抢救报告会把它判成「引用的单据没救回来」），这里不额外加锁。
-        if (original != null) {
-          final int received = _settlements.settledAmountOf(original.id);
-          final int refunded = _refundedAgainst(original.id);
-          if (refunded + entry.value > received) {
-            final int left = received - refunded;
-            throw RuleRejection(
-              '「${original.docNo}」只收到过 ${Money.format(received)} 元，'
-              '之前已经退过 ${Money.format(refunded)} 元，'
-              '这次最多还能退 ${Money.format(left < 0 ? 0 : left)} 元。'
-              '请把金额改小 —— 退款不能超过实际收到过的钱。',
-              code: RejectCode.ruleValidationFailed,
-              detail:
-                  '延迟退款超上限：原单 ${original.docNo} 收到 $received，'
-                  '已退 $refunded，本次 $entry.value（退货单 ${target.docNo}）',
-            );
-          }
-        }
-      }
     }
+
+    // ⚠️ **延迟退款上限：按原单聚合**（用户审查 2026-10-30 第二轮，两个 P0）。
+    //
+    // ① 不能只看 `moneyOut`：`sale_return` 用 `payment`（钱流出），
+    //    `purchase_return` 用 `receipt`（钱流入）—— 方向相反。写成
+    //    `if (moneyOut && isReturnType)` 就**整类漏掉采购退货**。
+    // ② 不能逐目标比：同一张付款单核销**同一原单**的两张退货单时，
+    //    逐目标读到的都是同一份历史累计（本次核销还没落库），
+    //    各自「不超本单金额」，合计却超了原单实际结算额。
+    //
+    // 所以放在循环之后、按 `ref_doc_id` 分组统一算一次。
+    _requireReturnSettlementWithinCap(incoming);
     if (requested > doc.totalAmount) {
       // **业务拒绝**：要么改小核销金额，要么把那几张单的金额改对。
       throw RuleRejection(

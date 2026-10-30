@@ -997,8 +997,26 @@ String? _stockProblem({
     }
   }
 
-  // ② 盘点：零差额不产生流水 ⇒ 只保留上面那条，不比行数与数量
-  if (type == DocType.stocktake) return null;
+  // ② 盘点：**能查的比「该有的」更多，但不能少**
+  //
+  // 盘点的明细存的是「实际数量」，差额只在流水里（`diff = 实际 − 账面`），
+  // 而差额为 0 时**根本不写流水**（`rule_engine._stocktake`）。
+  // 所以「某条本该存在的盘点流水丢了」这件事，单凭单据**判断不出来** ——
+  // 要判它得知道当时的账面数，而账面数只能从（可能已经损坏的）流水反推，
+  // 那等于用被怀疑的数据去验证它自己。这里如实不做，不假装查过。
+  //
+  // 能查且值得查的是**多出来的**：一条明细最多产生一条流水，
+  // 所以「流水条数 > 明细条数」一定是坏的（重复写入 / 串了单据）。
+  if (type == DocType.stocktake) {
+    for (final MapEntry<String, int> entry in stockRows.entries) {
+      final int lines = lineRows[entry.key] ?? 0;
+      if (entry.value > lines) {
+        return '「${entry.key}」的库存记录比盘点明细还多（明细 $lines 条，'
+            '库存记录 ${entry.value} 条）—— 有一条对不上任何盘点行。';
+      }
+    }
+    return null;
+  }
 
   for (final MapEntry<String, int> entry in lineRows.entries) {
     final String pid = entry.key;

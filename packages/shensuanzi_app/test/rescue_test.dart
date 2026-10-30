@@ -156,6 +156,236 @@ void main() {
     return no;
   }
 
+  /// 造一张**盘点单**（用真实规则，不是手写 SQL）。
+  ///
+  /// [actual] = 盘点出来的实际数量。账面数由库里的流水决定：
+  /// `makeLedger(docs: 0)` 之后账面为 0，所以 `actual: 5` ⇒ 差额 +5（写一条流水），
+  /// `actual: 0` ⇒ 差额 0（**不写流水**）。
+  String makeStocktake(String path, {required int actual}) {
+    final Db db = Db.open(path);
+    final RuleEngine engine = RuleEngine(db);
+    final int t = DateTime(2026, 10, 1).millisecondsSinceEpoch;
+    final Document doc = Document(
+      id: newId(),
+      docNo: 'PD-TEST-$actual',
+      docType: DocType.stocktake,
+      status: DocStatus.confirmed,
+      totalAmount: 0,
+      occurredAt: t,
+      createdAt: t,
+      updatedAt: t,
+    );
+    final RuleOutcome outcome = engine.dispatch(
+      document: doc,
+      now: t,
+      stocktakeActual: <String, int>{'prod1': actual},
+    );
+    expect(outcome.status, RuleStatus.applied, reason: outcome.reason);
+    db.close();
+    return doc.id;
+  }
+
+  /// 造一本**混合业务**的真实账本，覆盖资金方向相反的四条路径：
+  ///
+  /// ① 采购 + 当场全款付（钱流出、库存增加、往来方向相反）
+  /// ② 销售只收一部分（部分核销）
+  /// ③ 销售退货 + **延迟退款**（付款单事后核销退货单）
+  /// ④ 采购退货 + **延迟收款**（收款单事后核销退货单）
+  ///
+  /// 用户审查 2026-10-30 §四：只验销售+收款，**不能推断**采购、采购退货、
+  /// 延迟退款这些方向相反的路径也通过。尤其采购退货 —— 它的资金与往来方向
+  /// 都跟销售退货相反，最容易暴露「只考虑销售业务」。
+  void makeMixedLedger(String path) {
+    final Db db = Db.open(path);
+    final RuleEngine engine = RuleEngine(db);
+    final QueryDao queries = QueryDao(db);
+    final PurchaseService purchases = PurchaseService(
+      engine: engine,
+      queries: queries,
+    );
+    final SaleService sales = SaleService(engine: engine, queries: queries);
+    final ReturnService returns = ReturnService(
+      engine: engine,
+      queries: queries,
+    );
+
+    final int t = DateTime(2026, 9, 1).millisecondsSinceEpoch;
+    ProductDao(db).insert(
+      Product(
+        id: 'prod1',
+        code: 'P0001',
+        name: '可乐',
+        unit: '瓶',
+        sellPrice: 1000,
+        costPrice: 800,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    PartyDao(db).insert(
+      Party(
+        id: 'p1',
+        name: '客户甲',
+        roles: const <PartyRole>[PartyRole.customer],
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    PartyDao(db).insert(
+      Party(
+        id: 'p2',
+        name: '供应商乙',
+        roles: const <PartyRole>[PartyRole.supplier],
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+    AccountDao(db).insert(
+      Account(
+        id: 'acc1',
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+
+    String idOf(String docNo) =>
+        db.raw.select('SELECT id FROM documents WHERE doc_no = ?', <Object?>[
+              docNo,
+            ]).first['id']!
+            as String;
+
+    // ① 采购 10 瓶 × ¥10 = ¥100，当场全款付
+    final PurchaseSaved bought = purchases.create(
+      PurchaseDraft(
+        partyId: 'p2',
+        partyName: '供应商乙',
+        date: '2026-09-01',
+        lines: <PurchaseLineDraft>[
+          PurchaseLineDraft(
+            productId: 'prod1',
+            productName: '可乐',
+            quantity: '10',
+            unitPrice: '10',
+          ),
+        ],
+        payments: <PurchasePaymentDraft>[
+          PurchasePaymentDraft(
+            accountId: 'acc1',
+            accountName: '现金',
+            amount: '100',
+          ),
+        ],
+      ),
+    );
+    final String purchaseId = idOf(bought.docNo);
+
+    // ② 销售 3 瓶 = ¥30，只收 ¥10（部分核销）
+    final SaleSaved sold = sales.create(
+      SaleDraft(
+        partyId: 'p1',
+        partyName: '客户甲',
+        date: '2026-09-01',
+        lines: <SaleLineDraft>[
+          SaleLineDraft(
+            productId: 'prod1',
+            productName: '可乐',
+            quantity: '3',
+            unitPrice: '10',
+          ),
+        ],
+        payments: <SalePaymentDraft>[
+          SalePaymentDraft(accountId: 'acc1', accountName: '现金', amount: '10'),
+        ],
+      ),
+    );
+    final String saleId = idOf(sold.docNo);
+
+    // ③ 销售退货 1 瓶 ¥10，**不立即退钱**；随后用付款单退给他
+    final ReturnSaved saleReturn = returns.create(
+      ReturnDraft(
+        refDocId: saleId,
+        originalDocType: DocType.sale,
+        partyId: 'p1',
+        partyName: '客户甲',
+        lines: <ReturnLineDraft>[
+          ReturnLineDraft(
+            productId: 'prod1',
+            productName: '可乐',
+            quantity: '1',
+            amount: '10.00',
+            originalQuantity: 3,
+            originalAmountCents: 3000,
+          ),
+        ],
+      ),
+    );
+
+    // ④ 采购退货 2 瓶 ¥20，**不立即收钱**；随后用收款单收回来
+    final ReturnSaved purchaseReturn = returns.create(
+      ReturnDraft(
+        refDocId: purchaseId,
+        originalDocType: DocType.purchase,
+        partyId: 'p2',
+        partyName: '供应商乙',
+        lines: <ReturnLineDraft>[
+          ReturnLineDraft(
+            productId: 'prod1',
+            productName: '可乐',
+            quantity: '2',
+            amount: '20.00',
+            originalQuantity: 10,
+            originalAmountCents: 10000,
+          ),
+        ],
+      ),
+    );
+
+    int seq = 0;
+    void settle({
+      required DocType type,
+      required String partyId,
+      required int cents,
+      required String targetId,
+    }) {
+      final RuleOutcome outcome = engine.dispatch(
+        document: Document(
+          id: newId(),
+          docNo: 'MIX-${++seq}',
+          docType: type,
+          status: DocStatus.confirmed,
+          partyId: partyId,
+          accountId: 'acc1',
+          totalAmount: cents,
+          occurredAt: t,
+          createdAt: t,
+          updatedAt: t,
+        ),
+        allocations: <Allocation>[
+          Allocation(targetDocId: targetId, amount: cents),
+        ],
+        now: t,
+      );
+      expect(outcome.status, RuleStatus.applied, reason: outcome.reason);
+    }
+
+    settle(
+      type: DocType.payment,
+      partyId: 'p1',
+      cents: 1000,
+      targetId: idOf(saleReturn.docNo),
+    );
+    settle(
+      type: DocType.receipt,
+      partyId: 'p2',
+      cents: 2000,
+      targetId: idOf(purchaseReturn.docNo),
+    );
+
+    db.close();
+  }
+
   Future<RescueReport> rescue() => rescueDatabase(
     sourcePath: source,
     outputPath: output,
@@ -652,6 +882,92 @@ void main() {
         reason: '外键断了硬导进去，用户会看到一张指向空气的单',
       );
       expect(report.issues.single.detail, contains('ghost'));
+    });
+
+    test('**混合业务**的真实账本（采购/部分收款/两种延迟退款）⇒ 全部完整', () async {
+      // 用户审查 2026-10-30 §四：只验「销售 + 自动收款」不能推断采购、
+      // 采购退货、延迟退款这些**方向相反**的路径也通过。
+      // 这是一份刚由神算子自己生成的合法账本，抢救不能挑出任何毛病。
+      makeMixedLedger(source);
+      final RescueReport report = await rescue();
+
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues,
+        isEmpty,
+        reason:
+            '采购退货的往来与资金方向都跟销售退货相反 —— '
+            '判据如果只想着销售，这里就会误杀',
+      );
+      expect(
+        report.importedDocuments,
+        8,
+        reason: '采购 + 付款 + 销售 + 收款 + 销售退货 + 退款 + 采购退货 + 收款',
+      );
+    });
+
+    test('盘点：**有差额**、流水完整 ⇒ 完整', () async {
+      makeLedger(source, docs: 0);
+      makeStocktake(source, actual: 5); // 账面 0、实际 5 ⇒ 差额 +5，写一条流水
+      final RescueReport report = await rescue();
+
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.issues, isEmpty);
+      expect(report.importedDocuments, 1);
+    });
+
+    test('盘点：流水条数**多于**明细 ⇒ 不完整', () async {
+      // 一条明细最多产生一条流水，所以「流水比明细多」一定是坏的。
+      makeLedger(source, docs: 0);
+      final String stk = makeStocktake(source, actual: 5);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        'INSERT INTO stock_ledger (id, product_id, document_id, quantity, '
+        'unit_cost, total_cost, seq_no, occurred_at, created_at) '
+        "VALUES ('dup-stock', 'prod1', ?, 1, 800, 800, 9998, 0, 0)",
+        <Object?>[stk],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues.single.kind,
+        RescueIssueKind.missingLedger,
+        reason: '两条流水对着一行明细 ⇒ 有一条找不到出处',
+      );
+    });
+
+    test('**核销记录本身**丢失（两端单据都还在）⇒ 两端都被拦下', () async {
+      // 用户审查 2026-10-30 §三：传播靠「读到的核销关系」，所以某条核销
+      // **本身没读出来**时，传播这条路走不通 —— 得靠各端自己的核对：
+      //   · 收款单：核销合计 0 ≠ 本单金额 ¥20 ⇒ 不完整
+      //   · 销售单：`settlements` 合计 0 ≠ `paid_amount` ¥20 ⇒ 不完整
+      // 两条都命中，两端自然都进不了新库。
+      //
+      // ⚠️ 这条**不是**在测传播（传播由「收款单整张没读到」那条钉住）。
+      // 它测的是「核销行没了」这种更隐蔽的形态：关系不在了，只能靠
+      // 金额对不上来发现 —— 所以 `_settlementProblem()` 不能省。
+      makeLedger(source, docs: 1, paid: true);
+      final Db db = Db.open(source);
+      db.raw.execute('DELETE FROM settlements');
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.importedDocuments,
+        0,
+        reason: '收款单核销合计变成 0、销售单的核销合计也变成 0 ⇒ 两边都不完整',
+      );
+      expect(report.issues.length, 2, reason: '收款单 + 销售单，各被自己的核对拦下');
+      expect(
+        report.issues.where(
+          (RescueIssue i) => (i.detail ?? '').contains('核销记录'),
+        ),
+        isNotEmpty,
+        reason: '销售单那端的说明要指向「核销记录对不上」，而不是笼统说「流水缺失」',
+      );
     });
   });
 
