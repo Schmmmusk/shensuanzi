@@ -48,6 +48,9 @@ enum RescueIssueKind {
 
   /// 单据引用的商品/往来方/账户没救回来（外键断了）
   missingMasterData,
+
+  /// 核销关系的另一端缺失或不完整（`receipt` ↔ 被核销单）
+  brokenSettlement,
 }
 
 /// 一张不完整的单据。
@@ -84,6 +87,7 @@ class RescueIssue {
     RescueIssueKind.missingLedger => '流水可能缺失（库存或往来会不准）',
     RescueIssueKind.orphanLines => '单据本身没读到，只有明细',
     RescueIssueKind.missingMasterData => '引用的商品或往来方没救回来',
+    RescueIssueKind.brokenSettlement => '收款或付款记录对不上（账会不平）',
   };
 }
 
@@ -723,11 +727,24 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
 
   final Map<String, int> totalByType = <String, int>{};
   final Map<String, int> completeByType = <String, int>{};
-  final Set<String> knownDocIds = <String>{};
+
+  // 核销是**双端**关系 —— 判「另一端在不在」得先收齐所有单据 id。
+  final Set<String> knownDocIds = <String>{
+    for (final Map<String, Object?> doc in docs)
+      if (doc['id'] is String) doc['id']! as String,
+  };
+  // 目标一端也要能反查（`settlements` 默认按 receipt 分组，这里再按 target 分一份）
+  final Map<String, List<Map<String, Object?>>> settleByTarget = _groupBy(
+    rows[Schema.settlements] ?? const [],
+    'target_doc_id',
+  );
+
+  // id → 结论。**不在这里 = 完整**。核销传播要在第一遍之后才能定，
+  // 所以先攒结论、最后再统一落 `importable`。
+  final Map<String, RescueIssue> verdicts = <String, RescueIssue>{};
 
   for (final Map<String, Object?> doc in docs) {
     final String id = doc['id'] as String;
-    knownDocIds.add(id);
     final String wire = doc['doc_type'] as String? ?? '';
     final DocType? type = DocType.fromWireOrNull(wire);
     final String label = type?.label ?? '未知类型';
@@ -738,19 +755,10 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
     final List<Map<String, Object?>> myStock = stock[id] ?? const [];
     final List<Map<String, Object?>> myMoney = money[id] ?? const [];
     final List<Map<String, Object?>> myParty = party[id] ?? const [];
-
-    RescueIssueKind? issue;
-    String? detail;
+    final List<Map<String, Object?>> mySettle = settle[id] ?? const [];
+    final int settledCents = _sumCents(settleByTarget[id] ?? const []);
 
     // 该有明细吗？收付款单没有明细（它们只有资金流水）
-    // ⚠️ **判据按业务类型分**（2026-10-30 用户裁定补充 ②）。
-    //
-    // 从前只问「有没有任意一条流水」—— 一张 5 行明细的销售单丢了 4 条库存流水，
-    // 剩下 1 条也照样判「完整」，导进去库存就少减 4 行，账错了还没人知道。
-    //
-    // 用户举的反例更狠：同一商品两行明细（可乐 10 + 可乐 20），丢一条之后
-    // 「流水里还有可乐」—— 按 `product_id` 看有没有的判据照样通过。
-    // 所以必须**按商品核对行数**，再核对**金额**。
     final bool expectsLines =
         type != null && type != DocType.receipt && type != DocType.payment;
     final int totalCents = doc['total_amount'] is int
@@ -760,13 +768,15 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
         ? doc['paid_amount']! as int
         : 0;
 
+    RescueIssueKind? issue;
+    String? detail;
+
     // 判据顺序：**越具体越靠前**。
     // 「引用的商品 ghost 没救回来」比「库存记录条数对不上」更可操作 ——
     // 前者告诉用户缺什么，后者只告诉他数字不匹配。所以外键检查排在流水检查之前。
     final String? missingRef = _firstMissingRef(
       doc: doc,
       lines: myLines,
-      settle: settle[id] ?? const [],
       productIds: productIds,
       partyIds: partyIds,
       accountIds: accountIds,
@@ -780,66 +790,96 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
     } else if (missingRef != null) {
       issue = RescueIssueKind.missingMasterData;
       detail = '这张单引用的「$missingRef」没有救回来。补上它之前，这张单不能导入。';
-    } else if (expectsLines &&
-        type != DocType.stocktake &&
-        _hasMissingStockRows(myLines, myStock) != null) {
-      // 库存流水：**按商品核对行数**。盘点单跳过（数量无变化的行不产生流水）。
-      issue = RescueIssueKind.missingLedger;
-      detail =
-          '「${_hasMissingStockRows(myLines, myStock)}」的库存记录条数对不上明细 —— '
-          '可能少读了几条。导入它会让库存少减或少加。';
-    } else if (expectsLines &&
-        type != DocType.stocktake &&
-        // ⚠️ 必须写 `== true`，不能写 `!= null`：
-        // 这个函数返回 `bool?`（`null` = 不适用、`false` = 相符），
-        // 而 `false != null` 是 **true** —— 那样会把「相符」当成「不符」，全判不完整。
-        _ledgerAmountMismatch(
-              party: myParty,
-              partyId: doc['party_id'],
-              totalCents: totalCents,
-            ) ==
-            true) {
-      // 往来流水：金额必须等于单据金额（挂账时冲减的就是这张单）。
-      issue = RescueIssueKind.missingLedger;
-      detail = '这张单的欠款记录金额与单据金额对不上 —— 欠款会算错。';
-    } else if (_moneyAmountMismatch(myMoney, paidCents)) {
-      // 资金流水：金额必须等于已收/已付。
-      issue = RescueIssueKind.missingLedger;
-      detail = '这张单收到的钱与资金记录对不上 —— 账会不平。';
-    } else if (!expectsLines &&
-        type != null &&
-        _settlementMismatch(
-          settle: settle[id] ?? const [],
-          totalCents: totalCents,
-        )) {
-      // 收付款单：核销出去的总额必须等于本单金额。
-      issue = RescueIssueKind.missingLedger;
-      detail = '这张收付款单核销出去的钱与单据金额对不上 —— 账会不平。';
-    } else if (!expectsLines &&
-        type != null &&
-        myMoney.isEmpty &&
-        myParty.isEmpty) {
-      // 收付款单连一条资金/往来流水都没有 ⇒ 它什么都没做
-      issue = RescueIssueKind.missingLedger;
-      detail = '这张收付款单没有任何资金记录 —— 它可能是空的。';
+    } else if (expectsLines) {
+      final String? stockProblem = _stockProblem(
+        lines: myLines,
+        stock: myStock,
+        type: type,
+      );
+      if (stockProblem != null) {
+        issue = RescueIssueKind.missingLedger;
+        detail = stockProblem;
+      }
     }
 
-    final Map<String, Object?> meta = _meta(doc, label);
+    // 往来流水：**有往来方就必须有**（不能拿「流水为空」当「不适用」）
     if (issue == null) {
+      final String? partyProblem = _partyProblem(
+        party: myParty,
+        partyId: doc['party_id'],
+        totalCents: totalCents,
+      );
+      if (partyProblem != null) {
+        issue = RescueIssueKind.missingLedger;
+        detail = partyProblem;
+      }
+    }
+
+    // 资金流水：**按单据类型分开判**
+    if (issue == null) {
+      final String? moneyProblem = _moneyProblem(
+        type: type,
+        money: myMoney,
+        totalCents: totalCents,
+        paidCents: paidCents,
+        settledCents: settledCents,
+      );
+      if (moneyProblem != null) {
+        issue = RescueIssueKind.missingLedger;
+        detail = moneyProblem;
+      }
+    }
+
+    // 收付款单：核销合计必须等于本单金额
+    if (issue == null && !expectsLines && type != null) {
+      final String? settleProblem = _settlementProblem(
+        settle: mySettle,
+        totalCents: totalCents,
+      );
+      if (settleProblem != null) {
+        issue = RescueIssueKind.missingLedger;
+        detail = settleProblem;
+      }
+    }
+
+    if (issue != null) {
+      final Map<String, Object?> meta = _meta(doc, label);
+      verdicts[id] = RescueIssue(
+        docId: id,
+        docNo: doc['doc_no'] as String? ?? '（单号读不出来）',
+        typeLabel: label,
+        kind: issue,
+        occurredAt: meta['occurredAt'] as DateTime?,
+        totalAmount: meta['totalAmount'] as int?,
+        detail: detail,
+      );
+    }
+  }
+
+  // ---- 核销双端：一端缺失/不完整 ⇒ 另一端也不完整 ----
+  //
+  // 用户审查 2026-10-30（P0）：从前写新库时只是**把这条核销关系过滤掉**，
+  // 两端的单据照旧导入 —— 于是「收付款单还在、它核销的那张单没了」或者
+  // 「单还在、收的钱没了」，两种都是**能打开但账不对**的账本。
+  _propagateSettlements(
+    verdicts: verdicts,
+    settlements: rows[Schema.settlements] ?? const [],
+    knownDocIds: knownDocIds,
+    docs: docs,
+  );
+
+  // ---- 汇总 ----
+  for (final Map<String, Object?> doc in docs) {
+    final String id = doc['id'] as String;
+    final String label =
+        DocType.fromWireOrNull(doc['doc_type'] as String? ?? '')?.label ??
+        '未知类型';
+    final RescueIssue? verdict = verdicts[id];
+    if (verdict != null) {
+      asm.issues.add(verdict);
+    } else {
       asm.importable.add(id);
       completeByType[label] = (completeByType[label] ?? 0) + 1;
-    } else {
-      asm.issues.add(
-        RescueIssue(
-          docId: id,
-          docNo: doc['doc_no'] as String? ?? '（单号读不出来）',
-          typeLabel: label,
-          kind: issue,
-          occurredAt: meta['occurredAt'] as DateTime?,
-          totalAmount: meta['totalAmount'] as int?,
-          detail: detail,
-        ),
-      );
     }
   }
 
@@ -911,87 +951,262 @@ Set<String> _ids(List<Map<String, Object?>> rows) => <String>{
     if (row['id'] is String) row['id']! as String,
 };
 
-/// 库存流水**按商品核对行数**：明细里某商品有 N 行，流水里同一商品也必须有 N 行。
+/// 库存流水核对 —— 按商品比 **行数** 与 **数量绝对值合计**。
 ///
-/// 返回第一个对不上的商品 id（给报告用），全对返回 `null`。
+/// 返回一句人话（`null` = 没问题）。
 ///
-/// ## 为什么不能只看「这个商品在流水里出现过」
+/// ## 为什么行数不够（用户审查 2026-10-30，P1）
 ///
-/// 用户举的反例：同一商品两行明细（可乐 10 + 可乐 20），丢一条流水之后
-/// 流水里**仍然有「可乐」** —— 按 `product_id` 看有没有的判据会直接放过。
-/// 行数才是「每条明细都落了流水」的证据。
+/// 只比行数时，「1 行明细 10 瓶 / 1 条流水 -8 瓶」也通过 —— 数量对不上，
+/// 库存照样错。所以要再比一次**数量绝对值合计**（符号按业务类型相反，
+/// 比绝对值就不必关心方向）。
 ///
-/// ⚠️ 不比**数量合计**：同一商品多行明细在流水里是逐条写的（`rule_engine` 逐行插入），
-/// 数量符号也按业务类型相反；比行数已经能抓住「整批丢一条」，再叠数量容易误报。
-String? _hasMissingStockRows(
-  List<Map<String, Object?>> lines,
-  List<Map<String, Object?>> stock,
-) {
+/// ## 盘点单是例外，但**不是整类跳过**
+///
+/// 盘点的零差额**本来就不写流水**，所以不能要求「每行明细都有流水」。
+/// 但「流水里有、明细里没有的商品」仍然是错的 —— 那说明这条流水
+/// 找不到对应的盘点行，导入它库存会凭空变。
+String? _stockProblem({
+  required List<Map<String, Object?>> lines,
+  required List<Map<String, Object?>> stock,
+  required DocType type,
+}) {
   final Map<String, int> lineRows = <String, int>{};
+  final Map<String, int> lineQty = <String, int>{};
   for (final Map<String, Object?> line in lines) {
     final Object? pid = line['product_id'];
-    if (pid is String) lineRows[pid] = (lineRows[pid] ?? 0) + 1;
+    if (pid is! String) continue;
+    lineRows[pid] = (lineRows[pid] ?? 0) + 1;
+    final Object? qty = line['quantity'];
+    if (qty is int) lineQty[pid] = (lineQty[pid] ?? 0) + qty.abs();
   }
   final Map<String, int> stockRows = <String, int>{};
+  final Map<String, int> stockQty = <String, int>{};
   for (final Map<String, Object?> row in stock) {
     final Object? pid = row['product_id'];
-    if (pid is String) stockRows[pid] = (stockRows[pid] ?? 0) + 1;
+    if (pid is! String) continue;
+    stockRows[pid] = (stockRows[pid] ?? 0) + 1;
+    final Object? qty = row['quantity'];
+    if (qty is int) stockQty[pid] = (stockQty[pid] ?? 0) + qty.abs();
   }
+
+  // ① 流水里有、明细里没有的商品 —— 任何类型都算错
+  for (final String pid in stockRows.keys) {
+    if (!lineRows.containsKey(pid)) {
+      return '「$pid」有库存记录，但明细里没有这个商品 —— 导入它库存会凭空变。';
+    }
+  }
+
+  // ② 盘点：零差额不产生流水 ⇒ 只保留上面那条，不比行数与数量
+  if (type == DocType.stocktake) return null;
+
   for (final MapEntry<String, int> entry in lineRows.entries) {
-    if ((stockRows[entry.key] ?? 0) != entry.value) return entry.key;
+    final String pid = entry.key;
+    if ((stockRows[pid] ?? 0) != entry.value) {
+      return '「$pid」的库存记录条数对不上明细（明细 ${entry.value} 条，'
+          '库存记录 ${stockRows[pid] ?? 0} 条）—— 可能少读了几条。';
+    }
+    final int want = lineQty[pid] ?? 0;
+    final int got = stockQty[pid] ?? 0;
+    if (want != got) {
+      return '「$pid」的库存数量对不上明细（明细 $want，库存记录 $got）—— '
+          '可能有一条流水只读到了一半。';
+    }
   }
   return null;
 }
 
-/// 往来流水金额必须等于单据金额（**绝对值比对**，不依赖业务类型的正负号）。
+/// 往来流水：**有往来方就必须有**，且金额等于单据金额。
 ///
-/// 返回 `true` = 对不上。
-bool? _ledgerAmountMismatch({
+/// ## 为什么不能拿「流水为空」推断「不适用」（用户审查 2026-10-30，P0）
+///
+/// 从前 `party.isEmpty` 直接 `return null`，注释说「一条都没有由前面的分支处理」
+/// —— 但前面根本没有那个分支。于是一张赊账销售单**整张往来流水丢失**时：
+/// 库存行数过、往来检查跳过、资金检查也过 ⇒ 被判完整导入。
+/// 结果就是「货恢复了、单据恢复了、客户欠款不见了」。
+///
+/// 「散客 / 散采」（没有往来方）才是真正的不适用 —— 那种情况 `party_id` 为空。
+String? _partyProblem({
   required List<Map<String, Object?>> party,
   required Object? partyId,
   required int totalCents,
 }) {
   // 没有往来方 = 散客当场结清，本来就不写往来流水
   if (partyId is! String || partyId.isEmpty) return null;
-  if (party.isEmpty) return null; // 「一条都没有」由前面的分支处理
-  int sum = 0;
-  for (final Map<String, Object?> row in party) {
-    final Object? amount = row['amount'];
-    if (amount is int) sum += amount;
+  if (party.isEmpty) {
+    return '这张单有往来方，但一行欠款记录都没读到 —— '
+        '导入它，这位客户/供应商的欠款就凭空消失了。';
   }
-  return sum.abs() != totalCents.abs();
+  final int sum = _sumCents(party);
+  if (sum.abs() != totalCents.abs()) {
+    return '这张单的欠款记录金额（${Money.formatGrouped(sum.abs())} 分）'
+        '与单据金额（${Money.formatGrouped(totalCents.abs())} 分）对不上 —— '
+        '欠款会算错。';
+  }
+  return null;
 }
 
-/// 资金流水金额必须等于已收/已付金额（绝对值比对）。
-bool _moneyAmountMismatch(List<Map<String, Object?>> money, int paidCents) {
-  if (money.isEmpty) return false; // 没有立即收付 ⇒ 不写资金流水，正常
-  int sum = 0;
-  for (final Map<String, Object?> row in money) {
-    final Object? amount = row['amount'];
-    if (amount is int) sum += amount;
+/// 资金流水：**按单据类型分开判**（用户审查 2026-10-30，P0）。
+///
+/// ## 两种单据的「钱」根本不在同一个地方
+///
+/// | 单据 | `money_ledger` 挂谁 | 真正的金额在哪 |
+/// |---|---|---|
+/// | `sale/purchase/delivery/退货` | **不写**（只在自动生成的收付款单上） | `settlements` 核销合计 = `paid_amount` |
+/// | `receipt/payment` | 挂自己，`±total_amount` | 本单 `total_amount`（它的 `paid_amount` **恒为 0**） |
+///
+/// 从前一律拿 `money_ledger` 去比 `paid_amount`：正常的 ¥100 收款单是
+/// 「资金流水 100、`paid_amount` 0」⇒ **被判成不完整**；而主单因为
+/// `money_ledger` 本来就是空的，这项检查**从来没生效过**。
+String? _moneyProblem({
+  required DocType? type,
+  required List<Map<String, Object?>> money,
+  required int totalCents,
+  required int paidCents,
+  required int settledCents,
+}) {
+  final bool isSettleDoc = type == DocType.receipt || type == DocType.payment;
+  final String name = type == DocType.payment ? '付款单' : '收款单';
+
+  if (isSettleDoc) {
+    if (money.isEmpty) {
+      return '这张$name没有任何资金记录 —— 导入它，这笔钱就凭空消失了。';
+    }
+    final int sum = _sumCents(money);
+    if (sum.abs() != totalCents.abs()) {
+      return '这张$name的资金记录金额与单据金额对不上 —— 账会不平。';
+    }
+    return null;
   }
-  return sum.abs() != paidCents.abs();
+
+  // 主单：真实收付款在 `settlements`，不在自己的 `money_ledger` 上
+  if (settledCents != paidCents) {
+    return '这张单记着已收/已付 ${Money.formatGrouped(paidCents)} 分，'
+        '但实际核销记录只有 ${Money.formatGrouped(settledCents)} 分 —— '
+        '钱和单对不上，导入它账会不平。';
+  }
+  return null;
 }
 
-/// 收付款单核销出去的总额必须等于本单金额。
-bool _settlementMismatch({
+/// 收付款单：核销出去的合计必须等于本单金额。
+String? _settlementProblem({
   required List<Map<String, Object?>> settle,
   required int totalCents,
 }) {
-  if (settle.isEmpty) return totalCents != 0;
+  if (settle.isEmpty) {
+    if (totalCents != 0) {
+      return '这张收付款单没有任何核销记录 —— 导入它，这笔钱挂不到任何单据上。';
+    }
+    return null;
+  }
+  final int sum = _sumCents(settle);
+  if (sum != totalCents) {
+    return '这张收付款单核销出去的钱与单据金额对不上 —— 账会不平。';
+  }
+  return null;
+}
+
+/// 核销**双端**传播：一端缺失或不完整 ⇒ 另一端也不完整，迭代到不动点。
+///
+/// ## 为什么不能只把关系过滤掉（用户审查 2026-10-30，P0）
+///
+/// `_writeNewDatabase` 从前遇到「一端不在可导入集合里」就 `continue`，
+/// 把那条核销扔掉、两端的单据照旧导入。用户拿到的是一份**结构上能打开、
+/// 但某笔收付款与它原本核销的单据失去了联系**的账本。
+///
+/// 传播是必要的：A 不完整 ⇒ B 不完整 ⇒ B 的另一笔核销又让 C 不完整。
+/// 轮数上限 20 只是保险（正常两三轮就收敛），不是业务规则。
+void _propagateSettlements({
+  required Map<String, RescueIssue> verdicts,
+  required List<Map<String, Object?>> settlements,
+  required Set<String> knownDocIds,
+  required List<Map<String, Object?>> docs,
+}) {
+  if (settlements.isEmpty) return;
+  final Map<String, Map<String, Object?>> byId = <String, Map<String, Object?>>{
+    for (final Map<String, Object?> doc in docs)
+      if (doc['id'] is String) doc['id']! as String: doc,
+  };
+
+  for (int round = 0; round < 20; round++) {
+    bool changed = false;
+    for (final Map<String, Object?> row in settlements) {
+      final Object? rawReceipt = row['receipt_doc_id'];
+      if (rawReceipt is! String) continue;
+      final Object? rawTarget = row['target_doc_id'];
+      final String? target = rawTarget is String ? rawTarget : null;
+
+      final bool receiptOk =
+          knownDocIds.contains(rawReceipt) && !verdicts.containsKey(rawReceipt);
+      // `target_doc_id` 为空的核销是**预收 / 预付**（还没落到某张单上），
+      // 只有收付款单一端，不需要两端都在。
+      final bool targetOk =
+          target == null ||
+          (knownDocIds.contains(target) && !verdicts.containsKey(target));
+
+      if (receiptOk && targetOk) continue;
+
+      if (knownDocIds.contains(rawReceipt) &&
+          !verdicts.containsKey(rawReceipt)) {
+        verdicts[rawReceipt] = _settlementIssue(
+          byId[rawReceipt],
+          receipt: true,
+        );
+        changed = true;
+      }
+      if (target != null &&
+          knownDocIds.contains(target) &&
+          !verdicts.containsKey(target)) {
+        verdicts[target] = _settlementIssue(byId[target], receipt: false);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+}
+
+RescueIssue _settlementIssue(
+  Map<String, Object?>? doc, {
+  required bool receipt,
+}) {
+  final String label =
+      DocType.fromWireOrNull(doc?['doc_type'] as String? ?? '')?.label ??
+      '未知类型';
+  final Map<String, Object?> meta = doc == null
+      ? const <String, Object?>{}
+      : _meta(doc, label);
+  return RescueIssue(
+    docId: doc?['id'] as String? ?? '',
+    docNo: doc?['doc_no'] as String? ?? '（单号读不出来）',
+    typeLabel: label,
+    kind: RescueIssueKind.brokenSettlement,
+    occurredAt: meta['occurredAt'] as DateTime?,
+    totalAmount: meta['totalAmount'] as int?,
+    detail: receipt
+        ? '这张收付款单核销的那张单据没救回来（或者它本身不完整）。'
+              '单独导入它，这笔钱就挂不到任何单据上。'
+        : '这张单的收款/付款记录没救回来（或者那条记录本身不完整）。'
+              '单独导入它，欠款会对不上。',
+  );
+}
+
+int _sumCents(List<Map<String, Object?>> rows) {
   int sum = 0;
-  for (final Map<String, Object?> row in settle) {
+  for (final Map<String, Object?> row in rows) {
     final Object? amount = row['amount'];
     if (amount is int) sum += amount;
   }
-  return sum != totalCents;
+  return sum;
 }
 
 /// 找出「这张单引用了、但主数据没救回来」的第一个名字（人话）。
+///
+/// ⚠️ 核销关系的检查**不在这里**：它需要「两端都在不在」的全量视角，
+/// 由 [_propagateSettlements] 统一处理（从前这里收了个 `settle` 参数却没用，
+/// 是个半成品入口 —— 2026-10-30 审查指出）。
 String? _firstMissingRef({
   required Map<String, Object?> doc,
   required List<Map<String, Object?>> lines,
-  required List<Map<String, Object?>> settle,
   required Set<String> productIds,
   required Set<String> partyIds,
   required Set<String> accountIds,
@@ -1052,7 +1267,12 @@ String? _writeNewDatabase({
           _insertRow(db!, table, row);
         }
       }
-      // 核销：只写两端都在的单据（否则就是指向空气的核销）
+      // 核销：只写两端都可导入的单据。
+      //
+      // 到这里 `ok` 已经过 `_propagateSettlements` 的双端传播 —— 只要一端
+      // 缺失或不完整，另一端也已经被踢出 `ok` 了。所以这个 `continue`
+      // 现在只是**兜底**（防将来有人改动传播逻辑后静默丢关系），
+      // 正常情况下一条都不会命中。
       for (final Map<String, Object?> row
           in rows[Schema.settlements] ?? const []) {
         final Object? receipt = row['receipt_doc_id'];

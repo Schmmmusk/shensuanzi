@@ -219,13 +219,14 @@ class ReturnService {
 
   // ------------------------------------------------------------ 提交
 
-  /// 提交草稿。校验不通过抛 [ReturnDraftInvalid]；规则拒绝抛 [StateError]
-  /// （此时库已整单回滚，界面走「意外失败」兜底文案）。
   /// 原单**真实收款**（走 `settlements`，不是 `paid_amount` 缓存）。
   ///
   /// `settlements.target_doc_id` 指向被核销的单，`amount` 是这次核销的金额 ——
   /// 两者相加就是这个原单实际收到（或付出）过多少钱。
-  int _receivedCentsOf(String documentId) {
+  ///
+  /// 给界面用：可退金额为 0 时，要靠它区分「一分没收过」与「收过的全退完了」
+  /// （用户审查 2026-10-30，P2）—— 两种情形对用户的意思完全不同。
+  int receivedCentsOf(String documentId) {
     final List<Map<String, Object?>> rows = _queries.db.raw.select(
       'SELECT COALESCE(SUM(amount), 0) AS s FROM settlements WHERE target_doc_id = ?',
       <Object?>[documentId],
@@ -258,7 +259,7 @@ class ReturnService {
   /// ⚠️ 只读 `settlements`，不看 `paid_amount` 缓存。
   int refundableCentsOf(String originalId) {
     final int left =
-        _receivedCentsOf(originalId) - _refundedCentsAgainst(originalId);
+        receivedCentsOf(originalId) - _refundedCentsAgainst(originalId);
     return left < 0 ? 0 : left;
   }
 

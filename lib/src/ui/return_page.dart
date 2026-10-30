@@ -54,6 +54,12 @@ class _ReturnPageState extends State<ReturnPage> {
   /// 所以不会出现「界面让填、提交被拒」的割裂。
   int _refundableCents = 0;
 
+  /// 原单**真实收到过多少钱**（走 `settlements`）。
+  ///
+  /// 只用来区分「可退 = 0」的两种原因：一分没收过 / 收过的全退完了。
+  /// 用户审查 2026-10-30（P2）：说成同一句会让后者以为收款记录丢了。
+  int _receivedCents = 0;
+
   /// 立即退款的账户（`null` = 挂账冲减，不立即退钱）
   Account? _refundAccount;
 
@@ -91,6 +97,7 @@ class _ReturnPageState extends State<ReturnPage> {
     _returnType = ReturnService.returnTypeFor(widget.original.docType);
     _accounts = widget.service.activeAccounts();
     _refundableCents = widget.service.refundableCentsOf(widget.original.id);
+    _receivedCents = widget.service.receivedCentsOf(widget.original.id);
     _quotas = widget.service.quotasFor(
       refDocId: widget.original.id,
       returnType: _returnType,
@@ -552,8 +559,14 @@ class _ReturnPageState extends State<ReturnPage> {
           Text('立即退款（可选）', style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
           Text(
-            '这张单还没收到过钱，所以没有可退的款 —— 退货后会直接冲减欠款。'
-            '等以后真的收到钱了，再退也不迟。',
+            // 两种原因，两句话 —— 不能合并：
+            //   · 一分钱没收过 ⇒ 现在退不了，但以后收到钱还能退
+            //   · 收过的钱全退完了 ⇒ 已经退到头了
+            _receivedCents <= 0
+                ? '这张单还没收到过钱，所以没有可退的款 —— 退货后会直接冲减欠款。'
+                      '等以后真的收到钱了，再退也不迟。'
+                : '这张单收到过的钱已经全部退完了，没有可退的款 —— '
+                      '退货后会直接冲减欠款。',
             key: const Key('return-no-refundable'),
             style: TextStyle(
               height: 1.6,

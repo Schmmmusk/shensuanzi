@@ -44,83 +44,116 @@ void main() {
     }
   });
 
-  /// 造 [docs] 张销售单：每单 2 行明细 + 1 条库存流水 + 1 条资金流水。
-  void makeDb(String path, {int docs = 20, bool withPartyLedger = true}) {
+  /// 用**真实业务规则**造一本账（用户审查 2026-10-30 §三 的要求）。
+  ///
+  /// ## 为什么不能用 SQL 手写
+  ///
+  /// 手写夹具把资金流水直接挂在销售单上、`paid_amount` 设成同额；真实引擎是
+  /// 「主单**不写** `money_ledger`，立即收款自动生成 `receipt` 单，资金流水挂在
+  /// receipt 上，`settlements` 关联两端」。结构不同 ⇒ 抢救判据在夹具上永远绿、
+  /// 在真数据上却会误判。审查抓到的「正常收款单被判不完整」就是被夹具掩盖的。
+  ///
+  /// ## 造出来是什么样
+  ///
+  /// [docs] 张销售单，每单 2 行明细（都是 `prod1`、各 1 瓶 ¥10）⇒ 每单：
+  ///   · 1 张 `sale`（`paid_amount` = 0 或 2000）
+  ///   · 2 条 `stock_ledger`（挂 sale）
+  ///   · 1 条 `party_ledger`（挂 sale，+2000）
+  ///   · [paid] 时再加：1 张 `receipt` + 1 条 `money_ledger` + 1 条 `party_ledger`
+  ///     + 1 条 `settlements`（receipt → sale）
+  ///
+  /// 返回按建单顺序的销售单 id —— 测试要用它们注入损坏。
+  List<String> makeLedger(String path, {int docs = 20, bool paid = false}) {
     final Db db = Db.open(path);
-    db.raw.execute(
-      "INSERT OR IGNORE INTO products (id, code, name, unit, sell_price, "
-      "cost_price, safety_stock, is_active, created_at, updated_at) "
-      "VALUES ('prod1', 'P0001', '可乐', '瓶', 1000, 800, 0, 1, 0, 0)",
+    final RuleEngine engine = RuleEngine(db);
+    final QueryDao queries = QueryDao(db);
+    final SaleService sales = SaleService(engine: engine, queries: queries);
+
+    final int t = DateTime(2026, 9, 1).millisecondsSinceEpoch;
+    ProductDao(db).insert(
+      Product(
+        id: 'prod1',
+        code: 'P0001',
+        name: '可乐',
+        unit: '瓶',
+        sellPrice: 1000,
+        costPrice: 800,
+        createdAt: t,
+        updatedAt: t,
+      ),
     );
-    db.raw.execute(
-      "INSERT OR IGNORE INTO parties (id, name, roles, created_at, updated_at) "
-      "VALUES ('p1', '老王', '[\"customer\"]', 0, 0)",
+    PartyDao(db).insert(
+      Party(
+        id: 'p1',
+        name: '老王',
+        roles: const <PartyRole>[PartyRole.customer],
+        createdAt: t,
+        updatedAt: t,
+      ),
     );
-    db.raw.execute(
-      "INSERT OR IGNORE INTO accounts (id, name, type, initial_balance, "
-      "created_at, updated_at) VALUES ('acc1', '现金', 'cash', 0, 0, 0)",
+    AccountDao(db).insert(
+      Account(
+        id: 'acc1',
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      ),
     );
+
+    final List<String> ids = <String>[];
     for (int i = 0; i < docs; i++) {
-      final String did = 'doc${i.toString().padLeft(3, '0')}';
-      final int at = DateTime(2026, 9, 1).millisecondsSinceEpoch + i * 3600000;
-      db.raw.execute(
-        'INSERT INTO documents (id, doc_no, doc_type, status, party_id, '
-        'total_amount, paid_amount, occurred_at, time_estimated, created_at, '
-        'updated_at, business_day) VALUES (?,?,?,?,?,?,?,?,0,?,?,?)',
-        <Object?>[
-          did,
-          'XS${i.toString().padLeft(3, '0')}',
-          'sale',
-          'confirmed',
-          'p1',
-          2000,
-          2000,
-          at,
-          at,
-          at,
-          businessDayOf(at),
-        ],
-      );
-      // ⚠️ **每行明细一条库存流水**（与 `rule_engine` 一致：`for (line in lines)
-      // _insertStock(...)`）。从前这里 2 行明细只插 1 条流水，判据又只看
-      // 「有没有任意一条」，两边一起把「少一条流水」放过去了 —— 夹具必须先对。
-      for (int j = 0; j < 2; j++) {
-        db.raw.execute(
-          'INSERT INTO document_lines (id, document_id, product_id, quantity, '
-          'unit_price, amount) VALUES (?,?,?,?,?,?)',
-          <Object?>['$did-l$j', did, 'prod1', 1, 1000, 1000],
-        );
-        db.raw.execute(
-          'INSERT INTO stock_ledger (id, product_id, document_id, quantity, '
-          'unit_cost, total_cost, seq_no, occurred_at, created_at) '
-          'VALUES (?,?,?,?,?,?,?,?,?)',
-          <Object?>[
-            '$did-s$j',
-            'prod1',
-            did,
-            -1,
-            1000,
-            1000,
-            i * 10 + j,
-            at,
-            at,
+      final SaleSaved saved = sales.create(
+        SaleDraft(
+          partyId: 'p1',
+          partyName: '老王',
+          date: '2026-09-01',
+          lines: <SaleLineDraft>[
+            SaleLineDraft(
+              productId: 'prod1',
+              productName: '可乐',
+              quantity: '1',
+              unitPrice: '10',
+            ),
+            SaleLineDraft(
+              productId: 'prod1',
+              productName: '可乐',
+              quantity: '1',
+              unitPrice: '10',
+            ),
           ],
-        );
-      }
-      db.raw.execute(
-        'INSERT INTO money_ledger (id, account_id, document_id, amount, '
-        'seq_no, occurred_at, created_at) VALUES (?,?,?,?,?,?,?)',
-        <Object?>['$did-m', 'acc1', did, 2000, i + 1, at, at],
+          payments: paid
+              ? <SalePaymentDraft>[
+                  SalePaymentDraft(
+                    accountId: 'acc1',
+                    accountName: '现金',
+                    amount: '20',
+                  ),
+                ]
+              : const <SalePaymentDraft>[],
+        ),
       );
-      if (withPartyLedger) {
-        db.raw.execute(
-          'INSERT INTO party_ledger (id, party_id, document_id, amount, '
-          'seq_no, occurred_at, created_at) VALUES (?,?,?,?,?,?,?)',
-          <Object?>['$did-p', 'p1', did, 2000, i + 1, at, at],
-        );
-      }
+      ids.add(
+        db.raw.select('SELECT id FROM documents WHERE doc_no = ?', <Object?>[
+              saved.docNo,
+            ]).first['id']!
+            as String,
+      );
     }
     db.close();
+    return ids;
+  }
+
+  /// 源库里某张单的单号（断言报告里的 `docNo` 用）。
+  String docNoOf(String id) {
+    final Db db = Db.open(source);
+    final String no =
+        db.raw.select('SELECT doc_no FROM documents WHERE id = ?', <Object?>[
+              id,
+            ]).first['doc_no']!
+            as String;
+    db.close();
+    return no;
   }
 
   Future<RescueReport> rescue() => rescueDatabase(
@@ -142,7 +175,7 @@ void main() {
   // ============================================================ 完好库
   group('完好库', () {
     test('全部读出、全部导入、0 条待确认', () async {
-      makeDb(source);
+      makeLedger(source);
       final RescueReport report = await rescue();
 
       expect(report.ok, isTrue, reason: report.failure);
@@ -156,7 +189,7 @@ void main() {
     });
 
     test('原件一个字节都没被动过，并且被设成只读', () async {
-      makeDb(source);
+      makeLedger(source);
       final List<int> before = File(source).readAsBytesSync();
       final RescueReport report = await rescue();
 
@@ -170,7 +203,7 @@ void main() {
     });
 
     test('新库里主数据也在（否则单据指向空气）', () async {
-      makeDb(source);
+      makeLedger(source);
       final RescueReport report = await rescue();
       final Db db = Db.open(report.outputPath!);
       final int products =
@@ -195,7 +228,7 @@ void main() {
       // ⚠️ 必须用**数据量够大**的库：20 单的库总页数与「空库 donor」只差几页，
       // 撤掉「修页数」也照样读得出 ⇒ 测试钉不住那个修复（实测踩到）。
       // 200 单时真实页数远大于 donor，不修页数会丢掉大半数据。
-      makeDb(source, docs: 200);
+      makeLedger(source, docs: 200);
       patchBytes(source, 0, List<int>.filled(100, 0));
 
       final RescueReport report = await rescue();
@@ -210,7 +243,7 @@ void main() {
     });
 
     test('坏一个索引 ⇒ 砍索引后全部救回', () async {
-      makeDb(source);
+      makeLedger(source);
       // 弄坏一个索引的根页
       final Db db = Db.open(source);
       final found = db.raw.select(
@@ -235,7 +268,7 @@ void main() {
     test('坏页 ⇒ 救回大部分，并把读不出的部分如实报出来', () async {
       // 50 单就够：夹具改成「每明细一条流水」后库变大，坏两页容易砸到关键结构，
       // 那时抢救会正确地报「读不出任何数据」—— 那就测不到「跳过坏页」这个能力了。
-      makeDb(source, docs: 50);
+      makeLedger(source, docs: 50);
       final int size = File(source).lengthSync();
       // ⚠️ 页大小必须从文件头读（偏移 16..17，大端），**不能假设 4096**。
       final RandomAccessFile head = File(source).openSync();
@@ -244,9 +277,15 @@ void main() {
       final int pageSize = (first[16] << 8) | first[17];
       final int pages = size ~/ pageSize;
 
-      // 坏**尾部两页**（数据叶子页）：坏根页的话 SQLite 会静默返回空表
-      // （实测），那就成了「整份读不出」，测不到「跳过坏页」这个能力。
-      for (final int target in <int>[pages - 2]) {
+      // 坏**中后段四页**：只坏一页时它可能正好落在空闲页 / 被砍掉的索引上，
+      // 读数据根本不碰它（实测踩到过）。坏根页又会让 SQLite 静默返回空表
+      // （那就成了「整份读不出」），所以取中后段的四页。
+      for (final int target in <int>[
+        pages ~/ 2,
+        pages * 3 ~/ 5,
+        pages * 4 ~/ 5,
+        pages - 2,
+      ]) {
         patchBytes(source, target * pageSize, List<int>.filled(pageSize, 0));
       }
 
@@ -267,7 +306,7 @@ void main() {
     });
 
     test('截断 ⇒ 明确失败并说清原因（不做页级扫描）', () async {
-      makeDb(source);
+      makeLedger(source);
       final int size = File(source).lengthSync();
       final RandomAccessFile raf = File(
         source,
@@ -289,10 +328,15 @@ void main() {
   // ============================================================ 完整性
   group('完整性（按单据，不按行）', () {
     test('缺明细的单据进待确认、**不导入**', () async {
-      makeDb(source, docs: 10);
+      final List<String> ids = makeLedger(source, docs: 10);
+      final String target = ids[4];
+      final String targetNo = docNoOf(target);
       // 删掉第 5 单的全部明细 —— 模拟「明细那几行落在坏页上」
       final Db db = Db.open(source);
-      db.raw.execute("DELETE FROM document_lines WHERE document_id = 'doc004'");
+      db.raw.execute(
+        'DELETE FROM document_lines WHERE document_id = ?',
+        <Object?>[target],
+      );
       db.close();
 
       final RescueReport report = await rescue();
@@ -300,7 +344,7 @@ void main() {
       expect(report.totalDocuments, 10);
       expect(report.importedDocuments, 9);
       expect(report.issues.length, 1);
-      expect(report.issues.single.docNo, 'XS004');
+      expect(report.issues.single.docNo, targetNo);
       expect(report.issues.single.kind, RescueIssueKind.missingLines);
       expect(report.issues.single.summary, contains('明细'));
 
@@ -308,7 +352,10 @@ void main() {
       final Db out = Db.open(report.outputPath!);
       final int n =
           out.raw
-                  .select("SELECT COUNT(*) FROM documents WHERE id = 'doc004'")
+                  .select(
+                    'SELECT COUNT(*) FROM documents WHERE id = ?',
+                    <Object?>[target],
+                  )
                   .first
                   .values
                   .first!
@@ -322,9 +369,14 @@ void main() {
       // 删掉其中一条 ⇒ 商品「prod1」**仍然出现在流水里**，
       // 所以「按 product_id 看有没有」这种判据会放过它（用户指出的漏检）。
       // 必须按商品核对**行数**与**数量**才抓得住。
-      makeDb(source, docs: 1);
+      final List<String> ids = makeLedger(source, docs: 1);
       final Db db = Db.open(source);
-      db.raw.execute("DELETE FROM stock_ledger WHERE id = 'doc000-s1'");
+      db.raw.execute(
+        'DELETE FROM stock_ledger WHERE id = '
+        '(SELECT id FROM stock_ledger WHERE document_id = ? '
+        ' ORDER BY id LIMIT 1)',
+        <Object?>[ids.single],
+      );
       db.close();
 
       final RescueReport report = await rescue();
@@ -338,11 +390,12 @@ void main() {
     });
 
     test('往来流水金额与单据金额不符 ⇒ 不完整', () async {
-      makeDb(source, docs: 1);
+      final List<String> ids = makeLedger(source, docs: 1);
       final Db db = Db.open(source);
       // 单据金额 2000，往来冲减却被写成 1000（模拟坏页只救回一部分 / 数据被改）
       db.raw.execute(
-        "UPDATE party_ledger SET amount = 1000 WHERE document_id = 'doc000'",
+        'UPDATE party_ledger SET amount = 1000 WHERE document_id = ?',
+        <Object?>[ids.single],
       );
       db.close();
 
@@ -351,26 +404,79 @@ void main() {
       expect(report.issues.length, 1, reason: '往来冲减 ≠ 单据金额 ⇒ 欠款会算错，不能当完整');
     });
 
-    test('资金流水金额与已收金额不符 ⇒ 不完整', () async {
-      makeDb(source, docs: 1);
+    test('正常的收款单**不能**被判不完整（用户审查 2026-10-30 的 P0）', () async {
+      // 真实引擎的收款单：`total_amount` = 2000、`paid_amount` = **0**、
+      // 资金流水挂在它自己身上 = 2000。旧判据拿「资金流水 vs paid_amount」
+      // 一比就是 2000 ≠ 0 ⇒ **每一张正常收款单都被判不完整**。
+      //
+      // 这条用例是那处 bug 的回归钉：夹具用真实 `SaleService` 生成，
+      // 不改任何数据，必须全部完整。
+      final List<String> ids = makeLedger(source, docs: 3, paid: true);
+      expect(ids.length, 3);
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.issues, isEmpty, reason: '一份刚由神算子自己生成的账本，抢救不能挑出任何毛病');
+      expect(report.importedDocuments, 6, reason: '3 张销售单 + 3 张自动生成的收款单');
+    });
+
+    test('收款单的资金流水金额与单据金额不符 ⇒ 两端都不完整', () async {
+      final List<String> ids = makeLedger(source, docs: 1, paid: true);
       final Db db = Db.open(source);
-      // 单据 paid_amount = 2000，资金流水却只有 1000
+      // 收款单 total_amount = 2000，资金流水被改成 1000
       db.raw.execute(
-        "UPDATE money_ledger SET amount = 1000 WHERE document_id = 'doc000'",
+        'UPDATE money_ledger SET amount = 1000 '
+        "WHERE document_id IN (SELECT id FROM documents WHERE doc_type = 'receipt')",
       );
       db.close();
 
       final RescueReport report = await rescue();
       expect(report.ok, isTrue, reason: report.failure);
-      expect(report.issues.length, 1, reason: '收到的钱与流水对不上 ⇒ 账错了，不能当完整');
+      expect(report.importedDocuments, 0, reason: '钱和单对不上，两边都不能导');
+      expect(
+        report.issues.where(
+          (RescueIssue i) => i.kind == RescueIssueKind.brokenSettlement,
+        ),
+        isNotEmpty,
+        reason: '销售单本身没毛病，但它的收款记录坏了 —— 必须一起拦下',
+      );
+      expect(ids.length, 1);
+    });
+
+    test('赊账单的往来流水**整张丢失** ⇒ 不完整（用户审查的 P0）', () async {
+      // 从前 `party.isEmpty` 直接返回「不适用」⇒ 库存行数过、资金检查过
+      // ⇒ 判完整导入。结果：货恢复了、单据恢复了、客户欠款不见了。
+      final List<String> ids = makeLedger(source, docs: 2);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        'DELETE FROM party_ledger WHERE document_id = ?',
+        <Object?>[ids.first],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.importedDocuments, 1);
+      expect(
+        report.issues.single.kind,
+        RescueIssueKind.missingLedger,
+        reason: '有往来方却一条往来流水都没有 ⇒ 欠款会凭空消失',
+      );
+      expect(report.issues.single.detail, contains('欠款'));
     });
 
     test('没有任何流水的单据也算不完整（库存/往来会不准）', () async {
-      makeDb(source, docs: 5, withPartyLedger: false);
+      final List<String> ids = makeLedger(source, docs: 5);
       final Db db = Db.open(source);
-      // 把第 2 单的库存与资金流水都删掉
-      db.raw.execute("DELETE FROM stock_ledger WHERE document_id = 'doc001'");
-      db.raw.execute("DELETE FROM money_ledger WHERE document_id = 'doc001'");
+      // 把第 2 单的库存与往来流水都删掉
+      db.raw.execute(
+        'DELETE FROM stock_ledger WHERE document_id = ?',
+        <Object?>[ids[1]],
+      );
+      db.raw.execute(
+        'DELETE FROM party_ledger WHERE document_id = ?',
+        <Object?>[ids[1]],
+      );
       db.close();
 
       final RescueReport report = await rescue();
@@ -383,10 +489,94 @@ void main() {
       );
     });
 
+    test('库存流水数量与明细对不上（行数却相等）⇒ 不完整', () async {
+      // 用户审查 2026-10-30（P1）：只比行数时「1 行明细 1 瓶 / 1 条流水 -1 瓶」
+      // 之外的形态抓不住 —— 这里把流水数量改成 -2，行数仍是 1。
+      final List<String> ids = makeLedger(source, docs: 1);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        'UPDATE stock_ledger SET quantity = -2 WHERE id = '
+        '(SELECT id FROM stock_ledger WHERE document_id = ? ORDER BY id LIMIT 1)',
+        <Object?>[ids.single],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues.single.kind,
+        RescueIssueKind.missingLedger,
+        reason: '行数相等、数量不等 ⇒ 库存照样会错',
+      );
+      expect(report.issues.single.detail, contains('数量'));
+    });
+
+    test('库存流水里有、明细里没有的商品 ⇒ 不完整', () async {
+      // 旧判据只遍历「明细里的商品」，多出来的流水商品根本不看。
+      final List<String> ids = makeLedger(source, docs: 1);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        "INSERT INTO products (id, code, name, unit, sell_price, cost_price, "
+        "safety_stock, is_active, created_at, updated_at) "
+        "VALUES ('prod2', 'P0002', '雪碧', '瓶', 1000, 800, 0, 1, 0, 0)",
+      );
+      db.raw.execute(
+        "INSERT INTO stock_ledger (id, product_id, document_id, quantity, "
+        "unit_cost, total_cost, seq_no, occurred_at, created_at) "
+        "VALUES ('ghost-stock', 'prod2', ?, -1, 800, 800, 9999, 0, 0)",
+        <Object?>[ids.single],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues.single.kind,
+        RescueIssueKind.missingLedger,
+        reason: '这条流水找不到对应的明细行 ⇒ 导入它库存会凭空变',
+      );
+    });
+
+    test('收款单整张没读到 ⇒ 它核销的那张销售单也不完整（双端）', () async {
+      // 用户审查 2026-10-30（P0）：从前写新库时只把核销关系过滤掉，
+      // 销售单照旧导入 ⇒ 账上「已收 20」但没有任何收款记录。
+      final List<String> ids = makeLedger(source, docs: 2, paid: true);
+      // 关外键：`settlements` 指着这张收款单，不关就删不掉 —— 而现实里
+      // 「单据那一行落在坏页上」正是这种「指着空气」的形态。
+      final Db db = Db.open(source, foreignKeys: false);
+      final String receiptId =
+          db.raw.select(
+                'SELECT id FROM documents WHERE doc_type = ? LIMIT 1',
+                <Object?>['receipt'],
+              ).first['id']!
+              as String;
+      // 模拟「收款单那一行落在坏页上」
+      db.raw.execute('DELETE FROM documents WHERE id = ?', <Object?>[
+        receiptId,
+      ]);
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues.where(
+          (RescueIssue i) => i.kind == RescueIssueKind.brokenSettlement,
+        ),
+        isNotEmpty,
+        reason: '收款单没了，销售单的「已收」就无从核对 —— 不能单独导入',
+      );
+      expect(
+        report.importedDocuments,
+        lessThan(4),
+        reason: '另一端也不许导入（2 张销售 + 1 张收款正常，另一端的销售要拦下）',
+      );
+      expect(ids.length, 2);
+    });
+
     test('盘点单：数量无变化 ⇒ 不产生库存流水，仍算**完整**（反例）', () async {
       // 用户裁定补充里的反例：盘点的零差额**本来就不写库存流水**，
       // 所以不能要求「每行明细都有流水」—— 那样每张没差异的盘点单都会被误判。
-      makeDb(source, docs: 0);
+      makeLedger(source, docs: 0);
       final Db db = Db.open(source);
       final int at = DateTime(2026, 10, 1).millisecondsSinceEpoch;
       db.raw.execute(
@@ -419,7 +609,7 @@ void main() {
     });
 
     test('单据本身没读到、但明细还在 ⇒ 单独报出来', () async {
-      makeDb(source, docs: 5);
+      makeLedger(source, docs: 5);
       // 关外键才能插出「指向不存在单据」的行 —— 现实里这是坏页造成的，
       // 不是正常写入能产生的形态
       final Db db = Db.open(source, foreignKeys: false);
@@ -443,13 +633,13 @@ void main() {
     });
 
     test('引用没救回来的商品 ⇒ 不导入并说清缺什么', () async {
-      makeDb(source, docs: 3);
+      final List<String> ids = makeLedger(source, docs: 3);
       // 关外键：模拟「商品那几行落在坏页上、单据还指着它」的形态
       final Db db = Db.open(source, foreignKeys: false);
       // 第 1 单引用一个不存在的商品（模拟商品那几行没救回来）
       db.raw.execute(
-        "UPDATE document_lines SET product_id = 'ghost' "
-        "WHERE document_id = 'doc000'",
+        "UPDATE document_lines SET product_id = 'ghost' WHERE document_id = ?",
+        <Object?>[ids.first],
       );
       db.close();
 
@@ -470,7 +660,7 @@ void main() {
     /// 造一个「主文件 100 单 + wal 里 20 单」的库，返回时**源库仍开着**
     /// （一关就会 checkpoint，wal 就空了 —— 这正是崩溃现场的形态）。
     Database makeWithPendingWal(String path) {
-      makeDb(path, docs: 100);
+      makeLedger(path, docs: 100);
       final Database raw = sqlite3.open(path);
       raw.execute('PRAGMA journal_mode = WAL');
       raw.execute('PRAGMA wal_autocheckpoint = 0');
@@ -489,7 +679,11 @@ void main() {
             'confirmed',
             'p1',
             2000,
-            2000,
+            // ⚠️ 赊账（`paid_amount = 0`）：这里的 20 单只造了「明细 + 库存流水」，
+            // 没有自动生成的收款单与核销记录。若写成「已收 2000」，
+            // 新的资金判据（核销合计必须 = paid_amount）会正确地判它们不完整，
+            // 断言 120 就会失败 —— 而失败原因是夹具不是完整业务单元，不是 WAL 没救回来。
+            0,
             at,
             at,
             at,
@@ -510,10 +704,11 @@ void main() {
           'VALUES (?,?,?,?,?,?,?,?,?)',
           <Object?>['$did-s', 'prod1', did, -1, 1000, 1000, 1000 + i, at, at],
         );
+        // 赊账 ⇒ 往来流水挂在销售单上（与 `RuleEngine._sale` 一致：+total_amount）
         raw.execute(
-          'INSERT INTO money_ledger (id, account_id, document_id, amount, '
+          'INSERT INTO party_ledger (id, party_id, document_id, amount, '
           'seq_no, occurred_at, created_at) VALUES (?,?,?,?,?,?,?)',
-          <Object?>['$did-m', 'acc1', did, 2000, 1000 + i, at, at],
+          <Object?>['$did-p', 'p1', did, 2000, 1000 + i, at, at],
         );
       }
       return raw;
@@ -550,7 +745,7 @@ void main() {
     });
 
     test('源库没有 wal（正常关闭）⇒ 照常工作，不误报', () async {
-      makeDb(source);
+      makeLedger(source);
       final RescueReport report = await rescue();
       expect(report.ok, isTrue, reason: report.failure);
       expect(report.walCopied, isFalse);
@@ -561,7 +756,7 @@ void main() {
   // ============================================================ 报告文案
   group('报告文案（用户补充建议第 2 条：不许出现 SQL 术语）', () {
     test('按类型统计用的是中文名，不是表名', () async {
-      makeDb(source, docs: 6);
+      makeLedger(source, docs: 6);
       final RescueReport report = await rescue();
       expect(report.typeStats.length, 1);
       expect(
@@ -574,7 +769,7 @@ void main() {
     });
 
     test('不可读的表用中文名', () async {
-      makeDb(source, docs: 2);
+      makeLedger(source, docs: 2);
       final RescueReport report = await rescue();
       for (final String name in report.unreadableTables) {
         expect(name, isNot(contains('_')), reason: '不许把 stock_ledger 这种表名露给用户');

@@ -6,6 +6,10 @@ import '../dao/settlement_dao.dart';
 import '../db/database.dart';
 import '../db/schema.dart';
 import '../documents/outstanding.dart';
+// `isReturnType` 是「哪些单据算退货」的唯一定义，不在这里复制一份
+//（`SettlementService` 也 import 本文件 —— Dart 允许循环 import，
+// 只要没有循环的顶层常量求值）。
+import '../documents/settlement_service.dart' show SettlementService;
 import '../models/document.dart';
 import '../models/document_line.dart';
 import '../models/money_ledger.dart';
@@ -830,6 +834,45 @@ class RuleEngine {
               '核销额超过被核销单未收金额：${target.docNo} 已收 $already'
               ' / 总额 ${target.totalAmount}，本次请求 ${entry.value}',
         );
+      }
+
+      // ⚠️ **延迟退款上限**（用户审查 2026-10-30，P0）。
+      //
+      // 退货时选「不立即退钱」是常见操作，钱以后再退 —— 那条路走的是
+      // **独立的付款单核销退货单**，根本不经过 `_return()` 里的
+      // `_requireRefundWithinCap`。而上面那条判据只校验
+      // 「已核销 + 本次 ≤ **本单金额**」：
+      //
+      //   原单只收到 ¥1000 → 退货单 A ¥750（挂账）→ 退货单 B ¥750（挂账）
+      //   → 付款核销 A ¥750（750 ≤ 750，通过）→ 付款核销 B ¥750（750 ≤ 750，通过）
+      //   ⇒ 累计退出去 ¥1500，比收到过的钱多 ¥500，**凭空付出去一笔**。
+      //
+      // 所以退货单作为核销目标时，上限要回到**原单的真实收款**（走 settlements），
+      // 与 `_requireRefundWithinCap` 同一条口径。
+      if (moneyOut && SettlementService.isReturnType(target.docType)) {
+        final String? originalId = target.refDocId;
+        final Document? original = originalId == null
+            ? null
+            : _docs.findById(originalId);
+        // 原单缺失时不做这项判断：退货单已经指着空气了，那是另一个问题
+        //（抢救报告会把它判成「引用的单据没救回来」），这里不额外加锁。
+        if (original != null) {
+          final int received = _settlements.settledAmountOf(original.id);
+          final int refunded = _refundedAgainst(original.id);
+          if (refunded + entry.value > received) {
+            final int left = received - refunded;
+            throw RuleRejection(
+              '「${original.docNo}」只收到过 ${Money.format(received)} 元，'
+              '之前已经退过 ${Money.format(refunded)} 元，'
+              '这次最多还能退 ${Money.format(left < 0 ? 0 : left)} 元。'
+              '请把金额改小 —— 退款不能超过实际收到过的钱。',
+              code: RejectCode.ruleValidationFailed,
+              detail:
+                  '延迟退款超上限：原单 ${original.docNo} 收到 $received，'
+                  '已退 $refunded，本次 $entry.value（退货单 ${target.docNo}）',
+            );
+          }
+        }
       }
     }
     if (requested > doc.totalAmount) {

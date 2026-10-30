@@ -414,4 +414,98 @@ void main() {
       expect(saved.refundedCents, 3000);
     });
   });
+
+  // ------------------------------------------------------------ 延迟退款
+  group('事后用付款单核销退货单（延迟退款）也受同一上限约束', () {
+    /// 建一张付款单核销退货单 [returnId]，金额 [cents]。
+    int paySeq = 0;
+    RuleOutcome payReturn(String returnId, int cents) {
+      final int stamp = now();
+      return engine.dispatch(
+        document: Document(
+          id: newId(),
+          // ⚠️ 不能用 `newId().substring(...)` 造号：`newId()` 前几位是时间前缀，
+          // 同一毫秒内建两张会撞 `documents.doc_no` 的唯一约束（踩过）。
+          docNo: 'TEST-PAY-${++paySeq}',
+          docType: DocType.payment,
+          status: DocStatus.confirmed,
+          partyId: customerId,
+          accountId: accountId,
+          totalAmount: cents,
+          occurredAt: stamp,
+          createdAt: stamp,
+          updatedAt: stamp,
+        ),
+        allocations: <Allocation>[
+          Allocation(targetDocId: returnId, amount: cents),
+        ],
+        now: stamp,
+      );
+    }
+
+    test('两笔退货都挂账、各用付款单退一次 ⇒ 第二次超真实收款，拒绝', () {
+      // 用户审查 2026-10-30（P0）：「后续独立核销退货单的退款路径没有纳入
+      // 原单累计退款额度校验」。
+      //
+      // 退货时选「不立即退钱」是常见操作，钱以后再退 —— 那条路走的是
+      // **独立的付款单核销退货单**，根本不经过 `_return()` 里的
+      // `_requireRefundWithinCap`。而 `_settle` 只校验
+      // `已核销 + 本次 ≤ 本单金额`，于是两张各 ¥750 的退货单各自核销一次，
+      // 每次都「没超过本单金额」，累计却退出去 ¥1500，而原单只收到过 ¥1000
+      // —— 多出的 ¥500 是凭空付出去的钱。
+      final String saleId = sell(qty: 250, paidCents: 100000); // ¥2500，只收 ¥1000
+      final String a = idOf(
+        doReturn(
+          refDocId: saleId,
+          originalType: DocType.sale,
+          qty: 75,
+          refundCents: 0,
+        ).docNo,
+      );
+      final String b = idOf(
+        doReturn(
+          refDocId: saleId,
+          originalType: DocType.sale,
+          qty: 75,
+          refundCents: 0,
+        ).docNo,
+      );
+
+      expect(
+        payReturn(a, 75000).status,
+        RuleStatus.applied,
+        reason: '退 ¥750 ≤ 收到 ¥1000，这一笔是合法的',
+      );
+
+      final RuleOutcome second = payReturn(b, 75000);
+      expect(
+        second.status,
+        isNot(RuleStatus.applied),
+        reason: '再退 ¥750 就累计退出去 ¥1500，而只收到过 ¥1000',
+      );
+      expect(second.reason, contains('只收到'));
+
+      final int rows =
+          db.raw.select(
+                'SELECT COUNT(*) AS c FROM settlements WHERE target_doc_id = ?',
+                <Object?>[b],
+              ).first['c']!
+              as int;
+      expect(rows, 0, reason: '拒绝时不该留下核销记录');
+    });
+
+    test('只收到 ¥1000、退 ¥1000 ⇒ 正好用光，通过（不误杀）', () {
+      final String saleId = sell(qty: 250, paidCents: 100000);
+      final String a = idOf(
+        doReturn(
+          refDocId: saleId,
+          originalType: DocType.sale,
+          qty: 100,
+          refundCents: 0,
+        ).docNo,
+      );
+      expect(payReturn(a, 100000).status, RuleStatus.applied);
+      expect(returns.refundableCentsOf(saleId), 0, reason: '额度已用光');
+    });
+  });
 }

@@ -310,6 +310,86 @@ void main() {
     expect(find.textContaining('还没收到过钱'), findsOneWidget);
   });
 
+  testWidgets('钱已经全部退完 ⇒ 说「已经全部退完」，不许说「还没收到过钱」（⑥ UI 二态）', (
+    WidgetTester tester,
+  ) async {
+    // 用户审查 2026-10-30（P2）：可退 = 0 有**两种完全不同的原因** ——
+    // 「一分钱没收过」和「收过的钱已经全退完了」。同一句文案会误导：
+    // 后者的用户会以为系统把他收到的钱弄丢了。
+    final SaleService sales = SaleService(engine: engine, queries: queries);
+    final SaleSaved saved = sales.create(
+      SaleDraft(
+        partyId: customerId,
+        partyName: '客户甲',
+        date: '2026-10-04',
+        lines: <SaleLineDraft>[
+          SaleLineDraft(
+            productId: productId,
+            productName: '蒙牛纯牛奶',
+            quantity: '3',
+            unitPrice: '250',
+            entryUnit: '箱',
+            baseUnit: '瓶',
+            packageUnit: '箱',
+            packageSize: 12,
+          ),
+        ],
+        // 3 箱共 ¥750，只收了 ¥250
+        payments: <SalePaymentDraft>[
+          SalePaymentDraft(
+            accountId: accountId,
+            accountName: '现金',
+            amount: '250',
+          ),
+        ],
+      ),
+    );
+    final String saleId = idOf(saved.docNo);
+
+    // 退 1 箱（12 瓶）并立即退 ¥250 ⇒ 收过的钱全退完了，额度归零
+    returns.create(
+      ReturnDraft(
+        refDocId: saleId,
+        originalDocType: DocType.sale,
+        partyId: customerId,
+        partyName: '客户甲',
+        lines: <ReturnLineDraft>[
+          ReturnLineDraft(
+            productId: productId,
+            productName: '蒙牛纯牛奶',
+            quantity: '12',
+            amount: '250.00',
+            originalQuantity: 36,
+            originalAmountCents: 75000,
+          ),
+        ],
+        refunds: <ReturnRefundDraft>[
+          ReturnRefundDraft(
+            accountId: accountId,
+            accountName: '现金',
+            amount: '250',
+          ),
+        ],
+      ),
+    );
+    expect(returns.refundableCentsOf(saleId), 0, reason: '夹具前提：额度已用光');
+
+    await tester.pumpWidget(page(documents.findById(saleId)!));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('return-no-refundable')), findsOneWidget);
+    expect(
+      find.textContaining('已经全部退完'),
+      findsOneWidget,
+      reason: '钱是收到过的，只是退完了 —— 要说清是哪一种',
+    );
+    expect(
+      find.textContaining('还没收到过钱'),
+      findsNothing,
+      reason: '说成「没收到过」会让用户以为收款记录丢了',
+    );
+  });
+
   testWidgets('拒收（fullReturn）：预填全部可退量，保存后原送货单 cancelled', (
     WidgetTester tester,
   ) async {
