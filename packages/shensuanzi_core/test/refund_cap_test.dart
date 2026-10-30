@@ -282,6 +282,69 @@ void main() {
     });
   });
 
+  // ------------------------------------------------------------ 主机权威
+  group('主机规则层才是权威边界（绕过 ReturnService）', () {
+    test('直接调 RuleEngine.dispatch 造退货单 ⇒ 同样拒绝', () {
+      // 用户审查 2026-10-30：`SyncServer._createDocument` 收到客户端请求后
+      // **直接调 `_engine.dispatch`**，完全绕过 `ReturnService`。
+      // 如果闸只在服务层，同步入口就能造出超额退款 —— 而 Android 客户端
+      // 暂时不开这条路，不等于永远不会。
+      final String deliveryId = signedDelivery(qty: 10);
+      final int stamp = now();
+
+      final Document returnDoc = Document(
+        id: newId(),
+        docNo: 'TEST-RET-001',
+        docType: DocType.saleReturn,
+        status: DocStatus.confirmed,
+        partyId: customerId,
+        refDocId: deliveryId,
+        totalAmount: 3000,
+        occurredAt: stamp,
+        createdAt: stamp,
+        updatedAt: stamp,
+      );
+      final List<DocumentLine> lines = <DocumentLine>[
+        DocumentLine.create(
+          documentId: returnDoc.id,
+          productId: productId,
+          quantity: 3,
+          amount: 3000,
+          entryQuantity: 3,
+          entryUnit: '瓶',
+        ),
+      ];
+
+      final RuleOutcome outcome = engine.dispatch(
+        document: returnDoc,
+        lines: lines,
+        immediatePayments: <PaymentEntry>[
+          PaymentEntry(accountId: accountId, amount: 3000),
+        ],
+        now: stamp,
+      );
+
+      expect(
+        outcome.status,
+        isNot(RuleStatus.applied),
+        reason: '一分钱没收的送货单，直接走同步入口也不许退款',
+      );
+      expect(outcome.reason, contains('还没收到'));
+      // 而且什么都没写进去
+      final int count =
+          db.raw
+                  .select(
+                    'SELECT COUNT(*) FROM documents WHERE id = ?',
+                    <Object?>[returnDoc.id],
+                  )
+                  .first
+                  .values
+                  .first!
+              as int;
+      expect(count, 0, reason: '拒绝时不该留下半张单');
+    });
+  });
+
   // ------------------------------------------------------------ 累计上限
   group('累计退款 ≤ 原单真实收款', () {
     test('只收了 50，却要退 60 ⇒ 拒绝', () {

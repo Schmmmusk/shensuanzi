@@ -153,7 +153,6 @@ void main() {
       final String p = createProduct();
       final String party = createParty();
       final Document purchase = seedPurchase(p, party, 10, 100);
-
       final Document ret = doc(
         type: DocType.purchaseReturn,
         partyId: party,
@@ -483,7 +482,17 @@ void main() {
         partyId: party,
         totalAmount: 5000,
       );
-      run(sale, oneLine(sale.id, p, 10, 500));
+      // ⚠️ 原单必须**真的收到过钱**（2026-10-30 退款上限：没收过钱就没有可退的款）。
+      // 从前这里不收钱也能退款 —— 那正是「凭空多一笔支出」的入口。
+      final RuleOutcome saleOutcome = engine.dispatch(
+        document: sale,
+        lines: oneLine(sale.id, p, 10, 500),
+        immediatePayments: <PaymentEntry>[
+          PaymentEntry(accountId: account, amount: 5000),
+        ],
+        now: now(),
+      );
+      expect(saleOutcome.status, RuleStatus.applied, reason: '夹具前提：原单已收款');
 
       final Document ret = doc(
         type: DocType.saleReturn,
@@ -515,7 +524,8 @@ void main() {
       ).first;
       expect(refund['doc_type'], 'payment');
       expect(refund['amount'], -1000, reason: '退给客户 → 资金流出');
-      expect(money.balanceOf(account), -1000);
+      // 原单收了 5000，退回 1000 ⇒ 账上剩 4000
+      expect(money.balanceOf(account), 4000);
     });
 
     test('未立即退款 → 未结清部分留在 party_ledger（我方应付）', () {
@@ -628,6 +638,23 @@ void main() {
       final String party = createParty();
       final String account = createAccount();
       final Document purchase = seedPurchase(p, party, 10, 100);
+      // ⚠️ 原单必须**真的付过钱**（2026-10-30 退款上限：没付过就没有可收的退款）。
+      // 从前这里不付款也能收退款 —— 那是「凭空多一笔收入」的入口。
+      // 收付款单还必须带 `accountId`（核销门槛①），否则核销被跳过、settlements 为空。
+      final Document pay = doc(
+        type: DocType.payment,
+        partyId: party,
+        accountId: account,
+        totalAmount: 1000,
+      );
+      final RuleOutcome payOutcome = engine.dispatch(
+        document: pay,
+        allocations: <Allocation>[
+          Allocation(targetDocId: purchase.id, amount: 1000),
+        ],
+        now: now(),
+      );
+      expect(payOutcome.status, RuleStatus.applied, reason: '夹具前提：原单已付款');
 
       final Document ret = doc(
         type: DocType.purchaseReturn,
@@ -657,9 +684,11 @@ void main() {
       ).first;
       expect(refund['doc_type'], 'receipt');
       expect(refund['amount'], 300, reason: '供应商退我们钱 → 资金流入');
-      expect(money.balanceOf(account), 300);
-      // −1000（采购）+ 300（退货）+（receipt 记 −300）⇒ 仍欠 1000
-      expect(partyLedger.balanceOf(party), -1000);
+      // 原单先付了 1000（夹具前提），退货收回 300 ⇒ 账户净额 −700
+      expect(money.balanceOf(account), -700);
+      // 采购 −1000，付款 +1000（夹具前提：已付清），退货 +300，收退款的 receipt −300
+      // ⇒ 往来归零（这笔生意彻底两清）
+      expect(partyLedger.balanceOf(party), 0);
     });
 
     test('ref_doc_id 缺失 → 拒绝', () {

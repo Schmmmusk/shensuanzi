@@ -526,6 +526,18 @@ class _ReturnPageState extends State<ReturnPage> {
     );
   }
 
+  /// 退款上限的说明：把「原单剩余额度」与「本次最多可退」分开说。
+  String _refundHintText() {
+    final int thisReturn = _draftOrNull()?.totalCents ?? 0;
+    final String left = '这张单还剩 ¥${Money.formatGrouped(_refundableCents)} 可退';
+    if (thisReturn <= 0) return '$left。';
+    final int thisMax = thisReturn < _refundableCents
+        ? thisReturn
+        : _refundableCents;
+    return '$left；本次退货 ¥${Money.formatGrouped(thisReturn)}，'
+        '所以最多退 ¥${Money.formatGrouped(thisMax)}。';
+  }
+
   Widget _refundSection(ThemeData theme) {
     final List<Account> accounts = _accounts;
     // ⚠️ ⑥（用户裁定 2026-10-30）：**原单没收到过钱就不显示退款卡片**。
@@ -556,9 +568,14 @@ class _ReturnPageState extends State<ReturnPage> {
       children: <Widget>[
         Text('立即退款（可选）', style: theme.textTheme.titleMedium),
         const SizedBox(height: 4),
-        // 把上限摆出来：用户不用猜「能退多少」，也不用提交后才发现被拒
+        // 把上限摆出来：用户不用猜「能退多少」，也不用提交后才发现被拒。
+        //
+        // ⚠️ 要区分**两个数**（2026-10-30 用户审查）：
+        //   · 原单还剩多少累计退款额度（`_refundableCents`）
+        //   · 本次最多能退 = min(那个额度, **本次退货金额**)
+        // 只显示前者会让「原单还能退 100、本次只退 30」的用户以为能填 100。
         Text(
-          '这张单最多还能退 ¥${Money.formatGrouped(_refundableCents)}。',
+          _refundHintText(),
           key: const Key('return-refundable-hint'),
           style: TextStyle(
             height: 1.6,

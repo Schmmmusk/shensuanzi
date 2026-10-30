@@ -475,6 +475,75 @@ class RuleEngine {
   /// | 立即结算生成的单据 | `payment`（退款给客户） | `receipt`（供应商退钱） |
   ///
   /// `total_cost` 由 [CostPolicy.returnCost] 按**原单比例精确回退**（R-11 方案 A）。
+  /// 退款上限（用户裁定 2026-10-30 ⑥，2026-10-30 审查后移入规则层）。
+  ///
+  /// 三条判据：
+  ///   ① **本次退款 ≤ 本次退货金额** —— 超了就拒绝，**不截断**。
+  ///      从前 `Overpay.clamp` 会把 40 压成 30 落库，而确认框显示的是 40 ——
+  ///      用户确认的金额和实际付出去的金额不一致，这比拒绝更糟。
+  ///   ② 累计实际退款（含本次） ≤ 原单**真实收款**
+  ///   ③ 原单真实收款 == 0 ⇒ 任何退款都拒绝
+  ///
+  /// ⚠️ 两个数都走 `settlements`（真相），不看 `documents.paid_amount`（派生缓存）。
+  void _requireRefundWithinCap({
+    required Document doc,
+    required Document original,
+    required List<PaymentEntry> immediatePayments,
+  }) {
+    int thisRefund = 0;
+    for (final PaymentEntry entry in immediatePayments) {
+      thisRefund += entry.amount;
+    }
+    if (thisRefund <= 0) return; // 挂账冲减，不涉及钱
+
+    // ① 本次退款不能超过本次退货金额
+    if (thisRefund > doc.totalAmount) {
+      // ⚠️ 必须抛 `RuleRejection`（不是 `RuleRejected`）：`dispatch` 的兜底
+      // `catch (error, stack)` 会抓走一切异常，只有 `RuleRejection` 会被转成
+      // 业务拒绝（`RuleOutcome.rejected`）再由服务层原样抛给界面。
+      throw RuleRejection(
+        '这次要退 ¥${_yuan(thisRefund)}，但本次退货只有 ¥${_yuan(doc.totalAmount)}。'
+        '退款金额不能超过退货金额 —— 请改小，或者分两次退。',
+        code: RejectCode.ruleValidationFailed,
+      );
+    }
+
+    // ②③ 原单真实收款与累计已退
+    final int received = _settlements.settledAmountOf(original.id);
+    if (received <= 0) {
+      throw const RuleRejection(
+        '这张单还没收到过钱，所以没有可退的款。'
+        '如果确实要退钱给客户，请先在原单上收款；或者这次选「不立即退钱、冲减欠款」。',
+        code: RejectCode.ruleValidationFailed,
+      );
+    }
+    final int alreadyRefunded = _refundedAgainst(original.id);
+    if (alreadyRefunded + thisRefund > received) {
+      final int left = received - alreadyRefunded;
+      throw RuleRejection(
+        '这张单只收到过 ¥${_yuan(received)}，'
+        '之前已经退过 ¥${_yuan(alreadyRefunded)}，'
+        '这次最多还能退 ¥${_yuan(left < 0 ? 0 : left)}。',
+        code: RejectCode.ruleValidationFailed,
+      );
+    }
+  }
+
+  /// 这张原单**已经退出去多少**（所有退货单被核销的金额之和，走 settlements）。
+  int _refundedAgainst(String originalId) {
+    final List<Map<String, Object?>> rows = db.raw.select(
+      'SELECT COALESCE(SUM(s.amount), 0) AS s FROM settlements s '
+      'JOIN documents r ON r.id = s.target_doc_id '
+      "WHERE r.ref_doc_id = ? AND r.doc_type IN ('sale_return', 'purchase_return')",
+      <Object?>[originalId],
+    );
+    final Object? value = rows.isEmpty ? null : rows.first['s'];
+    return value is int ? value : 0;
+  }
+
+  /// 分 → 「12.34」形式（规则层文案要能直接给用户看）
+  String _yuan(int cents) => (cents / 100).toStringAsFixed(2);
+
   RuleOutcome _return(
     Document doc,
     List<DocumentLine> lines,
@@ -505,6 +574,19 @@ class RuleEngine {
         '实际为 ${original.docType.wire}（原单 ${original.docNo}）',
       );
     }
+
+    // ⚠️ ⑥ 退款上限 —— **必须在这里**，不能只在 `ReturnService`（2026-10-30 用户审查）。
+    //
+    // `SyncServer._createDocument` 收到客户端请求后**直接调 `_engine.dispatch`**，
+    // 完全绕过 `ReturnService`。把安全边界放在服务层，等于把「客户端暂时不会这样发请求」
+    // 当成保证 —— 而主机规则层才是权威边界。
+    //
+    // 放在 `insertIfAbsent` **之前**：拒绝时一个字节都不写，也不占用单号。
+    _requireRefundWithinCap(
+      doc: doc,
+      original: original,
+      immediatePayments: immediatePayments,
+    );
 
     if (!_docs.insertIfAbsent(doc, lines)) {
       return RuleOutcome(RuleStatus.alreadyExists, document: doc);

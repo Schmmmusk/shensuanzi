@@ -427,28 +427,39 @@ void main() {
       expect(money.balanceOf(accountId), 75000 - 25000);
     });
 
-    test('退款超合计 ⇒ 封顶（找零口径，裁定 5）', () {
+    test('退款超合计 ⇒ **拒绝**（2026-10-30 改判：不再截断）', () {
+      // 从前这里是「封顶到退货金额，多的当找零」—— 但确认框显示的是用户填的
+      // 原始金额（300），实际只落库 250，**用户确认的钱和实际付的钱不一致**。
+      // 用户裁定（2026-10-30）：「退款金额超过本次退货金额，就应该明确提示并拒绝，
+      // 而不是悄悄截断。」
       final String refDocId = sell3Boxes();
 
-      final ReturnSaved saved = returns.create(
-        ReturnDraft(
-          refDocId: refDocId,
-          originalDocType: DocType.sale,
-          partyId: customerId,
-          partyName: '客户甲',
-          lines: <ReturnLineDraft>[boxLine(qty: '1', amount: '250.00')],
-          refunds: <ReturnRefundDraft>[
-            ReturnRefundDraft(
-              accountId: accountId,
-              accountName: '现金',
-              amount: '300',
-            ),
-          ],
+      expect(
+        () => returns.create(
+          ReturnDraft(
+            refDocId: refDocId,
+            originalDocType: DocType.sale,
+            partyId: customerId,
+            partyName: '客户甲',
+            lines: <ReturnLineDraft>[boxLine(qty: '1', amount: '250.00')],
+            refunds: <ReturnRefundDraft>[
+              ReturnRefundDraft(
+                accountId: accountId,
+                accountName: '现金',
+                amount: '300',
+              ),
+            ],
+          ),
         ),
+        throwsA(
+          isA<RuleRejected>().having(
+            (RuleRejected e) => e.reason,
+            'reason',
+            contains('不能超过退货金额'),
+          ),
+        ),
+        reason: '确认框显示 300、落库 250 —— 这种不一致比拒绝更糟',
       );
-
-      expect(saved.totalCents, 25000);
-      expect(saved.refundedCents, 25000, reason: '填了 300，落库封顶到 250.00');
     });
   });
 
