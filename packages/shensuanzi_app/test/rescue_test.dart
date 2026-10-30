@@ -18,6 +18,7 @@ import 'package:path/path.dart' as p;
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
+import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -363,6 +364,99 @@ void main() {
         reason: '外键断了硬导进去，用户会看到一张指向空气的单',
       );
       expect(report.issues.single.detail, contains('ghost'));
+    });
+  });
+
+  // ============================================================ WAL（裁定补充 ①）
+  group('WAL', () {
+    /// 造一个「主文件 100 单 + wal 里 20 单」的库，返回时**源库仍开着**
+    /// （一关就会 checkpoint，wal 就空了 —— 这正是崩溃现场的形态）。
+    Database makeWithPendingWal(String path) {
+      makeDb(path, docs: 100);
+      final Database raw = sqlite3.open(path);
+      raw.execute('PRAGMA journal_mode = WAL');
+      raw.execute('PRAGMA wal_autocheckpoint = 0');
+      for (int i = 0; i < 20; i++) {
+        final int at =
+            DateTime(2026, 10, 1).millisecondsSinceEpoch + i * 3600000;
+        final String did = 'wal${i.toString().padLeft(3, '0')}';
+        raw.execute(
+          'INSERT INTO documents (id, doc_no, doc_type, status, party_id, '
+          'total_amount, paid_amount, occurred_at, time_estimated, created_at, '
+          'updated_at, business_day) VALUES (?,?,?,?,?,?,?,?,0,?,?,?)',
+          <Object?>[
+            did,
+            'WAL${i.toString().padLeft(3, '0')}',
+            'sale',
+            'confirmed',
+            'p1',
+            2000,
+            2000,
+            at,
+            at,
+            at,
+            businessDayOf(at),
+          ],
+        );
+        // ⚠️ 必须是**完整业务单元**（明细 + 库存流水 + 资金流水），否则会被
+        // 完整性判定正确地判成「不完整」而不导入 —— 那时断言 120 就会失败，
+        // 但失败原因是夹具不完整，不是 WAL 没救回来（这一条踩过）。
+        raw.execute(
+          'INSERT INTO document_lines (id, document_id, product_id, quantity, '
+          'unit_price, amount) VALUES (?,?,?,?,?,?)',
+          <Object?>['$did-l0', did, 'prod1', 1, 1000, 1000],
+        );
+        raw.execute(
+          'INSERT INTO stock_ledger (id, product_id, document_id, quantity, '
+          'unit_cost, total_cost, seq_no, occurred_at, created_at) '
+          'VALUES (?,?,?,?,?,?,?,?,?)',
+          <Object?>['$did-s', 'prod1', did, -1, 1000, 1000, 1000 + i, at, at],
+        );
+        raw.execute(
+          'INSERT INTO money_ledger (id, account_id, document_id, amount, '
+          'seq_no, occurred_at, created_at) VALUES (?,?,?,?,?,?,?)',
+          <Object?>['$did-m', 'acc1', did, 2000, 1000 + i, at, at],
+        );
+      }
+      return raw;
+    }
+
+    test('源库有还没落盘的事务 ⇒ 必须一起救回来', () async {
+      // 实测（提案 53 §一）：只拷主文件会丢 17%。这条钉住「连 -wal 一起拷」。
+      final Database raw = makeWithPendingWal(source);
+      final int walSize = File('$source-wal').existsSync()
+          ? File('$source-wal').lengthSync()
+          : 0;
+      expect(walSize, greaterThan(0), reason: '夹具前提：wal 里必须有内容');
+
+      final RescueReport report = await rescue();
+      raw.dispose();
+
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.walCopied, isTrue, reason: '要告诉用户「用上了还没落盘的数据」');
+      expect(
+        report.totalDocuments,
+        120,
+        reason:
+            '只拷主文件只能读到 100 —— 那 20 单是**已提交、还没 checkpoint** 的，'
+            '丢掉它们不是「没办法」，是漏了',
+      );
+      expect(countDocs(report.outputPath!), 120);
+    });
+
+    test('源文件不存在 ⇒ 明确失败，不产半成品', () async {
+      final RescueReport report = await rescue();
+      expect(report.ok, isFalse);
+      expect(report.failure, contains('已经不在了'));
+      expect(File(output).existsSync(), isFalse);
+    });
+
+    test('源库没有 wal（正常关闭）⇒ 照常工作，不误报', () async {
+      makeDb(source);
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.walCopied, isFalse);
+      expect(report.totalDocuments, 20);
     });
   });
 

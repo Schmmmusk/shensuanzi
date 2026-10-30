@@ -122,6 +122,7 @@ class RescueReport {
     this.outputPath,
     this.headerRepaired = false,
     this.readOnlyMarked = false,
+    this.walCopied = false,
     this.totalDocuments = 0,
     this.importedDocuments = 0,
     this.typeStats = const <RescueTypeStat>[],
@@ -135,6 +136,7 @@ class RescueReport {
     : outputPath = null,
       headerRepaired = false,
       readOnlyMarked = false,
+      walCopied = false,
       totalDocuments = 0,
       importedDocuments = 0,
       typeStats = const <RescueTypeStat>[],
@@ -150,6 +152,9 @@ class RescueReport {
 
   /// 原件是否成功设为只读
   final bool readOnlyMarked;
+
+  /// 是否把 `-wal` 一起复制过来了（意味着「最近还没落盘的事务」也在里面）
+  final bool walCopied;
 
   /// 从坏库里读到多少张单据
   final int totalDocuments;
@@ -230,9 +235,42 @@ Future<RescueReport> rescueDatabase({
   final String copy = p.join(work.path, 'work.db');
 
   bool readOnlyMarked = false;
+  bool walCopied = false;
   try {
     onProgress?.call(const RescueProgress(0.05, '正在复制一份出来（原件不会被动）'));
+
+    // ⚠️ **`-wal` 必须一起复制**（2026-10-29 审查意见 ①，实测丢 17%）。
+    //
+    // 库工作在 WAL 模式：已提交的事务可以先只落在 `-wal` 里，等 checkpoint 才
+    // 写回主文件。只拷主文件就会丢掉那些事务 —— 实测（120 单的库、其中 20 单只在
+    // wal 里）：只拷主文件读出 100 单；连 wal 一起拷读出 120 单。
+    //
+    // 而且实测「主文件头坏 / 坏页」时，wal 里的页仍能被正常应用（wal 存的是完整页，
+    // 会覆盖主文件的坏页）。`-shm` 不用复制：共享内存索引，SQLite 打开时重建。
+    //
+    // ⚠️ **但两次复制之间源文件可能变**（2026-10-30 裁定补充）：如果还有别的进程在写库，
+    // 会拿到「主文件 + 另一个时刻的 wal」—— 那比只拷主文件更糟（会应用半截事务）。
+    // 所以复制前后各取一次指纹，不一致就**明确失败**，不硬着头皮往下走。
+    final _FileSnapshot dbBefore = _FileSnapshot.of(sourcePath);
+    final _FileSnapshot walBefore = _FileSnapshot.of('$sourcePath-wal');
+
     source.copySync(copy);
+    if (walBefore.exists) {
+      File('$sourcePath-wal').copySync('$copy-wal');
+      walCopied = true;
+    }
+
+    final _FileSnapshot dbAfter = _FileSnapshot.of(sourcePath);
+    final _FileSnapshot walAfter = _FileSnapshot.of('$sourcePath-wal');
+    if (dbBefore != dbAfter || walBefore != walAfter) {
+      _cleanup(work);
+      return const RescueReport.failed(
+        '复制的时候，这个数据文件还在被别的程序改动 —— 现在拿到的不是一份完整的快照。'
+        '请先把神算子关掉（也检查一下有没有网盘同步、杀毒软件正在扫这个文件夹），'
+        '然后再试一次。你的原文件没有被改动过。',
+      );
+    }
+
     // 原件设只读：防的不是我们（我们只读副本），是**用户手滑**
     readOnlyMarked = _markReadOnly(sourcePath);
   } on FileSystemException catch (error) {
@@ -248,6 +286,7 @@ Future<RescueReport> rescueDatabase({
       copy: copy,
       outputPath: outputPath,
       readOnlyMarked: readOnlyMarked,
+      walCopied: walCopied,
       onProgress: onProgress,
     );
   } finally {
@@ -260,6 +299,7 @@ RescueReport _rescueFromCopy({
   required String copy,
   required String outputPath,
   required bool readOnlyMarked,
+  required bool walCopied,
   void Function(RescueProgress)? onProgress,
 }) {
   // ② 打开副本。
@@ -374,6 +414,7 @@ RescueReport _rescueFromCopy({
       outputPath: outputPath,
       headerRepaired: repaired,
       readOnlyMarked: readOnlyMarked,
+      walCopied: walCopied,
       totalDocuments: asm.documents.length,
       importedDocuments: asm.documents.length - asm.issues.length,
       typeStats: asm.typeStats,
@@ -384,6 +425,51 @@ RescueReport _rescueFromCopy({
   } finally {
     db.dispose();
   }
+}
+
+// ============================================================ 复制前的指纹
+
+/// 一个文件「这一刻长什么样」—— 用来判断复制期间源文件有没有被改动。
+///
+/// 只看**大小 + 修改时间**：
+/// - 大小：wal 每写一个事务就会长（除非被 checkpoint 截断）
+/// - 修改时间：毫秒精度，正常写入一定会变
+///
+/// ⚠️ 不读 wal 的 salt：那要解析 32 字节 header，而 salt 只在 checkpoint 时变，
+/// 对「复制期间是否有人写」这个判断没有额外价值。
+class _FileSnapshot {
+  const _FileSnapshot({
+    required this.exists,
+    required this.size,
+    required this.modifiedMs,
+  });
+
+  factory _FileSnapshot.of(String path) {
+    final File file = File(path);
+    if (!file.existsSync()) {
+      return const _FileSnapshot(exists: false, size: 0, modifiedMs: 0);
+    }
+    final FileStat stat = file.statSync();
+    return _FileSnapshot(
+      exists: true,
+      size: stat.size,
+      modifiedMs: stat.modified.millisecondsSinceEpoch,
+    );
+  }
+
+  final bool exists;
+  final int size;
+  final int modifiedMs;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _FileSnapshot &&
+      other.exists == exists &&
+      other.size == size &&
+      other.modifiedMs == modifiedMs;
+
+  @override
+  int get hashCode => Object.hash(exists, size, modifiedMs);
 }
 
 // ============================================================ 借头

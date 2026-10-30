@@ -182,7 +182,11 @@ export 'src/documents/return_draft.dart'
 export 'src/documents/return_service.dart'
     show ReturnDraftInvalid, ReturnQuota, ReturnSaved, ReturnService;
 export 'src/documents/settlement_service.dart'
-    show SettlementInvalid, SettlementSaved, SettlementService;
+    show
+        OutstandingAfterReturn,
+        SettlementInvalid,
+        SettlementSaved,
+        SettlementService;
 export 'src/documents/stocktake_draft.dart'
     show StocktakeDraft, StocktakeLineDraft, StocktakeValidation;
 export 'src/documents/stocktake_service.dart'

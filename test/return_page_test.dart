@@ -205,12 +205,68 @@ void main() {
     await tester.tap(find.byKey(const Key('return-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('退货单'), findsOneWidget, reason: 'SnackBar 报单号');
+    // 用户裁定 2026-10-30 ⑤：退货页**不再自己弹提示**，而是把结果交回详情页，
+    // 由详情页用服务层算好的方向给一句明确的欠款结论（「客户还欠你 ¥X」）。
+    expect(
+      find.byType(SnackBar),
+      findsNothing,
+      reason: '两条提示会打架；结论只能有一条，且必须由拿到结果的那一页给',
+    );
     // 落库：销售出库 −36、退货入库 +12 ⇒ 账面 −24
     expect(bookQuantity(), -(36 - 12));
     // 往来：销售**已全款收清**（+750 应收 − 750 收款 = 0），
     // 退货挂账冲减 −250.00 ⇒ 余额 −250.00（负 = 我欠客户）
     expect(partyLedger.balanceOf(customerId), -25000);
+  });
+
+  testWidgets('保存成功后**把结果交回上一页**（ReturnSaved，不是 void）', (
+    WidgetTester tester,
+  ) async {
+    // 这是 ⑤ 的契约：详情页要拿到退货金额才能算「现在欠多少」。
+    // 从前 pop() 不带值，调用方只能猜。
+    final Document original = sell3Boxes();
+    ReturnSaved? received;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (BuildContext context) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () async {
+                  received = await Navigator.of(context).push<ReturnSaved>(
+                    MaterialPageRoute<ReturnSaved>(
+                      builder: (BuildContext context) =>
+                          ReturnPage(original: original, service: returns),
+                    ),
+                  );
+                },
+                child: const Text('去退货'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('去退货'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(Key('return-qty-$productId')), '1');
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('return-save')),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('return-save')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('return-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(received, isNotNull, reason: '详情页要拿它算「现在欠多少」');
+    expect(received!.totalCents, 25000, reason: '1 箱 = ¥250');
+    expect(received!.docNo, isNotEmpty);
   });
 
   testWidgets('拒收（fullReturn）：预填全部可退量，保存后原送货单 cancelled', (

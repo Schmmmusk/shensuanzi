@@ -81,6 +81,46 @@ class SettlementSaved {
   final int changeCents;
 }
 
+/// 「退货之后，这张原单现在是谁欠谁、欠多少」—— 给界面拼一句话用。
+///
+/// ## 为什么要一个专门的类型，而不是让 UI 自己算
+///
+/// 用户裁定（2026-10-30）：*「金额和债务方向由服务层计算，不让 UI 自己拼公式。」*
+///
+/// 因为 UI 拼公式一定会漏一种情况：`totalAmount - paid - returned` 的结果**可以是负数**
+/// （退得比收得多 ⇒ 反过来是我们欠客户）。负号在界面上一会儿读作「多收」、
+/// 一会儿读作「欠」，正是那种「看着合理、实际误导」的数字。
+/// 所以**方向由这里定死**，界面只负责按 `(cents, inbound)` 选词。
+class OutstandingAfterReturn {
+  const OutstandingAfterReturn({
+    required this.cents,
+    required this.inbound,
+    required this.docType,
+  });
+
+  /// 带符号的未结金额。
+  ///
+  /// - `> 0`：`inbound == true` ⇒ **对方还欠我**；`inbound == false` ⇒ **我还欠对方**
+  /// - `== 0`：两清
+  /// - `< 0`：方向反过来（`inbound == true` ⇒ 我欠对方；`false` ⇒ 对方欠我）
+  final int cents;
+
+  /// `true` = 这张单我方**应收**（`sale` / `delivery`）；`false` = 我方**应付**（`purchase`）
+  final bool inbound;
+
+  final DocType docType;
+
+  bool get settled => cents == 0;
+
+  /// 我欠对方的金额（`cents < 0 && inbound`，或 `cents > 0 && !inbound`）
+  int get weOweCents =>
+      (inbound && cents < 0) || (!inbound && cents > 0) ? cents.abs() : 0;
+
+  /// 对方欠我的金额
+  int get theyOweCents =>
+      (inbound && cents > 0) || (!inbound && cents < 0) ? cents.abs() : 0;
+}
+
 class SettlementService {
   SettlementService({required Db db, required RuleEngine engine})
     : _db = db,
@@ -137,6 +177,23 @@ class SettlementService {
       totalAmount: doc.totalAmount,
       paidAmount: settled,
       returnedAmount: documents.returnedAgainst(documentId),
+    );
+  }
+
+  /// 退货之后的债务结论（用户裁定 2026-10-30 ⑤）。
+  ///
+  /// 调用时机：退货单**刚提交完**，原单的 `returnedAmount` 已经含这一笔。
+  /// 返回的东西足够界面拼出三种话之一：「对方还欠我 ¥X」/「两清」/「我欠对方 ¥X」。
+  OutstandingAfterReturn outstandingAfterReturn(String documentId) {
+    final Document? doc = DocumentDao(_db).findById(documentId);
+    // 单据读不到时按「我方应收」兜底：这是最常见的方向，且 `cents` 会是 0
+    // （`unsettledCentsOf` 对不存在的单据返回 0）⇒ 界面显示「两清」，
+    // 不会编出一个凭空的欠款数字。
+    final DocType type = doc?.docType ?? DocType.sale;
+    return OutstandingAfterReturn(
+      cents: unsettledCentsOf(documentId),
+      inbound: isInbound(type) ?? true,
+      docType: type,
     );
   }
 

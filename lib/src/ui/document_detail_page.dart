@@ -681,12 +681,13 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     );
   }
 
-  /// 打开退货页；回来后刷新详情（状态可能变过 —— 拒收会 cancel 原送货单）。
+  /// 打开退货页；回来后刷新详情（状态可能变过 —— 拒收会 cancel 原送货单），
+  /// 并给一句**明确的欠款结论**（用户裁定 2026-10-30 ⑤）。
   Future<void> _startReturn(Document doc, {required bool fullReturn}) async {
     final ReturnService? service = widget.returnService;
     if (service == null) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+    final ReturnSaved? saved = await Navigator.of(context).push<ReturnSaved>(
+      MaterialPageRoute<ReturnSaved>(
         builder: (BuildContext context) => ReturnPage(
           original: doc,
           service: service,
@@ -695,10 +696,48 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
         ),
       ),
     );
-    if (mounted) {
-      setState(_load);
-      widget.onChanged?.call();
+    if (!mounted) return;
+    setState(_load);
+    widget.onChanged?.call();
+    if (saved == null) return;
+
+    // ⚠️ 金额与**方向**都由服务层算（`outstandingAfterReturn`），这里只选词。
+    // 负号在界面上读作「多收」还是「欠」，正是那种「看着合理、实际误导」的数字，
+    // 所以方向不在 UI 判断。
+    final OutstandingAfterReturn result = widget.settlements
+        .outstandingAfterReturn(doc.id);
+    showSnack(
+      context,
+      SnackBar(
+        content: Text(
+          '已退货 ¥${Money.formatGrouped(saved.totalCents)}'
+          '（${saved.docNo}）。${_outstandingSentence(result)}',
+        ),
+        // 6 秒：这句话里有两个金额 + 一个方向，读一遍要几秒
+        duration: const Duration(seconds: 6),
+      ),
+    );
+  }
+
+  /// 把债务结论翻成人话。**三种情形都要说清方向**，不能只给一个带符号的数字。
+  ///
+  /// | 情形 | 文案 |
+  /// |---|---|
+  /// | 对方还欠我 | 「这张单现在客户还欠你 ¥70。」 |
+  /// | 两清 | 「这张单已经两清（谁都不欠谁）。」 |
+  /// | 我欠对方 | 「退得比收得多 —— 现在你欠客户 ¥20。」 |
+  String _outstandingSentence(OutstandingAfterReturn result) {
+    final bool toCustomer =
+        result.docType == DocType.sale || result.docType == DocType.delivery;
+    final String who = toCustomer ? '客户' : '供应商';
+
+    if (result.settled) return '这张单已经两清（谁都不欠谁）。';
+    if (result.theyOweCents > 0) {
+      return '这张单现在$who还欠你 ¥${Money.formatGrouped(result.theyOweCents)}。';
     }
+    // 剩下就是「我欠对方」：多收/少付造成的那一侧
+    final String why = toCustomer ? '退得比收得多' : '付得比应付多';
+    return '$why —— 现在你欠$who ¥${Money.formatGrouped(result.weOweCents)}。';
   }
 
   /// 送货单的「签收」行（`in_transit` 才有按钮）。

@@ -232,18 +232,14 @@ class _ReturnPageState extends State<ReturnPage> {
     try {
       final ReturnSaved saved = widget.service.create(draft);
       if (!mounted) return;
-      showSnack(
-        context,
-        SnackBar(
-          content: Text(
-            '退货单 ${saved.docNo} 已保存，冲减 '
-            '¥${Money.formatGrouped(saved.totalCents)}'
-            '（原单 ${saved.originalDocNo}）。',
-          ),
-          duration: const Duration(seconds: 6),
-        ),
-      );
-      Navigator.of(context).pop();
+      // ⚠️ **把结果交回调用方，自己不弹提示**（用户裁定 2026-10-30 ⑤）。
+      //
+      // 从前这里弹一句「退货单已保存，冲减 ¥X」就关窗 —— 用户回到详情页
+      // 要跨「金额 / 已收 / 已退货 / 未收」四行心算才知道现在欠多少。
+      // 对熟练用户只是麻烦，对目标用户是算错账的来源。
+      //
+      // 现在由详情页拿到结果后，用服务层算好的方向给一句明确结论。
+      Navigator.of(context).pop(saved);
     } on ReturnDraftInvalid catch (error) {
       setState(() {
         _invalid = error;
