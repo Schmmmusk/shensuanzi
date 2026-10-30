@@ -65,11 +65,20 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
     );
 
     final int total = weeks.fold(0, (int s, RevenuePoint p) => s + p.netCents);
-    final int activeDays = rows.where((RevenueDay d) => d.netCents != 0).length;
+    // **有没有做过生意**，不是「净额是不是 0」（用户审查 2026-10-30）：
+    // 卖了 ¥500 又退了 ¥500 ⇒ 净额 0，但那天当然有生意。
+    final bool hasActivity = rows.isNotEmpty;
+    // 分母同样按经营活动算 —— 用净额判会把「当天卖光又全退」的日子漏掉，
+    // 于是「平均每个有生意的日子」被算高。
+    final int activeDays = rows.where((RevenueDay d) => !d.isEmpty).length;
     final int avg = activeDays == 0 ? 0 : (total / activeDays).round();
     final int inTransit = rows.fold(
       0,
       (int s, RevenueDay d) => s + d.inTransitCount,
+    );
+    final int inTransitCents = rows.fold(
+      0,
+      (int s, RevenueDay d) => s + d.inTransitCents,
     );
 
     return Card(
@@ -93,7 +102,7 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
               ),
             ),
             const SizedBox(height: 12),
-            if (weeks.isEmpty || total == 0)
+            if (!hasActivity)
               _emptyHint(theme)
             else ...<Widget>[
               Semantics(
@@ -129,7 +138,9 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
-                    '其中 $inTransit 张送货还没签收（钱可能还没到手）',
+                    // 只报张数不够：¥100 的在途和 ¥100,000 的在途，那句话一模一样
+                    '其中 $inTransit 张送货还没签收，共 '
+                    '¥${Money.formatGrouped(inTransitCents)}（钱可能还没到手）',
                     style: TextStyle(
                       height: 1.6,
                       fontSize: 13,
@@ -169,7 +180,11 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
 
   String _summaryText(int total, int avg, int weeks) {
     final String head = '最近 ${widget.days} 天合计 ¥${Money.formatGrouped(total)}';
-    if (total == 0) return '$head。';
+    if (total == 0) {
+      // 净额为 0 但**有经营活动**：卖的和退的一样多。
+      // 不能说「没有销售记录」—— 那是另一回事（用户审查 2026-10-30）。
+      return '$head —— 这段时间卖的和退的正好一样多，净额是 0。';
+    }
     return '$head，平均每个有生意的日子 ¥${Money.formatGrouped(avg)}'
         '（共 $weeks 周）。';
   }
@@ -228,6 +243,34 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
   }
 }
 
+/// 柱子上方的金额文字。
+///
+/// ## 两个决定（用户审查 2026-10-30）
+///
+/// 1. **负数带负号**：柱子朝下 + 变红还不够 —— 金额标签本身要能独立表达数值，
+///    不能让用户靠「柱子在哪边」推断正负。
+/// 2. **≥¥100 时只写整数元**：图上比的是量级，分位是噪音；而且 `.00` 三个字符
+///    会让标签在窄窗口里互相压住（30 天 × 5~6 根时每根只有 50~60px）。
+///    **这是改格式，不是缩字号** —— 15sp 不打折。
+///
+/// [withCurrency] 为 `false` 时省略 `¥`（窄窗口用；卡片标题与总结句里都有单位）。
+String barAmountLabel(
+  int cents, {
+  bool withCurrency = true,
+  bool withSeparators = true,
+}) {
+  final String sign = cents < 0 ? '−' : '';
+  final String symbol = withCurrency ? '¥' : '';
+  final int abs = cents.abs();
+  final String body = abs >= 100
+      // ≥¥100 只写整数元：分位是噪音，且 `.00` 会挤掉邻居
+      ? Money.formatGrouped(
+          (abs ~/ 100) * 100,
+        ).replaceFirst(RegExp(r'\.00$'), '')
+      : Money.formatGrouped(abs);
+  return '$sign$symbol${withSeparators ? body : body.replaceAll(',', '')}';
+}
+
 /// 柱状图绘制。
 ///
 /// 只做两件事：按 `netCents` 画柱、把金额写在柱子上。
@@ -268,7 +311,6 @@ class RevenueBarPainter extends CustomPainter {
       maxNeg = math.max(maxNeg, -p.netCents);
     }
     final int span = maxPos + maxNeg;
-    if (span <= 0) return;
 
     // 负数柱子的金额标签要画在柱子**下方**，得单独给它一条带子 ——
     // 否则它会压到日期标签上（第一版就是直接画，渲染出来才发现）。
@@ -276,9 +318,13 @@ class RevenueBarPainter extends CustomPainter {
     final double barArea = size.height - _labelBand - _axisBand - negLabelBand;
     if (barArea <= 0) return;
 
-    // 有负数时把基线抬高，否则基线贴底
-    final double baselineY = _labelBand + barArea * (maxPos / span);
-    final double unit = barArea / span; // 每一「分」占多少像素
+    // 有负数时把基线抬高，否则基线贴底。
+    // ⚠️ `span == 0`（这段时间卖的和退的正好抵消）时**不能提前 return** ——
+    // 那会画出一块空白，用户以为图坏了。基线照画、金额照写「¥0」。
+    final double baselineY = span <= 0
+        ? _labelBand + barArea
+        : _labelBand + barArea * (maxPos / span);
+    final double unit = span <= 0 ? 0 : barArea / span;
 
     final Paint axis = Paint()
       ..color = axisColor
@@ -309,13 +355,31 @@ class RevenueBarPainter extends CustomPainter {
       // ⚠️ 正负两种要用**不同的对齐**：正数让文字**底边**贴柱顶（往上长），
       // 负数让文字**顶边**贴柱底（往下长）。第一版两者都用 `bottomForAbove`，
       // 结果负数的金额直接画进了柱子里面（渲染出来才发现）。
-      _drawText(
+      //
+      // ⚠️ **按实际字体量宽度**（用户审查 2026-10-30）：光靠「缩字号」或
+      // 「窗口测试不报错」都不能证明标签没互相压住 —— 那是画布上的事，
+      // Flutter 的布局异常看不到。这里先排一次版，宽了就退到**无千分位**写法
+      // （还是 15sp，只是少两个逗号）。
+      TextPainter label = _layout(
+        barAmountLabel(p.netCents, withCurrency: !compact),
+        15,
+      );
+      if (label.width > slot - 6) {
+        final TextPainter plain = _layout(
+          barAmountLabel(
+            p.netCents,
+            withCurrency: !compact,
+            withSeparators: false,
+          ),
+          15,
+        );
+        if (plain.width < label.width) label = plain;
+      }
+      _paint(
         canvas,
-        '¥${Money.formatGrouped(p.netCents.abs())}',
+        label,
         centerX,
         negative ? baselineY + h + 2 : baselineY - h - 4,
-        size: compact ? 13 : 15,
-        bold: true,
         align: negative ? _Align.top : _Align.bottomForAbove,
       );
 
@@ -359,18 +423,40 @@ class RevenueBarPainter extends CustomPainter {
     required _Align align,
     Color? color,
   }) {
-    final TextPainter painter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          fontSize: size,
-          fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
-          color: color ?? labelColor,
-        ),
+    _paint(
+      canvas,
+      _layout(text, size, bold: bold, color: color),
+      centerX,
+      y,
+      align: align,
+    );
+  }
+
+  TextPainter _layout(
+    String text,
+    double size, {
+    bool bold = false,
+    Color? color,
+  }) => TextPainter(
+    text: TextSpan(
+      text: text,
+      style: TextStyle(
+        fontSize: size,
+        fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
+        color: color ?? labelColor,
       ),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout();
+    ),
+    textDirection: TextDirection.ltr,
+    maxLines: 1,
+  )..layout();
+
+  void _paint(
+    Canvas canvas,
+    TextPainter painter,
+    double centerX,
+    double y, {
+    required _Align align,
+  }) {
     final double dx = centerX - painter.width / 2;
     final double dy = align == _Align.top ? y : y - painter.height;
     painter.paint(canvas, Offset(dx, dy));

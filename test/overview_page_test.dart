@@ -16,11 +16,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/overview_page.dart';
+import 'package:shensuanzi/src/ui/balance_bars.dart';
 import 'package:shensuanzi/src/ui/revenue_chart.dart';
 import 'package:shensuanzi/src/ui/stock_top.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
+
+/// 按单号取 id（测试夹具用；`idOf` 在别的文件里是闭包，这里需要独立函数）。
+String idOfOn(Db db, String docNo) =>
+    db.raw.select('SELECT id FROM documents WHERE doc_no = ?', <Object?>[
+          docNo,
+        ]).first['id']!
+        as String;
 
 void main() {
   Widget page({
@@ -617,6 +625,162 @@ void main() {
         expect(find.byKey(const Key('overview-revenue-chart')), findsOneWidget);
       });
     }
+
+    test('柱子上方的金额：负数带负号、整数元、窄窗省 ¥', () {
+      // 用户审查 2026-10-30：柱子朝下+变红还不够，金额标签本身要能表达正负。
+      expect(barAmountLabel(-50000), '−¥500');
+      expect(barAmountLabel(50000), '¥500');
+      // ≥¥100 只写整数元（分位是噪音，且 `.00` 会在窄窗口挤掉邻居）
+      expect(barAmountLabel(1260000), '¥12,600');
+      expect(barAmountLabel(-1260000), '−¥12,600');
+      // 窄窗口省掉 ¥（卡片标题与总结句里都有单位）
+      expect(barAmountLabel(1260000, withCurrency: false), '12,600');
+      // 小于 ¥1 时保留分位，否则会写成「¥0」
+      expect(barAmountLabel(50), '¥0.50');
+      // 太宽时退到无千分位（还是 15sp，只少两个逗号）
+      expect(
+        barAmountLabel(1260000, withCurrency: false, withSeparators: false),
+        '12600',
+      );
+    });
+
+    testWidgets('欠款横条：比例照实，小额只保证 4px 可见（不抬到 4%）', (tester) async {
+      // 用户审查 2026-10-30：把比例抬到 4% 会让 ¥10 对 ¥10,000 显示成 25:1，
+      // 而真实是 1000:1 —— 图会暗示错误的比例。
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BalanceBarsCard(
+              receivables: const ReceivablesSummary(
+                totalCents: 1000, // ¥10
+                partyCount: 1,
+                topName: '客户甲',
+                topCents: 1000,
+                topActive: true,
+              ),
+              payables: const PayablesSummary(
+                totalCents: 1000000, // ¥10,000
+                partyCount: 1,
+                topName: '供应商乙',
+                topCents: 1000000,
+                topActive: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final double payable = tester
+          .getSize(find.byKey(const Key('overview-balance-payable-bar')))
+          .width;
+      final double receivable = tester
+          .getSize(find.byKey(const Key('overview-balance-receivable-bar')))
+          .width;
+
+      expect(payable, greaterThan(100), reason: '应付是最大项 ⇒ 铺满');
+      expect(
+        receivable,
+        4.0,
+        reason:
+            '¥10 对 ¥10,000 真实比例 0.1% ⇒ 按比例只有 0.x 像素，'
+            '所以给 4px 可见宽度；**不能**抬到 4%（那是 40 倍失真）',
+      );
+    });
+
+    testWidgets('净额为零但**有经营活动** ⇒ 不能说「没有销售记录」', (tester) async {
+      // 用户审查 2026-10-30：卖 ¥50 又全退 ¥50 ⇒ 净额 0，但那天有生意。
+      final Directory box2 = Directory.systemTemp.createTempSync('ssz_zero_');
+      final Db db2 = Db.open(p.join(box2.path, 'zero.db'));
+      addTearDown(() {
+        db2.close();
+        box2.deleteSync(recursive: true);
+      });
+
+      final int t = DateTime.now().millisecondsSinceEpoch;
+      final QueryDao q2 = QueryDao(db2);
+      final Product product = Product(
+        id: newId(),
+        code: 'PZ',
+        name: '苹果',
+        unit: '斤',
+        costPrice: 500,
+        sellPrice: 1000,
+        createdAt: t,
+        updatedAt: t,
+      );
+      ProductDao(db2).insert(product);
+      final Account cash = Account(
+        id: newId(),
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      );
+      AccountDao(db2).insert(cash);
+      final RuleEngine engine = RuleEngine(db2);
+      final SaleService sales2 = SaleService(engine: engine, queries: q2);
+      final ReturnService returns2 = ReturnService(engine: engine, queries: q2);
+      final DateTime today = DateTime.now();
+      String two(int v) => v.toString().padLeft(2, '0');
+      final String day = '${today.year}-${two(today.month)}-${two(today.day)}';
+
+      // 赊账销售 + 挂账退货（不涉及退款）⇒ 净额正好 0，但那天确实做了生意
+      final Party jia = Party(
+        id: newId(),
+        name: '客户甲',
+        roles: const <PartyRole>[PartyRole.customer],
+        createdAt: t,
+        updatedAt: t,
+      );
+      PartyDao(db2).insert(jia);
+
+      final SaleSaved sale = sales2.create(
+        SaleDraft(
+          partyId: jia.id,
+          partyName: '客户甲',
+          date: day,
+          lines: <SaleLineDraft>[
+            SaleLineDraft(
+              productId: product.id,
+              productName: '苹果',
+              quantity: '5',
+              unitPrice: '10',
+            ),
+          ],
+        ),
+        now: t,
+      );
+      returns2.create(
+        now: t + 1000,
+        ReturnDraft(
+          refDocId: idOfOn(db2, sale.docNo),
+          originalDocType: DocType.sale,
+          partyId: jia.id,
+          partyName: '客户甲',
+          lines: <ReturnLineDraft>[
+            ReturnLineDraft(
+              productId: product.id,
+              productName: '苹果',
+              quantity: '5',
+              amount: '50.00',
+              originalQuantity: 5,
+              originalAmountCents: 5000,
+            ),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(page(queries: q2));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('overview-revenue-empty')),
+        findsNothing,
+        reason: '那天确实有生意 —— 净额 0 不等于「没有销售记录」',
+      );
+      expect(find.textContaining('正好一样多'), findsOneWidget);
+    });
 
     testWidgets('压货榜：金额大的排前面，数量照实写各自单位', (tester) async {
       // 用户举的反例：牙签 500 个 vs 电机 10 台 —— 按数量排牙签会排第一。

@@ -21,6 +21,8 @@ class RevenueDay {
     this.returnCents = 0,
     this.documentCount = 0,
     this.inTransitCount = 0,
+    this.inTransitCents = 0,
+    this.returnCount = 0,
   });
 
   final int day;
@@ -43,10 +45,23 @@ class RevenueDay {
   /// 其中**还没签收**的送货单数（图上要标注「含未签收 N 张」）
   final int inTransitCount;
 
+  /// 其中未签收送货的**金额**（「N 张 · ¥X」—— 只报张数，用户看不出这事有多大）
+  final int inTransitCents;
+
+  /// 这一天的**退货单数**（不是金额）。
+  ///
+  /// 用来判断「这天有没有做过生意」：一天卖了 ¥500、又退了 ¥500，净额是 0，
+  /// 但那天**确实有经营活动**。只按 `netCents != 0` 判断会漏掉这种日子，
+  /// 于是「平均每个有生意的日子」被算高（用户审查 2026-10-30）。
+  final int returnCount;
+
   /// 净营收 = 销售 + 送货 − 退货
   int get netCents => saleCents + deliveryCents - returnCents;
 
-  bool get isEmpty => netCents == 0 && documentCount == 0;
+  /// 这一天**有没有经营活动**（不是「净额是不是 0」）。
+  ///
+  /// 卖了 ¥500 又退了 ¥500 ⇒ 净额 0，但那天是有生意的。
+  bool get isEmpty => documentCount == 0 && returnCount == 0;
 }
 
 /// 图上一个桶（一天 / 一周 / 一月）。
@@ -59,6 +74,8 @@ class RevenuePoint {
     required this.returnCents,
     required this.documentCount,
     required this.inTransitCount,
+    required this.inTransitCents,
+    required this.returnCount,
   });
 
   /// 桶的第一天（业务日序号）
@@ -72,10 +89,13 @@ class RevenuePoint {
   final int returnCents;
   final int documentCount;
   final int inTransitCount;
+  final int inTransitCents;
+  final int returnCount;
 
   int get netCents => saleCents + deliveryCents - returnCents;
 
-  bool get isEmpty => netCents == 0 && documentCount == 0;
+  /// 这个桶里**有没有经营活动**（见 `RevenueDay.isEmpty` 的说明）
+  bool get isEmpty => documentCount == 0 && returnCount == 0;
 }
 
 /// 分桶粒度。
@@ -126,6 +146,8 @@ List<RevenuePoint> buildRevenueSeries({
             returnCents: prev.returnCents + row.returnCents,
             documentCount: prev.documentCount + row.documentCount,
             inTransitCount: prev.inTransitCount + row.inTransitCount,
+            inTransitCents: prev.inTransitCents + row.inTransitCents,
+            returnCount: prev.returnCount + row.returnCount,
           );
   }
 
@@ -197,6 +219,8 @@ class _MutableBucket {
   int returnCents = 0;
   int documentCount = 0;
   int inTransitCount = 0;
+  int inTransitCents = 0;
+  int returnCount = 0;
 
   void add(RevenueDay data) {
     saleCents += data.saleCents;
@@ -204,6 +228,8 @@ class _MutableBucket {
     returnCents += data.returnCents;
     documentCount += data.documentCount;
     inTransitCount += data.inTransitCount;
+    inTransitCents += data.inTransitCents;
+    returnCount += data.returnCount;
   }
 
   /// [fromDay] 用来把桶的起点**夹进窗口**：窗口的第一周/第一月可能不是从
@@ -216,5 +242,7 @@ class _MutableBucket {
     returnCents: returnCents,
     documentCount: documentCount,
     inTransitCount: inTransitCount,
+    inTransitCents: inTransitCents,
+    returnCount: returnCount,
   );
 }

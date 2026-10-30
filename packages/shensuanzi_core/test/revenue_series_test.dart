@@ -348,6 +348,52 @@ void main() {
       );
       expect(rows.single.deliveryCents, 3000, reason: '裁定甲：在途也算营收');
       expect(rows.single.inTransitCount, 1, reason: '界面必须能说「含未签收 1 张」');
+      expect(
+        rows.single.inTransitCents,
+        3000,
+        reason: '只报张数不够：¥100 和 ¥100,000 的在途，那句话一模一样',
+      );
+    });
+
+    test('**原单读不到的退货仍然冲减**（提案 54 §五：不知道就别加回来）', () {
+      // 从前这里是内连接 ⇒ 原单缺失的退货被**整条过滤掉** ⇒ 营收虚高。
+      // `documents` 表对 `ref_doc_id` 没有外键约束，所以这种「指着空气」的行
+      // 是真实可能存在的（坏页 / 手工清理）。
+      sell('2026-10-11', 5); // ¥50
+
+      final int at = DateTime.parse(
+        '2026-10-11 12:00:00',
+      ).millisecondsSinceEpoch;
+      db.raw.execute(
+        'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+        'paid_amount, ref_doc_id, occurred_at, time_estimated, created_at, '
+        'updated_at, business_day) VALUES (?,?,?,?,?,?,?,?,0,?,?,?)',
+        <Object?>[
+          'ghost-return',
+          'TH-GHOST-1',
+          DocType.saleReturn.wire,
+          DocStatus.confirmed.wire,
+          2000,
+          0,
+          'no-such-document',
+          at,
+          at,
+          at,
+          businessDayOf(at),
+        ],
+      );
+
+      final List<RevenueDay> rows = queries.dailyRevenue(
+        fromDay: dayOf('2026-10-11'),
+        toDay: dayOf('2026-10-11'),
+      );
+      expect(rows.single.saleCents, 5000);
+      expect(
+        rows.single.returnCents,
+        2000,
+        reason: '原单读不到 ⇒ 仍然冲减（保守），不能当成「没发生」',
+      );
+      expect(rows.single.returnCount, 1);
     });
 
     test('作废单据不计', () {

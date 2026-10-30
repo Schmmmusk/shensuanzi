@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
@@ -88,10 +90,12 @@ class BalanceBarsCard extends StatelessWidget {
     required int maxCents,
     required Color color,
   }) {
-    // 比例至少留 4% —— 否则「欠 ¥1」会画成一条看不见的线，用户以为没画
-    final double ratio = maxCents <= 0
-        ? 0
-        : (cents / maxCents).clamp(0.04, 1.0).toDouble();
+    // ⚠️ **不把比例抬到 4%**（用户审查 2026-10-30）：那会让 ¥10 对 ¥10,000
+    // 显示成 4% 对 100%（25:1），而真实比例是 1000:1 —— 图会暗示错误的比例。
+    //
+    // 正确做法：比例照实算，只保证**最小 4 像素**画得出来。
+    // 「欠 ¥1」仍然看得见，但条长没有撒谎。
+    final double ratio = maxCents <= 0 ? 0 : (cents / maxCents).clamp(0.0, 1.0);
     return Column(
       key: Key(key),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -115,17 +119,23 @@ class BalanceBarsCard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: Stack(
-            children: <Widget>[
-              Container(height: 12, color: theme.dividerColor),
-              FractionallySizedBox(
-                widthFactor: ratio,
-                child: Container(height: 12, color: color),
+        LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints c) {
+            final double width = math.max(c.maxWidth * ratio, 4);
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Stack(
+                children: <Widget>[
+                  Container(height: 12, color: theme.dividerColor),
+                  SizedBox(
+                    key: Key('$key-bar'),
+                    width: width,
+                    child: Container(height: 12, color: color),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         ),
         const SizedBox(height: 2),
         Text(

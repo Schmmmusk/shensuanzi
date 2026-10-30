@@ -233,6 +233,8 @@ class QueryDao {
     final Map<int, int> refund = <int, int>{};
     final Map<int, int> count = <int, int>{};
     final Map<int, int> transit = <int, int>{};
+    final Map<int, int> transitCents = <int, int>{};
+    final Map<int, int> refundCount = <int, int>{};
 
     // ① 店内销售
     for (final Map<String, Object?> row in _raw.select(
@@ -252,11 +254,13 @@ class QueryDao {
     for (final Map<String, Object?> row in _raw.select(
       'SELECT business_day AS d, COUNT(*) AS c, '
       'COALESCE(SUM(total_amount), 0) AS amt, '
-      'SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS transit '
+      'SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS transit, '
+      'SUM(CASE WHEN status = ? THEN total_amount ELSE 0 END) AS transit_amt '
       'FROM ${Schema.documents} '
       'WHERE doc_type = ? AND status != ? AND business_day BETWEEN ? AND ? '
       'GROUP BY business_day',
       <Object?>[
+        DocStatus.inTransit.wire,
         DocStatus.inTransit.wire,
         DocType.delivery.wire,
         DocStatus.cancelled.wire,
@@ -268,17 +272,26 @@ class QueryDao {
       delivery[day] = row['amt']! as int;
       count[day] = (count[day] ?? 0) + (row['c']! as int);
       transit[day] = row['transit']! as int;
+      transitCents[day] = row['transit_amt']! as int;
     }
 
-    // ③ 销售退货 —— **只减原单仍有效的**
+    // ③ 销售退货
     //
-    // 拒收型退货：原送货单被置 `cancelled`，它本来就没进上面两条的营收，
-    // 这里再减一次就是双重冲减。用户实测 458 张、虚减 ¥45.8 万（3.9%）。
+    // **三条边界**（用户审查 2026-10-30 第 3 条）：
+    //   · 原单存在且**未作废** ⇒ 冲减（正常退货）
+    //   · 原单存在但**已作废** ⇒ **不冲减**：拒收时原送货单被置 `cancelled`、
+    //     本来就没进上面两条的营收，再减一次就是双重冲减
+    //     （用户实测 458 张、虚减 ¥45.8 万 / 3.9%）
+    //   · 原单**读不到**（数据缺失）⇒ **仍然冲减**：提案 54 §五的边界约定是
+    //     「不知道就别擅自加回来」。从前这里是内连接，直接把这种退货**过滤掉了**
+    //     ⇒ 营收虚高 —— 与方案不一致。
     for (final Map<String, Object?> row in _raw.select(
-      'SELECT r.business_day AS d, COALESCE(SUM(r.total_amount), 0) AS amt '
+      'SELECT r.business_day AS d, COUNT(*) AS c, '
+      'COALESCE(SUM(r.total_amount), 0) AS amt '
       'FROM ${Schema.documents} r '
-      'JOIN ${Schema.documents} o ON o.id = r.ref_doc_id '
-      'WHERE r.doc_type = ? AND r.status != ? AND o.status != ? '
+      'LEFT JOIN ${Schema.documents} o ON o.id = r.ref_doc_id '
+      'WHERE r.doc_type = ? AND r.status != ? '
+      '  AND (o.id IS NULL OR o.status != ?) '
       '  AND r.business_day BETWEEN ? AND ? '
       'GROUP BY r.business_day',
       <Object?>[
@@ -289,7 +302,9 @@ class QueryDao {
         toDay,
       ],
     )) {
-      refund[row['d']! as int] = row['amt']! as int;
+      final int day = row['d']! as int;
+      refund[day] = row['amt']! as int;
+      refundCount[day] = row['c']! as int;
     }
 
     final Set<int> days = <int>{...sale.keys, ...delivery.keys, ...refund.keys};
@@ -303,6 +318,8 @@ class QueryDao {
           returnCents: refund[day] ?? 0,
           documentCount: count[day] ?? 0,
           inTransitCount: transit[day] ?? 0,
+          inTransitCents: transitCents[day] ?? 0,
+          returnCount: refundCount[day] ?? 0,
         ),
     ];
   }
