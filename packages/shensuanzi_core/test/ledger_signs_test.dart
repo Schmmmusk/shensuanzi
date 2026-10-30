@@ -106,27 +106,44 @@ void main() {
     return v is int ? v : 0;
   }
 
-  /// 核对一张单的三本账符号是否与符号表一致。
+  /// 某张单在某张表里的**行数**。
+  int rowsOf(String table, String docId) {
+    final Object? v = db.raw.select(
+      'SELECT COUNT(*) AS c FROM $table WHERE document_id = ?',
+      <Object?>[docId],
+    ).first['c'];
+    return v is int ? v : 0;
+  }
+
+  /// 核对一张单的三本账方向是否与符号表一致。
   ///
-  /// `sign == 0` 表示「这类单据不该有这张表的流水」⇒ 要求一行都没有。
+  /// ⚠️ [LedgerDirection.absent] 的分支查的是 **`COUNT(*)`，不是 `SUM()`**：
+  /// 两条 `+100` / `−100` 的流水合计为 0，用 `SUM` 判会放过
+  /// （用户审查 2026-10-30）。「不该有」就是一行都不能有。
   void expectSigns(String docId, DocType type, {String? label}) {
     final String what = label ?? type.wire;
-    for (final (String table, String column, int sign)
-        in <(String, String, int)>[
-          ('stock_ledger', 'quantity', stockSignOf(type)),
-          ('party_ledger', 'amount', partySignOf(type)),
-          ('money_ledger', 'amount', moneySignOf(type)),
+    for (final (String table, String column, LedgerDirection dir)
+        in <(String, String, LedgerDirection)>[
+          ('stock_ledger', 'quantity', stockDirectionOf(type)),
+          ('party_ledger', 'amount', partyDirectionOf(type)),
+          ('money_ledger', 'amount', moneyDirectionOf(type)),
         ]) {
-      final int sum = sumOf(table, column, docId);
-      if (sign == 0) {
-        expect(sum, 0, reason: '$what 不该有 $table 流水，实际合计 $sum');
+      final int rows = rowsOf(table, docId);
+      if (dir == LedgerDirection.absent) {
+        expect(rows, 0, reason: '$what 不该有 $table 流水，实际 $rows 行');
         continue;
       }
+      if (dir == LedgerDirection.either) {
+        // 方向不固定（盘点）⇒ 不比符号
+        continue;
+      }
+      expect(rows, greaterThan(0), reason: '$what 应该有 $table 流水');
+      final int sum = sumOf(table, column, docId);
       expect(
         sum.sign,
-        sign,
+        dir.sign,
         reason:
-            '$what 的 $table 方向应为 ${sign > 0 ? '+' : '−'}，'
+            '$what 的 $table 方向应为 ${dir.sign! > 0 ? '+' : '−'}，'
             '实际合计 $sum —— 符号表与规则层漂了',
       );
     }

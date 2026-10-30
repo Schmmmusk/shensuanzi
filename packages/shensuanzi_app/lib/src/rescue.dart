@@ -834,6 +834,22 @@ _Assembly _assemble(Map<String, List<Map<String, Object?>>> rows) {
       }
     }
 
+    // **不该有的流水**：符号表说「这类单据不产生」⇒ 一行都不许有
+    if (issue == null) {
+      final String? unexpected = _unexpectedLedgerProblem(
+        // 类型为空已在上一个分支返回，这里必然非空
+        type: type!,
+        stock: myStock,
+        party: myParty,
+        money: myMoney,
+        partyId: doc['party_id'],
+      );
+      if (unexpected != null) {
+        issue = RescueIssueKind.missingLedger;
+        detail = unexpected;
+      }
+    }
+
     // 流水**自己**的引用（往来方 / 账户）—— 用户审查 2026-10-30（P1）
     if (issue == null) {
       final String? ledgerRef = _ledgerRefProblem(
@@ -1078,9 +1094,12 @@ String? _stockProblem({
           '库存记录 ${stockRows[pid] ?? 0} 条）—— 可能少读了几条。';
     }
     // **方向也要对**（用户审查 2026-10-30，P0）：销售/送货/采购退货是出库（−），
-    // 采购/销售退货是入库（+）。符号由 `stockSignOf()` 统一给出 —— 与规则层
+    // 采购/销售退货是入库（+）。方向由 `stockDirectionOf()` 统一给出 —— 与规则层
     // 同一套约定（`ledger_signs_test` 用真引擎对拍）。
-    final int sign = stockSignOf(type);
+    final int sign = stockDirectionOf(type).sign ?? 0;
+    // `0` = 这类单据不该有库存流水：由 `_unexpectedLedgerProblem` 判「一条都不许有」，
+    // 这里不重复（也走不到：盘点已在上面返回，收付款单没有明细）。
+    if (sign == 0) return null;
     final int want = sign * (lineQty[pid] ?? 0);
     final int got = stockQty[pid] ?? 0;
     if (want != got) {
@@ -1123,8 +1142,9 @@ String? _partyProblem({
   // 销售/送货/采购退货/付款是**增加**（+），采购/销售退货/收款是**减少**（−）。
   // 取绝对值会把「客户欠我 100」和「我欠客户 100」当成同一件事 ——
   // 这不是小误差，是账务方向整个反过来。
-  final int sign = partySignOf(type);
-  if (sign == 0) return null; // 这类单据不产生往来流水（如盘点）
+  final int sign = partyDirectionOf(type).sign ?? 0;
+  // `0` = 这类单据不该有往来流水（如盘点）：由 `_unexpectedLedgerProblem` 判
+  if (sign == 0) return null;
   final int sum = _sumCents(party);
   final int want = sign * totalCents;
   if (sum != want) {
@@ -1169,7 +1189,7 @@ String? _moneyProblem({
     // 符号也要对（用户审查 2026-10-30，P0）：收款（`receipt`）+，付款（`payment`）−。
     // 取绝对值会把「收进 100」和「付出 100」当成同一件事，恢复出来余额反着走。
     final int sum = _sumCents(money);
-    final int want = moneySignOf(type!) * totalCents;
+    final int want = (moneyDirectionOf(type!).sign ?? 0) * totalCents;
     if (sum != want) {
       if (sum.abs() == want.abs()) {
         return '这张$name的资金记录**方向反了**（应该是'
@@ -1291,6 +1311,51 @@ RescueIssue _settlementIssue(
         : '这张单的收款/付款记录没救回来（或者那条记录本身不完整）。'
               '单独导入它，欠款会对不上。',
   );
+}
+
+/// 出现了**不该有**的流水（用户审查 2026-10-30，P0）。
+///
+/// 符号表里 [LedgerDirection.absent] 的意思是「这类单据**不产生**这本账的流水」，
+/// 不是「方向为零」。所以只要出现了行，就是坏数据 —— 而从前三条判据
+/// 各自只看自己的那一侧，谁都没管「多余」：
+///
+/// | 场景 | 从前为什么漏 |
+/// |---|---|
+/// | 普通销售单多出一条资金流水 | `_moneyProblem` 的主单分支只比 `settled vs paid`，不看 `money` 是否为空 |
+/// | 散客销售多出一条往来流水 | `_partyProblem` 在 `party_id` 为空时直接 `return null` |
+/// | 收付款单多出一条库存流水 | `_stockProblem` 只在 `expectsLines` 时调用，收付款单没有明细 ⇒ 整个跳过 |
+///
+/// 后果都是「账户余额凭空多一笔 / 欠款挂到别人名下 / 收款改了库存」。
+///
+/// ⚠️ 例外：**盘点的库存流水是合法的**（差额可正可负），所以库存那条只判
+/// `absent`，`either` 放行。
+String? _unexpectedLedgerProblem({
+  required DocType type,
+  required List<Map<String, Object?>> stock,
+  required List<Map<String, Object?>> party,
+  required List<Map<String, Object?>> money,
+  required Object? partyId,
+}) {
+  if (!stockDirectionOf(type).mayHaveRows && stock.isNotEmpty) {
+    return '这张单不该有库存记录，却读到了 ${stock.length} 条 —— '
+        '导入它，库存会凭空变。';
+  }
+  // 往来：**两个条件任一不成立都不该有** ——
+  //   ① 这类单据本来就不产生往来流水（如盘点）
+  //   ② 单据根本没有往来方（散客 / 散采）⇒ 欠款无处可挂
+  final bool partyAllowed =
+      partyDirectionOf(type).mayHaveRows &&
+      partyId is String &&
+      partyId.isNotEmpty;
+  if (!partyAllowed && party.isNotEmpty) {
+    return '这张单不该有欠款记录，却读到了 ${party.length} 条 —— '
+        '导入它，这笔欠款会被挂到某个客户/供应商名下。';
+  }
+  if (!moneyDirectionOf(type).mayHaveRows && money.isNotEmpty) {
+    return '这张单不该有资金记录，却读到了 ${money.length} 条 —— '
+        '导入它，账户余额会凭空变。';
+  }
+  return null;
 }
 
 /// 分 → 「¥1,234.56」。报告里一律用这个，不写「1234.56 分」。

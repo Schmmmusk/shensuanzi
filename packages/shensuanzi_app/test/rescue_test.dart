@@ -1164,6 +1164,89 @@ void main() {
       expect(report.issues, isNotEmpty);
     });
 
+    test('散客销售被注入**往来流水** ⇒ 不完整（欠款挂到别人名下）', () async {
+      // 用户审查 2026-10-30（P0）：`_partyProblem` 在 `party_id` 为空时
+      // 直接 `return null`（散客豁免），于是「散客却有一笔欠款」没人管。
+      final List<String> ids = makeLedger(source, docs: 1);
+      final Db db = Db.open(source);
+      // 模拟：单据的往来方被损坏清空，而往来流水那一行还在
+      db.raw.execute(
+        'UPDATE documents SET party_id = NULL WHERE id = ?',
+        <Object?>[ids.single],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.importedDocuments, 0);
+      expect(report.issues.single.detail, contains('不该有欠款记录'));
+    });
+
+    test('普通销售单被注入**资金流水** ⇒ 不完整（余额凭空多一笔）', () async {
+      // 主单不写 `money_ledger`（钱挂在收付款单上），但 `_moneyProblem`
+      // 的主单分支只比「核销合计 vs paid_amount」，不看 money 是否为空。
+      final List<String> ids = makeLedger(source, docs: 1);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        'INSERT INTO money_ledger (id, account_id, document_id, amount, '
+        'seq_no, occurred_at, created_at) VALUES (?,?,?,?,?,?,?)',
+        <Object?>['extra-money', 'acc1', ids.single, 2000, 9999, 0, 0],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(report.importedDocuments, 0);
+      expect(report.issues.single.detail, contains('不该有资金记录'));
+    });
+
+    test('收款单被注入**库存流水** ⇒ 不完整（收钱改了库存）', () async {
+      // `_stockProblem` 只在 `expectsLines` 时调用，收付款单没有明细 ⇒ 整类跳过。
+      makeLedger(source, docs: 1, paid: true);
+      final Db db = Db.open(source);
+      final String receiptId =
+          db.raw.select(
+                'SELECT id FROM documents WHERE doc_type = ? LIMIT 1',
+                <Object?>['receipt'],
+              ).first['id']!
+              as String;
+      db.raw.execute(
+        'INSERT INTO stock_ledger (id, product_id, document_id, quantity, '
+        'unit_cost, total_cost, seq_no, occurred_at, created_at) '
+        'VALUES (?,?,?,?,?,?,?,?,?)',
+        <Object?>['extra-stock', 'prod1', receiptId, -1, 800, 800, 9998, 0, 0],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues.map((RescueIssue i) => i.docId),
+        contains(receiptId),
+        reason: '收款单不该碰库存 —— 一条都不许有',
+      );
+    });
+
+    test('盘点单被注入**往来流水** ⇒ 不完整（盘点不涉及往来）', () async {
+      makeLedger(source, docs: 0);
+      final String stk = makeStocktake(source, actual: 5);
+      final Db db = Db.open(source);
+      db.raw.execute(
+        'INSERT INTO party_ledger (id, party_id, document_id, amount, '
+        'seq_no, occurred_at, created_at) VALUES (?,?,?,?,?,?,?)',
+        <Object?>['extra-party', 'p1', stk, 500, 9997, 0, 0],
+      );
+      db.close();
+
+      final RescueReport report = await rescue();
+      expect(report.ok, isTrue, reason: report.failure);
+      expect(
+        report.issues.map((RescueIssue i) => i.docId),
+        contains(stk),
+        reason: '盘点没有往来方，多出来的欠款无处可挂',
+      );
+    });
+
     test('**核销记录本身**丢失（两端单据都还在）⇒ 两端都被拦下', () async {
       // 用户审查 2026-10-30 §三：传播靠「读到的核销关系」，所以某条核销
       // **本身没读出来**时，传播这条路走不通 —— 得靠各端自己的核对：

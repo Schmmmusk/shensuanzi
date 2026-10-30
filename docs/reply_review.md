@@ -16723,3 +16723,46 @@ int moneySignOf(DocType type);   // receipt +1；payment −1
 我第一次写「反向灵敏度」时，把 `DocType.sale => -1` **追加**在 switch 末尾 ——
 前面那条 arm 已经匹配了 sale，追加的永远走不到，测试当然是绿的。
 **改 switch 做反向验证，必须改到真正生效的那条 arm 上。**
+
+### 五十一、2026-10-30 第六轮审查：不该有的流水 + 符号表零值语义
+
+用户指出：抢救器现在能识别**方向错**的流水，却还没保证**不该有的流水**一定进不了新库。
+根因是我把符号表的 `0` 当成了「不适用」，于是「不产生流水」和「方向不固定」
+被混成同一个值 —— 前者该是硬约束，后者只是「不比方向」。
+
+#### ① 符号表：`int` 的 `0` → `LedgerDirection` 三态
+
+| 值 | 含义 | 消费方该怎么做 |
+|---|---|---|
+| `absent` | 这类单据**不产生**这本账的流水 | 一行都不许有 |
+| `either` | 会产生，但方向不固定（盘点） | 允许有，不比方向 |
+| `positive` / `negative` | 固定方向 | 有符号合计 = 预期 |
+
+`stockSignOf/partySignOf/moneySignOf` → `stockDirectionOf/partyDirectionOf/moneyDirectionOf`，
+返回 `LedgerDirection`。这不是「引入复杂类型」，而是**把两个不同的意思分开**。
+
+#### ② 新增 `_unexpectedLedgerProblem()`
+
+三条判据各自只看自己那一侧，谁都没管「多余」：
+
+| 场景 | 从前为什么漏 |
+|---|---|
+| 普通销售单多出一条资金流水 | `_moneyProblem` 主单分支只比 `settled vs paid`，不看 `money` 是否为空 |
+| 散客销售多出一条往来流水 | `_partyProblem` 在 `party_id` 为空时直接 `return null`（散客豁免） |
+| 收付款单多出一条库存流水 | `_stockProblem` 只在 `expectsLines` 时调用，收付款单没有明细 ⇒ 整类跳过 |
+| 盘点单多出往来/资金流水 | 同上（盘点不涉及往来，但没人查） |
+
+现在统一由一条判据兜住，按 `LedgerDirection.absent` + 「有 `party_id` 才允许有往来」
+两个条件判。**盘点的库存流水仍是合法的**（`either`），不误杀。
+
+#### ③ `expectSigns()` 的零值分支：`SUM` → `COUNT`
+
+两条 `+100` / `−100` 的流水合计为 0，用 `SUM` 判会放过。改成 `COUNT(*)`：
+「不该有」就是一行都不能有。`either` 分支不比符号。
+
+#### 测试与门禁
+
+- `rescue_test` +4（43 条）：散客注入往来 / 销售注入资金 / 收款单注入库存 / 盘点注入往来。
+- `ledger_signs_test` 改为三态语义；`absent` 分支查 `COUNT`。
+- **反向灵敏度**：把三条 `absent` 检查全部停用 ⇒ 四条用例全红。
+- 门禁：root **391** · core **761** · app **439** · analyze 0。
