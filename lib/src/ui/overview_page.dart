@@ -22,6 +22,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'balance_bars.dart';
 import 'notice.dart';
 import 'revenue_chart.dart';
+import 'stock_top.dart';
 
 /// 提醒橙 —— **不用错误红**（可以不拦人的提醒一律橙色，
 /// `docs/ui_principles.md` §1.3；与 `product_form_dialog.dart` 的内联提示同色）
@@ -134,6 +135,9 @@ class _OverviewPageState extends State<OverviewPage> {
         ? q!.receivablesSummary()
         : null;
     final PayablesSummary? payables = hasDocs ? q!.payablesSummary() : null;
+    final List<StockValueRow> stockTop = hasDocs
+        ? q!.topStockByValue()
+        : const <StockValueRow>[];
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -294,7 +298,12 @@ class _OverviewPageState extends State<OverviewPage> {
           // `margin: EdgeInsets.zero`，紧贴会看起来像「两张卡叠在一起」
           // （用户 2026-10-20 报过的那个现象）。
           const SizedBox(height: 12),
-          _charts(theme, receivables: receivables, payables: payables),
+          _charts(
+            theme,
+            receivables: receivables,
+            payables: payables,
+            stockTop: stockTop,
+          ),
         ],
         // 2026-10-22（§CV·八十三 批 2 第 12 条）：**空库也要有入口**
         if (widget.onNavigate != null && !hasDocs) ...<Widget>[
@@ -508,6 +517,7 @@ class _OverviewPageState extends State<OverviewPage> {
     ThemeData theme, {
     required ReceivablesSummary receivables,
     required PayablesSummary payables,
+    required List<StockValueRow> stockTop,
   }) {
     final bool hasBalance =
         receivables.totalCents > 0 || payables.totalCents > 0;
@@ -525,6 +535,10 @@ class _OverviewPageState extends State<OverviewPage> {
             payables: payables,
             mobileShell: widget.mobileShell,
           ),
+        ],
+        if (stockTop.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 12),
+          StockTopCard(rows: stockTop, mobileShell: widget.mobileShell),
         ],
       ],
     );

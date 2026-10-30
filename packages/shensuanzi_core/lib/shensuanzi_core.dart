@@ -155,7 +155,7 @@ export 'src/documents/delivery_service.dart'
     show DeliveryDraftInvalid, DeliverySaved, DeliveryService, DeliverySigned;
 export 'src/documents/discount_spread.dart' show spreadDiscount;
 export 'src/documents/overpay.dart' show Overpay;
-export 'src/dao/query_dao.dart' show QueryDao, StockAgg;
+export 'src/dao/query_dao.dart' show QueryDao, StockAgg, StockValueRow;
 export 'src/documents/draft_json.dart';
 export 'src/documents/product_backfill.dart';
 export 'src/documents/outstanding.dart'

@@ -364,4 +364,127 @@ void main() {
       expect(rows, isEmpty);
     });
   });
+
+  // ============================================================ 库存 Top 10
+  group('QueryDao.topStockByValue（压货榜）', () {
+    late Db db;
+    late PurchaseService purchases;
+    late SaleService sales;
+    late QueryDao queries;
+    late Account cash;
+
+    setUp(() {
+      resetClock();
+      db = newMemoryDb();
+      final RuleEngine engine = RuleEngine(db);
+      queries = QueryDao(db);
+      purchases = PurchaseService(engine: engine, queries: queries);
+      sales = SaleService(engine: engine, queries: queries);
+
+      final int t = now();
+      cash = Account(
+        id: newId(),
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      );
+      AccountDao(db).insert(cash);
+    });
+
+    tearDown(() => db.close());
+
+    /// 进 [qty] 件，单价 [yuan]（元）。
+    String buy(String name, String unit, int qty, String yuan) {
+      final int t = now();
+      final Product product = Product(
+        id: newId(),
+        code: 'P${name.hashCode.abs()}',
+        name: name,
+        unit: unit,
+        costPrice: 0,
+        sellPrice: 0,
+        createdAt: t,
+        updatedAt: t,
+      );
+      ProductDao(db).insert(product);
+      purchases.create(
+        PurchaseDraft(
+          date: '2026-10-04',
+          lines: <PurchaseLineDraft>[
+            PurchaseLineDraft(
+              productId: product.id,
+              productName: name,
+              quantity: '$qty',
+              unitPrice: yuan,
+            ),
+          ],
+          payments: <PurchasePaymentDraft>[
+            PurchasePaymentDraft(
+              accountId: cash.id,
+              amount: Money.format((double.parse(yuan) * qty * 100).round()),
+            ),
+          ],
+        ),
+      );
+      return product.id;
+    }
+
+    test('**按占用资金排，不按数量**（用户举的反例）', () {
+      // 牙签 500 个 × ¥0.01 = ¥5；电机 10 台 × ¥100 = ¥1000。
+      // 按数量排「牙签」会排第一 —— 那正是要避免的误导。
+      buy('牙签', '个', 500, '0.01');
+      buy('电机', '台', 10, '100');
+
+      final List<StockValueRow> top = queries.topStockByValue();
+      expect(top.length, 2);
+      expect(top.first.name, '电机', reason: '占用 ¥1000 > ¥5');
+      expect(top.first.valueCents, 100000);
+      expect(top.first.quantity, 10);
+      expect(top.first.unit, '台');
+      expect(top.last.name, '牙签');
+      expect(top.last.valueCents, 500);
+      expect(top.last.quantity, 500, reason: '数量照实给，但**不参与排序**');
+    });
+
+    test('limit 生效，且按价值降序', () {
+      buy('A', '个', 10, '1'); // ¥10
+      buy('B', '个', 10, '5'); // ¥50
+      buy('C', '个', 10, '3'); // ¥30
+
+      final List<StockValueRow> top = queries.topStockByValue(limit: 2);
+      expect(top.map((StockValueRow r) => r.name).toList(), <String>['B', 'C']);
+    });
+
+    test('超卖（数量为负）不进压货榜 —— 它属于「要留心」那张卡', () {
+      final String id = buy('亏货款', '个', 5, '10');
+      // 卖掉 8 个 ⇒ 库存 −3
+      sales.create(
+        SaleDraft(
+          date: '2026-10-05',
+          lines: <SaleLineDraft>[
+            SaleLineDraft(
+              productId: id,
+              productName: '亏货款',
+              quantity: '8',
+              unitPrice: '20',
+            ),
+          ],
+          payments: <SalePaymentDraft>[
+            SalePaymentDraft(accountId: cash.id, amount: '160'),
+          ],
+        ),
+      );
+
+      expect(
+        queries.topStockByValue(),
+        isEmpty,
+        reason: '负库存不是「压货」，混进来会让榜首变成一个负数',
+      );
+    });
+
+    test('没有任何库存流水 ⇒ 空列表（不是一堆 0）', () {
+      expect(queries.topStockByValue(), isEmpty);
+    });
+  });
 }

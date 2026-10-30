@@ -17,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/overview_page.dart';
 import 'package:shensuanzi/src/ui/revenue_chart.dart';
+import 'package:shensuanzi/src/ui/stock_top.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
@@ -616,6 +617,78 @@ void main() {
         expect(find.byKey(const Key('overview-revenue-chart')), findsOneWidget);
       });
     }
+
+    testWidgets('压货榜：金额大的排前面，数量照实写各自单位', (tester) async {
+      // 用户举的反例：牙签 500 个 vs 电机 10 台 —— 按数量排牙签会排第一。
+      // 这里钉的是**卡片按传入顺序渲染**（排序由 `topStockByValue` 负责，
+      // 那边有 DAO 层测试），以及数量/单位**不换算、不求和**。
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StockTopCard(
+              rows: const <StockValueRow>[
+                StockValueRow(
+                  productId: 'motor',
+                  name: '电机',
+                  unit: '台',
+                  quantity: 10,
+                  valueCents: 100000,
+                ),
+                StockValueRow(
+                  productId: 'pick',
+                  name: '牙签',
+                  unit: '个',
+                  quantity: 500,
+                  valueCents: 500,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('overview-stock-top')), findsOneWidget);
+      expect(find.textContaining('按占用资金排'), findsOneWidget);
+      expect(find.text('10 台'), findsOneWidget);
+      expect(find.text('500 个'), findsOneWidget);
+      expect(
+        tester.getRect(find.byKey(const Key('overview-stock-top-motor'))).top,
+        lessThan(
+          tester.getRect(find.byKey(const Key('overview-stock-top-pick'))).top,
+        ),
+      );
+
+      // 空列表 ⇒ 整张卡不渲染（不留一块空壳）
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(body: StockTopCard(rows: <StockValueRow>[])),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('overview-stock-top')), findsNothing);
+    });
+
+    testWidgets('压货榜与欠款卡之间也留了间距', (tester) async {
+      final QueryDao q = await seedBiz(
+        todayMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      await tester.pumpWidget(page(queries: q));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('overview-stock-top')), findsOneWidget);
+      final Rect balance = tester.getRect(
+        find.byKey(const Key('overview-balance-bars')),
+      );
+      final Rect stock = tester.getRect(
+        find.byKey(const Key('overview-stock-top')),
+      );
+      expect(
+        stock.top - balance.bottom,
+        greaterThanOrEqualTo(8),
+        reason: '欠款卡与压货榜贴在一起了',
+      );
+    });
 
     testWidgets('**卡片之间必须留间距**（2026-10-20「两张卡叠在一起」的回归钉）', (tester) async {
       final QueryDao q = await seedBiz(

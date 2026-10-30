@@ -48,6 +48,48 @@ class QueryDao {
     'FROM ${Schema.stockLedger} GROUP BY product_id',
   );
 
+  /// **压货最多的商品**（提案 54 §三「第三优先」，2026-10-30 裁定）。
+  ///
+  /// ## 为什么按**占用资金**排，不按数量
+  ///
+  /// 用户举的例子成立：500 个、20 箱、80 千克 —— 数字大小说明不了谁压货多
+  /// （单位不同，且单价差异巨大）。按数量排出来的「Top 10」会把
+  /// 「一箱牙签」排在「十台电机」前面，**误导经营决策**。
+  ///
+  /// ## 口径
+  ///
+  /// `valueCents = SUM(stock_ledger.total_cost)` —— **剩余存货的历史加权平均成本**
+  /// （R-9），不是「最近进价 × 数量」。UI 上必须标明这一点（§AA·四 / AA-4）。
+  ///
+  /// 只取 `quantity > 0` 的：超卖（负数）不该出现在「压货」榜里，
+  /// 它属于「要留心」那张卡（负库存 N 种）。
+  List<StockValueRow> topStockByValue({int limit = 10}) {
+    if (limit <= 0) return const <StockValueRow>[];
+    return <StockValueRow>[
+      for (final Map<String, Object?> row in _raw.select(
+        'SELECT p.id AS id, p.name AS name, p.unit AS unit, '
+        '       s.qty AS qty, s.cost AS cost '
+        'FROM ${Schema.products} p '
+        'JOIN (SELECT product_id, '
+        '             COALESCE(SUM(quantity), 0) AS qty, '
+        '             COALESCE(SUM(total_cost), 0) AS cost '
+        '      FROM ${Schema.stockLedger} GROUP BY product_id) s '
+        '  ON s.product_id = p.id '
+        'WHERE s.qty > 0 '
+        'ORDER BY s.cost DESC, p.name ASC '
+        'LIMIT ?',
+        <Object?>[limit],
+      ))
+        StockValueRow(
+          productId: row['id']! as String,
+          name: row['name']! as String,
+          unit: row['unit']! as String,
+          quantity: row['qty']! as int,
+          valueCents: row['cost']! as int,
+        ),
+    ];
+  }
+
   /// **在途数量**：送货单里 `status = in_transit` 的未签收数量
   /// （`docs/rules.md` RULE-003 的在途视图）。
   Map<String, int> inTransitByProduct() => _keyedSum(
@@ -579,6 +621,29 @@ class QueryDao {
         if (byId[id] != null) byId[id]!,
     ];
   }
+}
+
+/// [QueryDao.topStockByValue] 的一行：一个商品的压货情况。
+class StockValueRow {
+  const StockValueRow({
+    required this.productId,
+    required this.name,
+    required this.unit,
+    required this.quantity,
+    required this.valueCents,
+  });
+
+  final String productId;
+  final String name;
+
+  /// 商品自己的单位（**不做单位换算、不跨商品求和**）
+  final String unit;
+
+  /// 当前库存数量（最小单位）
+  final int quantity;
+
+  /// 占用资金（分）= `SUM(stock_ledger.total_cost)`，历史加权平均成本口径
+  final int valueCents;
 }
 
 /// [QueryDao.todaySummary] 的一行结果（#32：概览页「今日经营」卡）。
