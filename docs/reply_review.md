@@ -16250,3 +16250,81 @@ SQLite 头里「页大小 = 1」表示 65536。
   （实测 143.8 ms vs 6.1 ms）；`buildDailySeries` 补零 + **自然周（周一起，不是 `business_day/7`）**。
 
 **门禁**：root **389** · core **736** · app 412 · analyze 0 · format 0。
+
+### 四十三、2026-10-30 落地 ⑥ 退款上限（第一块：规则层 + 界面）
+
+用户裁定「可以直接开始第 6 项」。按提案 55 §一，⑥ 分两块，这次做**第一块**（规则层拦截 + 界面），
+第二块（`refundedAgainstCentsOf` 改走 settlements + 对拍）留到下一轮单独提交。
+
+**为什么这是 P0**：一张「已签收、一分钱没收到」的送货单，从前照样能填退款金额并提交 ——
+系统生成一张 `payment` 单，**账上凭空多出一笔支出**。不是显示问题，是造错账的入口。
+
+**实现**（`ReturnService`）：
+
+| 位置 | 内容 |
+|---|---|
+| `_receivedCentsOf(id)` | 原单**真实收款** = `SUM(settlements.amount WHERE target_doc_id = 原单)` |
+| `_refundedCentsAgainst(原单)` | 已退 = 该原单下所有退货单被核销的金额之和（同样走 settlements） |
+| `refundableCentsOf(id)` | 两者之差（≥0）—— **界面与拦截同源**，不会出现「界面让填、提交被拒」 |
+| `create()` 里 | 三条判据：本次 ≤ 应退（钳制已保证）/ 累计 ≤ 真实收款 / 收款为 0 直接拒 |
+
+**两条取证修正了提案里的假设**：
+
+1. **判据①不用额外写**：`ReturnDraft.recordedRefundCents` 已经用 `Overpay.clamp` 钳到
+   「本次退货金额」，超出部分是找零。写之前差点重复实现一遍。
+2. **「真实收款」和「已退」都不看 `paid_amount`**：那是派生缓存（`Agents.md` §二·4）。
+   两条 SQL 都直接查 `settlements` —— 这正是用户指出的「不能把 `paid_amount` 当唯一权威」。
+
+**界面**（`ReturnPage`）：
+
+- 可退金额 = 0 ⇒ **不显示金额与账户**，改成一句说明：「这张单还没收到过钱，所以没有可退的款 ——
+  退货后会直接冲减欠款。等以后真的收到钱了，再退也不迟。」
+- 可退 > 0 ⇒ 显示卡片，并在上面加一行「这张单最多还能退 ¥X。」
+
+**测试 +9**：
+
+- core `refund_cap_test.dart` **8 条**：送货已签收未收款 ⇒ 拒 / 销售全赊 ⇒ 拒 / 采购全赊 ⇒ 拒 /
+  **不退钱的退货不受影响** / 只收 50 却退 60 ⇒ 拒 / 分两次累计超 ⇒ 第二次拒 /
+  `refundableCentsOf` 随已退递减 / 正常退款不误杀。
+- root **1 条**：已签收未收款的送货单，退货页**不出现退款输入框**，且出现说明文案
+  （不能只是藏起来，要说清「为什么没有」）。
+- 反向灵敏度：把 `if (thisRefundCents > 0)` 改成 `if (false)` ⇒ **5 条红**。
+
+**门禁**：root **390** · core **744** · app 412 · analyze 0 · format 0。
+
+**下一轮（⑥ 第二块）**：`SettlementService.refundedAgainstCentsOf()` 从
+`SUM(documents.paid_amount)` 改走 `settlements` —— 它会影响详情页「还欠客户退款」的显示，
+必须**单独一轮 + 新旧算法对拍**（同一批数据结果必须一致；不一致说明某处缓存与真相漂了）。
+
+### 四十四、2026-10-30 落地 ⑥ 第二块：`refundedAgainstCentsOf` 改走真相
+
+用户「接着做吧，省得后面忘了」⇒ 做 ⑥ 第二块（提案 55 §一 第 2 项，要求**单独一轮 + 对拍**）。
+
+**为什么单独一轮**：这个方法决定详情页「还欠客户退款 ¥X」显示多少，动它会让既有显示跟着变。
+
+**先做真库对拍**（改之前）：
+
+| 项 | 数值 |
+|---|---|
+| 有退货的原单 | **4810 张** |
+| 新旧算法**不一致**的 | **0** |
+
+⇒ 这个库上 `paid_amount` 缓存与 `settlements` 真相**没有漂**，可以安全迁移。
+
+**改动**：`SELECT SUM(paid_amount) FROM documents WHERE ref_doc_id = ?`
+→ `SELECT SUM(s.amount) FROM settlements s JOIN documents r ON r.id = s.target_doc_id
+WHERE r.ref_doc_id = ? AND r.doc_type IN (returns)`。
+
+**测试 +4**（`refunded_against_test.dart`）：正常路径 / 挂账退货为 0 / 多次累加 /
+**缓存被写坏时以真相为准**。
+
+最后那条是这次改动的意义所在：把退货单的 `paid_amount` 手工改成 99999（`documents` 允许
+UPDATE 这个字段，所以真实世界里可能发生 —— 历史 bug / 手工改库 / 旧版本写坏），
+断言仍返回 3000。改之前这条**红**（返回 99999），改之后绿。
+
+> 这也印证了提案里那句「不一致说明某处缓存与真相漂了 —— 那本身是另一个 bug」：
+> 真库对拍是 0 差异，所以这次没有第二个 bug 要查；但测试必须证明「漂了的时候能纠正」。
+
+**门禁**：root 390 · core **748**（+4）· app 412 · analyze 0 · format 0。
+
+**⑥ 至此两块都完成**：规则层三条判据 + 界面按可退金额显示 + 已退款改走真相。

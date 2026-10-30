@@ -48,6 +48,12 @@ class _ReturnPageState extends State<ReturnPage> {
   final TextEditingController _remark = TextEditingController();
   final TextEditingController _refundAmount = TextEditingController();
 
+  /// 这张原单**现在最多还能退多少钱**（0 = 一分都不能退）。
+  ///
+  /// 与规则层的拦截**同源**（真实收款 − 已退，都走 `settlements`）——
+  /// 所以不会出现「界面让填、提交被拒」的割裂。
+  int _refundableCents = 0;
+
   /// 立即退款的账户（`null` = 挂账冲减，不立即退钱）
   Account? _refundAccount;
 
@@ -84,6 +90,7 @@ class _ReturnPageState extends State<ReturnPage> {
     super.initState();
     _returnType = ReturnService.returnTypeFor(widget.original.docType);
     _accounts = widget.service.activeAccounts();
+    _refundableCents = widget.service.refundableCentsOf(widget.original.id);
     _quotas = widget.service.quotasFor(
       refDocId: widget.original.id,
       returnType: _returnType,
@@ -521,10 +528,43 @@ class _ReturnPageState extends State<ReturnPage> {
 
   Widget _refundSection(ThemeData theme) {
     final List<Account> accounts = _accounts;
+    // ⚠️ ⑥（用户裁定 2026-10-30）：**原单没收到过钱就不显示退款卡片**。
+    //
+    // 从前这里只看「有没有选账户」，不看原单收过钱没有 —— 一张已签收、一分未收的
+    // 送货单照样能填退款金额，提交后生成一张 payment 单，**账上凭空多一笔支出**。
+    // 用户原话：「这种问题发生了后果更难收拾。」
+    if (_refundableCents <= 0) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('立即退款（可选）', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(
+            '这张单还没收到过钱，所以没有可退的款 —— 退货后会直接冲减欠款。'
+            '等以后真的收到钱了，再退也不迟。',
+            key: const Key('return-no-refundable'),
+            style: TextStyle(
+              height: 1.6,
+              color: theme.textTheme.bodySmall?.color,
+            ),
+          ),
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Text('立即退款（可选）', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 4),
+        // 把上限摆出来：用户不用猜「能退多少」，也不用提交后才发现被拒
+        Text(
+          '这张单最多还能退 ¥${Money.formatGrouped(_refundableCents)}。',
+          key: const Key('return-refundable-hint'),
+          style: TextStyle(
+            height: 1.6,
+            color: theme.textTheme.bodySmall?.color,
+          ),
+        ),
         const SizedBox(height: 8),
         if (accounts.isEmpty)
           Text(

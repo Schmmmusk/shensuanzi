@@ -265,9 +265,18 @@ class SettlementService {
   /// ⚠️ 方向：**销售退货** = 我方退钱给客户（客户应收）；**采购退货** = 供应商退钱给我们。
   /// 本方法只给"已退回去多少"，方向由调用方按 `isInbound` 决定措辞。
   int refundedAgainstCentsOf(String documentId) {
+    // ⚠️ **走 `settlements`，不走 `documents.paid_amount`**（用户裁定 2026-10-30 ⑥ 第二块）。
+    //
+    // `paid_amount` 是派生缓存（`Agents.md` §二·4），真相在核销流水。
+    // 从前这里读缓存：缓存一旦被写坏（历史 bug / 手工改库 / 旧版本），
+    // 「还欠客户退款」就会显示一个凭空的数字，而用户没有别的办法核对。
+    //
+    // 迁移前做过**真库对拍**：4810 张有退货的原单，新旧算法 **0 差异** ——
+    // 所以这次改动在正常数据上不改变任何显示，只在缓存漂了的时候把答案纠正回来。
     final List<Map<String, Object?>> rows = _db.raw.select(
-      'SELECT COALESCE(SUM(paid_amount), 0) AS s FROM documents '
-      "WHERE ref_doc_id = ? AND doc_type IN ('sale_return', 'purchase_return')",
+      'SELECT COALESCE(SUM(s.amount), 0) AS s FROM settlements s '
+      'JOIN documents r ON r.id = s.target_doc_id '
+      "WHERE r.ref_doc_id = ? AND r.doc_type IN ('sale_return', 'purchase_return')",
       <Object?>[documentId],
     );
     if (rows.isEmpty) return 0;

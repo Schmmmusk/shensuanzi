@@ -269,6 +269,47 @@ void main() {
     expect(received!.docNo, isNotEmpty);
   });
 
+  testWidgets('已签收但一分未收的送货单 ⇒ **不显示退款输入框**（⑥）', (WidgetTester tester) async {
+    // 用户裁定 2026-10-30 ⑥：这是「会造错账」的入口 —— 货送到了、钱没收，
+    // 从前照样能填退款金额，提交后生成一张 payment 单，账上凭空多一笔支出。
+    final DeliveryService deliveries = DeliveryService(
+      engine: engine,
+      queries: queries,
+    );
+    final DeliverySaved saved = deliveries.create(
+      DeliveryDraft(
+        partyId: customerId,
+        partyName: '客户甲',
+        date: '2026-10-04',
+        lines: <DeliveryLineDraft>[
+          DeliveryLineDraft.fromProduct(
+            productDao.findById(productId)!,
+            quantity: '12',
+          ),
+        ],
+      ),
+    );
+    final String deliveryId = idOf(saved.docNo);
+    deliveries.markDelivered(deliveryId);
+    final Document doc = documents.findById(deliveryId)!;
+    expect(doc.status, DocStatus.delivered, reason: '夹具前提：已签收');
+
+    await tester.pumpWidget(page(doc));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('return-refund-amount')),
+      findsNothing,
+      reason: '一分钱没收到，退什么款',
+    );
+    expect(
+      find.byKey(const Key('return-no-refundable')),
+      findsOneWidget,
+      reason: '不能只是藏起来，要说清「为什么没有」和「以后怎么退」',
+    );
+    expect(find.textContaining('还没收到过钱'), findsOneWidget);
+  });
+
   testWidgets('拒收（fullReturn）：预填全部可退量，保存后原送货单 cancelled', (
     WidgetTester tester,
   ) async {

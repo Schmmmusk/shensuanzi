@@ -27,6 +27,7 @@ import '../models/product.dart';
 import '../rules/payment_entry.dart';
 import '../rules/rule_engine.dart';
 import '../rules/rule_rejection.dart';
+import '../util/money.dart';
 import '../util/ids.dart';
 import 'return_draft.dart';
 
@@ -221,6 +222,47 @@ class ReturnService {
 
   /// 提交草稿。校验不通过抛 [ReturnDraftInvalid]；规则拒绝抛 [StateError]
   /// （此时库已整单回滚，界面走「意外失败」兜底文案）。
+  /// 原单**真实收款**（走 `settlements`，不是 `paid_amount` 缓存）。
+  ///
+  /// `settlements.target_doc_id` 指向被核销的单，`amount` 是这次核销的金额 ——
+  /// 两者相加就是这个原单实际收到（或付出）过多少钱。
+  int _receivedCentsOf(String documentId) {
+    final List<Map<String, Object?>> rows = _queries.db.raw.select(
+      'SELECT COALESCE(SUM(amount), 0) AS s FROM settlements WHERE target_doc_id = ?',
+      <Object?>[documentId],
+    );
+    final Object? value = rows.isEmpty ? null : rows.first['s'];
+    return value is int ? value : 0;
+  }
+
+  /// 这张原单**已经退出去多少**（所有退货单被核销的金额之和）。
+  ///
+  /// ⚠️ 同样走 `settlements`：退货单的 `paid_amount` 是缓存，而这里要的是
+  /// 「钱真的付出去了多少」。
+  int _refundedCentsAgainst(String originalId) {
+    final List<Map<String, Object?>> rows = _queries.db.raw.select(
+      'SELECT COALESCE(SUM(s.amount), 0) AS s FROM settlements s '
+      'JOIN documents r ON r.id = s.target_doc_id '
+      "WHERE r.ref_doc_id = ? AND r.doc_type IN ('sale_return', 'purchase_return')",
+      <Object?>[originalId],
+    );
+    final Object? value = rows.isEmpty ? null : rows.first['s'];
+    return value is int ? value : 0;
+  }
+
+  /// 这张原单**现在最多还能退多少钱**（0 = 一分都不能退）。
+  ///
+  /// 给界面用：退款卡片按它决定「显示输入框」还是「显示一句说明」，
+  /// 并把上限写出来。判据与 [create] 里的拦截**同源**（都是真实收款 − 已退），
+  /// 所以不会出现「界面允许填、提交被拒」的割裂。
+  ///
+  /// ⚠️ 只读 `settlements`，不看 `paid_amount` 缓存。
+  int refundableCentsOf(String originalId) {
+    final int left =
+        _receivedCentsOf(originalId) - _refundedCentsAgainst(originalId);
+    return left < 0 ? 0 : left;
+  }
+
   ReturnSaved create(ReturnDraft draft, {int? now}) {
     final Map<ReturnField, String> fieldErrors = draft.validate();
     final List<Map<ReturnLineField, String>> lineErrors = draft.validateLines();
@@ -245,6 +287,43 @@ class ReturnService {
     }
     // 以**库里的原单**为准定退货类型（不信任表单带来的上下文）
     final DocType returnType = returnTypeFor(original.docType);
+
+    // ⚠️ ⑥ 退款上限（用户裁定 2026-10-30）。
+    //
+    // 为什么必须在这里拦、而不是只在界面上隐藏输入框：一张「已签收、一分钱没收到」的
+    // 送货单，从前照样能填退款金额并提交 —— 系统会生成一张 payment 单，
+    // **账上凭空多出一笔支出**，而货其实根本没付过钱。这不是显示问题，是造错账的入口。
+    //
+    // 三条判据：
+    //   ① 本次退款 ≤ 本次退货应退金额 —— 已由 `recordedRefundCents` 的钳制保证
+    //   ② 累计实际退款（含本次） ≤ 原单真实收款
+    //   ③ 原单真实收款 == 0 ⇒ 任何退款都拒绝
+    //
+    // ⚠️「真实收款」走 `settlements`，**不是** `documents.paid_amount`（那是派生缓存，
+    // `Agents.md` §二·4）。同理「累计已退款」也走 settlements，不看退货单的 paid_amount。
+    final int thisRefundCents = draft.recordedRefundCents.fold(
+      0,
+      (int sum, int value) => sum + value,
+    );
+    if (thisRefundCents > 0) {
+      final int receivedCents = _receivedCentsOf(original.id);
+      if (receivedCents <= 0) {
+        throw const RuleRejected(
+          '这张单还没收到过钱，所以没有可退的款。'
+          '如果确实要退钱给客户，请先在原单上收款；'
+          '或者这次选「不立即退钱、冲减欠款」。',
+        );
+      }
+      final int alreadyRefundedCents = _refundedCentsAgainst(original.id);
+      if (alreadyRefundedCents + thisRefundCents > receivedCents) {
+        final int remaining = receivedCents - alreadyRefundedCents;
+        throw RuleRejected(
+          '这张单只收到过 ¥${Money.formatGrouped(receivedCents)}，'
+          '之前已经退过 ¥${Money.formatGrouped(alreadyRefundedCents)}，'
+          '这次最多还能退 ¥${Money.formatGrouped(remaining < 0 ? 0 : remaining)}。',
+        );
+      }
+    }
 
     final int stamp = now ?? DateTime.now().millisecondsSinceEpoch;
 
