@@ -1,5 +1,6 @@
 import 'package:sqlite3/sqlite3.dart';
 
+import '../charts/daily_series.dart';
 import '../db/database.dart';
 import '../db/read_failures.dart';
 import '../db/schema.dart';
@@ -157,6 +158,111 @@ class QueryDao {
       deliveryCount: deliveryCount,
       deliveryCents: deliveryCents,
     );
+  }
+
+  /// **经营图表**：按业务日聚合的营收（提案 54 §二，2026-10-30 裁定）。
+  ///
+  /// ## 口径
+  ///
+  /// ```
+  /// 营收 = 销售 + 送货 − 原单仍然有效的销售退货
+  /// ```
+  ///
+  /// - **在途送货算营收**（裁定甲）—— 另给 `inTransitCount`，图上必须标注
+  ///   「含未签收 N 张」；
+  /// - 退货只减「**原单仍有效**」的：拒收时原送货单被置 `cancelled`、
+  ///   本来就不计营收，再减一次就是**双重冲减**（实测 458 张、虚减 3.9%）；
+  /// - 用 `business_day`（整数、有索引、不随时区漂移），**不用** `occurred_at`
+  ///   —— 后者依赖查询时区，换台电脑历史图会整体平移；
+  /// - 作废单据一律排除。
+  ///
+  /// ## 为什么是三条 SQL 而不是一条
+  ///
+  /// 一条 `GROUP BY business_day, doc_type` 会让规划器放弃
+  /// `(doc_type, business_day)` 索引 —— 实测 **143.8 ms vs 6.1 ms**（24 倍）。
+  ///
+  /// 返回**稀疏**结果（只含有数据的天）；补零与分桶交给
+  /// `buildRevenueSeries()` —— 那是纯函数，边界好测。
+  List<RevenueDay> dailyRevenue({required int fromDay, required int toDay}) {
+    if (fromDay > toDay) return const <RevenueDay>[];
+
+    final Map<int, int> sale = <int, int>{};
+    final Map<int, int> delivery = <int, int>{};
+    final Map<int, int> refund = <int, int>{};
+    final Map<int, int> count = <int, int>{};
+    final Map<int, int> transit = <int, int>{};
+
+    // ① 店内销售
+    for (final Map<String, Object?> row in _raw.select(
+      'SELECT business_day AS d, COUNT(*) AS c, '
+      'COALESCE(SUM(total_amount), 0) AS amt '
+      'FROM ${Schema.documents} '
+      'WHERE doc_type = ? AND status != ? AND business_day BETWEEN ? AND ? '
+      'GROUP BY business_day',
+      <Object?>[DocType.sale.wire, DocStatus.cancelled.wire, fromDay, toDay],
+    )) {
+      final int day = row['d']! as int;
+      sale[day] = row['amt']! as int;
+      count[day] = (count[day] ?? 0) + (row['c']! as int);
+    }
+
+    // ② 送货（含在途；另数出在途张数给界面标注用）
+    for (final Map<String, Object?> row in _raw.select(
+      'SELECT business_day AS d, COUNT(*) AS c, '
+      'COALESCE(SUM(total_amount), 0) AS amt, '
+      'SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS transit '
+      'FROM ${Schema.documents} '
+      'WHERE doc_type = ? AND status != ? AND business_day BETWEEN ? AND ? '
+      'GROUP BY business_day',
+      <Object?>[
+        DocStatus.inTransit.wire,
+        DocType.delivery.wire,
+        DocStatus.cancelled.wire,
+        fromDay,
+        toDay,
+      ],
+    )) {
+      final int day = row['d']! as int;
+      delivery[day] = row['amt']! as int;
+      count[day] = (count[day] ?? 0) + (row['c']! as int);
+      transit[day] = row['transit']! as int;
+    }
+
+    // ③ 销售退货 —— **只减原单仍有效的**
+    //
+    // 拒收型退货：原送货单被置 `cancelled`，它本来就没进上面两条的营收，
+    // 这里再减一次就是双重冲减。用户实测 458 张、虚减 ¥45.8 万（3.9%）。
+    for (final Map<String, Object?> row in _raw.select(
+      'SELECT r.business_day AS d, COALESCE(SUM(r.total_amount), 0) AS amt '
+      'FROM ${Schema.documents} r '
+      'JOIN ${Schema.documents} o ON o.id = r.ref_doc_id '
+      'WHERE r.doc_type = ? AND r.status != ? AND o.status != ? '
+      '  AND r.business_day BETWEEN ? AND ? '
+      'GROUP BY r.business_day',
+      <Object?>[
+        DocType.saleReturn.wire,
+        DocStatus.cancelled.wire,
+        DocStatus.cancelled.wire,
+        fromDay,
+        toDay,
+      ],
+    )) {
+      refund[row['d']! as int] = row['amt']! as int;
+    }
+
+    final Set<int> days = <int>{...sale.keys, ...delivery.keys, ...refund.keys};
+    final List<int> sorted = days.toList()..sort();
+    return <RevenueDay>[
+      for (final int day in sorted)
+        RevenueDay(
+          day: day,
+          saleCents: sale[day] ?? 0,
+          deliveryCents: delivery[day] ?? 0,
+          returnCents: refund[day] ?? 0,
+          documentCount: count[day] ?? 0,
+          inTransitCount: transit[day] ?? 0,
+        ),
+    ];
   }
 
   /// **#32**：未签收送货单张数（`in_transit`；「送货 M 笔 · ¥Y」行的小注）。

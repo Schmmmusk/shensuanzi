@@ -77,6 +77,16 @@ export 'src/models/stock_ledger.dart' show StockLedger;
 export 'src/models/sync_queue_entry.dart' show SyncQueueEntry, SyncQueueStatus;
 
 // DAO
+export 'src/charts/daily_series.dart'
+    show
+        RevenueBucket,
+        RevenueDay,
+        RevenuePoint,
+        buildRevenueSeries,
+        dayLabel,
+        dayToDate,
+        monthStartDay,
+        weekStartDay;
 export 'src/dao/account_dao.dart' show AccountDao;
 export 'src/dao/document_dao.dart'
     show DocumentDao, DocumentStatusView, DocumentSummary, ReturnAgg;

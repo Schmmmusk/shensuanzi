@@ -16813,3 +16813,62 @@ int moneySignOf(DocType type);   // receipt +1；payment −1
 55 第一批（⑥ 退款上限 + ② 业务完整性）到此收口。提案 55 增加「结项状态」一节：
 判据清单 + **两条已知限制**（盘点流水丢失不可判；源文件被改动只能检测不能锁）。
 54 经营图表作为**独立新阶段**开始，不与本轮混在一起。
+
+### 五十三、2026-10-30 经营图表第一批：schema v7 + 聚合 + 纯函数
+
+提案 54 的第一批（查询层），**不含任何 UI**。
+
+#### ① schema v7：`documents(doc_type, business_day)`
+
+只加索引、不碰行。顺序不能反：查询永远是「先按类型、再按日期范围」，
+反过来规划器会退化成扫该日期段的全部类型。
+
+**真实大库实测（26.2 万单 / 545 MB）**：v6→v7 迁移 **1.1 s**，
+近 30 天销售聚合 **4–5 ms**。
+
+#### ② `QueryDao.dailyRevenue()`
+
+口径：`销售 + 送货 − 原单仍然有效的销售退货`。
+
+- 在途送货**计入**营收（裁定甲），另给 `inTransitCount` 供界面标注；
+- 退货 SQL 带 `JOIN documents o ON o.id = r.ref_doc_id AND o.status != 'cancelled'`
+  —— 拒收时原送货单已作废、本就不计营收，再减一次就是**双重冲减**
+  （用户实测 458 张、虚减 3.9%）；
+- 用 `business_day`，不用 `occurred_at`（后者依赖查询时区）；
+- **三条 SQL 而不是一条**：`GROUP BY business_day, doc_type` 会让规划器
+  放弃新索引（143.8 vs 6.1 ms）。
+
+#### ③ `buildRevenueSeries()` 纯函数
+
+补零（空白日必须画出来，否则「三天没卖」会被画成连续趋势）+ 自然周
+（周一起，`((day+3)/7).floor()*7-3`，**不是** `day ~/ 7`）+ 自然月。
+返回稀疏数据由 DAO 负责、补零由纯函数负责 —— 边界全部可单测。
+
+#### ④ 迁移链：v3 → v7（家人的 0.6.1）
+
+新增专项测试：现场造一个**带数据的 v3 库**（只跑前两环 + 写死 `user_version=3`
++ 塞两张单据），再用正常入口打开，断言：
+数据不丢、`business_day` 按 `occurred_at` 回填（23:50 那张不会被折到第二天）、
+`idx_docs_type_bday` 的列顺序是 `(doc_type, business_day)`。
+
+顺带修了测试里的降级辅助：`DROP COLUMN business_day` 前必须先摘
+`idx_docs_type_bday`（SQLite 会检查依赖该列的索引）。
+
+#### ⑤ 顺手修的两个真问题
+
+**报告漏出英文 SQL 错误**：截断的库 `sqlite3.open` 能成功、一读才抛
+`database disk image is malformed` —— 那句英文直接进了报告，违反「不许出现
+SQL 术语」。改成打开前先判截断（头里页数 × 页大小 vs 实际大小），给中文；
+打开失败也不再拼 `error.message`。
+
+**测试的「截断」不是真截断**：用 `FileMode.writeOnly` 去 `truncateSync`，
+而那个模式**打开就清零**，结果测的是「头坏了」而不是「截断了」。改成读字节回写。
+
+#### 测试与门禁
+
+- `revenue_series_test` **9 条**（纯函数 5 + 口径 4）。
+- `schema_test` +1（v3→v7）；版本断言 6→7；降级辅助修 1 处。
+- `recovery_test` 的 `makeDb(schemaVersion:)` 默认值改成 `Schema.version`
+  —— 写死 6 会让每次升版红一批无关用例。
+- 反向灵敏度：去掉「原单仍有效」条件 ⇒ 拒收那条红；周改 `day ~/ 7` ⇒ 周那条红。
+- 门禁：root **391** · core **772** · app **443** · analyze 0。

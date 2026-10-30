@@ -41,7 +41,9 @@ void main() {
   });
 
   /// 造一个有 [docs] 张单据的库；返回路径。
-  String makeDb(String path, {int docs = 3, int schemaVersion = 6}) {
+  /// [schemaVersion] 默认跟随**当前版本** —— 写死数字的话，每次升 schema
+  /// 都会让一批无关用例红一次（v7 就踩了）。
+  String makeDb(String path, {int docs = 3, int schemaVersion = Schema.version}) {
     final Db db = Db.open(path);
     for (int i = 0; i < docs; i++) {
       final int at = DateTime(2026, 10, 20 + i, 10).millisecondsSinceEpoch;

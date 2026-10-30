@@ -336,14 +336,26 @@ RescueReport _rescueFromCopy({
     repaired = true;
   }
 
+  // 打开**之前**先判截断：头里记着「我有多大」，实际文件比它短 ⇒ 一定被截过。
+  // 放在这里而不是等 SQLite 报错，是为了给一句中文（见上面那条注释）。
+  final String? truncated = _truncationProblem(copy);
+  if (truncated != null) return RescueReport.failed(truncated);
+
   Database? db;
   try {
     db = sqlite3.open(copy);
     // 头好了也可能结构坏 —— 真读一下才算「打开成功」
     db.select('SELECT name FROM sqlite_master LIMIT 1');
-  } on SqliteException catch (error) {
+  } on SqliteException {
     db?.dispose();
-    return RescueReport.failed('打不开这个数据文件（${error.message}）');
+    // ⚠️ **不把 `error.message` 拼进报告**：那是英文的 SQLite 术语
+    // （`database disk image is malformed`），而报告的硬规矩是
+    // 「不许出现 SQL 术语」（用户补充建议第 2 条）。用户看懂了也没用，
+    // 他要的是「现在怎么办」。
+    return RescueReport.failed(
+      '这个数据文件损坏得比较严重，连它自己的目录都读不出来了。'
+      '这种情况没法继续抢救 —— 如果备份里有更早的版本，从备份恢复更稳妥。',
+    );
   }
 
   try {
@@ -485,6 +497,46 @@ class _FileSnapshot {
 }
 
 // ============================================================ 借头
+
+/// 文件是不是**被截断过**（头里写的页数 × 页大小 > 实际大小）。
+///
+/// 为什么单独判：截断的库 `sqlite3.open` 能成功，但一读就抛
+/// `database disk image is malformed` —— 那句英文会直接进报告。
+/// 提前判出来就能给一句人话，也省得后面一堆分支各自处理。
+///
+/// 只判「比头里记的小」这一个方向：文件**大于**声明值是允许的
+/// （WAL 未 checkpoint 时主文件里可能有预留页）。
+String? _truncationProblem(String path) {
+  final RandomAccessFile raf;
+  try {
+    raf = File(path).openSync();
+  } on FileSystemException {
+    return null; // 读不了交给后面的分支报
+  }
+  try {
+    final int size = raf.lengthSync();
+    if (size < 512) {
+      return '这个文件太小了，不像是一份完整的数据 —— 可能只复制了一半。';
+    }
+    final List<int> head = raf.readSync(100);
+    final int rawPageSize = (head[16] << 8) | head[17];
+    final int pageSize = rawPageSize == 1 ? 65536 : rawPageSize;
+    if (pageSize < 512) return null; // 头本身不靠谱，交给借头分支
+    final int pages =
+        (head[28] << 24) | (head[29] << 16) | (head[30] << 8) | head[31];
+    if (pages <= 0) return null; // 没写页数，判不了
+    if (size < pages * pageSize || size % pageSize != 0) {
+      return '这个文件比它自己记录的要小 —— 像是被截断过'
+          '（复制到一半断了，或者硬盘出了问题）。'
+          '这种情况没法继续抢救；备份里有更早的版本的话，从备份恢复更稳妥。';
+    }
+    return null;
+  } on FileSystemException {
+    return null;
+  } finally {
+    raf.closeSync();
+  }
+}
 
 /// 文件头是不是一个合法的 SQLite 库（前 16 字节的魔数）。
 bool _hasValidHeader(String path) {

@@ -34,7 +34,14 @@ class Schema {
   /// ⚠️ **本步（段 1a）只动 schema 与迁移**：`document_lines.quantity` 仍
   /// **永远是最小单位**、`amount` 仍是这一行**实际发生金额的真相**；
   /// 引擎 / 草稿 / UI 的口径改动分别在 2a / 2b / 3 段。
-  static const int version = 6;
+  /// v7（2026-10-30，提案 54 §二）：`documents` 加
+  /// `(doc_type, business_day)` 复合索引，给**经营图表**的按日聚合用。
+  ///
+  /// 为什么必须有它：按 `doc_type` 过滤时规划器走 `idx_documents_type_status`，
+  /// 于是**要扫该类型的全部历史**再筛日期。478 MB / 26.2 万单实测：
+  /// 近 30 天按类型分开查 **143.8 → 6.1 ms**（只查销售 **108.4 → 3.7 ms**），
+  /// 建索引一次性 184 ms。只动索引、不碰任何行。
+  static const int version = 7;
 
   // ---------------------------------------------------------------- 表名
 
@@ -230,6 +237,11 @@ class Schema {
     // 有了它 `ORDER BY business_day DESC, created_at DESC LIMIT 200` 能**走索引
     // 直接取前 200 行**，不用把 16 万根单全排一遍（实测 136.8 → 0.1 ms）。
     'CREATE INDEX idx_docs_bday_created     ON $documents(business_day, created_at, id)',
+    // v7：**经营图表**的按日聚合键。`(doc_type, business_day)` 的顺序不是随手写的：
+    // 查询永远是「先按类型（sale/delivery/sale_return 各查一次）再按日期范围」，
+    // 所以类型在前、日期在后 —— 反过来就退化成扫全表。
+    // 实测（478 MB / 26.2 万单）按类型查 30 天：143.8 → 6.1 ms。
+    'CREATE INDEX idx_docs_type_bday      ON $documents(doc_type, business_day)',
     // v4（P0-3）：同步「最近更新窗口」按 (updated_at, id) 取；主数据游标
     // 同款复合索引（idx_products_updated 等）—— 没有它窗口查询是全表扫
     // + 临时 B 树（EXPLAIN 实测，业务审查 §5.4）。
@@ -485,6 +497,18 @@ class Schema {
     // ⚠️ 本步由 `Db._migrate` 在**外键关闭**的状态下执行（重建父表必须先关，
     // 否则子表的行会让 `DROP TABLE` 直接报错）；迁移完再 `foreign_key_check` 复核。
     5 => _rebuildDocumentsV6(),
+
+    // v6 → v7（2026-10-30，提案 54 §二）：经营图表的按日聚合索引。
+    //
+    // 只加索引、**不触碰任何行** —— 所以走 `CREATE INDEX IF NOT EXISTS` 就够，
+    // 不需要重建表。`IF NOT EXISTS` 是保命符：手工建过同名索引的库不会因此开不了机。
+    //
+    // 顺序 `(doc_type, business_day)`：查询永远是「先按类型、再按日期范围」。
+    // 反过来的话规划器会退化成扫该日期段的全部类型 —— 那正是要避免的。
+    6 => <String>[
+      'CREATE INDEX IF NOT EXISTS idx_docs_type_bday '
+          'ON $documents(doc_type, business_day)',
+    ],
 
     4 => <String>[
       'DROP INDEX IF EXISTS idx_stock_product_seq',

@@ -1,0 +1,342 @@
+// 经营图表的**序列构建**与**聚合口径**（提案 54 §二 / 55 §三）。
+//
+// 这一层最容易出的错不是「算错」，而是**画错**：
+//   · 不补零 ⇒ 三天没卖被画成连续趋势；
+//   · 用 `day ~/ 7` 当周 ⇒ 边界既不是周一也不是周日，用户对不上日历；
+//   · 拒收的退货再减一次 ⇒ 双重冲减（实测虚减 3.9%）。
+//
+// 所以纯函数和口径各测一组。
+import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'package:shensuanzi_core/sqlite_local.dart';
+import 'package:test/test.dart';
+
+import 'support/fixtures.dart';
+
+void main() {
+  setUpAll(useLocalSqlite);
+
+  // ============================================================ 纯函数
+
+  group('buildRevenueSeries（纯函数）', () {
+    /// 2026-10-26 是**周一**（用来验「自然周从周一起」）。
+    int dayOf(int y, int m, int d) =>
+        businessDayOf(DateTime(y, m, d, 12).millisecondsSinceEpoch);
+
+    test('补零：没有数据的那天也要出现在序列里', () {
+      final int d1 = dayOf(2026, 10, 1);
+      final int d4 = dayOf(2026, 10, 4);
+      final List<RevenuePoint> points = buildRevenueSeries(
+        rows: <RevenueDay>[
+          RevenueDay(day: d1, saleCents: 1000),
+          RevenueDay(day: d4, saleCents: 2000),
+        ],
+        fromDay: d1,
+        toDay: d4,
+      );
+
+      expect(points.length, 4, reason: '10-01 到 10-04 是 4 天，一天都不能少');
+      expect(
+        points.map((RevenuePoint p) => p.netCents).toList(),
+        <int>[1000, 0, 0, 2000],
+        reason: '中间两天必须是 0 —— 不补零会画成「连续卖了四天」',
+      );
+    });
+
+    test('自然周：周一为一周的第一天（不是每 7 天切一刀）', () {
+      final int monday = dayOf(2026, 10, 26);
+      final int sunday = dayOf(2026, 11, 1);
+      expect(dayToDate(monday).weekday, DateTime.monday, reason: '夹具前提');
+
+      expect(weekStartDay(monday), monday);
+      expect(
+        weekStartDay(sunday),
+        monday,
+        reason: '周日属于**上一周**（周一起算），不能跟下周一归到一起',
+      );
+      expect(
+        weekStartDay(dayOf(2026, 10, 25)),
+        monday - 7,
+        reason: '10-25 是周日，属于 10-19 那一周',
+      );
+
+      final List<RevenuePoint> weeks = buildRevenueSeries(
+        rows: <RevenueDay>[
+          RevenueDay(day: monday, saleCents: 1000),
+          RevenueDay(day: monday + 6, saleCents: 2000), // 周日
+          RevenueDay(day: monday + 7, saleCents: 4000), // 下周一
+        ],
+        fromDay: monday,
+        toDay: monday + 7,
+        bucket: RevenueBucket.week,
+      );
+      expect(weeks.length, 2);
+      expect(weeks[0].startDay, monday);
+      expect(weeks[0].netCents, 3000, reason: '周一到周日要合成一个桶');
+      expect(weeks[1].netCents, 4000);
+    });
+
+    test('自然月：跨月切成两个桶', () {
+      final int end = dayOf(2026, 10, 31);
+      final int start = dayOf(2026, 11, 1);
+      expect(
+        monthStartDay(end),
+        isNot(monthStartDay(start)),
+        reason: '10-31 和 11-01 必须是两个月',
+      );
+
+      final List<RevenuePoint> months = buildRevenueSeries(
+        rows: <RevenueDay>[
+          RevenueDay(day: end, saleCents: 1000),
+          RevenueDay(day: start, saleCents: 2000),
+        ],
+        fromDay: end,
+        toDay: start,
+        bucket: RevenueBucket.month,
+      );
+      expect(months.length, 2);
+      expect(months.first.startDay, monthStartDay(end));
+      expect(months.last.startDay, monthStartDay(start));
+    });
+
+    test('窗口外的数据被忽略；from > to ⇒ 空列表', () {
+      final int d = dayOf(2026, 10, 10);
+      final List<RevenuePoint> points = buildRevenueSeries(
+        rows: <RevenueDay>[
+          RevenueDay(day: d - 1, saleCents: 999),
+          RevenueDay(day: d, saleCents: 100),
+          RevenueDay(day: d + 1, saleCents: 999),
+        ],
+        fromDay: d,
+        toDay: d,
+      );
+      expect(points.length, 1);
+      expect(points.single.netCents, 100);
+
+      expect(
+        buildRevenueSeries(rows: const [], fromDay: d, toDay: d - 1),
+        isEmpty,
+      );
+    });
+
+    test('同一天出现多次 ⇒ 累加（查询层不该给重复，但别指望）', () {
+      final int d = dayOf(2026, 10, 12);
+      final List<RevenuePoint> points = buildRevenueSeries(
+        rows: <RevenueDay>[
+          RevenueDay(day: d, saleCents: 100, documentCount: 1),
+          RevenueDay(day: d, deliveryCents: 200, documentCount: 1),
+        ],
+        fromDay: d,
+        toDay: d,
+      );
+      expect(points.single.netCents, 300);
+      expect(points.single.documentCount, 2);
+    });
+  });
+
+  // ============================================================ 聚合口径
+
+  group('QueryDao.dailyRevenue（口径）', () {
+    late Db db;
+    late SaleService sales;
+    late DeliveryService deliveries;
+    late ReturnService returns;
+    late QueryDao queries;
+
+    late String productId;
+    late String accountId;
+    late String customerId;
+
+    setUp(() {
+      resetClock();
+      db = newMemoryDb();
+      final RuleEngine engine = RuleEngine(db);
+      queries = QueryDao(db);
+      sales = SaleService(engine: engine, queries: queries);
+      deliveries = DeliveryService(engine: engine, queries: queries);
+      returns = ReturnService(engine: engine, queries: queries);
+
+      final int t = now();
+      final Product product = Product(
+        id: newId(),
+        code: 'P001',
+        name: '纯牛奶',
+        unit: '瓶',
+        costPrice: 600,
+        sellPrice: 1000,
+        createdAt: t,
+        updatedAt: t,
+      );
+      ProductDao(db).insert(product);
+      productId = product.id;
+
+      final Account cash = Account(
+        id: newId(),
+        name: '现金',
+        type: AccountType.cash,
+        createdAt: t,
+        updatedAt: t,
+      );
+      AccountDao(db).insert(cash);
+      accountId = cash.id;
+
+      final Party customer = Party(
+        id: newId(),
+        name: '客户甲',
+        roles: const <PartyRole>[PartyRole.customer],
+        createdAt: t,
+        updatedAt: t,
+      );
+      PartyDao(db).insert(customer);
+      customerId = customer.id;
+    });
+
+    tearDown(() => db.close());
+
+    String idOf(String docNo) =>
+        db.raw.select('SELECT id FROM documents WHERE doc_no = ?', <Object?>[
+              docNo,
+            ]).first['id']!
+            as String;
+
+    int dayOf(String date) =>
+        businessDayOf(DateTime.parse('$date 12:00:00').millisecondsSinceEpoch);
+
+    String sell(String date, int qty) {
+      final SaleSaved saved = sales.create(
+        SaleDraft(
+          partyId: customerId,
+          partyName: '客户甲',
+          date: date,
+          lines: <SaleLineDraft>[
+            SaleLineDraft(
+              productId: productId,
+              productName: '纯牛奶',
+              quantity: '$qty',
+              unitPrice: '10',
+            ),
+          ],
+          payments: <SalePaymentDraft>[
+            SalePaymentDraft(
+              accountId: accountId,
+              accountName: '现金',
+              amount: '${qty * 10}',
+            ),
+          ],
+        ),
+      );
+      return idOf(saved.docNo);
+    }
+
+    String deliver(String date, int qty) {
+      final DeliverySaved saved = deliveries.create(
+        DeliveryDraft(
+          partyId: customerId,
+          partyName: '客户甲',
+          date: date,
+          lines: <DeliveryLineDraft>[
+            DeliveryLineDraft(
+              productId: productId,
+              productName: '纯牛奶',
+              quantity: '$qty',
+              unitPrice: '10',
+            ),
+          ],
+        ),
+      );
+      return idOf(saved.docNo);
+    }
+
+    /// 退货单的 `occurred_at` 由 `now` 决定（草稿里没有 date 字段）——
+    /// 要把它落在指定那天，必须显式传 `now`。
+    ReturnSaved refund(String refDocId, DocType type, String date, int qty) =>
+        returns.create(
+          now: DateTime.parse('$date 12:00:00').millisecondsSinceEpoch,
+          ReturnDraft(
+            refDocId: refDocId,
+            originalDocType: type,
+            partyId: customerId,
+            partyName: '客户甲',
+            lines: <ReturnLineDraft>[
+              ReturnLineDraft(
+                productId: productId,
+                productName: '纯牛奶',
+                quantity: '$qty',
+                amount: '${qty * 10}.00',
+                originalQuantity: 100,
+                originalAmountCents: 100000,
+              ),
+            ],
+          ),
+        );
+
+    test('销售 + 送货 − 有效退货：三天各算各的', () {
+      sell('2026-10-04', 3); // ¥30
+      deliver('2026-10-05', 2); // ¥20
+      final String saleId = sell('2026-10-04', 1); // 再卖 ¥10
+      refund(saleId, DocType.sale, '2026-10-06', 1); // 退 ¥10
+
+      final List<RevenueDay> rows = queries.dailyRevenue(
+        fromDay: dayOf('2026-10-04'),
+        toDay: dayOf('2026-10-06'),
+      );
+      expect(rows.length, 3);
+
+      expect(rows[0].saleCents, 4000, reason: '同一天两笔销售要合并');
+      expect(rows[0].deliveryCents, 0);
+      expect(rows[1].deliveryCents, 2000);
+      expect(rows[2].returnCents, 1000);
+      expect(rows[2].netCents, -1000, reason: '净额可以为负 —— 只退货的那天');
+    });
+
+    test('**拒收**的退货不冲减营收（原单已作废，减两次就是双重冲减）', () {
+      // 拒收 = 送货单还在途 + 全量退货 ⇒ 原送货单被置 cancelled。
+      // 它本来就不计营收，退货再减一次就是凭空少一笔。
+      final String deliveryId = deliver('2026-10-07', 5);
+      final ReturnSaved ret = refund(
+        deliveryId,
+        DocType.delivery,
+        '2026-10-07',
+        5,
+      );
+      expect(
+        db.raw.select('SELECT status FROM documents WHERE id = ?', <Object?>[
+          deliveryId,
+        ]).first['status'],
+        DocStatus.cancelled.wire,
+        reason: '夹具前提：全量拒收会把原送货单置 cancelled',
+      );
+      expect(ret.docNo, isNotEmpty);
+
+      final List<RevenueDay> rows = queries.dailyRevenue(
+        fromDay: dayOf('2026-10-07'),
+        toDay: dayOf('2026-10-07'),
+      );
+      expect(rows, isEmpty, reason: '拒收当天既不该有营收，也不该有冲减 —— 两边都是 0');
+    });
+
+    test('在途送货**计入**营收，并单独给出张数（图上要标注）', () {
+      deliver('2026-10-08', 3); // 不签收，保持 in_transit
+
+      final List<RevenueDay> rows = queries.dailyRevenue(
+        fromDay: dayOf('2026-10-08'),
+        toDay: dayOf('2026-10-08'),
+      );
+      expect(rows.single.deliveryCents, 3000, reason: '裁定甲：在途也算营收');
+      expect(rows.single.inTransitCount, 1, reason: '界面必须能说「含未签收 1 张」');
+    });
+
+    test('作废单据不计', () {
+      final String saleId = sell('2026-10-09', 4);
+      db.raw.execute('UPDATE documents SET status = ? WHERE id = ?', <Object?>[
+        DocStatus.cancelled.wire,
+        saleId,
+      ]);
+
+      final List<RevenueDay> rows = queries.dailyRevenue(
+        fromDay: dayOf('2026-10-09'),
+        toDay: dayOf('2026-10-09'),
+      );
+      expect(rows, isEmpty);
+    });
+  });
+}

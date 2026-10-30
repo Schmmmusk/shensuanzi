@@ -344,7 +344,7 @@ void main() {
         'PRAGMA user_version',
       );
       expect(version.single.values.single, Schema.version);
-      expect(Schema.version, 6, reason: '本测试就是为 v6 写的');
+      expect(Schema.version, 7, reason: '本测试就是为 v7 写的');
       migrated.close();
     });
 
@@ -535,7 +535,87 @@ void main() {
     // 审查意见 §五：「迁移链是**链**，写完一环就该验证一环」——
     // 于是这里不只测「最终到了 v3」，还测「**中间的 v2 那一环真的跑了**」
     // 与「某一环失败时，链停在哪、有没有半个结构」。
-    test('化石升至 v6：**五环都跑**（v1→v2→v3→v4→v5→v6），列 + 索引到齐', () {
+    test('**v3 存量库 → v7**（0.6.1 正式版升级）：数据不丢、business_day 回填、v7 索引可用', () {
+      // 真实场景：家里那台还在跑 0.6.1（schema v3）。它要跨 **4 环**
+      // （v3→v4→v5→v6→v7）升上来，其中 v5→v6 是**重建表**。
+      //
+      // 这条测试不复用「化石」文件，而是**现场造一个带数据的 v3 库**：
+      // 只跑前两环、写死 user_version=3，再塞两张单据 —— 这样 v6 的
+      // `business_day` 回填才有行可回填（空库测不出回填对不对）。
+      final Directory box = Directory.systemTemp.createTempSync('sz_v3_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/v3.db';
+      File('test/fixtures/v1_empty.db').copySync(path);
+
+      // ---- ① 造 v3：只跑 1、2 两环
+      final Database raw = sqlite3.open(path);
+      for (int v = 1; v < 3; v++) {
+        for (final String sql in Schema.migrationStep(v)) {
+          raw.execute(sql);
+        }
+      }
+      raw.execute('PRAGMA user_version = 3');
+
+      // v3 的 documents 还**没有** business_day —— 这正是要验的回填来源
+      final int morning = DateTime(2026, 9, 15, 10, 30).millisecondsSinceEpoch;
+      final int evening = DateTime(2026, 9, 16, 23, 50).millisecondsSinceEpoch;
+      raw.execute(
+        'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+        'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+        "VALUES ('v3-a', 'XS20260915-001', 'sale', 'confirmed', 2000, 2000, ?, 0, ?, ?)",
+        <Object?>[morning, morning, morning],
+      );
+      raw.execute(
+        'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+        'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
+        "VALUES ('v3-b', 'XS20260916-001', 'sale', 'confirmed', 3000, 0, ?, 0, ?, ?)",
+        <Object?>[evening, evening, evening],
+      );
+      raw.dispose();
+
+      // ---- ② 正常入口打开 ⇒ 逐环升到 v7
+      final Db upgraded = Db.open(path);
+      addTearDown(upgraded.close);
+      expect(upgraded.schemaVersion, Schema.version);
+      expect(Schema.version, 7, reason: '本测试就是为 v3 → v7 写的');
+
+      // ---- ③ 数据一行不少、金额没变
+      expect(
+        upgraded.raw.select('SELECT COUNT(*) AS c FROM documents').first['c'],
+        2,
+        reason: '迁移不能丢单据',
+      );
+      expect(
+        upgraded.raw
+            .select("SELECT total_amount FROM documents WHERE id = 'v3-b'")
+            .first['total_amount'],
+        3000,
+      );
+
+      // ---- ④ business_day 按 occurred_at 回填（本地日）
+      Map<String, Object?> dayOf(String id) => upgraded.raw.select(
+        'SELECT business_day FROM documents WHERE id = ?',
+        <Object?>[id],
+      ).first;
+      expect(dayOf('v3-a')['business_day'], businessDayOf(morning));
+      expect(
+        dayOf('v3-b')['business_day'],
+        businessDayOf(evening),
+        reason: '23:50 那张必须落在**当天**，不能被 UTC 折到第二天',
+      );
+
+      // ---- ⑤ v7 索引真的建了，而且列顺序是 (doc_type, business_day)
+      final List<Map<String, Object?>> columns = upgraded.raw
+          .select('PRAGMA index_info(idx_docs_type_bday)')
+          .toList();
+      expect(
+        columns.map((Map<String, Object?> r) => r['name']).toList(),
+        <String>['doc_type', 'business_day'],
+        reason: '顺序反了的话，按类型 + 日期范围的查询会退化成扫全表',
+      );
+    });
+
+    test('化石升至 v7：**六环都跑**（v1→…→v7），列 + 索引到齐', () {
       final File fixture = File('test/fixtures/v1_empty.db');
       final Directory box = Directory.systemTemp.createTempSync('sz_ring_ok_');
       addTearDown(() => deleteQuietly(box));
@@ -544,7 +624,7 @@ void main() {
 
       final Db migrated = Db.open(path);
       addTearDown(migrated.close);
-      expect(migrated.schemaVersion, 6);
+      expect(migrated.schemaVersion, 7);
 
       Set<Object?> columnsOf(String table) => migrated.raw
           .select('PRAGMA table_info($table)')
@@ -936,6 +1016,11 @@ void downgradeToV1(Database raw) {
     // 只有两行且语义明确。**下不为例** —— 再出现重建表就老老实实加化石。
     if (v == 5) {
       raw.execute('DROP INDEX IF EXISTS idx_docs_bday_created');
+      // v7（2026-10-30）的 `idx_docs_type_bday` 也引用 `business_day`。
+      // SQLite 的 `DROP COLUMN` 会**连带检查依赖它的索引**，不先摘掉就直接报错
+      // （「error in index idx_docs_type_bday after drop column」）。
+      // 降级是**逆序**执行的，v7 那一环还没轮到，所以这里手动先摘。
+      raw.execute('DROP INDEX IF EXISTS idx_docs_type_bday');
       raw.execute('ALTER TABLE documents DROP COLUMN business_day');
       continue;
     }

@@ -530,10 +530,10 @@ void main() {
       // 读数据根本不碰它（实测踩到过）。坏根页又会让 SQLite 静默返回空表
       // （那就成了「整份读不出」），所以取中后段的四页。
       for (final int target in <int>[
-        pages ~/ 2,
-        pages * 3 ~/ 5,
+        pages * 3 ~/ 4,
         pages * 4 ~/ 5,
         pages - 2,
+        pages - 3,
       ]) {
         patchBytes(source, target * pageSize, List<int>.filled(pageSize, 0));
       }
@@ -556,12 +556,11 @@ void main() {
 
     test('截断 ⇒ 明确失败并说清原因（不做页级扫描）', () async {
       makeLedger(source);
-      final int size = File(source).lengthSync();
-      final RandomAccessFile raf = File(
-        source,
-      ).openSync(mode: FileMode.writeOnly);
-      raf.truncateSync((size * 0.6).round());
-      raf.closeSync();
+      // ⚠️ **不能用 `FileMode.writeOnly` 去 truncate**：那个模式**打开就把文件清零**，
+      // 之后 truncate 出来的是一段全零 —— 头也没了，测的就不是「截断」而是「头坏了」。
+      // 正确做法：读出全部字节、写回前 60%。
+      final Uint8List all = File(source).readAsBytesSync();
+      File(source).writeAsBytesSync(all.sublist(0, (all.length * 0.6).round()));
 
       final RescueReport report = await rescue();
       expect(report.ok, isFalse);
