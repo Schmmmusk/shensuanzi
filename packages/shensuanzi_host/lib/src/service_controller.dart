@@ -395,7 +395,14 @@ class HostServiceController {
   Future<HostServiceSnapshot> _stopRaw() async {
     final HostHttpServer? server = _server;
     _server = null;
-    if (server != null) await server.close(force: true);
+    if (server != null) {
+      try {
+        await server.close(force: true);
+      } catch (_) {
+        // 关不掉也要把状态复位（2026-10-31：三个动作统一成「不往外抛」）。
+        // 停在 running 会让界面显示「已开启」而实际没有服务 —— 那更难查。
+      }
+    }
     _state = HostServiceState.stopped;
     _address = null;
     _addressOptions = const <NetAddressOption>[];

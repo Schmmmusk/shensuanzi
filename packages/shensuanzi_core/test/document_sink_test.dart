@@ -349,4 +349,46 @@ void main() {
       expect(first.documentId, isNot(second.documentId));
     });
   });
+
+  // ============================================================ wire 行的护栏
+  group('documentWireRow（客户端推送的 document 行）', () {
+    test('**不含任何主机专属 / 派生列**，且全部落在可写白名单里', () {
+      // 2026-10-31 真机联调：v6 给 documents 加了 business_day（toRow 会带），
+      // 而推送前只摘了 paid_amount / created_at / updated_at ⇒ 主机按
+      // 「不可写列」把**手机开的每一张单**都拒了（host 包 26 条测试同时红）。
+      //
+      // 这条护栏是**机械**的：以后 `documents` 再加派生列，只要忘了在
+      // `documentWireRow` 里摘掉，这里立刻红 —— 不用等联调。
+      final Document doc = Document(
+        id: newId(),
+        docNo: 'XS-1',
+        docType: DocType.sale,
+        status: DocStatus.confirmed,
+        totalAmount: 1000,
+        paidAmount: 0,
+        occurredAt: DateTime(2026, 10, 31, 10).millisecondsSinceEpoch,
+        createdAt: DateTime(2026, 10, 31, 10).millisecondsSinceEpoch,
+        updatedAt: DateTime(2026, 10, 31, 10).millisecondsSinceEpoch,
+      );
+
+      final Map<String, Object?> row = documentWireRow(doc);
+
+      for (final String column in <String>[
+        'paid_amount',
+        'created_at',
+        'updated_at',
+        'business_day',
+      ]) {
+        expect(row.containsKey(column), isFalse, reason: '「$column」不该由客户端写');
+      }
+      expect(
+        SyncWhitelist.offendingColumns(Schema.documents, row.keys),
+        isEmpty,
+        reason: '推送行里出现了主机不可写的列 —— 主机会整条拒掉',
+      );
+      // 该有的还在
+      expect(row['id'], doc.id);
+      expect(row['doc_no'], 'XS-1');
+    });
+  });
 }

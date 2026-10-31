@@ -47,10 +47,10 @@ void main() {
   ///
   /// 这条等式就是 wire 约定的核心（见 `sync_operation.dart` 的文档注释）：
   /// 测试里也照此构造，于是「wire = row」不再只是注释里的一句话。
-  Map<String, Object?> wireDocument(Document d) => d.toRow()
-    ..remove('paid_amount')
-    ..remove('created_at')
-    ..remove('updated_at');
+  /// 客户端推的 `document` 行 —— **直接调生产代码那一份**
+  /// （`documentWireRow`），不在这里复制一份摘列逻辑。
+  /// 2026-10-31：两份复制品一起漂，`business_day` 漏摘 ⇒ 26 条测试同时红。
+  Map<String, Object?> wireDocument(Document d) => documentWireRow(d);
 
   Document pending({
     required DocType type,

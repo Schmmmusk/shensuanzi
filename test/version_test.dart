@@ -41,14 +41,41 @@ void main() {
     );
   });
 
+  /// 1..99 的中文数字（只覆盖本仓会用到的范围）。
+  ///
+  /// ⚠️ **不手抄**「第九个 / 第十个」：那样每 bump 一次版本要改两个文件，
+  /// 而漏改的那一边只有跑测试才发现。这里从 `AppVersion.build` **算**出来，
+  /// 于是 `version.dart` 是唯一需要动的地方（2026-10-31 改成这样）。
+  String chineseNumeral(int n) {
+    const List<String> digits = <String>[
+      '零',
+      '一',
+      '二',
+      '三',
+      '四',
+      '五',
+      '六',
+      '七',
+      '八',
+      '九',
+    ];
+    if (n <= 0 || n >= 100) throw ArgumentError('只支持 1..99，收到 $n');
+    if (n < 10) return digits[n];
+    if (n == 10) return '十';
+    if (n < 20) return '十${digits[n - 10]}';
+    final int tens = n ~/ 10;
+    final int ones = n % 10;
+    return ones == 0 ? '${digits[tens]}十' : '${digits[tens]}十${digits[ones]}';
+  }
+
   test('给用户看的版本号带限定词（§AG-1：消除「是不是试用版」的疑虑）', () {
     expect(AppVersion.display, contains(AppVersion.value));
     expect(
       AppVersion.display,
-      contains('第九个可部署版本'),
+      contains('第${chineseNumeral(AppVersion.build)}个可部署版本'),
       reason:
-          '限定词与 `AppVersion.build` 同步手改（中文数字）—— bump 版本时'
-          '这里和 `version.dart` 必须一起动，漏一边测试立刻红',
+          '限定词必须与 `AppVersion.build` 一致（这里是从 build 算出来的，'
+          '不是手抄的）—— 不一致说明 `version.dart` 的 display 忘了改',
     );
   });
 

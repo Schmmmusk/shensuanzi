@@ -23,12 +23,12 @@ library;
 
 /// 版本号的**机器形态**（与 `pubspec.yaml` 的 `version:` 前半段逐字一致）
 abstract final class AppVersion {
-  /// `0.6.5` —— 与 `pubspec.yaml` 的 `version:` 相同
-  static const String value = '0.6.5';
+  /// `0.7.1` —— 与 `pubspec.yaml` 的 `version:` 相同
+  static const String value = '0.7.1';
 
-  /// `0.6.5+9` 里的构建号（= **第几个可部署版本**）
-  static const int build = 9;
+  /// `0.7.1+10` 里的构建号（= **第几个可部署版本**）
+  static const int build = 10;
 
   /// 给用户看的完整形态（帮助页 / 关于页用这个）
-  static const String display = 'v$value（第九个可部署版本）';
+  static const String display = 'v$value（第十个可部署版本）';
 }

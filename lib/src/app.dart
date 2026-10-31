@@ -303,6 +303,11 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 免得错误页给出「换一个文件夹」这种不相关的出路。
   bool _alreadyRunning = false;
 
+  /// 库比程序新（`SchemaTooNewException`）—— 与「文件坏了」是**两件事**，
+  /// 不能共用那一屏（2026-10-31 真机：用户双击了 10-28 的旧 exe，
+  /// 界面却说「文件可能出了点小问题」，他以为数据坏了）。
+  bool _dbTooNew = false;
+
   /// 库的**真实数据格式版本**（`PRAGMA user_version`）。
   ///
   /// ⚠️ 不能用 `location.marker.schemaVersion`：老用户的标记还是 v1，
@@ -737,6 +742,22 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 中老年用户看到「数据库损坏」的第一反应是「我是不是把电脑弄坏了」。
   /// 所以这里**不出现**「损坏 / 数据库 / 崩溃」这些词，先说「暂时打不开」，
   /// 再立刻给出**已有的退路**（每天自动备份），最后给一个动作（找回数据）。
+  /// 库比程序新时的说辞（2026-10-31 真机）。
+  ///
+  /// ⚠️ 与 [_brokenDatabaseMessage] 的**关键区别**：这里**数据是好的**，
+  /// 是「你打开的是旧版本软件」。所以：
+  /// - 不出现「可能坏了 / 出点小问题」这类话；
+  /// - 不给「从坏文件里找回」（那会把一份好数据改坏）。
+  String _dbTooNewMessage(
+    String directory, {
+    required int dbVersion,
+    required int appVersion,
+  }) =>
+      '这个数据文件是**更新版本**的神算子做的（数据格式 v$dbVersion，'
+      '你现在打开的这个版本只到 v$appVersion）。\n\n'
+      '数据一点没坏，别删它 —— 装上最新版本的神算子，再打开同一个文件夹就行。\n\n'
+      '（文件夹：$directory）';
+
   String _brokenDatabaseMessage(String directory) =>
       '这个文件夹里的数据文件暂时打不开 —— 可能是被别的程序占着，'
       '也可能是文件本身出了点小问题。\n\n'
@@ -925,6 +946,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       setState(() {
         _location = location;
         _db = db;
+        _dbTooNew = false;
         _schemaVersion = schemaVersion;
         // M16：主库开成功 ⇒ 清掉上一次的镜像失败（重试成功后不再停在错误页）
         _mirrorFailure = null;
@@ -982,6 +1004,23 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 最可能就是这一段在等磁盘（F: 若是机械盘/外置，首次访问要等它转起来）。
       StartupTrace.mark('T3b_backup_status');
       unawaited(_autoBackup());
+    } on SchemaTooNewException catch (error) {
+      // 旧版程序打开新版库：**文件一点没坏**，是软件版本不匹配。
+      // 用单独一屏说清楚（不提供「从坏文件里找回」—— 那会把好数据改坏）。
+      _log.write('库版本 ${error.dbVersion} 高于本程序 ${error.appVersion}（版本不匹配）');
+      setState(() {
+        _location = location;
+        _db = null;
+        _schemaVersion = 0;
+        _queries = null;
+        _dbTooNew = true;
+        _brokenDirectory = location.directory;
+        _dbFailure = _dbTooNewMessage(
+          location.directory,
+          dbVersion: error.dbVersion,
+          appVersion: error.appVersion,
+        );
+      });
     } catch (error, stack) {
       // §AG-5：**启动失败要留现场** —— 用户只会说「打不开了」，
       // 而这里恰好知道「是哪个位置、哪条异常」。路径不是经营数据，可以记。
@@ -1724,14 +1763,18 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 「库文件不见了」有**三条**出路：找回备份（重试）/ 换一个文件夹 /
       // 明确放弃、新建一本空账（2026-10-07，`docs/reply.md` §6 的 #1）。
       final String? missing = _missingDatabaseDirectory;
+      // 库比程序新 ⇒ **数据是好的**，只给「重试」和「更改」。
+      // 「找回数据 / 从坏文件里找回」在这条路上是有害的：那是给坏文件用的，
+      // 对一份完好的新库做抢救，只会把好数据弄坏。
+      final bool tooNew = _dbTooNew;
       return _StartupPage(
         message: _dbFailure!,
         // 主路（2026-10-29 P0）：先让用户看见自己**有备份**。
         // 放在最前面 —— 它是这一屏唯一「不用放弃数据」的出路。
-        recoveryLabel: '找回数据',
-        onRecovery: _openRecovery,
-        rescueLabel: '备份都不行？试试从坏文件里找回',
-        onRescue: _openRescue,
+        recoveryLabel: tooNew ? null : '找回数据',
+        onRecovery: tooNew ? null : _openRecovery,
+        rescueLabel: tooNew ? null : '备份都不行？试试从坏文件里找回',
+        onRescue: tooNew ? null : _openRescue,
         // 术语统一（§CV·八十 Q3）：按钮名与设置页/首启对话框一致，只叫「更改」
         actionLabel: '更改',
         // §审查 BUG-03：**必须强制弹目录选择框** —— 原来重新走 `_prepare()`，

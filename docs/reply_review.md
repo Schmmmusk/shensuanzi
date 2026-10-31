@@ -17367,3 +17367,64 @@ SqliteException(522): disk I/O error
 - `overview_page_test` +1（46 条）：默认倍数 / 切百分数两种说法。
 - `app_config_test` +3（36 条）：默认不写键 / 开启能存能读 / 类型不对退回倍数。
 - 门禁：root **423** · core **788** · app **446** · analyze 0。
+
+### 六十四、2026-10-31 发版前收口：版本 0.7.1 + 修掉联调查出的三类问题
+
+#### ① 版本 0.7.1（第十个可部署版本）
+
+改到位的四处（漏一处测试就红）：
+
+| 位置 | 改动 |
+|---|---|
+| `pubspec.yaml` | `0.6.5+9` → `0.7.1+10` |
+| `README.md` | 「版本 0.6.5（第九个可部署版本）」→ `0.7.1（第十个）` |
+| `AppVersion`（`version.dart`） | `value` / `build` / `display` 三处 |
+| `windows/runner/Runner.rc` | `ProductVersion` 与注释里的 `0.6.5+9` |
+| `packaging/用户手册.html` | 重新生成（20 章 / 34373 字节 / 版本戳已更新） |
+
+顺手把 `version_test` 的限定词断言**改成从 `AppVersion.build` 算中文数字** ——
+原来它手抄「第九个可部署版本」，每 bump 一次要改两个文件，漏一边只有跑测试才发现。
+
+#### ② **P0：手机开的每一张单都被主机拒掉**（v6 遗留）
+
+`sync_server_test` 26 条红，全是同一个原因：
+
+```dart
+// Document.toRow()（v6 起会带 business_day）
+'business_day': businessDayOf(occurredAt),
+
+// 推送前只摘了三列
+..remove('paid_amount') ..remove('created_at') ..remove('updated_at')
+
+// 主机的可写列白名单里也没有 business_day
+Schema.documents: {'id', 'doc_no', ..., 'remark'}
+```
+
+⇒ 手机开单推上去，主机按 `unwritableColumn` 整条拒绝。**v6 加列时漏了一处**。
+
+修法：抽出 `documentWireRow(document)`，把「摘哪些列」只定义在**一处**；
+`sync_server_test` 里那份**逐字复制**的 `wireDocument` 也改成调它 ——
+两份复制品一起漂才是这 26 条同时红的真正原因（纪律 18）。
+
+护栏：新增测试断言 `documentWireRow` 不含任何主机列，且
+`SyncWhitelist.offendingColumns` 为空 —— 以后再加派生列忘了摘，立刻红。
+
+> host 包：142 过 + **26 红** ⇒ **168 全过**。
+
+#### ③ 旧版程序开新库：不再说「文件可能坏了」
+
+`SchemaTooNewException` 本来就有，但被通用 catch 吞成了「数据文件暂时打不开」。
+现在单独一屏：
+
+- 文案：「这个数据文件是**更新版本**的神算子做的（数据格式 v7，你现在这个版本只到 v6）。数据一点没坏，别删它 —— 装上最新版本再打开同一个文件夹就行。」
+- **不给**「找回数据 / 从坏文件里找回」—— 那是对坏文件用的，对一份完好的新库做抢救只会把好数据弄坏。
+
+#### ④ `_stopRaw` 补 try
+
+三个动作（start / resetToken / stop）现在形状统一：**都不往外抛**。
+停不掉也把状态复位，免得界面显示「已开启」而实际没服务。
+
+#### 门禁
+
+root **423** · core **789** · app **446** · host **168** · analyze 0。
+反向灵敏度：`documentWireRow` 放回 `business_day` ⇒ 护栏那条红。

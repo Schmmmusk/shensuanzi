@@ -271,15 +271,38 @@ class ServiceSink implements DocumentSink {
 /// - `lines` = 完整 wire 行，**含客户端生成的 id**
 /// - `immediate_payments` = 立即收付款；**空列表时省略键**（与既有
 ///   selfcheck / host 契约一致：缺键 = 没有）
+/// 客户端推上来的 `document` 行 —— **去掉所有主机专属 / 派生列**。
+///
+/// ## 为什么单独抽出来
+///
+/// 2026-10-31 真机联调抓到 P0：v6 给 `documents` 加了 `business_day`
+/// （由 `occurred_at` 派生），`toRow()` 会带上它，但这里只摘了
+/// `paid_amount` / `created_at` / `updated_at` ⇒ 主机按「不可写列」把
+/// **手机开的每一张单**都拒了。而 `sync_server_test` 里另有一份**逐字复制**
+/// 的同样逻辑（`wireDocument`），两份一起漂，26 条测试同时变红。
+///
+/// 所以这里只留**一处**定义，测试也调它 —— 同构代码各写一份，就一定会漏改
+/// （纪律 18）。
+///
+/// 摘掉的列：
+///
+/// | 列 | 为什么客户端不能写 |
+/// |---|---|
+/// | `paid_amount` | 派生缓存，真相是 `SUM(settlements.amount)` |
+/// | `created_at` / `updated_at` | 主机时钟 |
+/// | `business_day` | 主机按 `occurred_at` + 主机本地时区派生（v6） |
+Map<String, Object?> documentWireRow(Document document) => document.toRow()
+  ..remove('paid_amount')
+  ..remove('created_at')
+  ..remove('updated_at')
+  ..remove('business_day');
+
 Map<String, Object?> documentCreatePayload(
   Document document, {
   required List<DocumentLine> lines,
   List<PaymentEntry> immediatePayments = const <PaymentEntry>[],
 }) => <String, Object?>{
-  'document': document.toRow()
-    ..remove('paid_amount')
-    ..remove('created_at')
-    ..remove('updated_at'),
+  'document': documentWireRow(document),
   'lines': <Object?>[for (final DocumentLine line in lines) line.toRow()],
   if (immediatePayments.isNotEmpty)
     'immediate_payments': <Object?>[

@@ -223,7 +223,8 @@ export 'src/documents/document_sink.dart'
         DocumentSubmitResult,
         QueueSink,
         ServiceSink,
-        documentCreatePayload;
+        documentCreatePayload,
+        documentWireRow;
 
 // 同步（协议层：DTO + 白名单。**服务端实现在 `shensuanzi_host`**）
 export 'src/sync/sync_operation.dart'
