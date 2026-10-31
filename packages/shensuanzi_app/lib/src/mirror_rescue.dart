@@ -302,7 +302,12 @@ String queueRescueReport({
     return out.toString();
   }
 
-  out.writeln('抢回 ${rescue.entries.length} 条还没传给电脑的操作。');
+  if (rescue.entries.isEmpty && rescue.unreadableRows == 0) {
+    // 真机（状态 2）实测：队列本来就是空的，写成「抢回 0 条」很别扭
+    out.writeln('没有还没传给电脑的操作 —— 不需要抢救。');
+  } else {
+    out.writeln('抢回 ${rescue.entries.length} 条还没传给电脑的操作。');
+  }
   if (rescue.unreadableRows > 0) {
     out.writeln(
       '另有 ${rescue.unreadableRows} 条损坏太严重、读不出来 —— '
@@ -327,7 +332,9 @@ String queueRescueReport({
   if (archivedPath != null) {
     out
       ..writeln()
-      ..writeln('原来那份打不开的文件已经留档：$archivedPath');
+      // 「打不开」是状态 3 的说法；状态 2（自检没过）文件其实是开得起来的，
+      // 所以这里用中性说法，两种情况都成立。
+      ..writeln('原来那份文件已经留档（改名保存，不会删）：$archivedPath');
   }
   return out.toString();
 }

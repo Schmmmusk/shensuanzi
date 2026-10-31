@@ -129,6 +129,13 @@ class HostIdentityStore {
   String? get lastWriteDiagnostics => _lastWriteDiagnostics;
   String? _lastWriteDiagnostics;
 
+  /// 上一次写盘**最终落在哪一级**（`rename` / `inPlace` / `memory`）。
+  ///
+  /// 诊断用：`lastWriteFailed == false` 只说明「写成了」，不说明是 L1 原子写成的
+  /// 还是 L2 原地重写成的 —— 而这两件事对「根因是什么」的指向完全不同。
+  HostWriteLevel? get lastWriteLevel => _lastWriteLevel;
+  HostWriteLevel? _lastWriteLevel;
+
   Map<String, Object?>? _memory;
 
   /// 上一次写盘**是否失败**（2026-10-31 真机：`host.json` 被拒写）。
@@ -160,10 +167,24 @@ class HostIdentityStore {
   HostIdentity? load() {
     final Map<String, Object?>? stored = _read();
     if (stored == null) return null;
+    // ⚠️ 2026-10-31 实测（L2 探针）：文件是**合法 JSON 但字段不全**时，
+    // 从前这里三个 `!` 会抛 `Null check operator used on a null value` ——
+    // 与「半截 JSON」同一个后果（主机服务启动失败、用户不知道该删哪个文件），
+    // 只是更难查（JSON 解析没报错）。所以字段类型逐个验，缺一个就当作没有身份。
+    final Object? hostId = stored['host_id'];
+    final Object? tokenHash = stored['token_hash'];
+    final Object? createdAt = stored['created_at'];
+    if (hostId is! String || tokenHash is! String || createdAt is! int) {
+      _lastReadProblem =
+          '身份文件字段不全（host_id=${hostId.runtimeType}, '
+          'token_hash=${tokenHash.runtimeType}, created_at=${createdAt.runtimeType}）：'
+          '${file?.path ?? '（内存）'}';
+      return null;
+    }
     return HostIdentity(
-      hostId: stored['host_id']! as String,
-      tokenHash: stored['token_hash']! as String,
-      createdAt: stored['created_at']! as int,
+      hostId: hostId,
+      tokenHash: tokenHash,
+      createdAt: createdAt,
     );
   }
 
@@ -276,6 +297,7 @@ class HostIdentityStore {
       io: _io,
     );
 
+    _lastWriteLevel = report.level;
     if (report.ok) {
       _lastWriteDiagnostics = null;
       return;

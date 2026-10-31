@@ -231,6 +231,26 @@ void main() {
       expect(report, contains('broken-20261031-220500'));
     });
 
+    test('队列本来就是空的 ⇒ 说「不需要抢救」，不写「抢回 0 条」', () {
+      // 真机（状态 2）实测：这份清单是给用户看的，「抢回 0 条」读起来像出了事
+      const MirrorQueueRescue empty = MirrorQueueRescue(
+        entries: <SyncQueueEntry>[],
+        unreadableRows: 0,
+        problem: null,
+        attempted: true,
+      );
+      final String report = queueRescueReport(
+        rescue: empty,
+        at: DateTime(2026, 10, 31, 23, 2),
+        archivedPath: '/data/mirror/shensuanzi_mirror.db.broken-20261031-230248',
+      );
+      expect(report, contains('不需要抢救'));
+      expect(report, isNot(contains('抢回 0 条')));
+      // 留档说法与状态无关（状态 2 的文件其实开得起来，说「打不开」是错的）
+      expect(report, contains('原来那份文件已经留档'));
+      expect(report, isNot(contains('打不开的文件已经留档')));
+    });
+
     test('一条也没抢回 ⇒ **不许**说「已经找回」，要写明原因', () {
       final MirrorQueueRescue failed = MirrorQueueRescue(
         entries: const <SyncQueueEntry>[],

@@ -1057,10 +1057,12 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       }
     }
     if (reportPath != null) {
+      // 只给文件名：完整私有路径在窄屏上要折四行，而且用户也点不进去。
+      // 文件名 + 「和本机数据副本放在一起」足够支持人员定位。
       text
         ..writeln()
-        ..writeln('详细清单已存成文件（需要时可以发给技术支持）：')
-        ..writeln(reportPath);
+        ..writeln('详细清单已存成文件：${p.basename(reportPath)}')
+        ..writeln('（和本机数据副本放在一起，需要时可以发给技术支持）');
     }
     return showDialog<void>(
       context: context,
