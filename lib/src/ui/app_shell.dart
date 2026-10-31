@@ -86,12 +86,32 @@ class AppShell extends StatefulWidget {
     required this.onConfigChanged,
     this.onChangeBackupLocation,
     this.initialDestinationId,
+    this.localDbNotice,
+    this.onRebuildLocalDb,
   });
 
   final String dataDirectory;
   final String backupDirectory;
   final int schemaVersion;
+
+  /// 「这套壳正在读的那张库」是否可用。
+  ///
+  /// ⚠️ 判据**跟壳走**（`app.dart` 装配处）：桌面 = 主库开成功；手机 = **镜像**
+  /// 开成功。手机的主库是空壳（见 `allowBackup` 那段注释），拿它当判据会让
+  /// 「镜像明明好好的、只是本地账本坏了」显示成「数据文件打不开」
+  /// （2026-10-31 联调 #0）。
   final bool databaseReady;
+
+  /// 手机端**本机账本打不开**时的常驻说明（`null` = 正常，不显示）。
+  ///
+  /// 只在 `MobileShell` 里渲染：桌面没有「本地库坏了但镜像还能用」这种状态
+  /// （桌面只有一张库，坏了就是真的打不开，走启动错误页）。
+  /// 文案由 `app.dart` 给（UI 只取值、不造句）。
+  final String? localDbNotice;
+
+  /// 「修复本机账本」= 留档坏文件 + 开一本空账（裁定 B）。
+  /// `null` = 不给出口（只说明）。
+  final VoidCallback? onRebuildLocalDb;
 
   /// 商品建档服务（数据库打开成功才有；为 `null` 时商品页显示「数据文件还没就绪」）
   final ProductService? products;

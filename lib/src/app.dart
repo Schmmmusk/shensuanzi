@@ -308,6 +308,22 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 界面却说「文件可能出了点小问题」，他以为数据坏了）。
   bool _dbTooNew = false;
 
+  /// 手机端**本机账本打不开**的原因（2026-10-31 联调 #0，用户裁定 A + B 相结合）。
+  ///
+  /// 与 [_dbFailure] 的分工：`_dbFailure` = **什么都用不了**，停在启动错误页；
+  /// 这里 = 只是本机那本空壳账打不开，**镜像还能用** ⇒ 照常进主界面。
+  ///
+  /// ## 为什么手机端可以「降级」而不是「拦住」
+  ///
+  /// 手机壳的业务页**全部接镜像**（`app_shell.dart` 里 `allowBackup` 那段注释：
+  /// 真机实测「备份文件里 0 商品 0 队列」⇒ 主库在手机上是**空壳**），
+  /// 开单走 `QueueSink`（镜像 + 队列）—— **一次都不碰本地库**。
+  /// 所以本地库坏掉不该让整个 App 停在错误页（真机实测的原始症状）。
+  String? _localDbFailure;
+
+  /// 重建进行中（按钮置灰；也防「连点两次把刚建好的库又挪走」）。
+  bool _rebuildingLocalDb = false;
+
   /// 库的**真实数据格式版本**（`PRAGMA user_version`）。
   ///
   /// ⚠️ 不能用 `location.marker.schemaVersion`：老用户的标记还是 v1，
@@ -483,18 +499,33 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       });
       return;
     }
+    final DataLocation location;
     try {
-      _openDatabase(_service.ensureInitialized(p.join(root, 'data')));
+      location = _service.ensureInitialized(p.join(root, 'data'));
+    } on DataDirectoryRejected catch (error) {
+      // 私有目录被拒（系统占位 / 只读）—— 这里**不能降级**：镜像
+      // （`<root>/mirror/`）就在同一个根下面，目录都不可用 ⇒ 镜像也开不了。
+      // 诚实展示，不兜圈子。
+      setState(() {
+        _dbFailure = '${error.reason}。${error.howTo ?? '请重新安装后再试。'}';
+      });
+      return;
+    } catch (error, stack) {
+      // 建目录 / 写标记就炸了（只读、空间满、存储坏了）—— 同上，降级没有意义
+      _log.crash(error, stack, label: '手机数据目录初始化失败');
+      setState(() => _dbFailure = storageFailureNote(error));
+      return;
+    }
+    // ⚠️ `_openDatabase` **不抛**：它自己兜住，且手机端会把失败降级成
+    // `_localDbFailure`（裁定 A）—— 于是无论本机账本能不能开，流程都走到这里，
+    // **镜像照开**（2026-10-31 联调 #0 的核心修法）。
+    _openDatabase(location);
+    try {
       // M16（2026-10-08）：**镜像在这里打开，不要留给 build** ——
       // build 期该只做纯布局；在那里做 I/O，失败会炸成框架异常页
       // （无导航、无重试，用户被困 —— Android 报告 M16 实测）。
       // 打开后 `openMirror()` 返回缓存，build 期不再有 I/O。
       _mobileSyncService?.openMirror();
-    } on DataDirectoryRejected catch (error) {
-      // 私有目录被拒（系统占位 / 只读）—— 诚实展示，不兜圈子
-      setState(() {
-        _dbFailure = '${error.reason}。${error.howTo ?? '请重新安装后再试。'}';
-      });
     } catch (error, stack) {
       // 镜像打不开：给**中文原因 + 重试出口**；原始异常只进日志
       _log.crash(error, stack, label: '打开手机镜像失败');
@@ -779,6 +810,18 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       '那会从零开始，里面不会有以前的单据。\n\n'
       '（文件夹：$directory）';
 
+  /// 手机端「本机账本打不开」的**常驻说明**（2026-10-31 联调 #0，裁定 A）。
+  ///
+  /// 三句必须齐：① 出了什么事；② **什么照常**（账没丢、能看能开单 ——
+  /// 这一句是用户最想知道的）；③ 本机自动备份暂停。
+  /// 「怎么修」不写在这里 —— 那是按钮（「修复本机账本」）的事，
+  /// 长解释放确认框（`_rebuildLocalDatabase`）。
+  String _localDatabaseBrokenMessage() =>
+      '手机上的账本文件打不开（多半是被清理软件动过、或存储空间不够）。'
+      '账没丢：手机上显示的是从电脑同步过来的数据，查看、开单都照常，'
+      '新开的单先记在待同步队列里，连上电脑会自动传过去。'
+      '本机自动备份暂停。';
+
   /// 错误页的**重试**（§审查 2026-10-05 真机）。
   ///
   /// 不碰 `config.json`：只是把启动流程重跑一遍 —— 库修好了就原样回到原目录。
@@ -790,6 +833,90 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       _alreadyRunning = false;
     });
     await _prepare();
+  }
+
+  /// 「修复本机账本」= 裁定 **B**（2026-10-31 联调 #0，用户裁定 A + B 缺一不可）。
+  ///
+  /// ## 顺序
+  ///
+  /// 1. **先问**（不替用户决定）：说明会做两件事，并明说「不会删、账不会丢」；
+  /// 2. **留档**：坏文件（`.db` + `-wal` + `-shm`）改名成 `.broken-<时间>`；
+  /// 3. **重跑启动流程**（`_retry`）—— 与平常启动**同一段代码**，
+  ///    所以不存在「重建用的第二条开库路径」。
+  ///
+  /// ## 为什么是「留档 + 空账」而不是「删了重建」
+  ///
+  /// 手机上的主库**通常**是空壳（权威数据在镜像与主机），但我们**不知道**
+  /// 这个用户的那一份里到底有什么（真机联调时它就被灌过 81 张单据）。
+  /// 删掉 = 无法挽回；改名 = 随时能找回来。代价只是几十 KB 磁盘。
+  ///
+  /// ## 失败怎么说
+  ///
+  /// `archiveBrokenDatabase` 失败时**已经把改过名的改回去了**，
+  /// 所以那时说「数据没有动过」是**真的**（这句话在错误文案里）。
+  Future<void> _rebuildLocalDatabase() async {
+    if (_rebuildingLocalDb) return;
+    final DataLocation? location = _location;
+    if (location == null) return;
+    final BuildContext? dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null || !dialogContext.mounted) return;
+
+    final bool? confirmed = await showDialog<bool>(
+      context: dialogContext,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('修复本机账本？'),
+        content: SingleChildScrollView(
+          child: Text(
+            '会做两件事：\n'
+            '一、把打不开的那个文件改名留档（不会删掉，需要时还能找回来）；\n'
+            '二、重新开一本空账。\n\n'
+            '你的账不会丢 —— 单据都在电脑主机上，手机显示的是同步过来的数据。'
+            '修好之后查看、开单照常使用。\n\n'
+            '（要动的是手机里的 ${p.basename(location.databasePath)}）',
+            style: const TextStyle(height: 1.6),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('先不修'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('修复'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _rebuildingLocalDb = true);
+    try {
+      // 旧句柄可能还握着（`_db` 通常已是 null，这里是保险）——
+      // 不关就改名，Windows 上会 EACCES，Android 上会留下一个悬空句柄
+      final Db? closing = _db;
+      _db = null;
+      closing?.close();
+
+      final ArchiveResult archived = archiveBrokenDatabase(
+        databasePath: location.databasePath,
+      );
+      if (!archived.ok) {
+        // 跨 async gap 后不持旧 context —— 每次从 navigatorKey 取新的
+        //（lint `use_build_context_synchronously` 的判定，仓内既有写法）
+        final BuildContext? retryContext = _navigatorKey.currentContext;
+        if (retryContext == null || !retryContext.mounted) return;
+        await _migrationMessage(retryContext, archived.problem!);
+        return;
+      }
+      _log.write(
+        '重建本机账本：旧文件留档 ${archived.archivedPath ?? '（没有旧文件）'}',
+      );
+      await _retry();
+    } finally {
+      if (mounted) setState(() => _rebuildingLocalDb = false);
+    }
   }
 
   /// 「新建一本空账」（只在「库文件不见了」时出现，2026-10-07）。
@@ -950,6 +1077,9 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         _schemaVersion = schemaVersion;
         // M16：主库开成功 ⇒ 清掉上一次的镜像失败（重试成功后不再停在错误页）
         _mirrorFailure = null;
+        // 2026-10-31 联调 #0：本机账本开成功（含「修复本机账本」之后）⇒
+        // 降级状态清零，顶部那条常驻说明自动消失
+        _localDbFailure = null;
         _queries = QueryDao(db);
         _backup = backup;
         _exports = exports;
@@ -1037,7 +1167,15 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         _schemaVersion = 0;
         _queries = null;
         _backup = null;
-        _exports = null;
+        // 导出只依赖「导出文件夹」，**不碰库** ⇒ 手机端降级时照旧可用
+        // （桌面上库都打不开就没有数据可导，维持 `null`）
+        _exports = _shellKind == ShellKind.mobile
+            ? ExportService(
+                exportDirectory: location.exportDirectory,
+                onFailure: (Object error, StackTrace stack) =>
+                    _log.crash(error, stack, label: '导出失败'),
+              )
+            : null;
         _lastBackup = null;
         _backupError = null;
         _hasDocuments = false;
@@ -1053,7 +1191,16 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         // §审查 OBS-13：原始异常只进日志（上面已 `_log.crash`）——
         // 界面只留结论 + 怎么办（中老年用户读不懂 SqliteException）
         _brokenDirectory = location.directory;
-        _dbFailure = _brokenDatabaseMessage(location.directory);
+        if (_shellKind == ShellKind.mobile) {
+          // 2026-10-31 联调 #0（用户裁定 A + B）：**手机端不拦人**。
+          // 业务页全部读镜像、开单走队列 —— 本机这本空壳账坏了不影响使用。
+          // 于是 `_dbFailure` 保持 `null`（启动错误页不出现），改挂一条常驻说明
+          // + 「修复本机账本」（`_rebuildLocalDatabase`）。
+          _dbFailure = null;
+          _localDbFailure = _localDatabaseBrokenMessage();
+        } else {
+          _dbFailure = _brokenDatabaseMessage(location.directory);
+        }
       });
     }
   }
@@ -1932,7 +2079,15 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       schemaVersion: _schemaVersion > 0
           ? _schemaVersion
           : location.marker.schemaVersion,
-      databaseReady: _db != null,
+      // ⚠️ 判据**跟壳走**（2026-10-31 联调 #0）：手机壳读的是镜像，
+      // 本地账本坏掉（`_db == null`）不影响镜像可用 —— 否则概览页会显示
+      // 「数据文件打不开，请到设置里换一个位置」，而手机上**没有**那个设置项。
+      databaseReady: _shellKind == ShellKind.mobile
+          ? mirror != null
+          : _db != null,
+      // 本机账本打不开时的常驻说明 + 修复出口（裁定 A + B；桌面恒 null）
+      localDbNotice: _localDbFailure,
+      onRebuildLocalDb: _localDbFailure == null ? null : _rebuildLocalDatabase,
       products: shellProducts,
       purchases: shellPurchases,
       sales: shellSales,
@@ -1962,7 +2117,17 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       accounts: shellAccounts,
       parties: shellParties,
       queries: shellQueries,
-      documents: _db == null ? null : DocumentDao(_db!),
+      // ⚠️ 2026-10-31 联调 #4 的架构缺口：**手机端绝不能接本地库**。
+      //
+      // 手机上的主库是空壳（真机实测「备份文件里 0 商品 0 队列」），单据全在
+      // 镜像里。原来这里写 `_db == null ? null : DocumentDao(_db!)` —— 手机 5 个
+      // tab 里没有「单据」入口，所以是**潜在**缺口：一旦有人加了入口，
+      // 列表会读一份空的 / 旧的副本，而界面看不出任何异常。
+      // 现在：手机恒 `null`（真加了入口也是「正在开发」占位，不会读错库）；
+      // 桌面照旧接主库，零变化。
+      documents: _shellKind == ShellKind.mobile || _db == null
+          ? null
+          : DocumentDao(_db!),
       settlements: _settlements,
       returns: _returns,
       engine: shellEngine,

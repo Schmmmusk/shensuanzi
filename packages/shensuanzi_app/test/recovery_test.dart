@@ -318,4 +318,83 @@ void main() {
       expect(File(databasePath).existsSync(), isTrue);
     });
   });
+
+  // 2026-10-31 联调 #0（用户裁定 A + B）：「修复本机账本」的前半步 —— 留档。
+  group('留档（重建本机账本）', () {
+    test('坏库 + -wal + -shm 一起改名，坏文件仍可读、原名消失', () {
+      // 故意造一个**不是 SQLite** 的文件（真机现场：disk I/O error）
+      File(databasePath).writeAsStringSync('这不是一个数据库' * 100);
+      File('$databasePath-wal').writeAsStringSync('wal');
+      File('$databasePath-shm').writeAsStringSync('shm');
+
+      final ArchiveResult result = archiveBrokenDatabase(
+        databasePath: databasePath,
+        now: () => DateTime(2026, 10, 31, 16, 21, 22),
+      );
+
+      expect(result.ok, isTrue, reason: result.problem ?? '');
+      expect(
+        result.archivedPath,
+        '$databasePath.broken-20261031-162122',
+        reason: '命名与「接回」同一套（brokenStamp）',
+      );
+      // 三个文件都挪走了，一个都不许留 —— 只挪 .db 的话，新库一打开
+      // 就会被旧库的 WAL 覆盖（restoreFromCandidate 第 ② 步同源）
+      for (final String sidecar in <String>['', '-wal', '-shm']) {
+        expect(
+          File('$databasePath$sidecar').existsSync(),
+          isFalse,
+          reason: '原名 $sidecar 必须让开',
+        );
+        expect(
+          File('${result.archivedPath}$sidecar').existsSync(),
+          isTrue,
+          reason: '留档必须带上 $sidecar',
+        );
+      }
+      // 「不会删」这句话要能验：内容一个字节都没少
+      expect(
+        File(result.archivedPath!).readAsStringSync(),
+        '这不是一个数据库' * 100,
+      );
+    });
+
+    test('库文件本来就不存在 ⇒ 也算成功，只是没有可留档的', () {
+      final ArchiveResult result = archiveBrokenDatabase(
+        databasePath: databasePath,
+      );
+      expect(result.ok, isTrue);
+      expect(result.archivedPath, isNull, reason: '没东西可留，别造一个空文件');
+      expect(
+        dataDir.listSync().where(
+          (FileSystemEntity e) => p.basename(e.path).contains('broken'),
+        ),
+        isEmpty,
+      );
+    });
+
+    test('留档之后原地开新库 ⇒ 拿到的是**空账**，旧数据只在 .broken 里', () {
+      makeDb(databasePath, docs: 3);
+      final ArchiveResult result = archiveBrokenDatabase(
+        databasePath: databasePath,
+      );
+      expect(result.ok, isTrue);
+
+      final Db fresh = Db.open(databasePath);
+      addTearDown(fresh.close);
+      expect(
+        fresh.raw.select('SELECT COUNT(*) FROM documents').first.values.first,
+        0,
+        reason: '重建 = 空账（旧数据在留档里，不在新库里）',
+      );
+
+      final Db old = Db.open(result.archivedPath!);
+      addTearDown(old.close);
+      expect(
+        old.raw.select('SELECT COUNT(*) FROM documents').first.values.first,
+        3,
+        reason: '留档的文件必须还能打开、数据还在',
+      );
+    });
+  });
 }

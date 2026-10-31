@@ -327,6 +327,18 @@ class HostServiceController {
       if (wasRunning) await _stopRaw();
       // 重新生成后 `_identity` 带着明文 ⇒ [_startRaw] 里 `??=` 会直接用它
       _identity = _identities.reset(now: _clock());
+      // 2026-10-31 真机：`host.json` 被拒写（`errno = 5`），ACL / SDDL / 只读 /
+      // 完整性标签全部排除，**根因未定**。降级（内存令牌）已经兜住了功能，
+      // 但日志里当时只有「失败了」这个事实、没有任何 errno ⇒ 下次复现等于
+      // 从零再查一遍。这里把原文交给宿主写进日志，留现场。
+      final String? persistProblem = _identities.lastWriteProblem;
+      if (persistProblem != null) {
+        onInternalError?.call(
+          'host.json 写不进去（配对码只对这次运行有效）',
+          persistProblem,
+          StackTrace.current,
+        );
+      }
     } catch (error) {
       // 领域层**不往外抛**（2026-10-31 真机：抛到界面 ⇒ 按钮全灰、只能重启）。
       // 统一成「failed 快照 + 人话 hint」，与 `_startRaw` 同一个形状。

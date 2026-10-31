@@ -95,10 +95,13 @@ export 'src/rescue.dart'
         rescueFileName;
 export 'src/recovery.dart'
     show
+        ArchiveResult,
         RecoveryCandidate,
         RecoveryRestoreResult,
         RecoverySource,
         RecoveryState,
+        archiveBrokenDatabase,
+        brokenStamp,
         restoreFromCandidate,
         scanRecoveryCandidates;
 export 'src/backup.dart'

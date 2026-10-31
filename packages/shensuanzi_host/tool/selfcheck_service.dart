@@ -40,12 +40,14 @@ HostServiceController build(
   HostIdentityStore store, {
   PortRange ports = testPorts,
   Future<String?> Function()? detectLocalIp,
+  void Function(String label, Object error, StackTrace stack)? onInternalError,
 }) => HostServiceController(
   db: db,
   identities: store,
   ports: ports,
   detectLocalIp: detectLocalIp ?? () async => fakeIp,
   clock: now,
+  onInternalError: onInternalError,
 );
 
 /// 每次新建客户端：`resetToken` 会 `force: true` 关掉在飞的连接（这是对的），
@@ -345,8 +347,43 @@ Future<void> main() async {
   );
   check('重启后可重置出可扫的码', (await restarted.resetToken()).qrAvailable);
 
-  section('stop：清空运行期状态');
-  final HostServiceSnapshot stopped = await restarted.stop();
+  section('host.json 写不进去 ⇒ 降级成内存令牌，原文进日志（2026-10-31 真机 errno 5）');
+  final Directory hostJsonBox = Directory.systemTemp.createTempSync(
+    'ssz_selfcheck_host_json_',
+  );
+  // 「父路径其实是个文件」⇒ 写盘必然失败（与真机 errno 5 同类效果）
+  final File hostJsonBlocker =
+      File('${hostJsonBox.path}${Platform.pathSeparator}blocker')
+        ..writeAsStringSync('x');
+  final HostIdentityStore brokenStore = HostIdentityStore(
+    File('${hostJsonBlocker.path}${Platform.pathSeparator}host.json'),
+  );
+  final List<String> hostJsonLogged = <String>[];
+  final HostServiceController brokenHost = build(
+    db,
+    brokenStore,
+    onInternalError: (String label, Object error, StackTrace stack) =>
+        hostJsonLogged.add('$label / $error'),
+  );
+  final HostServiceSnapshot sBroken = await brokenHost.resetToken();
+  check(
+    '功能照旧（降级，不是 failed）',
+    sBroken.state != HostServiceState.failed,
+  );
+  check('identityPersistFailed = true', brokenHost.identityPersistFailed);
+  check(
+    '失败原文进日志（带路径 —— 根因未定，下次复现要有现场）',
+    hostJsonLogged.length == 1 && hostJsonLogged.single.contains(hostJsonBox.path),
+    hostJsonLogged.join(' | '),
+  );
+  await brokenHost.stop();
+  try {
+    hostJsonBox.deleteSync(recursive: true);
+  } catch (_) {
+    // 删不掉不影响结论
+  }
+
+  section('stop：清空运行期状态');  final HostServiceSnapshot stopped = await restarted.stop();
   check('state = stopped', stopped.state == HostServiceState.stopped);
   check('端口清空', stopped.port == null);
   check('地址清空（不能留下会过期的地址行）', stopped.address == null);

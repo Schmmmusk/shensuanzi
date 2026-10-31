@@ -34,6 +34,7 @@ void main() {
     PortRange ports = testPorts,
     Future<String?> Function()? detectLocalIp,
     Future<List<NetAddressOption>> Function()? detectAddresses,
+    void Function(String label, Object error, StackTrace stack)? onInternalError,
   }) => HostServiceController(
     db: db,
     identities: identities ?? store,
@@ -41,6 +42,7 @@ void main() {
     detectLocalIp: detectLocalIp ?? () async => fakeIp,
     detectAddresses: detectAddresses,
     clock: now,
+    onInternalError: onInternalError,
   );
 
   setUp(() {
@@ -534,6 +536,48 @@ void main() {
       // 参数是**路径字符串** —— 与 `DataLocation.directory` 同型
       expect(hostIdentityFile('D:/data').path, endsWith(hostIdentityFileName));
       expect(hostIdentityFile('D:/data').path, contains('data'));
+    });
+
+    test('落盘失败 ⇒ 原文交给宿主日志（根因未定，下次复现要有现场）', () async {
+      // 2026-10-31 真机：`host.json` 被拒写（`errno = 5`），ACL / SDDL / 只读 /
+      // 完整性标签全部排除，根因至今未定。当时日志里**只有一个布尔值**，
+      // 等于下次复现要从零再查一遍。
+      final Directory box = Directory.systemTemp.createTempSync('host_json_');
+      addTearDown(() {
+        try {
+          box.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+      // 「父路径其实是个文件」⇒ 写盘必然失败（与真机 errno 5 同类效果）
+      final File blocker = File('${box.path}${Platform.pathSeparator}blocker')
+        ..writeAsStringSync('x');
+      final HostIdentityStore broken = HostIdentityStore(
+        File('${blocker.path}${Platform.pathSeparator}host.json'),
+      );
+
+      final List<String> labels = <String>[];
+      final List<Object> errors = <Object>[];
+      final HostServiceController c = build(
+        identities: broken,
+        onInternalError: (String label, Object error, StackTrace stack) {
+          labels.add(label);
+          errors.add(error);
+        },
+      );
+      addTearDown(c.stop);
+
+      final HostServiceSnapshot snapshot = await c.resetToken();
+
+      // 功能照旧（降级成内存令牌）—— 日志只是**附加**，不是新故障点
+      expect(snapshot.state, isNot(HostServiceState.failed));
+      expect(c.identityPersistFailed, isTrue);
+      expect(labels, hasLength(1), reason: '失败必须留一条日志');
+      expect(labels.single, contains('host.json'));
+      expect(
+        errors.single.toString(),
+        contains(box.path),
+        reason: '原文要带上出问题的路径，否则拿到 errno 也不知道是哪个文件',
+      );
     });
   });
 }

@@ -101,8 +101,43 @@ void main() {
     );
   });
 
-  test('Runner.rc 保持纯 ASCII（裁定：编码一致性 > 没人看的属性页）', () {
-    final List<int> nonAscii = File(
+  /// 随包文档的版本戳（2026-10-31，0.7.1 发版后补的闸门）。
+  ///
+  /// ## 为什么加这条
+  ///
+  /// 0.7.1 发版时 `packaging/使用说明.txt` 的版本号改成了 `v0.7.1`，
+  /// 但括号里的序数词**还留着「第九个」**（README 已经是「第十个」）——
+  /// 三处「版本一致」的闸门全绿，因为这个序数词**没有任何一处检查**：
+  /// `make_release.py` 只比 `v(\d+\.\d+\.\d+)`，`version_test` 只比
+  /// `pubspec` / `version.dart` / `Runner.rc`。
+  ///
+  /// 于是**已经发出去的那份包**里印着「v0.7.1（第九个可部署版本）」。
+  /// 这条把「文档侧那一半」也钉上：首行必须**逐字等于** `神算子 <AppVersion.display>`。
+  /// 限定词从 `AppVersion.build` 算（见上面的 `chineseNumeral`），不手抄。
+  test('使用说明.txt 首行 == 「神算子 <AppVersion.display>」，且 BOM 还在', () {
+    final String text = File('packaging/使用说明.txt').readAsStringSync();
+
+    // BOM：打包脚本按 UTF-8 **带 BOM** 读（`encoding='utf-8-sig'`），
+    // 记事本 / 某些编辑器一存就把它吃掉 —— 吃了之后用户打开是乱码。
+    // ⚠️ 必须读**字节**：Dart 的 `readAsStringSync` 会把 BOM 吃掉（utf8 解码器
+    // 默认吞 BOM），拿字符串判 BOM 永远是绿的 —— 假绿。
+    expect(
+      File('packaging/使用说明.txt').readAsBytesSync().take(3).toList(),
+      <int>[0xEF, 0xBB, 0xBF],
+      reason: 'BOM 被吃掉了（用记事本另存会这样）—— 打包脚本按 utf-8-sig 读',
+    );
+
+    final String firstLine = text.split('\n').first.trim();
+    expect(
+      firstLine,
+      '神算子 ${AppVersion.display}',
+      reason:
+          '随包文档的版本戳与 AppVersion.display 不一致 —— '
+          '改版本号时 `使用说明.txt` 也要改（含「第 N 个」这个序数词）',
+    );
+  });
+
+  test('Runner.rc 保持纯 ASCII（裁定：编码一致性 > 没人看的属性页）', () {    final List<int> nonAscii = File(
       'windows/runner/Runner.rc',
     ).readAsBytesSync().where((int b) => b > 127).toList();
 

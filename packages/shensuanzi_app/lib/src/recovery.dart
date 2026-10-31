@@ -404,6 +404,83 @@ class RecoveryRestoreResult {
   bool get ok => candidatePath != null;
 }
 
+/// 「留档 + 重新开一本空的」里**留档**这一步的结果。
+class ArchiveResult {
+  const ArchiveResult.ok(this.archivedPath) : problem = null;
+
+  const ArchiveResult.failure(this.problem) : archivedPath = null;
+
+  /// 坏文件被改名到了哪里（`null` = 原来就没有库文件，没什么可留）
+  final String? archivedPath;
+
+  /// 失败原因（人话，可直接显示）
+  final String? problem;
+
+  bool get ok => problem == null;
+}
+
+/// **留档**：把打不开的库（`.db` + `-wal` + `-shm`）改名成
+/// `<db>.broken-<时间>`，**一个字节都不删**。
+///
+/// ## 为什么手机端需要它（2026-10-31 联调 #0，用户裁定 A + B 相结合）
+///
+/// 手机上 `shensuanzi.db` 是**空壳** —— 权威数据在镜像与主机上（见
+/// `app_shell.dart` 里 `allowBackup` 那段注释：真机实测「备份文件里 0 商品
+/// 0 队列」）。可启动路径仍然把它当主库开 ⇒ 它一坏，整个 App 进不了界面，
+/// 哪怕镜像完好、80 张单据都在。修法两半：
+///
+/// - **A 降级**：本地库打不开 ≠ App 不可用，照常进界面（读镜像）；
+/// - **B 重建**：由用户点一下，把坏文件留档、再开一本空账。
+///
+/// 这里只做 B 的**前半步**（留档）。后半步（重新开库）走正常启动流程 ——
+/// 于是「重建」与「平常启动」共用同一段代码，不存在第二条开库路径。
+///
+/// ⚠️ **`-wal` / `-shm` 必须一起挪**：库是 WAL 模式，只挪 `.db` 的话，
+/// 新建的库一打开就会被旧库的 WAL 覆盖（比不重建更糟）。这条与
+/// [restoreFromCandidate] 第 ② 步同源。
+///
+/// ⚠️ **任何一步失败都回滚**（把已挪走的改回原名），并返回人话原因 ——
+/// 那时界面要说的是「数据没有动过」，这句话必须是真的。
+ArchiveResult archiveBrokenDatabase({
+  required String databasePath,
+  DateTime Function()? now,
+}) {
+  final String archived = '$databasePath.broken-${brokenStamp((now ?? DateTime.now)())}';
+  final bool hadDatabase = File(databasePath).existsSync();
+  final List<String> moved = <String>[];
+  if (hadDatabase) {
+    for (final String sidecar in <String>['', '-wal', '-shm']) {
+      final File source = File('$databasePath$sidecar');
+      if (!source.existsSync()) continue;
+      try {
+        source.renameSync('$archived$sidecar');
+        moved.add(sidecar);
+      } on FileSystemException catch (error) {
+        _rollbackArchive(databasePath, archived, moved);
+        return ArchiveResult.failure(
+          '原来的数据文件正被别的程序占用，改不了名'
+          '（${error.osError?.message ?? '请关掉占用它的程序'}）。数据没有动过。',
+        );
+      }
+    }
+  }
+  return ArchiveResult.ok(hadDatabase ? archived : null);
+}
+
+/// `.broken-<时间>` 里的时间戳（本地时间、到秒、无分隔符）。
+///
+/// 单独抽出来是为了让 [archiveBrokenDatabase] 与 [restoreFromCandidate]
+/// **用同一个格式** —— 两处各写一份，迟早一个带毫秒一个不带，
+/// 用户在同一目录里看到两种命名。
+String brokenStamp(DateTime stamp) =>
+    '${stamp.year.toString().padLeft(4, '0')}'
+    '${stamp.month.toString().padLeft(2, '0')}'
+    '${stamp.day.toString().padLeft(2, '0')}'
+    '-'
+    '${stamp.hour.toString().padLeft(2, '0')}'
+    '${stamp.minute.toString().padLeft(2, '0')}'
+    '${stamp.second.toString().padLeft(2, '0')}';
+
 /// 把 [candidatePath] 接回去（覆盖 [databasePath]）。
 ///
 /// ## 顺序（每一步失败都能退回原状）
@@ -436,16 +513,8 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
     return RecoveryRestoreResult.failure('这份备份现在不能用了：${check.note ?? '体检没通过'}');
   }
 
-  final DateTime stamp = (now ?? DateTime.now)();
-  final String suffix =
-      '${stamp.year.toString().padLeft(4, '0')}'
-      '${stamp.month.toString().padLeft(2, '0')}'
-      '${stamp.day.toString().padLeft(2, '0')}'
-      '-'
-      '${stamp.hour.toString().padLeft(2, '0')}'
-      '${stamp.minute.toString().padLeft(2, '0')}'
-      '${stamp.second.toString().padLeft(2, '0')}';
-  final String archived = '$databasePath.broken-$suffix';
+  final String archived =
+      '$databasePath.broken-${brokenStamp((now ?? DateTime.now)())}';
 
   // ② 现库改名留存。**`-wal` / `-shm` 必须一起挪** —— 库是 WAL 模式，
   //    只挪 `.db` 的话，新库一打开就会被旧库的 WAL 覆盖（比不恢复更糟）。

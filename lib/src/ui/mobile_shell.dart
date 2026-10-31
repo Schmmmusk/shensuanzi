@@ -23,6 +23,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'app_shell.dart';
+import 'local_db_banner.dart';
 import 'notice.dart';
 import 'price_lookup_page.dart';
 import 'read_failure_banner.dart';
@@ -213,6 +214,15 @@ class _MobileShellState extends State<MobileShell> {
               sync: widget.shell.mobileSync,
               version: widget.shell,
             ),
+            // 2026-10-31 联调 #0（用户裁定 A + B）：本机账本打不开时**不拦人**，
+            // 顶部常驻一条说明 + 一个「修复本机账本」。放在三态条**下面** ——
+            // 三态条已裁定「顶部常驻」，这条是异常提醒，不去挤那个位置
+            // （与 `ReadFailureBanner` 同一摆放理由）。
+            if (widget.shell.localDbNotice != null)
+              LocalDbBanner(
+                message: widget.shell.localDbNotice!,
+                onRebuild: widget.shell.onRebuildLocalDb,
+              ),
             // #42 甲 · L4（2026-10-14）：读数据不全的提示条 —— 与桌面壳**共用
             // 同一个 widget**（`read_failure_banner.dart`，照 `appShellPage` 的先例）。
             // 位置放在三态条**下面**：三态条是「同步进度」（常态），这条是「异常提醒」，

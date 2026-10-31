@@ -153,6 +153,9 @@ void main() {
       expect(store.lastWriteFailed, isTrue);
       expect(identity.plaintextToken, isNotNull, reason: '内存里必须有明文，否则二维码画不出来');
       expect(identity.authorizes(identity.plaintextToken), isTrue);
+      // 原文留着给日志（根因未定的那个 errno，下次复现要有现场）
+      expect(store.lastWriteProblem, isNotNull);
+      expect(store.lastWriteProblem, contains(blocker.path));
     });
   });
 }

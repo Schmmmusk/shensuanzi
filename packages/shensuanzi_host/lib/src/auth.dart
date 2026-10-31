@@ -121,6 +121,20 @@ class HostIdentityStore {
   bool get lastWriteFailed => _lastWriteFailed;
   bool _lastWriteFailed = false;
 
+  /// 上一次写盘失败的**原文**（`null` = 没失败过）。
+  ///
+  /// ## 为什么留它（2026-10-31 真机，联调待解决 #1）
+  ///
+  /// 那次 `host.json` 被拒写（`PathAccessException ... errno = 5`），
+  /// 而 ACL / SDDL / 只读属性 / 完整性标签**全部排除**（与 `shensuanzi.db`
+  /// 逐字节相同；同一用户、同一文件，我方进程能写、App 不能）—— **根因至今未定**。
+  ///
+  /// 没有这条记录，失败就只剩一个 `lastWriteFailed = true` 的布尔值：
+  /// 下次真机复现，日志里看不到任何 errno，等于**又要从零查一遍**。
+  /// 有它，宿主就能把原文写进日志（见 `ServiceController.resetToken`）。
+  String? get lastWriteProblem => _lastWriteProblem;
+  String? _lastWriteProblem;
+
   /// 读取已存的主机身份。
   ///
   /// **返回的实例里 [HostIdentity.plaintextToken] 恒为 `null`** ——
@@ -161,12 +175,15 @@ class HostIdentityStore {
     try {
       _write(next);
       _lastWriteFailed = false;
-    } catch (_) {
+      _lastWriteProblem = null;
+    } catch (error) {
       // ⚠️ **不抛**（2026-10-31 真机）：`host.json` 写不进去时，从前异常一路
       // 穿到界面 ⇒ 二维码永远画不出来 ⇒ 手机永远连不上。
       // 现在降级：令牌只在本进程内存里有效 —— 本次能配对，重启后失效
       // （那时再生成一次即可）。**比「功能直接不可用」好得多。**
       _lastWriteFailed = true;
+      // 原文留着给日志（根因未定，见 [lastWriteProblem] 的注释）
+      _lastWriteProblem = error.toString();
     }
     return next;
   }
