@@ -159,6 +159,13 @@ export 'src/export_tables.dart'
         productExportTable,
         stockExportTable;
 export 'src/emphasis.dart' show EmphasisSegment, emphasisSegments;
+export 'src/mirror_rescue.dart'
+    show
+        MirrorQueueRescue,
+        MirrorRecoveryResult,
+        queueRescueReport,
+        rescueMirrorQueue;
+
 export 'src/format.dart'
     show
         activeLabel,

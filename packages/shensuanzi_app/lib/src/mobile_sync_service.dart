@@ -49,6 +49,8 @@ import 'package:shensuanzi_core/shensuanzi_core.dart'
 import 'http_transport.dart';
 import 'sync_failure_message.dart';
 import 'mirror_archive.dart';
+import 'mirror_rescue.dart';
+import 'recovery.dart';
 import 'pairing_address.dart';
 import 'pairing_store.dart';
 
@@ -169,6 +171,109 @@ class MobileSyncService {
     final MirrorMeta meta = _meta();
     return resetForNewHost(previousHostId: meta.hostId);
   }
+
+  /// **镜像文件打不开时的隔离恢复**（2026-10-31 用户裁定「状态 3」，`docs/reply.md` §四）。
+  ///
+  /// ## 与 [rebuildLocalCopy] 的关键区别
+  ///
+  /// [rebuildLocalCopy] 的前提是**库还能打开**（它先 `_meta()` → `openMirror()`）。
+  /// 用户的原话点出了这个死角：
+  ///
+  /// > 设置页现有的「重建本机数据副本」也存在这个限制：它先调用 `_meta()`，
+  /// > 而 `_meta()` 又会调用 `openMirror()`。镜像打不开时，甚至无法进入真正的重建步骤。
+  ///
+  /// 所以这条路径**一步都不碰旧库**：先复制副本抢队列 → 原件改名留档 →
+  /// 建新镜像 → 回填队列 → 由调用方触发全量重拉。
+  ///
+  /// ## 顺序（用户裁定的六步，逐条对应）
+  ///
+  /// 1. 保留原数据库文件及其 `-wal`、`-shm` ⇒ [archiveBrokenDatabase]（改名，不删）
+  /// 2. 对原文件的**副本**尝试抢救 `sync_queue` ⇒ [rescueMirrorQueue]
+  /// 3. 保存能恢复的未同步单据、生成可分享的清单 ⇒ 调用方用 [queueRescueReport] 落盘
+  /// 4. 创建新的镜像库 ⇒ [openMirror]
+  /// 5. 从电脑完整拉取权威业务数据 ⇒ 调用方 `syncNow()`（新库游标为 0 ⇒ 全量）
+  /// 6. 恢复能够确认归属和完整性的队列数据 ⇒ 只回填 `pending` / `failed`，
+  ///    `sent`（主机已收下、本机没确认）**降级成 `pending` 重推一次** ——
+  ///    推送按实体 id 幂等（`sync_protocol.md` §六），重推比漏推安全。
+  ///
+  /// ⚠️ **救不回来的必须说出来**：返回结果里带 `unreadableRows` 与
+  /// `enqueueFailures`，UI 据此说「有 N 条没能找回」，不许假装全找回了。
+  MirrorRecoveryResult recoverBrokenMirror({required String workDirectory}) {
+    final PairingInfo? pairing = pairingStore.load();
+
+    // ① 先抢队列（在副本上做，原件还没动）
+    final MirrorQueueRescue rescue = rescueMirrorQueue(
+      mirrorPath: mirrorPath,
+      workDirectory: workDirectory,
+    );
+
+    // ② 关句柄再改名（Windows 上握着句柄改名会 EACCES）
+    try {
+      _mirror?.close();
+    } catch (_) {
+      // 关不掉也要往下走：改名失败会在下一步报出来
+    }
+    _mirror = null;
+
+    // ③ 原件留档（`.db` / `-wal` / `-shm` 一起，一个字节都不删）
+    final ArchiveResult archived = archiveBrokenDatabase(databasePath: mirrorPath);
+    if (!archived.ok) {
+      return MirrorRecoveryResult.failure(
+        rescue: rescue,
+        message: archived.problem!,
+      );
+    }
+
+    // ④ 新镜像 + 身份（同一台主机 ⇒ 不用重新扫码）
+    int restored = 0;
+    int enqueueFailures = 0;
+    try {
+      final Db fresh = openMirror();
+      if (pairing != null) {
+        MirrorMeta(fresh).writeHostId(pairing.hostId);
+      }
+      final SyncQueueDao queue = SyncQueueDao(fresh);
+      for (final SyncQueueEntry entry in rescue.entries) {
+        try {
+          queue.enqueue(_requeued(entry));
+          restored++;
+        } catch (_) {
+          enqueueFailures++;
+        }
+      }
+    } catch (error) {
+      return MirrorRecoveryResult.failure(
+        rescue: rescue,
+        message: '新的数据副本建不起来（$error）',
+        archivedPath: archived.archivedPath,
+      );
+    }
+
+    return MirrorRecoveryResult.ok(
+      rescue: rescue,
+      archivedPath: archived.archivedPath,
+      restored: restored,
+      enqueueFailures: enqueueFailures,
+      paired: pairing != null,
+    );
+  }
+
+  /// 回填时把 `sent` 降级成 `pending`（见 [recoverBrokenMirror] 第 6 步）。
+  static SyncQueueEntry _requeued(SyncQueueEntry entry) => SyncQueueEntry(
+    id: entry.id,
+    entity: entry.entity,
+    entityId: entry.entityId,
+    operation: entry.operation,
+    baseVersion: entry.baseVersion,
+    payload: entry.payload,
+    status: entry.status == SyncQueueStatus.sent
+        ? SyncQueueStatus.pending
+        : entry.status,
+    retryCount: entry.retryCount,
+    lastError: entry.lastError,
+    createdAt: entry.createdAt,
+    nextRetryAt: 0,
+  );
 
   /// 已有的历史主机归档（设置页「历史主机数据」列表用），新 → 旧。
   List<MirrorArchiveEntry> archives() => archive.list();

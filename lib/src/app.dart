@@ -309,7 +309,13 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 界面却说「文件可能出了点小问题」，他以为数据坏了）。
   bool _dbTooNew = false;
 
-  /// 手机端**本机账本打不开**的原因（2026-10-31 联调 #0，用户裁定 A + B 相结合）。
+  /// 正在做**镜像隔离恢复**（状态 3）—— 期间整页显示「正在修复」。
+  ///
+  /// 为什么不弹进度框：这一步要复制几百 MB 的文件，必须在**首帧之后**才开始，
+  /// 且不能给假进度（拿不到总字节就报百分比是骗人）。整页一句话最诚实。
+  bool _recoveringMirror = false;
+
+  /// 手机端**本机账本打不开**的原因（2026-10-31 联调 #0，用户裁定 A 第一阶段）。
   ///
   /// 与 [_dbFailure] 的分工：`_dbFailure` = **什么都用不了**，停在启动错误页；
   /// 这里 = 只是本机那本空壳账打不开，**镜像还能用** ⇒ 照常进主界面。
@@ -872,6 +878,196 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     if (retry != true || !mounted) return;
     await _retry();
   }
+
+  /// **镜像隔离恢复**（2026-10-31 用户裁定「状态 3」，`docs/reply.md` §四）。
+  ///
+  /// ## 为什么不能只给「重试」
+  ///
+  /// 用户原话：「设置页现有的『重建本机数据副本』也存在这个限制：它先调用
+  /// `_meta()`，而 `_meta()` 又会调用 `openMirror()`。镜像打不开时，
+  /// 甚至无法进入真正的重建步骤。」—— 镜像文件一坏，**所有**需要打开它的
+  /// 入口都跟着失效，用户被彻底锁死。
+  ///
+  /// ## 这一步做什么（六步，对应裁定原文）
+  ///
+  /// 1. 原件（`.db` + `-wal` + `-shm`）**改名留档**，一个字节不删；
+  /// 2. 在**副本**上抢救 `sync_queue`（未 checkpoint 的条目在 `-wal` 里，必须带上）；
+  /// 3. 把能抢回来的条目写回新副本，并落一份**抢救清单**（可发给技术支持）；
+  /// 4. 建一份新的镜像库（同一台主机 ⇒ 不用重新扫码）；
+  /// 5. 若还配着主机 ⇒ 立刻做一次**全量重拉**（新库游标为 0，天然从头拉）；
+  /// 6. **救不回来的如实说出来** —— 不许假装全找回了。
+  Future<void> _recoverBrokenMirror() async {
+    final MobileSyncService? sync = _mobileSyncService;
+    final String? root = widget.dataRoot;
+    if (sync == null || root == null) return;
+    final BuildContext? dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null || !dialogContext.mounted) return;
+
+    final bool? confirmed = await showDialog<bool>(
+      context: dialogContext,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('修复本机数据副本？'),
+        content: const SingleChildScrollView(
+          child: EmphasizedText(
+            '会做四件事：\n'
+            '一、把打不开的那份文件改名留档（不会删掉）；\n'
+            '二、尽力把还没传给电脑的单抢出来；\n'
+            '三、重新建一份空的副本；\n'
+            '四、连上电脑后，把账从头拉一遍。\n\n'
+            '⚠️ 抢不回来的单会**如实列出来**，不会假装都找回来了。'
+            '电脑上的账不受影响。',
+            style: TextStyle(height: 1.6),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('先不修'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('修复'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _recoveringMirror = true);
+    // 让「正在修复」那一帧先画出来，再开始拷文件（拷贝是同步 IO）
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    if (!mounted) return;
+
+    MirrorRecoveryResult result;
+    String? reportPath;
+    try {
+      result = sync.recoverBrokenMirror(
+        workDirectory: p.join(root, 'mirror', 'rescue-tmp'),
+      );
+      // 清单落在留档旁边（用户要发给技术支持时能直接找到）
+      try {
+        final String dir = p.dirname(sync.mirrorPath);
+        final String name = '未同步单据抢救-${_rescueStamp(DateTime.now())}.txt';
+        reportPath = p.join(dir, name);
+        File(reportPath).writeAsStringSync(
+          queueRescueReport(
+            rescue: result.rescue,
+            at: DateTime.now(),
+            archivedPath: result.archivedPath,
+          ),
+          flush: true,
+        );
+      } catch (error, stack) {
+        _log.crash(error, stack, label: '写抢救清单失败');
+        reportPath = null;
+      }
+    } catch (error, stack) {
+      // 领域层不抛（与主机服务同一条纪律），这里只兜「连兜都没兜住」的那种
+      _log.crash(error, stack, label: '镜像隔离恢复失败');
+      if (!mounted) return;
+      setState(() => _recoveringMirror = false);
+      final BuildContext? ctx = _navigatorKey.currentContext;
+      if (ctx != null && ctx.mounted) {
+        await _migrationMessage(ctx, '修复没能完成：$error。原来的文件没有动，可以重试。');
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _recoveringMirror = false);
+    _log.write(
+      '镜像隔离恢复：抢回 ${result.restored} 条，'
+      '读不出 ${result.rescue.unreadableRows} 条，'
+      '写回失败 ${result.enqueueFailures} 条，'
+      '留档 ${result.archivedPath ?? '（没有旧文件）'}',
+    );
+
+    final BuildContext? resultContext = _navigatorKey.currentContext;
+    if (resultContext != null && resultContext.mounted) {
+      await _showRecoveryResult(resultContext, result, reportPath: reportPath);
+    }
+
+    // 修完照常走启动流程（新副本已经能开了）；配着主机就顺手全量拉一遍
+    _prepareMobile();
+    if (result.ok && result.paired) {
+      await _mobileSyncNow();
+    }
+  }
+
+  /// 恢复结果的说明（**救不回来的必须说出来**）。
+  Future<void> _showRecoveryResult(
+    BuildContext context,
+    MirrorRecoveryResult result, {
+    String? reportPath,
+  }) {
+    final StringBuffer text = StringBuffer();
+    if (!result.ok) {
+      text.writeln('修复没能完成：${result.message}');
+      text.writeln();
+      text.writeln('原来的文件没有动过，可以再试一次。');
+    } else {
+      if (result.restored > 0) {
+        text.writeln('抢回 ${result.restored} 条还没传给电脑的单，已经放回本机副本。');
+        if (result.paired) {
+          text.writeln('接下来会把账从头拉一遍，那些单也会重新推给电脑。');
+        } else {
+          text.writeln('扫码连上电脑后，它们会自动推过去。');
+        }
+      } else if (!result.rescue.ok) {
+        // ⚠️ 「读不出来」与「本来就没有」是两件事 —— 不许混成一句
+        // 「没有未传的单」（那是撒谎：我们根本没能看里面有什么）。
+        text
+          ..writeln('原来那份文件已经认不出来了，**里面有没有没传上去的单，现在无法确认**。')
+          ..writeln('原因：${result.rescue.problem}');
+      } else if (result.rescue.attempted) {
+        text.writeln('这台手机上没有还没传上去的单 —— 不用找回什么。');
+      } else {
+        text.writeln('原来的副本文件已经不在了，直接建了一份新的。');
+      }
+      if (result.lostCount > 0) {
+        text
+          ..writeln()
+          ..writeln(
+            '⚠️ 另有 ${result.lostCount} 条没能找回（文件坏得太厉害）—— '
+            '这部分内容没法还原，请不要当成已经找回来了。',
+          );
+      }
+      if (!result.paired) {
+        text
+          ..writeln()
+          ..writeln('这台手机还没连电脑：到「我的 → 设置」扫码，账就会拉回来。');
+      }
+    }
+    if (reportPath != null) {
+      text
+        ..writeln()
+        ..writeln('详细清单已存成文件（需要时可以发给技术支持）：')
+        ..writeln(reportPath);
+    }
+    return showDialog<void>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text(result.ok ? '修好了' : '没能修好'),
+        content: SingleChildScrollView(
+          child: EmphasizedText(text.toString(), style: const TextStyle(height: 1.6)),
+        ),
+        actions: <Widget>[
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 清单文件名里的时间戳（`20261031-2205`，与备份文件名同风格）
+  static String _rescueStamp(DateTime t) =>
+      '${t.year}${t.month.toString().padLeft(2, '0')}'
+      '${t.day.toString().padLeft(2, '0')}-'
+      '${t.hour.toString().padLeft(2, '0')}'
+      '${t.minute.toString().padLeft(2, '0')}';
 
   /// 错误页的**重试**（§审查 2026-10-05 真机）。
   ///
@@ -1906,14 +2102,30 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       );
     }
 
+    if (_recoveringMirror) {
+      // 修复期间整页一句话：这一步在拷文件 + 建库，中途不能让人乱点
+      return const _StartupPage(
+        message: '正在修复本机数据副本……\n\n'
+            '先把还没传上去的单抢救出来，再把原来那份文件留档、'
+            '重新建一份空的 —— 期间请不要关掉软件。',
+      );
+    }
+
     if (_mirrorFailure != null) {
       // M16（2026-10-08）：镜像打不开 —— 给**可操作的重试**。
       // 以前是在 build 期直接调 `openMirror()`，异常冒到框架 ⇒ 异常页，
       // 既没有导航也没有重试，用户只能重启（重启也可能还是坏的）。
+      //
+      // 2026-10-31（用户裁定「状态 3」，`docs/reply.md` §四）：镜像文件**打不开**
+      // 时，光「重试」是死路 —— 设置页那个「重建本机数据副本」也进不去
+      // （它先 `openMirror()`）。所以这里给一条**隔离恢复**：
+      // 留档原件 → 独立抢救 `sync_queue` → 建新副本 → 全量重拉。
       return _StartupPage(
         message: _mirrorFailure!,
         actionLabel: '重试',
         onAction: _prepareMobile,
+        extraLabel: '修复本机数据副本',
+        onExtra: _recoverBrokenMirror,
       );
     }
 
@@ -2216,8 +2428,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
 class _StartupPage extends StatelessWidget {
   const _StartupPage({
     required this.message,
-    required this.actionLabel,
-    required this.onAction,
+    // 2026-10-31：改成可选 —— 「正在修复本机数据副本」那一屏**不给按钮**
+    // （修复期间不能让人乱点），但仍要复用这一页的排版。
+    this.actionLabel,
+    this.onAction,
     this.retryLabel,
     this.onRetry,
     this.extraLabel,
@@ -2243,8 +2457,8 @@ class _StartupPage extends StatelessWidget {
   /// 备份能用时不该有人走到这里。
   final String? rescueLabel;
   final VoidCallback? onRescue;
-  final String actionLabel;
-  final VoidCallback onAction;
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   /// 可选的第二动作（如「重试」）；两个都为 `null` 时只显示主按钮
   final String? retryLabel;
@@ -2301,16 +2515,16 @@ class _StartupPage extends StatelessWidget {
                       ),
                     // 主按钮降为 tonal：有「找回数据」时，不该让「换个文件夹」
                     // 看起来是最该点的那个
-                    if (recoveryLabel != null && onRecovery != null)
-                      FilledButton.tonal(
-                        onPressed: onAction,
-                        child: Text(actionLabel),
-                      )
-                    else
-                      FilledButton(
-                        onPressed: onAction,
-                        child: Text(actionLabel),
-                      ),
+                    if (actionLabel != null && onAction != null)
+                      recoveryLabel != null && onRecovery != null
+                          ? FilledButton.tonal(
+                              onPressed: onAction,
+                              child: Text(actionLabel!),
+                            )
+                          : FilledButton(
+                              onPressed: onAction,
+                              child: Text(actionLabel!),
+                            ),
                     if (extraLabel != null && onExtra != null)
                       TextButton(onPressed: onExtra, child: Text(extraLabel!)),
                     // 抢救是最后手段：最不起眼的位置
