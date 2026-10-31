@@ -323,12 +323,27 @@ class HostServiceController {
   /// 走公开方法会撞上单飞、**拿回自己那个还没完成的 Future** ⇒ 自等待死锁。
   Future<HostServiceSnapshot> resetToken() => _single(_Op.reset, () async {
     final bool wasRunning = _state == HostServiceState.running;
-    if (wasRunning) await _stopRaw();
-    // 重新生成后 `_identity` 带着明文 ⇒ [_startRaw] 里 `??=` 会直接用它，不会覆盖
-    _identity = _identities.reset(now: _clock());
+    try {
+      if (wasRunning) await _stopRaw();
+      // 重新生成后 `_identity` 带着明文 ⇒ [_startRaw] 里 `??=` 会直接用它
+      _identity = _identities.reset(now: _clock());
+    } catch (error) {
+      // 领域层**不往外抛**（2026-10-31 真机：抛到界面 ⇒ 按钮全灰、只能重启）。
+      // 统一成「failed 快照 + 人话 hint」，与 `_startRaw` 同一个形状。
+      _failureHint = '生成新的配对码失败：$error。可以重试；一直失败请重启软件。';
+      _state = HostServiceState.failed;
+      if (wasRunning) await _startRaw(); // 至少把服务恢复，别把用户晾在 failed
+      return snapshot;
+    }
     if (wasRunning) return _startRaw();
     return snapshot;
   });
+
+  /// 身份是否**只活在内存里**（`host.json` 写不进去）。
+  ///
+  /// 界面据此提示「这个码只对这次运行有效」—— 不说的话，用户下次开机
+  /// 发现码又没了，会以为软件在丢东西。
+  bool get identityPersistFailed => _identities.lastWriteFailed;
 
   /// 真正的启动逻辑（**不设单飞**，只给 [start] 与 [resetToken] 用）。
   Future<HostServiceSnapshot> _startRaw() async {

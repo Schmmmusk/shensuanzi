@@ -321,6 +321,13 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
   /// 格式/前置条件错误（红字，留在对话框里）
   String? _error;
 
+  /// 输入里**含全角字符**（中文输入法把 `.` 打成 `。`、`:` 打成 `：`）。
+  ///
+  /// 解析层会自动掰回半角（`PairingAddress.normalize`），但**必须说出来**
+  /// （2026-10-31 真机）：输入框里明明写着 `10。102。43。94`，程序却一声不响
+  /// 地按半角处理 —— 用户根本不知道它到底认没认对，只会怀疑「是不是这里错了」。
+  bool _hadFullWidth = false;
+
   @override
   void dispose() {
     _controller.dispose();
@@ -374,8 +381,24 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
                   errorText: _error,
                   errorMaxLines: 4,
                 ),
+                onChanged: (String value) {
+                  final bool full =
+                      PairingAddress.normalize(value) != value.trim();
+                  if (full != _hadFullWidth) {
+                    setState(() => _hadFullWidth = full);
+                  }
+                },
                 onSubmitted: (_) => _submit(),
               ),
+              if (_hadFullWidth) ...<Widget>[
+                const SizedBox(height: 6),
+                Text(
+                  '已自动把全角字符换成半角（中文输入法常把「.」「:」打成全角），'
+                  '不用改。',
+                  key: const Key('manual-fullwidth-hint'),
+                  style: TextStyle(height: 1.6, fontSize: 13, color: secondary),
+                ),
+              ],
               const SizedBox(height: 12),
               Text(
                 '在电脑「设置 → 多设备同步」里能看到这个地址。',

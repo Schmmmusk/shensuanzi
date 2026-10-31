@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'balance_bars.dart';
+import 'month_compare.dart';
 import 'notice.dart';
 import 'revenue_chart.dart';
 import 'stock_top.dart';
@@ -32,6 +33,7 @@ class _OverviewData {
     required this.payables,
     required this.stockTop,
     required this.revenueRows,
+    required this.monthCompare,
     required this.fromDay,
     required this.toDay,
   });
@@ -40,7 +42,14 @@ class _OverviewData {
   final ReceivablesSummary receivables;
   final PayablesSummary payables;
   final StockTopSummary stockTop;
+
+  /// 按日营收（**可能含 30 天窗口外的天** —— 月度对比要上月同期；
+  /// 营收卡自己按窗口裁）
   final List<RevenueDay> revenueRows;
+
+  /// 本月至今 vs 上月同期
+  final MonthCompare monthCompare;
+
   final int fromDay;
   final int toDay;
 }
@@ -66,6 +75,7 @@ class OverviewPage extends StatefulWidget {
     this.pendingMarks,
     this.onNavigate,
     this.onPriceLookup,
+    this.monthComparePercent = false,
   });
 
   /// 数据目录（用户选的，数据库就放在这里）
@@ -81,6 +91,10 @@ class OverviewPage extends StatefulWidget {
 
   /// 店名（设置页采集；空则显示「概览」，SC-2）
   final String? shopName;
+
+  /// 月度对比用百分数（`+595%`）而不是倍数（`6.9 倍`）——
+  /// 设置页可切，默认倍数
+  final bool monthComparePercent;
 
   /// 备份提醒文案（`null` = 不需要提醒 → 不显示橙卡）。
   /// 由 `shensuanzi_app` 的 `backupReminderText` 给出 —— 与设置页红字同源
@@ -164,12 +178,25 @@ class _OverviewPageState extends State<OverviewPage> {
     // 业务日按**本地日**算 —— 与 `documents.business_day` 同一口径
     final int toDay = businessDayOf(DateTime.now().millisecondsSinceEpoch);
     final int fromDay = toDay - (_chartDays - 1);
+
+    // 月度对比的「上月同期」可能比 30 天更早（今天 31 日 ⇒ 要回到上月初），
+    // 所以**一次查够两个窗口**，比查两次省一趟扫表。
+    final MonthCompareWindow window = monthCompareWindow(toDay);
+    final List<RevenueDay> wide = q.dailyRevenue(
+      fromDay: window.priorFrom < fromDay ? window.priorFrom : fromDay,
+      toDay: toDay,
+    );
+
     return _OverviewData(
       today: q.todaySummary(_dayStart()),
       receivables: q.receivablesSummary(),
       payables: q.payablesSummary(),
       stockTop: q.stockTop(),
-      revenueRows: q.dailyRevenue(fromDay: fromDay, toDay: toDay),
+      // 传的是**宽数据**（含上月同期，月度对比要用）——
+      // 营收卡自己按 `fromDay..toDay` 裁，这样「平均每个有生意的日子」
+      // 不会把上月的天算进去，也不依赖调用方记得裁。
+      revenueRows: wide,
+      monthCompare: buildMonthCompare(rows: wide, window: window),
       fromDay: fromDay,
       toDay: toDay,
     );
@@ -580,6 +607,16 @@ class _OverviewPageState extends State<OverviewPage> {
           toDay: data.toDay,
           mobileShell: widget.mobileShell,
         ),
+        // 月度对比紧跟营收图：两张都在说「卖得怎么样」，放在一起好对照。
+        // 间距显式给 —— 两张卡都是 `margin: EdgeInsets.zero`。
+        if (!data.monthCompare.isEmpty) ...<Widget>[
+          const SizedBox(height: 12),
+          MonthCompareCard(
+            compare: data.monthCompare,
+            mobileShell: widget.mobileShell,
+            usePercent: widget.monthComparePercent,
+          ),
+        ],
         if (hasBalance) ...<Widget>[
           const SizedBox(height: 12),
           BalanceBarsCard(

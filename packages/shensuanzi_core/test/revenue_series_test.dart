@@ -411,6 +411,122 @@ void main() {
     });
   });
 
+  // ============================================================ 月度对比
+  group('monthCompareWindow（本月至今 vs 上月同期）', () {
+    int dayOf(int y, int m, int d) =>
+        businessDayOf(DateTime(y, m, d, 12).millisecondsSinceEpoch);
+
+    test('普通月份：上月窗口取**同样的天数**，不是整月', () {
+      // 2026-10-08 ⇒ 本月 1–8 日（8 天），上月 9/1–9/8（8 天）。
+      // 拿 8 天比 30 天会显得「这个月惨淡」，那是窗口不等长，不是生意变差。
+      final MonthCompareWindow w = monthCompareWindow(dayOf(2026, 10, 8));
+      expect(w.currentDays, 8);
+      expect(w.priorDays, 8);
+      expect(w.currentFrom, dayOf(2026, 10, 1));
+      expect(w.currentTo, dayOf(2026, 10, 8));
+      expect(w.priorFrom, dayOf(2026, 9, 1));
+      expect(w.priorTo, dayOf(2026, 9, 8));
+    });
+
+    test('今天 31 日、上月只有 30 天 ⇒ 上月窗口截到月末，不跨到上上月', () {
+      // 2026-10-31 ⇒ 上月 9 月只有 30 天 ⇒ 9/1–9/30（30 天，不是 31 天）。
+      final MonthCompareWindow w = monthCompareWindow(dayOf(2026, 10, 31));
+      expect(w.currentDays, 31);
+      expect(w.priorDays, 30);
+      expect(w.priorFrom, dayOf(2026, 9, 1));
+      expect(w.priorTo, dayOf(2026, 9, 30));
+    });
+
+    test('跨年：1 月的「上月」是去年 12 月', () {
+      final MonthCompareWindow w = monthCompareWindow(dayOf(2027, 1, 15));
+      expect(w.currentFrom, dayOf(2027, 1, 1));
+      expect(w.priorFrom, dayOf(2026, 12, 1));
+      expect(w.priorTo, dayOf(2026, 12, 15));
+    });
+
+    test('闰年 2 月：3 月 31 日对 2/1–2/29（29 天，不是 30）', () {
+      // 2028 是闰年。
+      final MonthCompareWindow w = monthCompareWindow(dayOf(2028, 3, 31));
+      expect(w.priorFrom, dayOf(2028, 2, 1));
+      expect(w.priorTo, dayOf(2028, 2, 29));
+      expect(w.priorDays, 29);
+    });
+  });
+
+  group('buildMonthCompare（纯函数）', () {
+    int dayOf(int y, int m, int d) =>
+        businessDayOf(DateTime(y, m, d, 12).millisecondsSinceEpoch);
+
+    test('只汇总窗口内的天，窗口外的忽略', () {
+      final MonthCompareWindow w = monthCompareWindow(dayOf(2026, 10, 10));
+      final MonthCompare c = buildMonthCompare(
+        rows: <RevenueDay>[
+          RevenueDay(day: dayOf(2026, 9, 5), saleCents: 3000), // 上月同期内
+          RevenueDay(day: dayOf(2026, 9, 20), saleCents: 9000), // 上月同期**外**
+          RevenueDay(day: dayOf(2026, 10, 3), saleCents: 5000), // 本月内
+        ],
+        window: w,
+      );
+      expect(c.priorCents, 3000, reason: '9/20 在窗口外（同期只到 9/10）');
+      expect(c.currentCents, 5000);
+      expect(c.deltaCents, 2000);
+      expect(c.percent, 67); // 2000/3000 = 66.7% ⇒ 67
+    });
+
+    test('上月同期为 0 ⇒ **没有百分比**（不是 +∞%）', () {
+      final MonthCompareWindow w = monthCompareWindow(dayOf(2026, 10, 10));
+      final MonthCompare c = buildMonthCompare(
+        // ⚠️ `documentCount` 必须给：`isEmpty` 判的是「有没有经营活动」。
+        // 少写这个字段会让「有活动」变成「没活动」—— 夹具不完整，不是代码错。
+        rows: <RevenueDay>[
+          RevenueDay(
+            day: dayOf(2026, 10, 3),
+            saleCents: 5000,
+            documentCount: 1,
+          ),
+        ],
+        window: w,
+      );
+      expect(c.currentCents, 5000);
+      expect(c.priorCents, 0);
+      expect(c.percent, isNull, reason: '除以 0 不是无穷大，是「没法比」—— 界面要说「上月同期还没有生意」');
+      expect(c.priorHasActivity, isFalse);
+      expect(c.currentHasActivity, isTrue);
+    });
+
+    test('净额 0 但有经营活动 ⇒ 不算「没生意」', () {
+      // 卖了 ¥50 又退了 ¥50：净额 0，但那天确实做了生意。
+      final MonthCompareWindow w = monthCompareWindow(dayOf(2026, 10, 10));
+      final MonthCompare c = buildMonthCompare(
+        rows: <RevenueDay>[
+          RevenueDay(
+            day: dayOf(2026, 10, 3),
+            saleCents: 5000,
+            returnCents: 5000,
+            documentCount: 1,
+            returnCount: 1,
+          ),
+        ],
+        window: w,
+      );
+      expect(c.currentCents, 0);
+      expect(
+        c.currentHasActivity,
+        isTrue,
+        reason: '净额 0 不等于没做生意（与 RevenueDay.isEmpty 同一个教训）',
+      );
+      expect(c.isEmpty, isFalse, reason: '有活动 ⇒ 卡要显示');
+    });
+
+    test('两段都没有经营活动 ⇒ isEmpty（卡不显示）', () {
+      final MonthCompareWindow w = monthCompareWindow(dayOf(2026, 10, 10));
+      expect(
+        buildMonthCompare(rows: const <RevenueDay>[], window: w).isEmpty,
+        isTrue,
+      );
+    });
+  });
+
   // ============================================================ 库存 Top 10
   group('QueryDao.topStockByValue（压货榜）', () {
     late Db db;

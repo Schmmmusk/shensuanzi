@@ -79,12 +79,16 @@ export 'src/models/sync_queue_entry.dart' show SyncQueueEntry, SyncQueueStatus;
 // DAO
 export 'src/charts/daily_series.dart'
     show
+        MonthCompare,
+        MonthCompareWindow,
         RevenueBucket,
         RevenueDay,
         RevenuePoint,
+        buildMonthCompare,
         buildRevenueSeries,
         dayLabel,
         dayToDate,
+        monthCompareWindow,
         monthStartDay,
         weekStartDay;
 export 'src/dao/account_dao.dart' show AccountDao;
@@ -155,7 +159,8 @@ export 'src/documents/delivery_service.dart'
     show DeliveryDraftInvalid, DeliverySaved, DeliveryService, DeliverySigned;
 export 'src/documents/discount_spread.dart' show spreadDiscount;
 export 'src/documents/overpay.dart' show Overpay;
-export 'src/dao/query_dao.dart' show QueryDao, StockAgg, StockTopSummary, StockValueRow;
+export 'src/dao/query_dao.dart'
+    show QueryDao, StockAgg, StockTopSummary, StockValueRow;
 export 'src/documents/draft_json.dart';
 export 'src/documents/product_backfill.dart';
 export 'src/documents/outstanding.dart'

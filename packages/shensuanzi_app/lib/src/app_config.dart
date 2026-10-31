@@ -45,6 +45,7 @@ class AppConfig {
     this.uiScale = UiScale.defaultScale,
     this.backupDirectory,
     this.shopName,
+    this.monthComparePercent = false,
   });
 
   /// `null` = 还没选过（→ 走向导）
@@ -61,12 +62,21 @@ class AppConfig {
   /// 店名（向导第 3 步，可跳过）
   final String? shopName;
 
+  /// 月度对比用**百分数**（`+595%`）还是**倍数**（`6.9 倍`）。
+  ///
+  /// 默认 `false` = 倍数（2026-10-31 真机）：上月 ¥140、本月 ¥973 时，
+  /// 百分数会显示「+595%」—— 算术没错，但基期很小时百分比会爆炸，
+  /// 中老年用户看着像「涨了六倍」其实是基数太小。倍数说法更贴近他的直觉。
+  /// 想看百分数的人在设置里切。
+  final bool monthComparePercent;
+
   AppConfig copyWith({
     String? dataDirectory,
     UiScale? uiScale,
     String? shopName,
     bool clearShopName = false,
     String? backupDirectory,
+    bool? monthComparePercent,
   }) => AppConfig(
     dataDirectory: dataDirectory ?? this.dataDirectory,
     uiScale: uiScale ?? this.uiScale,
@@ -75,6 +85,7 @@ class AppConfig {
         this.backupDirectory, // ignore: unnecessary_this —— 与上下两行同形
     // 上面三行的 this. 都是「不传就保留原值」—— 统一保留，删一处反而不一致
     shopName: clearShopName ? null : (shopName ?? this.shopName),
+    monthComparePercent: monthComparePercent ?? this.monthComparePercent,
   );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -82,6 +93,7 @@ class AppConfig {
     'ui_scale': uiScale.factor,
     if (backupDirectory != null) 'backup_directory': backupDirectory,
     'shop_name': shopName,
+    if (monthComparePercent) 'month_compare_percent': true,
   };
 
   /// **容错解析**：任何字段不认识 / 类型不对 → 退回默认值，不抛。
@@ -96,6 +108,8 @@ class AppConfig {
       uiScale: UiScale.fromFactor(json['ui_scale']) ?? UiScale.defaultScale,
       backupDirectory: json['backup_directory'] as String?,
       shopName: (shop is String && shop.trim().isNotEmpty) ? shop : null,
+      // 只认 `true`；缺省 / 类型不对一律按默认（倍数）
+      monthComparePercent: json['month_compare_percent'] == true,
     );
   }
 

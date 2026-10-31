@@ -404,4 +404,37 @@ void main() {
       expect(copy.readAsStringSync(), first);
     });
   });
+
+  group('月度对比格式（2026-10-31 真机）', () {
+    test('默认是**倍数**；关掉时**不写进 JSON**（老配置零变化）', () {
+      const AppConfig config = AppConfig(dataDirectory: r'D:/数据');
+      expect(config.monthComparePercent, isFalse);
+      expect(config.toJson().containsKey('month_compare_percent'), isFalse);
+    });
+
+    test('开启后能存能读', () {
+      const AppConfig config = AppConfig(
+        dataDirectory: r'D:/数据',
+        monthComparePercent: true,
+      );
+      expect(config.toJson()['month_compare_percent'], isTrue);
+      expect(AppConfig.fromJson(config.toJson()).monthComparePercent, isTrue);
+    });
+
+    test('字段缺失 / 类型不对 ⇒ 退回倍数（容错解析不抛）', () {
+      expect(
+        AppConfig.fromJson(<String, Object?>{
+          'data_directory': r'D:/数据',
+        }).monthComparePercent,
+        isFalse,
+      );
+      expect(
+        AppConfig.fromJson(<String, Object?>{
+          'data_directory': r'D:/数据',
+          'month_compare_percent': 'yes', // 字符串不是布尔
+        }).monthComparePercent,
+        isFalse,
+      );
+    });
+  });
 }

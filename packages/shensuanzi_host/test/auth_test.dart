@@ -4,6 +4,7 @@
 //
 // ⚠️ 纯 Dart 测试：先 `dart pub get`。
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:shensuanzi_host/shensuanzi_host.dart';
@@ -104,6 +105,54 @@ void main() {
       expect(serialized, contains(identity.tokenHash));
       expect(identity.toJson()['token_hash'], identity.tokenHash);
       expect(identity.toJson().containsKey('token'), isFalse);
+    });
+  });
+
+  // ============================================================ 落盘健壮性
+  group('HostIdentityStore 落盘（2026-10-31 真机：host.json 被拒写）', () {
+    late Directory box;
+
+    setUp(() => box = Directory.systemTemp.createTempSync('host_ident_'));
+    tearDown(() {
+      try {
+        box.deleteSync(recursive: true);
+      } catch (_) {}
+    });
+
+    test('原子写：落盘后内容合法，且**不留 .tmp**', () {
+      final File target = File('${box.path}${Platform.pathSeparator}host.json');
+      final HostIdentityStore store = HostIdentityStore(target);
+      final HostIdentity identity = store.reset(now: 1000);
+
+      expect(store.lastWriteFailed, isFalse);
+      expect(target.existsSync(), isTrue);
+      expect(
+        File('${target.path}.tmp').existsSync(),
+        isFalse,
+        reason: '临时文件必须被 rename 掉，不能留垃圾',
+      );
+      // 落盘内容能读回来，哈希一致
+      expect(store.storedHash(), identity.tokenHash);
+    });
+
+    test('写不进去 ⇒ **不抛**，降级成内存令牌，并置 lastWriteFailed', () {
+      // 构造一个「父路径其实是个文件」的路径 ⇒ createSync 必然失败。
+      // 真机上是 `PathAccessException ... errno = 5`，效果相同。
+      final File blocker = File('${box.path}${Platform.pathSeparator}blocker')
+        ..writeAsStringSync('x');
+      final HostIdentityStore store = HostIdentityStore(
+        File('${blocker.path}${Platform.pathSeparator}host.json'),
+      );
+
+      late HostIdentity identity;
+      expect(
+        () => identity = store.reset(now: 1000),
+        returnsNormally,
+        reason: '写盘失败不能把「生成配对码」整个废掉 —— 那是小故障升级成功能不可用',
+      );
+      expect(store.lastWriteFailed, isTrue);
+      expect(identity.plaintextToken, isNotNull, reason: '内存里必须有明文，否则二维码画不出来');
+      expect(identity.authorizes(identity.plaintextToken), isTrue);
     });
   });
 }

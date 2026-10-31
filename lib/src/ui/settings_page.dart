@@ -329,6 +329,36 @@ class _SettingsPageState extends State<SettingsPage> {
               Text('设置', style: theme.textTheme.titleLarge),
               const SizedBox(height: 16),
 
+              // ---- 概览图表：月度对比的说法（2026-10-31 真机）----
+              _Section(
+                title: '概览图表',
+                children: <Widget>[
+                  Text(
+                    '「这个月和上个月」里，涨了还是跌了怎么说。\n'
+                    '上月基数很小时，百分数会显得夸张（¥140 → ¥973 会显示「+595%」），'
+                    '倍数更贴近直觉（「6.9 倍」）。',
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                  SwitchListTile(
+                    key: const Key('setting-month-compare-percent'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('用百分数显示变化'),
+                    subtitle: Text(
+                      _current.monthComparePercent
+                          ? '现在：比上月同期多 ¥833.00（+595%）'
+                          : '现在：比上月同期多 ¥833.00，是上月的 6.9 倍',
+                    ),
+                    value: _current.monthComparePercent,
+                    onChanged: (bool value) =>
+                        _apply(_current.copyWith(monthComparePercent: value)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
               // ---- 界面缩放（SC-1 + 遗漏 2）----
               _Section(
                 title: '界面大小',

@@ -113,6 +113,14 @@ class HostIdentityStore {
 
   Map<String, Object?>? _memory;
 
+  /// 上一次写盘**是否失败**（2026-10-31 真机：`host.json` 被拒写）。
+  ///
+  /// 失败时身份只活在本次运行里 —— 配对能用，重启后要重新生成码。
+  /// **不能让写盘失败把「配对」这个功能整个废掉**：那是把一个小故障
+  /// 升级成「手机永远连不上」。
+  bool get lastWriteFailed => _lastWriteFailed;
+  bool _lastWriteFailed = false;
+
   /// 读取已存的主机身份。
   ///
   /// **返回的实例里 [HostIdentity.plaintextToken] 恒为 `null`** ——
@@ -150,7 +158,16 @@ class HostIdentityStore {
       createdAt: now,
       plaintextToken: plaintext,
     );
-    _write(next);
+    try {
+      _write(next);
+      _lastWriteFailed = false;
+    } catch (_) {
+      // ⚠️ **不抛**（2026-10-31 真机）：`host.json` 写不进去时，从前异常一路
+      // 穿到界面 ⇒ 二维码永远画不出来 ⇒ 手机永远连不上。
+      // 现在降级：令牌只在本进程内存里有效 —— 本次能配对，重启后失效
+      // （那时再生成一次即可）。**比「功能直接不可用」好得多。**
+      _lastWriteFailed = true;
+    }
     return next;
   }
 
@@ -170,13 +187,41 @@ class HostIdentityStore {
     );
   }
 
+  /// 落盘：**原子写 + 重试**。
+  ///
+  /// 直接 `writeAsStringSync(目标)` 是「打开就截断再写」，只要那一瞬间有别的
+  /// 进程（杀毒 / 索引器 / 备份软件）攥着文件，整次就失败 ——
+  /// 2026-10-31 真机就是这样：`PathAccessException ... errno = 5`。
+  ///
+  /// 改成「写临时文件 → rename 覆盖」：临时文件是**新文件**，不会撞上任何锁；
+  /// rename 只需要极短的独占窗口。仍然失败就重试三次（60/120/180ms）。
   void _write(HostIdentity identity) {
     final Map<String, Object?> json = identity.toJson();
     if (file == null) {
       _memory = json;
       return;
     }
-    file!.parent.createSync(recursive: true);
-    file!.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(json));
+    final File target = file!;
+    target.parent.createSync(recursive: true);
+    final String text = const JsonEncoder.withIndent('  ').convert(json);
+    final File temp = File('${target.path}.tmp');
+
+    Object? lastError;
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        temp.writeAsStringSync(text, flush: true);
+        temp.renameSync(target.path);
+        return;
+      } catch (error) {
+        lastError = error;
+        // 同步等待：这条路径极少走到，几十毫秒的阻塞换来「不丢令牌」值得
+        sleep(Duration(milliseconds: 60 * (attempt + 1)));
+      }
+    }
+    // 三次都失败 ⇒ 交给调用方决定（`reset` 会降级成内存令牌）
+    throw FileSystemException(
+      '写不进 $file（试了 3 次）：$lastError',
+      target.path,
+    );
   }
 }

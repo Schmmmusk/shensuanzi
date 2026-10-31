@@ -229,4 +229,33 @@ void main() {
       reason: '一进来就弹键盘 = 用户还没看清该填什么，输入框先被盖住了',
     );
   });
+
+  testWidgets('输入全角字符 ⇒ 明说「已自动换成半角」（2026-10-31 真机）', (tester) async {
+    // 中文输入法把 `10.102.43.94:17890` 打成 `10。102。43。94：17890`。
+    // 解析层会自动掰回半角 —— 但从前**一声不响**，用户看着输入框里的
+    // 全角字符，根本不知道程序到底认没认对。
+    await openDialog(tester);
+    expect(find.byKey(const Key('manual-fullwidth-hint')), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const Key('manual-address-field')),
+      '10。102。43。94：17890',
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('manual-fullwidth-hint')),
+      findsOneWidget,
+      reason: '全角字符被自动转换时必须说出来',
+    );
+  });
+
+  testWidgets('半角输入 ⇒ 不出现全角提示（不制造噪音）', (tester) async {
+    await openDialog(tester);
+    await tester.enterText(
+      find.byKey(const Key('manual-address-field')),
+      '10.102.43.94:17890',
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('manual-fullwidth-hint')), findsNothing);
+  });
 }

@@ -1,7 +1,7 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+
+import 'ratio_bar.dart';
 
 /// 「压货最多的 10 个商品」（提案 54 §三「第三优先」）。
 ///
@@ -108,26 +108,24 @@ class StockTopCard extends StatelessWidget {
     );
   }
 
-  Widget _notice(ThemeData theme, {required String key, required String text}) =>
-      Padding(
-        key: Key(key),
-        padding: const EdgeInsets.only(top: 10),
-        child: Text(
-          text,
-          style: TextStyle(
-            height: 1.6,
-            fontSize: 13,
-            color: theme.textTheme.bodySmall?.color,
-          ),
-        ),
-      );
+  Widget _notice(
+    ThemeData theme, {
+    required String key,
+    required String text,
+  }) => Padding(
+    key: Key(key),
+    padding: const EdgeInsets.only(top: 10),
+    child: Text(
+      text,
+      style: TextStyle(
+        height: 1.6,
+        fontSize: 13,
+        color: theme.textTheme.bodySmall?.color,
+      ),
+    ),
+  );
 
   Widget _row(ThemeData theme, StockValueRow row, int maxValue) {
-    // 比例照实算，只保证**最小 4 像素**可见（与欠款横条同一条纪律）：
-    // 抬到 4% 会让 ¥50 对 ¥12,600 显示成 4% 而不是 0.4%，等于另造一套比例。
-    final double ratio = maxValue <= 0
-        ? 0
-        : (row.valueCents / maxValue).clamp(0.0, 1.0);
     return Column(
       key: Key('overview-stock-top-${row.productId}'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -157,26 +155,12 @@ class StockTopCard extends StatelessWidget {
         Row(
           children: <Widget>[
             Expanded(
-              child: LayoutBuilder(
-                builder: (BuildContext context, BoxConstraints c) {
-                  final double width = math.max(c.maxWidth * ratio, 4);
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: Stack(
-                      children: <Widget>[
-                        Container(height: 10, color: theme.dividerColor),
-                        SizedBox(
-                          key: Key('overview-stock-top-${row.productId}-bar'),
-                          width: width,
-                          child: Container(
-                            height: 10,
-                            color: theme.colorScheme.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+              child: RatioBar(
+                cents: row.valueCents,
+                maxCents: maxValue,
+                color: theme.colorScheme.primary,
+                height: 10,
+                barKey: Key('overview-stock-top-${row.productId}-bar'),
               ),
             ),
             const SizedBox(width: 8),

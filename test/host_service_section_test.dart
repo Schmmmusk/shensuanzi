@@ -17,6 +17,26 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 
+/// 一按开关就抛异常的控制器 —— 专门用来钉「失败后界面不会卡死」。
+class _ThrowingController extends HostServiceController {
+  _ThrowingController({required super.db, required super.identities})
+    : super(
+        ports: const PortRange(start: 17970, end: 17979),
+        detectLocalIp: () async => '192.168.1.7',
+      );
+
+  @override
+  Future<HostServiceSnapshot> start() async =>
+      throw StateError('故意抛的：模拟写盘失败 / 端口异常');
+
+  @override
+  Future<HostServiceSnapshot> stop() async => snapshot;
+
+  @override
+  Future<HostServiceSnapshot> resetToken() async =>
+      throw StateError('故意抛的：模拟写 host.json 失败');
+}
+
 void main() {
   setUpAll(useLocalSqlite);
 
@@ -186,5 +206,49 @@ void main() {
     // ⚠️ 而且必须包在 `runAsync` 里：`testWidgets` 默认跑在**假时钟**下，
     // 直接 `await stop()` 会一直等不到真实 I/O 的回调 —— 实测卡死 4 分 54 秒。
     await tester.runAsync(() => multi.stop());
+  });
+
+  testWidgets('操作抛异常时**不会把界面卡在「忙」状态**（2026-10-31 真机）', (
+    WidgetTester tester,
+  ) async {
+    // 真机现场：点「重新生成配对码」之后，转圈一直转、按钮全变灰、状态还停在
+    // 「已开启 / 这台电脑重启过了」。根因是 `_run` 里没有 try —— `action()`
+    // 一抛异常（写 host.json 失败 / 端口异常），`_busy` 就永远停在 true。
+    final HostServiceController throwing = _ThrowingController(
+      db: db,
+      identities: HostIdentityStore.inMemory(),
+    );
+    addTearDown(throwing.stop);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: HostServicePanel(controller: throwing),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('host-service-switch')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('host-service-action-error')),
+      findsOneWidget,
+      reason: '失败必须说出来 —— 转圈 + 灰按钮等于什么都没告诉用户',
+    );
+    expect(
+      find.byType(CircularProgressIndicator),
+      findsNothing,
+      reason: '转圈必须停 —— 停在 true 就是永久卡死',
+    );
+    expect(
+      tester
+          .widget<Switch>(find.byKey(const Key('host-service-switch')))
+          .onChanged,
+      isNotNull,
+      reason: '开关必须还能点，否则用户只能重启软件',
+    );
   });
 }

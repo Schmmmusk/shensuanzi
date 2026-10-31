@@ -26,6 +26,9 @@
 /// 这里**只做摆放与取值**（铁律）。
 library;
 
+import 'dart:async';
+
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'app_colors.dart';
@@ -72,20 +75,58 @@ class _HostServicePanelState extends State<HostServicePanel> {
   }
 
   /// 正在等启停结果（按钮与开关都要禁用，否则能连点出好几次启停）
+  /// 当前是否有一个启停动作在飞（按钮据此禁用 + 转圈）
   bool _busy = false;
+
+  /// 上一次操作失败的原因（人话，显示在面板上）。
+  ///
+  /// ⚠️ 没有它的话，「操作失败」对用户来说就是**转圈 + 按钮变灰** ——
+  /// 他不知道发生了什么，也不知道能不能再试（2026-10-31 真机）。
+  String? _actionError;
 
   /// 跑一次动作并把结果反映到界面。
   ///
   /// ⚠️ `setState` 前必须判 `mounted`：启停是异步的（要绑端口），
   /// 用户完全可能在等待期间切走页面。
   Future<void> _run(Future<HostServiceSnapshot> Function() action) async {
-    setState(() => _busy = true);
-    final HostServiceSnapshot next = await action();
-    if (!mounted) return;
     setState(() {
-      _snapshot = next;
-      _busy = false;
+      _busy = true;
+      _actionError = null;
     });
+    try {
+      // ⚠️ **必须有超时**：`action()` 万一永远不完成（端口关不干净 / 磁盘卡住），
+      // 没有超时就会一直转圈，用户只能重启软件。
+      final HostServiceSnapshot next = await action().timeout(
+        const Duration(seconds: 20),
+      );
+      if (!mounted) return;
+      setState(() => _snapshot = next);
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(
+        () => _actionError =
+            '这一步超过 20 秒还没完成，可能端口被别的程序占着。'
+            '请把软件关掉重开，再试一次。',
+      );
+    } catch (error) {
+      // ⚠️ **必须 catch**（2026-10-31 真机）：从前这里没有 try，`action()` 一抛异常
+      // `_busy` 就永远停在 true —— 转圈不停、所有按钮变灰、只能重启软件。
+      // 具体异常不给用户看（SocketException / FileSystemException 他读不懂），
+      // 原始异常走 debugPrint，开发时在控制台能看见。
+      debugPrint('[host-service] 操作失败: $error');
+      if (!mounted) return;
+      setState(
+        () => _actionError =
+            '刚才那一步没成功（可能是数据文件正被占用）。'
+            '请再点一次；一直这样就把软件关掉重开。'
+            // 调试版附带原始异常：正式版不给用户看（SocketException /
+            // FileSystemException 这些词他读不懂），但排查时没有它就是瞎猜。
+            '${kDebugMode ? '\n[调试] ${error.runtimeType}: $error' : ''}',
+      );
+    } finally {
+      // 无论成功、失败、超时，**必须复位** —— 这是「按钮不会永远变灰」的唯一保证
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _toggle(bool on) async {
@@ -98,7 +139,45 @@ class _HostServicePanelState extends State<HostServicePanel> {
 
   Future<void> _showQr() async {
     final PairingPayload? payload = widget.controller.pairingPayload;
-    if (payload == null) return;
+    if (payload == null) {
+      // ⚠️ **不能静默 return**（2026-10-31 真机）：用户点了「显示二维码」，
+      // 界面毫无反应 —— 他只会以为软件卡死了，然后反复点。
+      //
+      // 真正的原因只有一个：**令牌只在内存里**（硬盘上只有 hash），
+      // 服务没跑起来 / 刚重启过时拿不到明文令牌，就画不出码。
+      // 说清楚 + 给一条能走通的路（重新生成），比沉默强一百倍。
+      if (!mounted) return;
+      final bool? regenerate = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext context) => AlertDialog(
+          title: const Text('配对码现在画不出来'),
+          content: const SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Text(
+                '配对码里的令牌为了安全只存在内存里，没有存到硬盘 —— '
+                '所以服务重启过之后，旧的码就画不出来了。\n\n'
+                '点「重新生成」会做一张新的码。'
+                '已经连过的手机需要重新扫一次（它们原来那张码同时作废）。',
+                style: TextStyle(height: 1.6),
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('知道了'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('重新生成'),
+            ),
+          ],
+        ),
+      );
+      if (regenerate == true && mounted) await _regenerate();
+      return;
+    }
     await showDialog<void>(
       context: context,
       // D 批：对话框直接吃 controller —— 换地址时码要当场重画（见 `_PairingDialog`）
@@ -212,6 +291,18 @@ class _HostServicePanelState extends State<HostServicePanel> {
           _hintLine(snapshot.detail!),
         ],
 
+        // 上一次操作失败 ⇒ 说清「没成功 + 怎么办」。
+        // ⚠️ **必须无条件渲染**（2026-10-31 真机）：放进 `if (isRunning)` 里的话，
+        // 失败时服务本来就没跑起来 ⇒ 这行永远不显示，用户只看到转圈和灰按钮。
+        if (_actionError != null) ...<Widget>[
+          const SizedBox(height: 6),
+          Text(
+            _actionError!,
+            key: const Key('host-service-action-error'),
+            style: TextStyle(height: 1.6, color: theme.colorScheme.error),
+          ),
+        ],
+
         if (snapshot.isRunning) ...<Widget>[
           const SizedBox(height: 8),
           // 手输兜底（遗漏 4）—— 扫码失败时用户要能照着敲
@@ -230,6 +321,15 @@ class _HostServicePanelState extends State<HostServicePanel> {
           if (traffic != null)
             Text(traffic, style: TextStyle(height: 1.6, color: secondary)),
           const SizedBox(height: 8),
+
+          // 令牌只活在内存里 ⇒ 说清「这次能用、下次要重来」
+          if (widget.controller.identityPersistFailed) ...<Widget>[
+            const SizedBox(height: 6),
+            _hintLine(
+              '配对码只对这次运行有效 —— 写不进数据文件夹里的 host.json。'
+              '手机现在照样能连；下次开机再连时，要重新生成一次码。',
+            ),
+          ],
 
           // 能画码 ⇒ 给「显示二维码」；画不出（重启后）⇒ 给「重新生成」+ 说清后果
           if (snapshot.qrAvailable)

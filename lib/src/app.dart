@@ -1925,6 +1925,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       engine: shellEngine,
       hostService: _hostService,
       uiScale: _config.uiScale,
+      // 月度对比：倍数（默认）还是百分数
+      monthComparePercent: _config.monthComparePercent,
       shopName: _config.shopName,
       // ---- 备份文案（§AE-3 / AE-5 / 遗漏 2）----
       // ⚠️ 判定在这里算、UI 只摆字符串：概览橙卡与设置页红字**必须是同一个

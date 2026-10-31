@@ -70,6 +70,7 @@ class AppShell extends StatefulWidget {
     this.settlements,
     this.engine,
     this.uiScale = UiScale.standard,
+    this.monthComparePercent = false,
     this.shopName,
     this.dataLocationNote,
     this.dataPathsNote,
@@ -219,6 +220,9 @@ class AppShell extends StatefulWidget {
   /// 界面缩放（设置页可改；导航宽度随它缩放）
   final UiScale uiScale;
 
+  /// 月度对比用百分数还是倍数（设置页可切；默认倍数）
+  final bool monthComparePercent;
+
   /// 店名（概览页顶部显示；可空）
   final String? shopName;
 
@@ -308,6 +312,7 @@ Widget appShellPage(
   if (destination.id == 'overview') {
     page = OverviewPage(
       shopName: shell.shopName,
+      monthComparePercent: shell.monthComparePercent,
       dataDirectory: shell.dataDirectory,
       backupDirectory: shell.backupDirectory,
       schemaVersion: shell.schemaVersion,

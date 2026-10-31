@@ -37,6 +37,11 @@ class RevenueChartCard extends StatefulWidget {
   /// ⚠️ 由父级传入而不是自己查（用户审查 2026-10-30）：`build()` 里直接查库，
   /// 会让「点一下备份」这种纯 UI 状态变化也重跑一遍全历史聚合。
   /// 概览页把整页数据算一次、缓存住，重建时直接复用。
+  ///
+  /// ⚠️ **可能包含窗口外的天**（父级为「月度对比」一次查够两个窗口）。
+  /// 卡片自己按 `fromDay..toDay` 裁 —— 因为「平均每个有生意的日子」
+  /// 和「在途 N 张」都是直接遍历这个列表算的，混进窗口外的天会失真。
+  /// 裁在卡片里而不是调用方，是为了**不管谁传进来都不会算错**。
   final List<RevenueDay> rows;
 
   final int fromDay;
@@ -58,7 +63,10 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final List<RevenueDay> rows = widget.rows;
+    final List<RevenueDay> rows = <RevenueDay>[
+      for (final RevenueDay d in widget.rows)
+        if (d.day >= widget.fromDay && d.day <= widget.toDay) d,
+    ];
     final List<RevenuePoint> weeks = buildRevenueSeries(
       rows: rows,
       fromDay: widget.fromDay,
@@ -205,33 +213,33 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
             padding: const EdgeInsets.symmetric(vertical: 2),
             child: Row(
               children: <Widget>[
-                SizedBox(
-                  width: 92,
-                  child: Text(
-                    dayLabel(d.day),
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
+                // ⚠️ **不许用固定宽度**（2026-10-31 真机截图发现）：
+                // 界面缩放 125% 时 14sp 的 `2026-10-20` 比 92px 宽，
+                // 日期被折成「2026-10-2」+「0」两行 —— 完全没法读。
+                // 日期用自然宽度（不折行），金额占剩余空间右对齐。
+                Text(
+                  dayLabel(d.day),
+                  softWrap: false,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: theme.textTheme.bodySmall?.color,
                   ),
                 ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    '¥${Money.formatGrouped(d.netCents)}',
+                    // 「含未签收」并进金额那一格：单独一列在放大后会把它挤出去
+                    d.inTransitCount > 0
+                        ? '¥${Money.formatGrouped(d.netCents)}'
+                              '（含未签收 ${d.inTransitCount}）'
+                        : '¥${Money.formatGrouped(d.netCents)}',
+                    textAlign: TextAlign.right,
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
-                if (d.inTransitCount > 0)
-                  Text(
-                    '含未签收 ${d.inTransitCount}',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
-                  ),
               ],
             ),
           ),
@@ -266,6 +274,35 @@ String barAmountLabel(
         ).replaceFirst(RegExp(r'\.00$'), '')
       : Money.formatGrouped(abs);
   return '$sign$symbol${withSeparators ? body : body.replaceAll(',', '')}';
+}
+
+/// 柱子上到底写哪种写法：**先省千分位，最后才省 ¥**。
+///
+/// ## 为什么要抽成纯函数
+///
+/// 这段「退让顺序」是产品规则（数字必须带单位），但它**按实际字体宽度**决策，
+/// 而画布上的文字在 widget 测试里读不出来。抽出来之后可以用假的 `measure`
+/// 把优先级钉住 —— 不需要真的渲染。
+///
+/// ## 顺序（2026-10-31 真机定）
+///
+/// 1. `¥12,600` —— 最好
+/// 2. `¥12600` —— 省千分位
+/// 3. `12600` —— 实在放不下才省 ¥（数字失去单位，是**最后**的退让）
+///
+/// 从前手机（compact）直接从第 3 档起步，标签成了「534」「0.00」——
+/// 数字失去单位，用户得回头看总结句才知道那是钱。
+String chooseBarLabel(
+  int cents, {
+  required double slot,
+  required double Function(String text) measure,
+}) {
+  final double limit = slot - 6;
+  final String full = barAmountLabel(cents);
+  if (measure(full) <= limit) return full;
+  final String noSeparator = barAmountLabel(cents, withSeparators: false);
+  if (measure(noSeparator) <= limit) return noSeparator;
+  return barAmountLabel(cents, withCurrency: false, withSeparators: false);
 }
 
 /// 柱状图绘制。
@@ -329,7 +366,10 @@ class RevenueBarPainter extends CustomPainter {
     canvas.drawLine(Offset(0, baselineY), Offset(size.width, baselineY), axis);
 
     final double slot = size.width / points.length;
-    final double barWidth = math.min(slot * 0.56, compact ? 36 : 56);
+    // 上限 56 太细：5 根柱子在 1600px 宽的卡里格位约 317px，56px 只占 17.6%，
+    // 看起来像细棍（2026-10-31 真机截图实测）。72px 与金额标签宽度接近，
+    // 视觉上更「实」，同时仍远小于格位、不会连成一片。
+    final double barWidth = math.min(slot * 0.56, compact ? 36 : 72);
 
     for (int i = 0; i < points.length; i++) {
       final RevenuePoint p = points[i];
@@ -357,21 +397,16 @@ class RevenueBarPainter extends CustomPainter {
       // 「窗口测试不报错」都不能证明标签没互相压住 —— 那是画布上的事，
       // Flutter 的布局异常看不到。这里先排一次版，宽了就退到**无千分位**写法
       // （还是 15sp，只是少两个逗号）。
-      TextPainter label = _layout(
-        barAmountLabel(p.netCents, withCurrency: !compact),
+      // 退让顺序见 `chooseBarLabel`：先省千分位，最后才省 ¥。
+      // 宽度按**实际字体**量 —— 标签是画布上的字，Flutter 的布局检查看不见它。
+      final TextPainter label = _layout(
+        chooseBarLabel(
+          p.netCents,
+          slot: slot,
+          measure: (String text) => _layout(text, 15).width,
+        ),
         15,
       );
-      if (label.width > slot - 6) {
-        final TextPainter plain = _layout(
-          barAmountLabel(
-            p.netCents,
-            withCurrency: !compact,
-            withSeparators: false,
-          ),
-          15,
-        );
-        if (plain.width < label.width) label = plain;
-      }
       _paint(
         canvas,
         label,

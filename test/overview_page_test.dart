@@ -17,6 +17,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/overview_page.dart';
 import 'package:shensuanzi/src/ui/balance_bars.dart';
+import 'package:shensuanzi/src/ui/month_compare.dart';
+import 'package:shensuanzi/src/ui/ratio_bar.dart';
 import 'package:shensuanzi/src/ui/revenue_chart.dart';
 import 'package:shensuanzi/src/ui/stock_top.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
@@ -626,6 +628,20 @@ void main() {
       });
     }
 
+    test('柱子上金额的**退让顺序**：先省千分位，最后才省 ¥', () {
+      // 2026-10-31 真机：手机（compact）直接从「不带 ¥」起步，标签成了
+      // 「534」「0.00」—— 数字失去单位。这里把优先级钉住。
+      // 用假的 measure：每个字符 10px，便于精确构造「放得下 / 放不下」。
+      double measure(String text) => text.length * 10.0;
+
+      // 放得下 ⇒ 最完整的写法
+      expect(chooseBarLabel(1260000, slot: 200, measure: measure), '¥12,600');
+      // `¥12,600` 是 **7** 个字符 = 70px；slot-6=64 ⇒ 放不下，退到省千分位
+      expect(chooseBarLabel(1260000, slot: 70, measure: measure), '¥12600');
+      // ¥12600 是 6 个字符 = 60px；slot-6=54 ⇒ 还放不下，才省 ¥
+      expect(chooseBarLabel(1260000, slot: 60, measure: measure), '12600');
+    });
+
     test('柱子上方的金额：负数带负号、整数元、窄窗省 ¥', () {
       // 用户审查 2026-10-30：柱子朝下+变红还不够，金额标签本身要能表达正负。
       expect(barAmountLabel(-50000), '−¥500');
@@ -780,6 +796,340 @@ void main() {
         reason: '那天确实有生意 —— 净额 0 不等于「没有销售记录」',
       );
       expect(find.textContaining('正好一样多'), findsOneWidget);
+    });
+
+    // ---------------------------------------------------------- 月度对比
+    // 这一组**不依赖今天是几号**：直接构造 `MonthCompare` 渲染卡片。
+    // 窗口计算本身由 `revenue_series_test` 的纯函数组钉住（含跨年、闰年、
+    // 「今天 31 日、上月只有 30 天」）。
+    group('月度对比卡', () {
+      int dayOf(int y, int m, int d) =>
+          businessDayOf(DateTime(y, m, d, 12).millisecondsSinceEpoch);
+
+      MonthCompare build({
+        required int current,
+        required int prior,
+        bool currentActive = true,
+        bool priorActive = true,
+      }) => MonthCompare(
+        window: monthCompareWindow(dayOf(2026, 10, 31)),
+        currentCents: current,
+        priorCents: prior,
+        currentHasActivity: currentActive,
+        priorHasActivity: priorActive,
+      );
+
+      String summaryOf(WidgetTester tester) => tester
+          .widget<Text>(find.byKey(const Key('overview-month-summary')))
+          .data!;
+
+      Future<void> pump(WidgetTester tester, MonthCompare c) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(body: MonthCompareCard(compare: c)),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      testWidgets('默认用**倍数**：多 ¥X，是上月的 1.3 倍', (tester) async {
+        // 2026-10-31 真机：上月 ¥140、本月 ¥973 显示「+595%」——
+        // 基期小的时候百分比会爆炸，看着像涨了六倍。默认改成倍数。
+        await pump(tester, build(current: 1260000, prior: 980000));
+        // `Money.formatGrouped` 保留两位（全应用一致）
+        expect(summaryOf(tester), '比上月同期多 ¥2,800.00，是上月的 1.3 倍。');
+      });
+
+      testWidgets('设置里切百分数 ⇒ 说「多 ¥X（+N%）」', (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: MonthCompareCard(
+                compare: build(current: 1260000, prior: 980000),
+                usePercent: true,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(summaryOf(tester), '比上月同期多 ¥2,800.00（+29%）。');
+      });
+
+      testWidgets('比上月少 ⇒ 说「少」，倍数小于 1', (tester) async {
+        await pump(tester, build(current: 500000, prior: 1000000));
+        expect(summaryOf(tester), '比上月同期少 ¥5,000.00，是上月的 0.5 倍。');
+      });
+
+      testWidgets('一样多 ⇒ 不说「多 0」', (tester) async {
+        await pump(tester, build(current: 800000, prior: 800000));
+        expect(summaryOf(tester), '和上月同期一样多（¥8,000.00）。');
+      });
+
+      testWidgets('上月同期为 0 ⇒ **不编百分比**，说「没法和上月比」', (tester) async {
+        // 除以 0 不是 +∞%，也不是 +100% —— 那都是编出来的数。
+        await pump(
+          tester,
+          build(current: 500000, prior: 0, priorActive: false),
+        );
+        final String text = summaryOf(tester);
+        expect(text, contains('上月同期还没有生意'));
+        expect(text, isNot(contains('%')), reason: '没有基期就没有百分比');
+      });
+
+      testWidgets('本月还没有生意 ⇒ 报上月同期的数，不说「比上月少 100%」', (tester) async {
+        await pump(
+          tester,
+          build(current: 0, prior: 300000, currentActive: false),
+        );
+        expect(summaryOf(tester), '这个月还没有生意（上月同期 ¥3,000.00）。');
+      });
+
+      testWidgets('两段都没有经营活动 ⇒ 整张卡不渲染', (tester) async {
+        await pump(
+          tester,
+          build(current: 0, prior: 0, currentActive: false, priorActive: false),
+        );
+        expect(find.byKey(const Key('overview-month-compare')), findsNothing);
+      });
+
+      testWidgets('两段日期都印出来（用户能自己核对是不是同期）', (tester) async {
+        await pump(tester, build(current: 1260000, prior: 980000));
+        // 2026-10-31 ⇒ 本月 10/1–10/31，上月同期 9/1–9/30（9 月只有 30 天）
+        expect(find.text('10/1–31'), findsOneWidget);
+        expect(find.text('9/1–30'), findsOneWidget);
+        expect(
+          find.byKey(const Key('overview-month-current-bar')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('overview-month-prior-bar')),
+          findsOneWidget,
+        );
+      });
+    });
+
+    testWidgets('月度对比：**上月条不能与轨道同色**（真机截图发现的）', (tester) async {
+      // 2026-10-31 真机：¥973 对 ¥140，两条看起来一样长 ——
+      // 因为上月条用了 `dividerColor`，那正是 `RatioBar` 的轨道色，
+      // 填充和轨道同色，条长等于看不见。
+      final int d = businessDayOf(
+        DateTime(2026, 10, 31, 12).millisecondsSinceEpoch,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (BuildContext context) => MonthCompareCard(
+                compare: MonthCompare(
+                  window: monthCompareWindow(d),
+                  currentCents: 97300,
+                  priorCents: 14000,
+                  currentHasActivity: true,
+                  priorHasActivity: true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final RatioBar current = tester.widget<RatioBar>(
+        find.descendant(
+          of: find.byKey(const Key('overview-month-current')),
+          matching: find.byType(RatioBar),
+        ),
+      );
+      final RatioBar prior = tester.widget<RatioBar>(
+        find.descendant(
+          of: find.byKey(const Key('overview-month-prior')),
+          matching: find.byType(RatioBar),
+        ),
+      );
+      final ThemeData theme = Theme.of(
+        tester.element(find.byKey(const Key('overview-month-compare'))),
+      );
+      expect(
+        prior.color,
+        isNot(theme.dividerColor),
+        reason: '填充色 = 轨道色 ⇒ 条长看不出来（真机上就是这么翻车的）',
+      );
+      expect(prior.color, isNot(current.color), reason: '两条要能区分');
+      expect(prior.color.a, lessThan(1.0), reason: '上月用浅色（弱化），本月用实色');
+    });
+
+    testWidgets('三条横条的**深浅层次**：轨道最浅 < 上月 < 本月', (tester) async {
+      // 2026-10-31 真机：轨道用了 `dividerColor`（#73777F 中灰），
+      // 跟填充色几乎一样深 ⇒ 整条看着都像填满，用户分不出条有多长。
+      // 这里把「三层深浅」钉住：谁把轨道改深、或把上月改得跟本月一样，
+      // 都会红。
+      final int d = businessDayOf(
+        DateTime(2026, 10, 31, 12).millisecondsSinceEpoch,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MonthCompareCard(
+              compare: MonthCompare(
+                window: monthCompareWindow(d),
+                currentCents: 97300,
+                priorCents: 14000,
+                currentHasActivity: true,
+                priorHasActivity: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final ThemeData theme = Theme.of(
+        tester.element(find.byKey(const Key('overview-month-compare'))),
+      );
+      final RatioBar current = tester.widget<RatioBar>(
+        find.descendant(
+          of: find.byKey(const Key('overview-month-current')),
+          matching: find.byType(RatioBar),
+        ),
+      );
+      final RatioBar prior = tester.widget<RatioBar>(
+        find.descendant(
+          of: find.byKey(const Key('overview-month-prior')),
+          matching: find.byType(RatioBar),
+        ),
+      );
+
+      final Color track = RatioBar.trackColorOf(theme);
+      // 半透明色要看**叠在轨道上之后**的实际观感，不能只看它自己的 RGB
+      double onTrack(Color c) => Color.alphaBlend(c, track).computeLuminance();
+
+      expect(
+        track.computeLuminance(),
+        greaterThan(0.7),
+        reason: '轨道必须是浅色 —— 中灰轨道会让整条看起来都填满了',
+      );
+      expect(
+        onTrack(prior.color),
+        lessThan(track.computeLuminance() - 0.08),
+        reason: '上月条要能从轨道里看出来',
+      );
+      expect(
+        onTrack(current.color),
+        lessThan(onTrack(prior.color) - 0.08),
+        reason: '本月要比上月明显更深（三级层次：轨道 < 上月 < 本月）',
+      );
+    });
+
+    testWidgets('界面缩放 125% 时，每天明细的**日期不折行**', (tester) async {
+      // 2026-10-31 真机：`2026-10-20` 被折成「2026-10-2」+「0」——
+      // 因为日期装在 `SizedBox(width: 92)` 里，而全局 textScaler 是 1.25。
+      // 固定像素宽度 + 文字缩放 = 折行，这类写法一律不许再用。
+      final int day = businessDayOf(
+        DateTime(2026, 10, 20, 12).millisecondsSinceEpoch,
+      );
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(
+            size: Size(1200, 900),
+            textScaler: TextScaler.linear(1.25),
+          ),
+          child: MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: RevenueChartCard(
+                  rows: <RevenueDay>[
+                    RevenueDay(day: day, saleCents: 6000, documentCount: 1),
+                  ],
+                  fromDay: day - 6,
+                  toDay: day,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('overview-revenue-daily-toggle')));
+      await tester.pumpAndSettle();
+
+      final Finder label = find.text('2026-10-20');
+      expect(label, findsOneWidget);
+      final double oneLine = tester.getSize(label).height;
+      expect(
+        oneLine,
+        lessThan(34),
+        reason:
+            '日期占了 $oneLine 高 —— 125% 缩放下一行大约 18~20，'
+            '超过 34 说明折成了两行',
+      );
+    });
+
+    testWidgets('营收卡**自己裁窗口**：窗口外的天不算进合计与平均', (tester) async {
+      // 概览页为「月度对比」一次查够两个窗口，所以传给营收卡的数据里
+      // 可能混着 30 天窗口外的天。卡片必须自己裁 —— 否则「平均每个有生意的
+      // 日子」会把上月的天算进分母（用户审查 2026-10-30 同类问题）。
+      final int toDay = businessDayOf(DateTime.now().millisecondsSinceEpoch);
+      final int fromDay = toDay - 29;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: RevenueChartCard(
+                rows: <RevenueDay>[
+                  RevenueDay(
+                    day: fromDay + 1,
+                    saleCents: 10000,
+                    documentCount: 1,
+                  ),
+                  // 窗口外（比窗口早 5 天），金额很大 —— 混进去会一眼看出来
+                  RevenueDay(
+                    day: fromDay - 5,
+                    saleCents: 99900,
+                    documentCount: 1,
+                  ),
+                ],
+                fromDay: fromDay,
+                toDay: toDay,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final String summary = tester
+          .widget<Text>(find.byKey(const Key('overview-revenue-summary')))
+          .data!;
+      expect(summary, contains('合计 ¥100'), reason: '窗口外的 ¥999 不能进合计');
+      expect(
+        summary,
+        contains('平均每个有生意的日子 ¥100'),
+        reason: '分母也要裁 —— 否则是 ¥50（2 天）而不是 ¥100（1 天）',
+      );
+    });
+
+    testWidgets('月度对比卡在页面上：有总结句，且与上下两张卡都留了间距', (tester) async {
+      final QueryDao q = await seedBiz(
+        todayMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      await tester.pumpWidget(page(queries: q));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('overview-month-compare')), findsOneWidget);
+      expect(find.byKey(const Key('overview-month-summary')), findsOneWidget);
+
+      final Rect chart = tester.getRect(
+        find.byKey(const Key('overview-revenue-chart')),
+      );
+      final Rect month = tester.getRect(
+        find.byKey(const Key('overview-month-compare')),
+      );
+      expect(
+        month.top - chart.bottom,
+        greaterThanOrEqualTo(8),
+        reason: '营收卡与月度对比卡贴在一起了',
+      );
     });
 
     testWidgets('压货榜：金额大的排前面，数量照实写各自单位', (tester) async {

@@ -175,6 +175,129 @@ List<RevenuePoint> buildRevenueSeries({
   ];
 }
 
+/// 月度对比的两个窗口：**本月至今** vs **上月同期**。
+///
+/// ## 为什么必须比「同期」，不能比「上月整月」
+///
+/// 今天是 10 月 8 日时，「本月 1–8 日」对「上月 1–30 日」必然显得惨淡 ——
+/// 那不是生意变差，是**窗口不等长**。这种图会直接骗人（提案 54 §五
+/// 「口径必须先定，否则图会撒谎」）。
+///
+/// 所以上月窗口取**同样的天数**，并且：
+///
+/// - 上月不足那么多天时（今天 31 日、上月只有 30 天）**截到月末**，
+///   不跨到上上月去凑；
+/// - 卡片上把两段日期都写出来，用户能自己核对。
+class MonthCompareWindow {
+  const MonthCompareWindow({
+    required this.currentFrom,
+    required this.currentTo,
+    required this.priorFrom,
+    required this.priorTo,
+  });
+
+  final int currentFrom;
+  final int currentTo;
+  final int priorFrom;
+  final int priorTo;
+
+  int get currentDays => currentTo - currentFrom + 1;
+  int get priorDays => priorTo - priorFrom + 1;
+}
+
+/// 算出「本月至今」与「上月同期」两段窗口。
+///
+/// [todayDay] = 今天（业务日序号）。
+MonthCompareWindow monthCompareWindow(int todayDay) {
+  final int currentFrom = monthStartDay(todayDay);
+  final DateTime today = dayToDate(todayDay);
+  final int priorFrom = monthStartDay(currentFrom - 1);
+  // 上月有几天：从 1 日往后跳 32 天**一定**落到下个月（1 日 + 32 天 ≥ 33 日，
+  // 而任何月份都不超过 31 天），再取那之前一天。
+  final int priorMonthEnd = monthStartDay(priorFrom + 32) - 1;
+  final int priorDays = math.min(today.day, priorMonthEnd - priorFrom + 1);
+  return MonthCompareWindow(
+    currentFrom: currentFrom,
+    currentTo: todayDay,
+    priorFrom: priorFrom,
+    priorTo: priorFrom + priorDays - 1,
+  );
+}
+
+/// 月度对比的结果。
+class MonthCompare {
+  const MonthCompare({
+    required this.window,
+    required this.currentCents,
+    required this.priorCents,
+    required this.currentHasActivity,
+    required this.priorHasActivity,
+  });
+
+  final MonthCompareWindow window;
+
+  /// 本月至今的净营收（销售 + 送货 − 有效退货）
+  final int currentCents;
+
+  /// 上月同期的净营收
+  final int priorCents;
+
+  /// 两段窗口里**有没有经营活动**（不是「净额是不是 0」）。
+  ///
+  /// 卖了 ¥500 又退了 ¥500 的那天净额是 0，但它确实做了生意 ——
+  /// 用净额判断会说「这个月没生意」（与 `RevenueDay.isEmpty` 同一个教训）。
+  final bool currentHasActivity;
+  final bool priorHasActivity;
+
+  int get deltaCents => currentCents - priorCents;
+
+  /// 相对上月同期的变化百分比。
+  ///
+  /// 上月同期为 0 时**没有百分比**（除以 0 不是无穷大，是「没法比」）——
+  /// 界面要说「上月同期还没有生意」，不能写「+∞%」。
+  int? get percent {
+    if (priorCents == 0) return null;
+    return (deltaCents * 100 / priorCents).round();
+  }
+
+  /// 两段都没有经营活动 ⇒ 整张卡不显示
+  bool get isEmpty => !currentHasActivity && !priorHasActivity;
+}
+
+/// 从按日数据里汇总出月度对比。
+///
+/// [rows] 可以是比窗口更宽的区间（调用方通常一次查够两个窗口），
+/// 窗口外的天在这里被忽略。
+MonthCompare buildMonthCompare({
+  required List<RevenueDay> rows,
+  required MonthCompareWindow window,
+}) {
+  int current = 0;
+  int prior = 0;
+  bool currentActive = false;
+  bool priorActive = false;
+  for (final RevenueDay row in rows) {
+    final bool inCurrent =
+        row.day >= window.currentFrom && row.day <= window.currentTo;
+    final bool inPrior =
+        row.day >= window.priorFrom && row.day <= window.priorTo;
+    if (inCurrent) {
+      current += row.netCents;
+      if (!row.isEmpty) currentActive = true;
+    } else if (inPrior) {
+      prior += row.netCents;
+      if (!row.isEmpty) priorActive = true;
+    }
+  }
+  return MonthCompare(
+    window: window,
+    currentCents: current,
+    priorCents: prior,
+    currentHasActivity: currentActive,
+    priorHasActivity: priorActive,
+  );
+}
+
 /// [day] 所属**自然周**的第一天（周一）。
 ///
 /// 1970-01-01（业务日 0）是**星期四** ⇒ 那一周的周一是 −3。
