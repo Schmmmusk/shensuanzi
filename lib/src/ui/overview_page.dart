@@ -24,6 +24,27 @@ import 'notice.dart';
 import 'revenue_chart.dart';
 import 'stock_top.dart';
 
+/// 概览页一次算好的全部数字（`_OverviewPageState._load` 产出、缓存复用）。
+class _OverviewData {
+  const _OverviewData({
+    required this.today,
+    required this.receivables,
+    required this.payables,
+    required this.stockTop,
+    required this.revenueRows,
+    required this.fromDay,
+    required this.toDay,
+  });
+
+  final OverviewSummary today;
+  final ReceivablesSummary receivables;
+  final PayablesSummary payables;
+  final StockTopSummary stockTop;
+  final List<RevenueDay> revenueRows;
+  final int fromDay;
+  final int toDay;
+}
+
 /// 提醒橙 —— **不用错误红**（可以不拦人的提醒一律橙色，
 /// `docs/ui_principles.md` §1.3；与 `product_form_dialog.dart` 的内联提示同色）
 const Color _noticeColor = Color(0xFFB45309);
@@ -104,6 +125,56 @@ class OverviewPage extends StatefulWidget {
 class _OverviewPageState extends State<OverviewPage> {
   bool _busy = false;
 
+  /// 图表窗口：近 30 天（提案 54）
+  static const int _chartDays = 30;
+
+  /// **整页查询结果算一次就缓存**（用户审查 2026-10-30）。
+  ///
+  /// 从前这些查询直接写在 `build()` 里 —— 点一下「立即备份」会 `setState`
+  /// 改 `_busy`、页面重建、于是**全历史聚合又跑一遍**（`stockTop` 是对整个
+  /// `stock_ledger` 按商品分组再排序，`receivables/payables` 也是全历史）。
+  ///
+  /// 现在的时机：进入概览（`initState`）算一次；`queries` 换了（换库/重连）
+  /// 重算。离开再回来会重建 State ⇒ 自动刷新 —— 壳用的是「按 destination
+  /// 现建页面」，不是 `IndexedStack`（`app_shell.dart` 的 `appShellPage`）。
+  _OverviewData? _data;
+
+  @override
+  void initState() {
+    super.initState();
+    _data = _load();
+  }
+
+  @override
+  void didUpdateWidget(OverviewPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 换库（桌面 ↔ 手机镜像、重连）必须重算；其余重建复用缓存
+    if (oldWidget.queries != widget.queries) {
+      _data = _load();
+    }
+  }
+
+  /// 一次把概览要的数字都算出来。
+  ///
+  /// 空库（`hasAnyDocument() == false`）⇒ `null`：整块经营区不显示。
+  _OverviewData? _load() {
+    final QueryDao? q = widget.queries;
+    if (q == null || !q.hasAnyDocument()) return null;
+
+    // 业务日按**本地日**算 —— 与 `documents.business_day` 同一口径
+    final int toDay = businessDayOf(DateTime.now().millisecondsSinceEpoch);
+    final int fromDay = toDay - (_chartDays - 1);
+    return _OverviewData(
+      today: q.todaySummary(_dayStart()),
+      receivables: q.receivablesSummary(),
+      payables: q.payablesSummary(),
+      stockTop: q.stockTop(),
+      revenueRows: q.dailyRevenue(fromDay: fromDay, toDay: toDay),
+      fromDay: fromDay,
+      toDay: toDay,
+    );
+  }
+
   /// 遗漏 11：**视觉反馈优先于逻辑防护** —— 先禁用按钮，再谈并发。
   /// 结果文案（含完整路径）由领域层给（`backupOutcomeMessage`，遗漏 5）。
   Future<void> _backupNow() async {
@@ -127,17 +198,8 @@ class _OverviewPageState extends State<OverviewPage> {
     final ThemeData theme = Theme.of(context);
     final String? reminder = widget.backupReminder;
 
-    // 应收/应付**只查一次**：`receivablesSummary()` 在 26 万单的库上要 20~30 ms，
-    // 「要留心」卡与「欠款一览」条都要用，查两遍是白花钱。
-    final QueryDao? q = widget.queries;
-    final bool hasDocs = q?.hasAnyDocument() ?? false;
-    final ReceivablesSummary? receivables = hasDocs
-        ? q!.receivablesSummary()
-        : null;
-    final PayablesSummary? payables = hasDocs ? q!.payablesSummary() : null;
-    final List<StockValueRow> stockTop = hasDocs
-        ? q!.topStockByValue()
-        : const <StockValueRow>[];
+    // 数据在 `_load()` 里算过一次并缓存 —— 这里**不再查库**
+    final _OverviewData? data = _data;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -290,23 +352,18 @@ class _OverviewPageState extends State<OverviewPage> {
         // 概览页先回答「数据在哪、能不能用、从哪开始」，经营数字是**第二眼**的东西。
         // ⚠️ 必须带顶部间距：手机壳这里是 `Column` 竖排三卡，
         // 紧贴上一段文字会看起来「卡片边缘叠在一起」（用户 2026-10-20 报的现象）。
-        if (receivables != null && payables != null) ...<Widget>[
+        if (data != null) ...<Widget>[
           const SizedBox(height: 20),
-          _businessCards(theme, receivables: receivables, payables: payables),
+          _businessCards(theme, data),
           // 图表放在经营卡**下面**（用户 2026-10-30：中老年看不出营收，
           // 「真相在流水」里翻不出来）。间距必须显式给 —— `_bizCard` 是
           // `margin: EdgeInsets.zero`，紧贴会看起来像「两张卡叠在一起」
           // （用户 2026-10-20 报过的那个现象）。
           const SizedBox(height: 12),
-          _charts(
-            theme,
-            receivables: receivables,
-            payables: payables,
-            stockTop: stockTop,
-          ),
+          _charts(theme, data),
         ],
         // 2026-10-22（§CV·八十三 批 2 第 12 条）：**空库也要有入口**
-        if (widget.onNavigate != null && !hasDocs) ...<Widget>[
+        if (widget.onNavigate != null && data == null) ...<Widget>[
           const SizedBox(height: 12),
           _entriesCard(theme),
         ],
@@ -374,16 +431,14 @@ class _OverviewPageState extends State<OverviewPage> {
   /// **#32**：经营速览三卡。桌面横排（各 1/3，裁定⑥）；手机紧凑竖排
   ///（padding 收窄 + 入口一行图标）。卡片**不可点**（裁定⑦：先做静态，
   /// 带筛选跳转超范围）。金额 `formatGrouped`（界面带千分位，裁定⑧）。
-  Widget _businessCards(
-    ThemeData theme, {
-    required ReceivablesSummary receivables,
+  Widget _businessCards(ThemeData theme, _OverviewData data) {
     // F13（2026-10-25 复跑）：从前「要留心」只看应收 —— 欠着供应商的钱一个字都不说，
     // 边界上还会显示「目前没有要留心的事」。应付（我欠人）与应收同权重，且**排在前面**：
     // 要还出去的钱比要收进来的更急。
-    required PayablesSummary payables,
-  }) {
+    final ReceivablesSummary receivables = data.receivables;
+    final PayablesSummary payables = data.payables;
+    final OverviewSummary today = data.today;
     final QueryDao queries = widget.queries!;
-    final OverviewSummary today = queries.todaySummary(_dayStart());
     final int transitCount = queries.deliveryInTransitCount();
     final int negativeStock = queries
         .stockByProduct()
@@ -513,32 +568,29 @@ class _OverviewPageState extends State<OverviewPage> {
   ///
   /// 两张卡之间**必须显式留间距**：两边的 `Card` 都是 `margin: EdgeInsets.zero`，
   /// 紧贴会看起来像「叠在一起」（用户 2026-10-20 报过）。
-  Widget _charts(
-    ThemeData theme, {
-    required ReceivablesSummary receivables,
-    required PayablesSummary payables,
-    required List<StockValueRow> stockTop,
-  }) {
+  Widget _charts(ThemeData theme, _OverviewData data) {
     final bool hasBalance =
-        receivables.totalCents > 0 || payables.totalCents > 0;
+        data.receivables.totalCents > 0 || data.payables.totalCents > 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         RevenueChartCard(
-          queries: widget.queries!,
+          rows: data.revenueRows,
+          fromDay: data.fromDay,
+          toDay: data.toDay,
           mobileShell: widget.mobileShell,
         ),
         if (hasBalance) ...<Widget>[
           const SizedBox(height: 12),
           BalanceBarsCard(
-            receivables: receivables,
-            payables: payables,
+            receivables: data.receivables,
+            payables: data.payables,
             mobileShell: widget.mobileShell,
           ),
         ],
-        if (stockTop.isNotEmpty) ...<Widget>[
+        if (!data.stockTop.isEmpty) ...<Widget>[
           const SizedBox(height: 12),
-          StockTopCard(rows: stockTop, mobileShell: widget.mobileShell),
+          StockTopCard(summary: data.stockTop, mobileShell: widget.mobileShell),
         ],
       ],
     );

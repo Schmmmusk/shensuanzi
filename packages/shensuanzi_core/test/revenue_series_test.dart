@@ -482,7 +482,7 @@ void main() {
       buy('牙签', '个', 500, '0.01');
       buy('电机', '台', 10, '100');
 
-      final List<StockValueRow> top = queries.topStockByValue();
+      final List<StockValueRow> top = queries.stockTop().rows;
       expect(top.length, 2);
       expect(top.first.name, '电机', reason: '占用 ¥1000 > ¥5');
       expect(top.first.valueCents, 100000);
@@ -498,7 +498,7 @@ void main() {
       buy('B', '个', 10, '5'); // ¥50
       buy('C', '个', 10, '3'); // ¥30
 
-      final List<StockValueRow> top = queries.topStockByValue(limit: 2);
+      final List<StockValueRow> top = queries.stockTop(limit: 2).rows;
       expect(top.map((StockValueRow r) => r.name).toList(), <String>['B', 'C']);
     });
 
@@ -523,14 +523,46 @@ void main() {
       );
 
       expect(
-        queries.topStockByValue(),
+        queries.stockTop().rows,
         isEmpty,
         reason: '负库存不是「压货」，混进来会让榜首变成一个负数',
       );
     });
 
     test('没有任何库存流水 ⇒ 空列表（不是一堆 0）', () {
-      expect(queries.topStockByValue(), isEmpty);
+      expect(queries.stockTop().isEmpty, isTrue);
+    });
+
+    test('**成本未校准**（有货、成本 0）⇒ 不进榜，只报数量', () {
+      // 用户审查 2026-10-30：`WHERE qty > 0` 会把「期初录入没记进价」的商品
+      // 选进来，然后显示「¥0.00」—— 用户以为这货不要钱。库存页早就有
+      // 「待校准」这个词，榜单必须用同一套语言。
+      final String id = buy('待校准货', '个', 10, '0.01'); // 先正常进一次
+      // 把成本流水抹成 0（模拟「期初录入没记成本」：有正数量、成本余值 0）
+      db.raw.execute(
+        'UPDATE stock_ledger SET total_cost = 0 WHERE product_id = ?',
+        <Object?>[id],
+      );
+
+      final StockTopSummary summary = queries.stockTop();
+      expect(summary.rows, isEmpty, reason: '不能假装它占用 ¥0');
+      expect(summary.uncalibratedCount, 1);
+      expect(summary.negativeCostCount, 0);
+      expect(summary.isEmpty, isFalse, reason: '有东西要提示 ⇒ 卡还是要显示');
+    });
+
+    test('**负成本**（超卖把成本摊穿）⇒ 不进榜，单独计数', () {
+      final String id = buy('亏本货', '个', 2, '10'); // 2 个 × ¥10 = ¥20
+      // 卖掉 1 个后成本余值还是正的；再人为把它压成负数，模拟「退货摊穿」
+      db.raw.execute(
+        'UPDATE stock_ledger SET total_cost = -500 WHERE product_id = ?',
+        <Object?>[id],
+      );
+
+      final StockTopSummary summary = queries.stockTop();
+      expect(summary.rows, isEmpty, reason: '负成本的横条没有意义');
+      expect(summary.negativeCostCount, 1);
+      expect(summary.uncalibratedCount, 0);
     });
   });
 }

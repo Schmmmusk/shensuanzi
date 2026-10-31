@@ -72,7 +72,18 @@ D:\神算子数据\                     ← 有非系统盘时优先（重装系
 
 ## 当前状态
 
-**版本 0.6.5（第九个可部署版本）** —— 数据格式版本 `schema v5`（v1 / v2 老库自动逐版迁移：v2 补 `package_note` 备注列，v3 补包装换算与让价五列 —— 均无需手工干预，升级前自动备份）。
+**版本 0.6.5（第九个可部署版本）** —— 数据格式版本 **`schema v7`**。
+
+老库**自动逐版迁移**，无需手工干预（升级前自动备份）：
+
+| 版本 | 补什么 |
+|---|---|
+| v2 | `products.package_note`（包装说明） |
+| v3 | 包装换算 + 让价五列（`package_unit` / `package_size` / `discount_amount` / `entry_quantity` / `entry_unit`） |
+| v4 | 同步游标索引（`documents.updated_at`） |
+| v5 | 库存 / 往来两张**覆盖索引**（聚合查询快 20~35 倍） |
+| v6 | `documents.business_day`（业务日，重建表 + 回填；**排序与图表都靠它**） |
+| v7 | `documents(doc_type, business_day)` 索引（经营图表的按日聚合；26 万单实测 1.1 秒） |
 
 ### ✅ 已实现（可以真用了）
 

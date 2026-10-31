@@ -63,31 +63,74 @@ class QueryDao {
   ///
   /// 只取 `quantity > 0` 的：超卖（负数）不该出现在「压货」榜里，
   /// 它属于「要留心」那张卡（负库存 N 种）。
-  List<StockValueRow> topStockByValue({int limit = 10}) {
-    if (limit <= 0) return const <StockValueRow>[];
-    return <StockValueRow>[
-      for (final Map<String, Object?> row in _raw.select(
-        'SELECT p.id AS id, p.name AS name, p.unit AS unit, '
-        '       s.qty AS qty, s.cost AS cost '
+  ///
+  /// ## 成本三态（与库存页 §AD 遗漏 1 同一套口径）
+  ///
+  /// 只有 `cost > 0` 的商品才参与排名。另外两种**不能**当成「占用 ¥0」：
+  ///
+  /// | 状态 | 判定 | 为什么不能混进榜里 |
+  /// |---|---|---|
+  /// | 待校准 | `cost == 0`（期初录入没记成本） | 显示 ¥0 会让用户以为「这货不要钱」；库存页早就用「待校准」说清这件事 |
+  /// | 负成本 | `cost < 0`（超卖 / 退货把成本摊穿） | 混进来会排到榜尾，横条画成负数没有任何意义 |
+  ///
+  /// 两种都只报**数量**，由 UI 单独提示 —— 与「未进货 / 待校准」是同一套语言。
+  StockTopSummary stockTop({int limit = 10}) {
+    if (limit <= 0) {
+      return const StockTopSummary(
+        rows: <StockValueRow>[],
+        uncalibratedCount: 0,
+        negativeCostCount: 0,
+      );
+    }
+    const String aggregated =
         'FROM ${Schema.products} p '
         'JOIN (SELECT product_id, '
         '             COALESCE(SUM(quantity), 0) AS qty, '
         '             COALESCE(SUM(total_cost), 0) AS cost '
         '      FROM ${Schema.stockLedger} GROUP BY product_id) s '
         '  ON s.product_id = p.id '
-        'WHERE s.qty > 0 '
-        'ORDER BY s.cost DESC, p.name ASC '
-        'LIMIT ?',
-        <Object?>[limit],
-      ))
-        StockValueRow(
-          productId: row['id']! as String,
-          name: row['name']! as String,
-          unit: row['unit']! as String,
-          quantity: row['qty']! as int,
-          valueCents: row['cost']! as int,
-        ),
-    ];
+        'WHERE s.qty > 0 ';
+
+    // ⚠️ **一趟扫完**：`ORDER BY cost DESC` 之后「正 / 零 / 负」天然分段 ——
+    // 取前 `limit` 个正数进榜，另外两类只数个数。
+    //
+    // 从前是两条查询（一条取榜、一条数两类），两条都要对整个 `stock_ledger`
+    // 做一次 GROUP BY。545 MB / 26 万单实测：合并前 **97 ms**，合并后见台账。
+    final List<Map<String, Object?>> all = _raw.select(
+      'SELECT p.id AS id, p.name AS name, p.unit AS unit, '
+      '       s.qty AS qty, s.cost AS cost '
+      '$aggregated '
+      'ORDER BY s.cost DESC, p.name ASC',
+    );
+
+    final List<StockValueRow> rows = <StockValueRow>[];
+    int uncalibrated = 0;
+    int negativeCost = 0;
+    for (final Map<String, Object?> row in all) {
+      final int cost = row['cost']! as int;
+      if (cost > 0) {
+        if (rows.length < limit) {
+          rows.add(
+            StockValueRow(
+              productId: row['id']! as String,
+              name: row['name']! as String,
+              unit: row['unit']! as String,
+              quantity: row['qty']! as int,
+              valueCents: cost,
+            ),
+          );
+        }
+      } else if (cost == 0) {
+        uncalibrated++;
+      } else {
+        negativeCost++;
+      }
+    }
+    return StockTopSummary(
+      rows: rows,
+      uncalibratedCount: uncalibrated,
+      negativeCostCount: negativeCost,
+    );
   }
 
   /// **在途数量**：送货单里 `status = in_transit` 的未签收数量
@@ -640,7 +683,29 @@ class QueryDao {
   }
 }
 
-/// [QueryDao.topStockByValue] 的一行：一个商品的压货情况。
+/// [QueryDao.stockTop] 的结果：能排名的 + 两种「不能假装有金额」的计数。
+class StockTopSummary {
+  const StockTopSummary({
+    required this.rows,
+    required this.uncalibratedCount,
+    required this.negativeCostCount,
+  });
+
+  /// 占用资金 > 0 的商品，按金额降序（最多 `limit` 条）
+  final List<StockValueRow> rows;
+
+  /// 有库存但**成本为 0**（期初录入没记成本）的商品数 —— 显示成「待校准」
+  final int uncalibratedCount;
+
+  /// 有库存但**成本为负**（超卖 / 退货把成本摊穿）的商品数
+  final int negativeCostCount;
+
+  /// 三样都没有 ⇒ 整张卡不显示
+  bool get isEmpty =>
+      rows.isEmpty && uncalibratedCount == 0 && negativeCostCount == 0;
+}
+
+/// [QueryDao.stockTop] 的一行：一个商品的压货情况。
 class StockValueRow {
   const StockValueRow({
     required this.productId,

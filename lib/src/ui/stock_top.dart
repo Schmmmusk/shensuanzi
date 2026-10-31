@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
@@ -7,31 +9,41 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 ///
 /// 用户举的例子：500 个、20 箱、80 千克 —— 数字大小说明不了谁压货多
 /// （单位不同、单价差异巨大）。按数量排会把「一箱牙签」排在「十台电机」前面，
-/// **误导经营决策**。
+/// **误导经营决策**。标题也照实写「按占用资金」，不写「库存最多」。
 ///
-/// 标题也照实写「按占用资金」，不写「库存最多」。
+/// ## 成本三态（用户审查 2026-10-30）
 ///
-/// ## 口径要在卡上说清
+/// 只有 `cost > 0` 的商品进榜。另外两种**不假装它们占用 ¥0**：
 ///
-/// `占用资金 = SUM(stock_ledger.total_cost)` —— **历史加权平均成本**，
-/// 不是「最近进价 × 数量」（`docs/data_model.md` §AA·四 / AA-4 要求标明）。
+/// - **待校准**（`cost == 0`，期初录入没记进价）：显示 ¥0 会让用户以为
+///   「这货不要钱」。库存页早就有「待校准」这个词，这里沿用同一套语言。
+/// - **负成本**（`cost < 0`，超卖 / 退货摊穿）：横条画成负数没有意义。
+///
+/// 两种都只报**数量**，放在卡底一行提示里。
 ///
 /// ## 间距约定（⚠️ 用户 2026-10-20 报过「两张卡片重叠」）
 ///
 /// `margin: EdgeInsets.zero`，与相邻卡片的间距**由父级 `SizedBox` 给**。
 class StockTopCard extends StatelessWidget {
-  const StockTopCard({super.key, required this.rows, this.mobileShell = false});
+  const StockTopCard({
+    super.key,
+    required this.summary,
+    this.mobileShell = false,
+  });
 
-  final List<StockValueRow> rows;
+  final StockTopSummary summary;
   final bool mobileShell;
 
   @override
   Widget build(BuildContext context) {
-    if (rows.isEmpty) return const SizedBox.shrink();
+    if (summary.isEmpty) return const SizedBox.shrink();
     final ThemeData theme = Theme.of(context);
-    final int maxValue = rows
-        .map((StockValueRow r) => r.valueCents)
-        .reduce((int a, int b) => a > b ? a : b);
+    final List<StockValueRow> rows = summary.rows;
+    final int maxValue = rows.isEmpty
+        ? 0
+        : rows
+              .map((StockValueRow r) => r.valueCents)
+              .reduce((int a, int b) => a > b ? a : b);
 
     return Card(
       key: const Key('overview-stock-top'),
@@ -42,35 +54,80 @@ class StockTopCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              '压货最多的 ${rows.length} 个商品',
+              rows.isEmpty ? '压货榜' : '压货最多的 ${rows.length} 个商品',
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 4),
             Text(
-              '按占用资金排（不是数量）。金额按历史平均成本算，'
-              '不是最近一次进价。',
+              '按占用资金排（不是数量）。金额按历史平均成本算，不是最近一次进价。',
               style: TextStyle(
                 height: 1.6,
                 fontSize: 13,
                 color: theme.textTheme.bodySmall?.color,
               ),
             ),
-            const SizedBox(height: 12),
-            for (int i = 0; i < rows.length; i++) ...<Widget>[
-              if (i > 0) const SizedBox(height: 10),
-              _row(theme, rows[i], maxValue),
+            if (rows.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  '目前没有「成本已知且有库存」的商品，排不出榜。',
+                  style: TextStyle(
+                    height: 1.7,
+                    fontSize: 15,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
+                ),
+              )
+            else ...<Widget>[
+              const SizedBox(height: 12),
+              for (int i = 0; i < rows.length; i++) ...<Widget>[
+                if (i > 0) const SizedBox(height: 10),
+                _row(theme, rows[i], maxValue),
+              ],
             ],
+            // 两种「不能进榜」的，各说一句 —— 数量照报，但不假装有金额
+            if (summary.uncalibratedCount > 0)
+              _notice(
+                theme,
+                key: 'overview-stock-top-uncalibrated',
+                text:
+                    '另有 ${summary.uncalibratedCount} 种商品成本未校准'
+                    '（期初没记进价），暂不参与排名 —— 下次进货会自动校准。',
+              ),
+            if (summary.negativeCostCount > 0)
+              _notice(
+                theme,
+                key: 'overview-stock-top-negative',
+                text:
+                    '还有 ${summary.negativeCostCount} 种商品成本为负'
+                    '（超卖或退货把成本摊穿了），见「库存」页。',
+              ),
           ],
         ),
       ),
     );
   }
 
+  Widget _notice(ThemeData theme, {required String key, required String text}) =>
+      Padding(
+        key: Key(key),
+        padding: const EdgeInsets.only(top: 10),
+        child: Text(
+          text,
+          style: TextStyle(
+            height: 1.6,
+            fontSize: 13,
+            color: theme.textTheme.bodySmall?.color,
+          ),
+        ),
+      );
+
   Widget _row(ThemeData theme, StockValueRow row, int maxValue) {
-    // 至少留 4% —— 否则最后一名会画成一条看不见的线，用户以为没画
+    // 比例照实算，只保证**最小 4 像素**可见（与欠款横条同一条纪律）：
+    // 抬到 4% 会让 ¥50 对 ¥12,600 显示成 4% 而不是 0.4%，等于另造一套比例。
     final double ratio = maxValue <= 0
         ? 0
-        : (row.valueCents / maxValue).clamp(0.04, 1.0).toDouble();
+        : (row.valueCents / maxValue).clamp(0.0, 1.0);
     return Column(
       key: Key('overview-stock-top-${row.productId}'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -100,20 +157,26 @@ class StockTopCard extends StatelessWidget {
         Row(
           children: <Widget>[
             Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: Stack(
-                  children: <Widget>[
-                    Container(height: 10, color: theme.dividerColor),
-                    FractionallySizedBox(
-                      widthFactor: ratio,
-                      child: Container(
-                        height: 10,
-                        color: theme.colorScheme.primary,
-                      ),
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints c) {
+                  final double width = math.max(c.maxWidth * ratio, 4);
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: Stack(
+                      children: <Widget>[
+                        Container(height: 10, color: theme.dividerColor),
+                        SizedBox(
+                          key: Key('overview-stock-top-${row.productId}-bar'),
+                          width: width,
+                          child: Container(
+                            height: 10,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  );
+                },
               ),
             ),
             const SizedBox(width: 8),

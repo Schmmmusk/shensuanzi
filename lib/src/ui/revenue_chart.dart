@@ -26,18 +26,27 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 class RevenueChartCard extends StatefulWidget {
   const RevenueChartCard({
     super.key,
-    required this.queries,
+    required this.rows,
+    required this.fromDay,
+    required this.toDay,
     this.mobileShell = false,
-    this.days = 30,
   });
 
-  final QueryDao queries;
+  /// **已经查好的**按日营收（稀疏：只含有经营活动的那几天）。
+  ///
+  /// ⚠️ 由父级传入而不是自己查（用户审查 2026-10-30）：`build()` 里直接查库，
+  /// 会让「点一下备份」这种纯 UI 状态变化也重跑一遍全历史聚合。
+  /// 概览页把整页数据算一次、缓存住，重建时直接复用。
+  final List<RevenueDay> rows;
+
+  final int fromDay;
+  final int toDay;
 
   /// 手机壳：柱子矮一点、日期标签用短格式
   final bool mobileShell;
 
-  /// 窗口天数（默认近 30 天）
-  final int days;
+  /// 窗口天数（由 `fromDay..toDay` 推出，只用于文案「最近 N 天」）
+  int get days => toDay - fromDay + 1;
 
   @override
   State<RevenueChartCard> createState() => _RevenueChartCardState();
@@ -49,18 +58,11 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    // 业务日按**本地日**算 —— 与 `documents.business_day` 同一口径
-    final int toDay = businessDayOf(DateTime.now().millisecondsSinceEpoch);
-    final int fromDay = toDay - (widget.days - 1);
-
-    final List<RevenueDay> rows = widget.queries.dailyRevenue(
-      fromDay: fromDay,
-      toDay: toDay,
-    );
+    final List<RevenueDay> rows = widget.rows;
     final List<RevenuePoint> weeks = buildRevenueSeries(
       rows: rows,
-      fromDay: fromDay,
-      toDay: toDay,
+      fromDay: widget.fromDay,
+      toDay: widget.toDay,
       bucket: RevenueBucket.week,
     );
 
@@ -157,7 +159,7 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
                   child: Text(_showDaily ? '收起每天的数字' : '看每天的数字'),
                 ),
               ),
-              if (_showDaily) _dailyList(theme, rows, fromDay, toDay),
+              if (_showDaily) _dailyList(theme, rows),
             ],
           ],
         ),
@@ -190,12 +192,7 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
   }
 
   /// 每天的数字（可展开）—— 读屏天然可读，也方便用户抄下来对账。
-  Widget _dailyList(
-    ThemeData theme,
-    List<RevenueDay> rows,
-    int fromDay,
-    int toDay,
-  ) {
+  Widget _dailyList(ThemeData theme, List<RevenueDay> rows) {
     // 从最近一天往回排：用户最关心昨天、前天
     final List<RevenueDay> sorted = rows.toList()
       ..sort((RevenueDay a, RevenueDay b) => b.day.compareTo(a.day));

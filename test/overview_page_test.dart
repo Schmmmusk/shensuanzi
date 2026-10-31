@@ -790,22 +790,26 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: StockTopCard(
-              rows: const <StockValueRow>[
-                StockValueRow(
-                  productId: 'motor',
-                  name: '电机',
-                  unit: '台',
-                  quantity: 10,
-                  valueCents: 100000,
-                ),
-                StockValueRow(
-                  productId: 'pick',
-                  name: '牙签',
-                  unit: '个',
-                  quantity: 500,
-                  valueCents: 500,
-                ),
-              ],
+              summary: const StockTopSummary(
+                rows: <StockValueRow>[
+                  StockValueRow(
+                    productId: 'motor',
+                    name: '电机',
+                    unit: '台',
+                    quantity: 10,
+                    valueCents: 100000,
+                  ),
+                  StockValueRow(
+                    productId: 'pick',
+                    name: '牙签',
+                    unit: '个',
+                    quantity: 500,
+                    valueCents: 500,
+                  ),
+                ],
+                uncalibratedCount: 0,
+                negativeCostCount: 0,
+              ),
             ),
           ),
         ),
@@ -826,11 +830,165 @@ void main() {
       // 空列表 ⇒ 整张卡不渲染（不留一块空壳）
       await tester.pumpWidget(
         const MaterialApp(
-          home: Scaffold(body: StockTopCard(rows: <StockValueRow>[])),
+          home: Scaffold(
+            body: StockTopCard(
+              summary: StockTopSummary(
+                rows: <StockValueRow>[],
+                uncalibratedCount: 0,
+                negativeCostCount: 0,
+              ),
+            ),
+          ),
         ),
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('overview-stock-top')), findsNothing);
+    });
+
+    testWidgets('重建页面**不重新查库**（点备份不会把全历史聚合再跑一遍）', (tester) async {
+      // 用户审查 2026-10-30：从前这些查询写在 `build()` 里 —— 点一下「立即备份」
+      // 会 `setState` 改 `_busy`、页面重建、于是 165 ms 的全历史聚合又跑一遍，
+      // 备份结束再来一遍。现在数据在 `initState` 算好缓存住。
+      //
+      // 断言方式：改库之后触发一次纯 UI 重建，界面**仍显示缓存值**。
+      // 这不是「显示了旧数据」的 bug，而是「重建不查库」的契约。
+      // 窗口调高：橙卡 + 三卡 + 图表在 600px 里放不下，`ListView` 会把
+      // 屏幕外的子节点**延迟构建** ⇒ `find.byKey` 直接找不到（不是断言写错）
+      tester.view.physicalSize = const Size(800, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final int nowMs = DateTime.now().millisecondsSinceEpoch;
+      final QueryDao q = await seedBiz(todayMs: nowMs);
+      await tester.pumpWidget(
+        page(
+          queries: q,
+          // ⚠️ 「立即备份」按钮只在**有提醒**时渲染（橙卡里）——
+          // 不传 reminder 的话它根本不存在，`tap` 会直接抛
+          reminder: '数据已经 5 天没有备份了。',
+          onBackupNow: () async => const BackupOutcome.ok(r'D:/神算子备份/a.db'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final String before = tester
+          .widget<Text>(find.byKey(const Key('overview-revenue-summary')))
+          .data!;
+
+      // 直接往库里塞一张销售单（绕过 UI）—— 如果重建会重新查，数字就会变
+      db.raw.execute(
+        'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
+        'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+        'business_day) VALUES (?,?,?,?,?,?,?,0,?,?,?)',
+        <Object?>[
+          'late-sale',
+          'XS-LATE-1',
+          DocType.sale.wire,
+          DocStatus.confirmed.wire,
+          99900,
+          99900,
+          nowMs,
+          nowMs,
+          nowMs,
+          businessDayOf(nowMs),
+        ],
+      );
+
+      await tester.tap(find.byKey(const Key('overview-backup-now')));
+      await tester.pumpAndSettle();
+
+      final String after = tester
+          .widget<Text>(find.byKey(const Key('overview-revenue-summary')))
+          .data!;
+      expect(after, before, reason: '重建复用了缓存 —— 否则每次点备份都会重跑 100+ ms 的全历史聚合');
+    });
+
+    testWidgets('压货榜：**待校准 / 负成本**不进榜，但要在卡上说清', (tester) async {
+      // 用户审查 2026-10-30：有货但成本 0 的商品显示「¥0.00」会让用户
+      // 以为这货不要钱；负成本的横条也没有意义。两种都只报数量。
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: StockTopCard(
+              summary: StockTopSummary(
+                rows: <StockValueRow>[
+                  StockValueRow(
+                    productId: 'oil',
+                    name: '调和油',
+                    unit: '桶',
+                    quantity: 42,
+                    valueCents: 1260000,
+                  ),
+                ],
+                uncalibratedCount: 3,
+                negativeCostCount: 1,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('压货最多的 1 个商品'), findsOneWidget);
+      expect(
+        find.byKey(const Key('overview-stock-top-uncalibrated')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('成本未校准'), findsOneWidget);
+      expect(
+        find.byKey(const Key('overview-stock-top-negative')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('成本为负'), findsOneWidget);
+      // 不能出现「¥0.00」这种把未校准说成零占用的写法
+      expect(find.text('¥0.00'), findsNothing);
+    });
+
+    testWidgets('压货榜横条：比例照实，小额只保证 4px', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: StockTopCard(
+              summary: StockTopSummary(
+                rows: <StockValueRow>[
+                  StockValueRow(
+                    productId: 'big',
+                    name: '大件',
+                    unit: '台',
+                    quantity: 1,
+                    valueCents: 1260000,
+                  ),
+                  StockValueRow(
+                    productId: 'tiny',
+                    name: '小件',
+                    unit: '个',
+                    quantity: 500,
+                    valueCents: 500,
+                  ),
+                ],
+                uncalibratedCount: 0,
+                negativeCostCount: 0,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final double big = tester
+          .getSize(find.byKey(const Key('overview-stock-top-big-bar')))
+          .width;
+      final double tiny = tester
+          .getSize(find.byKey(const Key('overview-stock-top-tiny-bar')))
+          .width;
+      expect(big, greaterThan(100));
+      expect(
+        tiny,
+        4.0,
+        reason:
+            '¥5 对 ¥12,600 真实比例 0.04% ⇒ 按比例不到 1px，'
+            '给 4px 可见宽度；**不能**抬到 4%（那是 100 倍失真）',
+      );
     });
 
     testWidgets('压货榜与欠款卡之间也留了间距', (tester) async {
