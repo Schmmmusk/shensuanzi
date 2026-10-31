@@ -331,11 +331,14 @@ class HostServiceController {
       // 完整性标签全部排除，**根因未定**。降级（内存令牌）已经兜住了功能，
       // 但日志里当时只有「失败了」这个事实、没有任何 errno ⇒ 下次复现等于
       // 从零再查一遍。这里把原文交给宿主写进日志，留现场。
+      // 优先记**完整现场**（`stage` / 每步结果 / 属性 / 父目录可写性）；
+      // 没有现场时退回那句原文（老路径 / 内存模式）。
+      final String? diagnostics = _identities.lastWriteDiagnostics;
       final String? persistProblem = _identities.lastWriteProblem;
       if (persistProblem != null) {
         onInternalError?.call(
           'host.json 写不进去（配对码只对这次运行有效）',
-          persistProblem,
+          diagnostics ?? persistProblem,
           StackTrace.current,
         );
       }

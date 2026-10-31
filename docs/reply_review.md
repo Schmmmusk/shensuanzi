@@ -17689,3 +17689,119 @@ Windows 上 `rename`/`MoveFileEx` 返回 `errno 5` 的典型原因是**目标文
   并已 pull 回来复核（`integrity ok`、计数一致、`host_id` 保留）。
   ⇒ **下次解锁后第一件事**：重复「弄坏镜像 → 点『修复本机数据副本』」这一路，
   看错误页两条出路、确认框、结果框、留档与清单是否都对。
+
+### 六十八、2026-10-31 状态 3 真机验收 + 状态 2 + 提案 56 落地（①诊断 ②L2）
+
+用户解锁手机后第一件事就是重跑状态 3；同一条 `docs/reply.md` 里给了提案 56 的裁定，
+并要求「状态 2 可以补上」。
+
+#### ① 状态 3 真机验收：**四屏全过**（Redmi 1220×2712）
+
+| # | 操作 | 结果 |
+|---|---|---|
+| 1 | 把 `mirror/shensuanzi_mirror.db` 改成 23 字节垃圾后启动 | 错误页：说明 + **重试** + **修复本机数据副本** 两个按钮 |
+| 2 | 点「修复本机数据副本」 | 确认框（四件事 + 「抢不回来的会如实列出来」） |
+| 3 | 点「修复」 | 整页「正在修复……」→ 结果框「**修好了**」+「原来那份文件已经认不出来了，**里面有没有没传上去的单，现在无法确认**」+ 原因 + 清单路径 |
+| 4 | 点「知道了」 | 进主界面（概览、`数据文件已就绪（版本 7）`），随后自动全量重拉 |
+
+落盘物（`run-as` 实测）：`shensuanzi_mirror.db.broken-20261031-224149`（23 字节，留档）、
+新 `shensuanzi_mirror.db` + `-wal`、`未同步单据抢救-20261031-2241.txt`。
+清单内容与设计一致：「抢救结果：一条也没能读出来 / 原因：文件头坏了 / 原件已留档 + 路径」。
+
+**真机顺手抓出两个毛病**（都已修）：
+
+1. 清单 `.txt` 里写着 `抢救结果：**一条也没能读出来**` —— **纯文本文件不该有 Markdown 星号**
+   （与上一轮 UI 里 `**` 同源，只是这次在文件里）。
+2. `mirror/rescue-tmp/` 空目录留了下来（只删了副本文件）。用户翻数据目录会疑惑「这是什么」。
+
+> 手机已还原：镜像写回动手前的备份并复核（`integrity ok` / 80 单据 / 10 商品 / 队列 0 /
+> `host_id` 保留），概览数字与动手前一致（应付 ¥439 / 应收 ¥390）。
+
+#### ② 真机还抓到一条**英文漏上界面**（已修）
+
+状态 3 修完自动重拉时，主机没开，屏幕弹的是：
+
+```
+连接主机失败（Connection reset by peer）
+```
+
+`HttpTransport` 把 `HttpException.message` **直接拼进了用户可见文案**。
+两处都改：
+
+- `SyncHttpException` 的文案改成纯中文 + 怎么办（「连接被中途断开了 —— 请确认电脑上的
+  神算子还开着、手机和电脑连的是同一个 Wi-Fi，然后再试一次」）；
+- 原始英文经新增的 `HttpTransport.onError` 进日志（`MobileSyncService` 把自己的
+  `onError` 接进去，4 处 `HttpTransport()` 统一走 `_defaultTransport()`）。
+
+> 顺带说明那条 `Connection reset by peer` 本身：主机没开本该是 `Connection refused`，
+> 出现 reset 说明**中间有东西接了连接又掐断**（手机开着 VPN 时常见）。
+> 两种情况「怎么办」一样，所以文案合并；差异留在日志里。
+
+#### ③ 状态 2：镜像**开得起来但数据不对**
+
+裁定 §四 的第二个状态。实现 = 同一个恢复流程，只是**发现方式**不同：
+
+- `_prepareMobile` 在 `openMirror()` 之后跑 `PRAGMA quick_check`；
+- `mirrorHealthProblemOf()` 把结果翻成人话（`malformed` → 「文件内部有坏页」），
+  **英文不许上界面**；
+- 非 `ok` ⇒ 单独一屏：「手机上的数据副本自检没通过（文件内部有坏页）……点『修复本机数据副本』」，
+  文案与状态 3 分开写 —— 文件在、只是内容坏了，说「打不开」会让用户以为文件没了。
+
+⚠️ **实测一个坑**：坏页严重到 `quick_check` 自己跑不完时，它**不是返回一行错误而是抛**
+`SqliteException(11) database disk image is malformed`。不接住的话会一路冒到启动流程的
+通用 catch，被当成「打不开」（状态 3）—— 而它其实是状态 2。已接住并翻译。
+
+代价：`quick_check` 在 478 MB 主库实测 850 ms（`integrity_check` 3105 ms），
+镜像是主库的子集，通常几十毫秒。
+
+#### ④ 提案 56 落地：诊断埋点 + L1→L2→L3（裁定 ①②）
+
+新文件 `packages/shensuanzi_host/lib/src/host_write.dart`：
+
+| 裁定要求 | 实现 |
+|---|---|
+| 诊断埋点只进日志 | `HostWriteReport` 经 `onInternalError` 进日志，界面零变化 |
+| **操作前目标是否存在** | `targetExisted` |
+| **每步结果**（不许只记最终异常） | `steps`：`parent-ok` / `temp-written` / `temp-write-failed:N` / `rename-ok` / `rename-failed:N` / `old-read:N` / `inplace-written` / `inplace-failed:N` |
+| errno / 路径 / 属性 / 父目录可写性 / 完整性级别 | 同名字段；属性走 `attrib`、完整性走 `whoami /groups`（中文系统写「强制标签」，两种都认） |
+| L1→L2→L3 | `writeIdentityFile()`；L2 读旧内容 → 截断写 → 失败用旧内容写回，**恢复结果记 `restoreOutcome`** |
+| 不许说成可靠回滚 | `restoreOutcome` 三态：`ok` / `failed:N` / `nothing-to-restore`，日志照实记 |
+| 不许假设 L2 能绕过占用 | 注释与文档都写明：L2 只需 `FILE_WRITE_DATA`，被拒写共享模式时一样失败 |
+| 故障注入 | `host_write_test.dart` **9 条**（假 `HostWriteIo` 精确在指定步骤失败） |
+
+**故障注入九条**（对应裁定那张表）：L1 正常 / 写临时文件失败（flush）⇒ 三次都记
+`write-temp` 且不记成 rename / rename 一直失败 ⇒ L2 成功 / 截断后写入失败 ⇒ 恢复旧内容
+且记 `restore=ok` / 恢复也失败 ⇒ 记 `failed:` / 读不出旧内容 ⇒ `nothing-to-restore` /
+父目录建不了 ⇒ 直接 L3 / 首次创建 ⇒ `targetExisted=false` / 日志行字段齐。
+
+另补一条**读**的容错（裁定表最后一行「写入中进程退出」）：`host.json` 被写坏成半截 JSON 时，
+`load()` **不再抛**，认作「没有身份」并记 `lastReadProblem` —— 从前是 `jsonDecode` 直接抛，
+一路冒到主机服务启动 ⇒ 界面「启动服务失败」，用户不知道该删哪个文件。
+
+#### ⑤ 验收标准按裁定改写
+
+原稿「重启后不点重新生成也能画出同一个二维码」**做不到也不该做**：`host.json` 只存
+`token_hash`，明文不落盘。已改为：`host_id` 稳定 / 已配对手机仍能用原令牌连接 /
+不因写盘失败重新生成令牌。要「重启后直接显示原码」需另立**明文安全持久化**提案（DPAPI），
+不在本文范围。提案文档头部已写入裁定结果与这条修正。
+
+#### 测试与门禁
+
+- `host_write_test`（host 包，**9 条**）：上表九种故障。
+- `auth_test` +1：半截 JSON ⇒ 不崩、认作无身份、能自愈。
+- `mirror_rescue_test` +2：`quick_check` 输出 → 人话（英文不上界面）；真造一个
+  「能开但坏页」的库（破坏第 2 页、保留第 1 页）。
+- `mirror_recovery_page_test` +1：状态 2 那一屏说「自检没通过」而不是「打不开」，且无英文。
+- `http_transport_test`（新文件，**2 条**）：连不上 / 被掐断 ⇒ 文案纯中文 + 怎么办。
+- `selfcheck_service` 85/85（+1：写盘失败留下现场）。
+- 门禁：root **438** · core **789** · app **471** · host **179** · analyze 0。
+- 反向灵敏度：L1 那步如果不分开记（write-temp 混进 rename）⇒「flush 失败」那条红；
+  `quick_check` 不接异常 ⇒ 状态 2 的库会掉进状态 3（widget 测试红）。
+
+#### 还没做的
+
+- 提案 56 ③ 的「另立明文持久化提案」—— 没写，等用户要不要。
+- schema v8 —— 按裁定**暂缓**。
+- 真机验证 L2：需要一台**真的写不进 `host.json`** 的机器（就是用户那台）。
+  下次在那台机器上跑，日志里应该出现 `host.json 写入 level=... stage=...`；
+  若 L2 成功，配对码能跨重启保留（`host_id` 与令牌都稳定），这就是根因的第一次实锤。

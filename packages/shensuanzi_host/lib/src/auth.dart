@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'host_write.dart';
+
 import 'package:crypto/crypto.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
@@ -99,17 +101,33 @@ class HostIdentity {
 ///
 /// [HostIdentityStore.inMemory] 不碰文件系统，供单测使用。
 class HostIdentityStore {
-  HostIdentityStore(this.file) : _memory = null;
+  HostIdentityStore(this.file, {HostWriteIo io = const RealHostWriteIo()})
+    : _memory = null,
+      _io = io;
 
   /// 不碰文件系统 —— 单测与自检用。
   ///
   /// `file == null` 就是「内存模式」的判据；[_memory] 是它的存储槽，
   /// **初值必须是 `null`（= 还没存过）**，而不是空 map ——
   /// 空 map 会让 [load] 误判成「已存过一条记录」。
-  HostIdentityStore.inMemory() : file = null, _memory = null;
+  HostIdentityStore.inMemory()
+    : file = null,
+      _memory = null,
+      _io = const RealHostWriteIo();
 
   /// `null` = 纯内存模式
   final File? file;
+
+  /// 文件操作（**测试注入故障的接缝**；生产用 `dart:io`）
+  final HostWriteIo _io;
+
+  /// 上一次写盘的**完整现场**（一行日志；`null` = 没失败过）
+  ///
+  /// 用户裁定（提案 56 批复 §二）：失败时日志要能准确说出**失败在哪一步** ——
+  /// 只记一个 `errno` 不够，`create-parent` / `write-temp` / `rename` 三种失败
+  /// 的调查方向完全不同。
+  String? get lastWriteDiagnostics => _lastWriteDiagnostics;
+  String? _lastWriteDiagnostics;
 
   Map<String, Object?>? _memory;
 
@@ -199,10 +217,30 @@ class HostIdentityStore {
     if (file == null) return _memory;
     final File target = file!;
     if (!target.existsSync()) return null;
-    return Map<String, Object?>.from(
-      jsonDecode(target.readAsStringSync()) as Map<Object?, Object?>,
-    );
+    try {
+      return Map<String, Object?>.from(
+        jsonDecode(target.readAsStringSync()) as Map<Object?, Object?>,
+      );
+    } catch (error) {
+      // 2026-10-31 用户裁定（提案 56 批复 §三 故障注入表最后一行）：
+      // 「写入过程中进程异常退出 ⇒ 下次启动**能够识别损坏文件，不应直接崩溃**」。
+      //
+      // L2 原地重写在「截断之后、写完之前」被打断时，`host.json` 会变成
+      // 空文件或半截 JSON。从前这里直接 `jsonDecode` ⇒ 抛 FormatException ⇒
+      // 一路冒到主机服务启动 ⇒ 界面「启动服务失败」，而用户完全不知道
+      // 该删哪个文件。现在：**认作「没有身份」**（随后会生成新的），
+      // 并把原文记下来进日志。
+      _lastReadProblem = '身份文件读不懂（${error.runtimeType}）：${target.path}';
+      return null;
+    }
   }
+
+  /// 上一次**读**身份文件失败的原因（`null` = 没失败过）。
+  ///
+  /// 与 [lastWriteProblem] 分开：读失败意味着「要重新生成身份」，
+  /// 写失败意味着「这次能配对、重启后失效」—— 两件事的后果不同。
+  String? get lastReadProblem => _lastReadProblem;
+  String? _lastReadProblem;
 
   /// 落盘：**原子写 + 重试**。
   ///
@@ -219,25 +257,35 @@ class HostIdentityStore {
       return;
     }
     final File target = file!;
-    target.parent.createSync(recursive: true);
     final String text = const JsonEncoder.withIndent('  ').convert(json);
-    final File temp = File('${target.path}.tmp');
 
-    Object? lastError;
-    for (int attempt = 0; attempt < 3; attempt++) {
-      try {
-        temp.writeAsStringSync(text, flush: true);
-        temp.renameSync(target.path);
-        return;
-      } catch (error) {
-        lastError = error;
-        // 同步等待：这条路径极少走到，几十毫秒的阻塞换来「不丢令牌」值得
-        sleep(Duration(milliseconds: 60 * (attempt + 1)));
-      }
+    final HostWriteReport report = HostWriteReport(
+      level: HostWriteLevel.memory,
+      target: target.path,
+      temp: '${target.path}.tmp',
+      targetExisted: false,
+      steps: <String>[],
+      retries: <String>[],
+    );
+
+    // L1 临时文件 + rename → L2 原地重写 → L3 内存（见 `host_write.dart` 文件头）
+    writeIdentityFile(
+      target: target,
+      text: text,
+      report: report,
+      io: _io,
+    );
+
+    if (report.ok) {
+      _lastWriteDiagnostics = null;
+      return;
     }
-    // 三次都失败 ⇒ 交给调用方决定（`reset` 会降级成内存令牌）
+
+    // 只有失败时才去摸环境（`attrib` / `whoami` 要起进程，平时不跑）
+    collectEnvironment(report, target);
+    _lastWriteDiagnostics = report.toLogLine();
     throw FileSystemException(
-      '写不进 $file（试了 3 次）：$lastError',
+      '写不进 $file（${report.stage}，errno ${report.errno}）',
       target.path,
     );
   }

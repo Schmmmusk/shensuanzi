@@ -23,6 +23,14 @@
 /// **本包无 Flutter 依赖** —— `dart test` 全程可跑。
 library;
 
+export 'src/host_write.dart'
+    show
+        HostWriteIo,
+        HostWriteLevel,
+        HostWriteReport,
+        RealHostWriteIo,
+        collectEnvironment,
+        writeIdentityFile;
 export 'src/auth.dart' show HostIdentity, HostIdentityStore, HostToken;
 export 'src/http_server.dart' show HostHttpServer, PortRange;
 export 'src/local_ip.dart' show LocalIp, NetAddressOption, NetCandidate;

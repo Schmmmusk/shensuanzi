@@ -135,6 +135,31 @@ void main() {
       expect(store.storedHash(), identity.tokenHash);
     });
 
+    test('文件被写坏（半截 JSON）⇒ **不崩**，认作没有身份，并记下原因', () {
+      // 用户裁定（提案 56 批复 §三 故障注入表最后一行）：
+      // 「写入过程中进程异常退出 ⇒ 下次启动能够识别损坏文件，不应直接崩溃」。
+      // L2 原地重写在「截断之后、写完之前」被打断，留下的正是这种文件。
+      final File target = File('${box.path}${Platform.pathSeparator}host.json')
+        ..writeAsStringSync('{"host_id": "abc", "token_ha');
+
+      final HostIdentityStore store = HostIdentityStore(target);
+      late HostIdentity? loaded;
+      expect(
+        () => loaded = store.load(),
+        returnsNormally,
+        reason: '从前这里 jsonDecode 直接抛 ⇒ 主机服务启动失败，用户不知道该删哪个文件',
+      );
+      expect(loaded, isNull, reason: '读不懂就当作「没有身份」');
+      expect(store.lastReadProblem, isNotNull);
+      expect(store.lastReadProblem, contains('host.json'));
+
+      // 还能继续用：生成新身份并把它写回去（自愈）
+      final HostIdentity fresh = store.loadOrCreate(now: 1000);
+      expect(fresh.plaintextToken, isNotNull);
+      expect(store.lastWriteFailed, isFalse, reason: '新文件能正常写');
+      expect(store.load()?.hostId, fresh.hostId);
+    });
+
     test('写不进去 ⇒ **不抛**，降级成内存令牌，并置 lastWriteFailed', () {
       // 构造一个「父路径其实是个文件」的路径 ⇒ createSync 必然失败。
       // 真机上是 `PathAccessException ... errno = 5`，效果相同。

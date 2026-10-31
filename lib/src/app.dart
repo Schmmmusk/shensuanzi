@@ -309,6 +309,13 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 界面却说「文件可能出了点小问题」，他以为数据坏了）。
   bool _dbTooNew = false;
 
+  /// **镜像自检没通过**的原因（状态 2，2026-10-31 用户裁定）。
+  ///
+  /// 与 [_mirrorFailure] 的区别：那个是**打不开**（`openMirror()` 抛），
+  /// 这个是**开得起来但内容不对**（`PRAGMA quick_check` 报坏页）。
+  /// 处置是同一条路（抢队列 → 留档 → 重建 → 重拉），所以共用 `_recoverBrokenMirror`。
+  String? _mirrorUnhealthy;
+
   /// 正在做**镜像隔离恢复**（状态 3）—— 期间整页显示「正在修复」。
   ///
   /// 为什么不弹进度框：这一步要复制几百 MB 的文件，必须在**首帧之后**才开始，
@@ -529,7 +536,17 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // build 期该只做纯布局；在那里做 I/O，失败会炸成框架异常页
       // （无导航、无重试，用户被困 —— Android 报告 M16 实测）。
       // 打开后 `openMirror()` 返回缓存，build 期不再有 I/O。
-      _mobileSyncService?.openMirror();
+      final Db? mirror = _mobileSyncService?.openMirror();
+      // 状态 2（2026-10-31 裁定）：开得起来不代表数据是对的 ——
+      // `quick_check` 走一遍所有页（478 MB 主库实测 850 ms，镜像是子集，
+      // 通常几十毫秒）。报了坏页就走「隔离恢复」，与状态 3 同一条路。
+      final String? problem = mirror == null ? null : mirrorHealthProblemOf(mirror);
+      if (problem != null) {
+        _log.write('镜像自检没通过：$problem');
+        setState(() => _mirrorUnhealthy = problem);
+      } else {
+        setState(() => _mirrorUnhealthy = null);
+      }
     } catch (error, stack) {
       // 镜像打不开：给**中文原因 + 重试出口**；原始异常只进日志
       _log.crash(error, stack, label: '打开手机镜像失败');
@@ -911,7 +928,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         content: const SingleChildScrollView(
           child: EmphasizedText(
             '会做四件事：\n'
-            '一、把打不开的那份文件改名留档（不会删掉）；\n'
+            '一、把现在这份文件改名留档（不会删掉）；\n'
             '二、尽力把还没传给电脑的单抢出来；\n'
             '三、重新建一份空的副本；\n'
             '四、连上电脑后，把账从头拉一遍。\n\n'
@@ -2108,6 +2125,22 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         message: '正在修复本机数据副本……\n\n'
             '先把还没传上去的单抢救出来，再把原来那份文件留档、'
             '重新建一份空的 —— 期间请不要关掉软件。',
+      );
+    }
+
+    if (_mirrorUnhealthy != null) {
+      // 状态 2：开得起来但数据不对。文案与状态 3 分开写 —— 用户看到「打不开」
+      // 会以为文件没了，其实文件在、只是内容有问题，处置是「修」而不是「救」。
+      return _StartupPage(
+        message:
+            '手机上的数据副本自检没通过（${_mirrorUnhealthy!}）。\n\n'
+            '电脑上的账没受影响。点「修复本机数据副本」就能修好：'
+            '先把还没传上去的单抢出来，再把这份文件留档、重建一份空的，'
+            '最后从电脑重新拉一遍。',
+        actionLabel: '重试',
+        onAction: _prepareMobile,
+        extraLabel: '修复本机数据副本',
+        onExtra: _recoverBrokenMirror,
       );
     }
 

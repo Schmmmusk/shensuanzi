@@ -27,7 +27,16 @@ class HttpTransport implements Transport {
   HttpTransport({
     this.connectTimeout = const Duration(seconds: 5),
     this.readTimeout = const Duration(seconds: 10),
+    this.onError,
   });
+
+  /// **原始异常的去处**（2026-10-31 真机）：界面只给人话，`Connection reset by peer`
+  /// 这种英文进日志。
+  ///
+  /// 为什么必须有：`HttpException` 的 message 是英文，从前被直接拼进用户可见文案
+  /// —— 真机弹的是「连接主机失败（Connection reset by peer）」。
+  /// 中老年用户读不懂，而且它把「原因」和「怎么办」挤没了。
+  final void Function(Object error, StackTrace stack, String label)? onError;
 
   /// 连接超时（§BL 裁定 ①：3–5 秒，取 5）
   final Duration connectTimeout;
@@ -68,7 +77,14 @@ class HttpTransport implements Transport {
         '请确认电脑开着神算子、和手机连的是同一个 Wi-Fi',
       );
     } on HttpException catch (error) {
-      throw SyncHttpException(0, '连接主机失败（${error.message}）');
+      // 原始英文只进日志（`Connection reset by peer` / `Connection closed before
+      // full header was received` 之类）；界面给中文 + 怎么办。
+      onError?.call(error, StackTrace.current, '同步网络异常');
+      throw SyncHttpException(
+        0,
+        '连接被中途断开了 —— 请确认电脑上的神算子还开着、'
+        '手机和电脑连的是同一个 Wi-Fi，然后再试一次',
+      );
     } finally {
       client.close(force: true);
     }

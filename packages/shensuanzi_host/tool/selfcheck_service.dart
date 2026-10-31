@@ -371,6 +371,15 @@ Future<void> main() async {
     sBroken.state != HostServiceState.failed,
   );
   check('identityPersistFailed = true', brokenHost.identityPersistFailed);
+  // 2026-10-31 用户裁定（提案 56 批复 §二）：失败时要能说出**失败在哪一步**。
+  // 这里只验「现场存在且带 stage」，具体分级由 `test/host_write_test.dart` 的
+  // 故障注入用例逐个钉（selfcheck 不做假 IO）。
+  final String? writeDiag = brokenStore.lastWriteDiagnostics;
+  check(
+    '写盘失败留下现场（含 stage / errno / 每步结果）',
+    writeDiag != null && writeDiag.contains('stage='),
+    writeDiag,
+  );
   check(
     '失败原文进日志（带路径 —— 根因未定，下次复现要有现场）',
     hostJsonLogged.length == 1 && hostJsonLogged.single.contains(hostJsonBox.path),

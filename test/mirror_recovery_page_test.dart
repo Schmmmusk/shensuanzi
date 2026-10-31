@@ -25,6 +25,7 @@ void main() {
   late Directory box;
   late AppConfigStore store;
   late Directory root;
+  late String mirrorPath;
 
   setUp(() {
     box = Directory.systemTemp.createTempSync('ssz_mirror_page_');
@@ -36,11 +37,32 @@ void main() {
       configStore: store,
     ).ensureInitialized(p.join(root.path, 'data'));
     Db.open(location.databasePath).close();
-    // 镜像：认不出来的垃圾字节
-    final String mirrorPath = p.join(root.path, 'mirror', 'shensuanzi_mirror.db');
+    mirrorPath = p.join(root.path, 'mirror', 'shensuanzi_mirror.db');
     Directory(p.dirname(mirrorPath)).createSync(recursive: true);
-    File(mirrorPath).writeAsBytesSync(List<int>.filled(4096, 0x42));
   });
+
+  /// 状态 3：文件认不出来（`openMirror` 直接抛）
+  void breakHeader() =>
+      File(mirrorPath).writeAsBytesSync(List<int>.filled(4096, 0x42));
+
+  /// 状态 2：**开得起来但内容不对** —— 破坏第 2 页、保留第 1 页（schema）
+  void breakPages() {
+    final Db db = Db.open(mirrorPath, foreignKeys: false);
+    for (int i = 0; i < 200; i++) {
+      db.raw.execute(
+        'INSERT INTO products (id, code, name, unit, cost_price, sell_price, '
+        'is_active, created_at, updated_at) VALUES (?,?,?,?,0,0,1,0,0)',
+        <Object?>['p$i', 'C$i', '商品$i' * 20, '件'],
+      );
+    }
+    db.close();
+    final RandomAccessFile raf = File(mirrorPath).openSync(
+      mode: FileMode.append,
+    );
+    raf.setPositionSync(4096);
+    raf.writeFromSync(List<int>.filled(2048, 0x5A));
+    raf.closeSync();
+  }
 
   tearDown(() {
     try {
@@ -56,6 +78,7 @@ void main() {
   );
 
   testWidgets('镜像打不开 ⇒ 错误页给「修复本机数据副本」，点完能进主界面', (WidgetTester tester) async {
+    breakHeader();
     await tester.pumpWidget(app());
     await tester.pumpAndSettle();
 
@@ -107,7 +130,28 @@ void main() {
     );
   });
 
+  testWidgets('状态 2：库开得起来但自检没过 ⇒ 说「自检没通过」而不是「打不开」', (
+    WidgetTester tester,
+  ) async {
+    breakPages();
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('自检没通过'), findsOneWidget);
+    expect(
+      find.textContaining('手机上的数据文件打不开'),
+      findsNothing,
+      reason: '文件在、只是内容坏了 —— 说「打不开」会让用户以为文件没了',
+    );
+    expect(find.textContaining('文件内部有坏页'), findsOneWidget);
+    expect(find.text('修复本机数据副本'), findsOneWidget);
+    // 英文（malformed / disk image）一律不许上界面
+    expect(find.textContaining('malformed'), findsNothing);
+    expect(find.textContaining('disk image'), findsNothing);
+  });
+
   testWidgets('「先不修」⇒ 什么都不动，仍停在错误页', (WidgetTester tester) async {
+    breakHeader();
     await tester.pumpWidget(app());
     await tester.pumpAndSettle();
 

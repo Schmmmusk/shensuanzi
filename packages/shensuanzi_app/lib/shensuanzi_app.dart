@@ -163,7 +163,9 @@ export 'src/mirror_rescue.dart'
     show
         MirrorQueueRescue,
         MirrorRecoveryResult,
+        mirrorHealthProblemOf,
         queueRescueReport,
+        quickCheckProblem,
         rescueMirrorQueue;
 
 export 'src/format.dart'

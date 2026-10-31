@@ -58,6 +58,50 @@ class MirrorQueueRescue {
       'unreadable: $unreadableRows, problem: $problem, attempted: $attempted)';
 }
 
+/// **镜像自检**：`ok` 返回 `null`，否则返回**人话**原因（状态 2 的判据）。
+///
+/// 用户裁定（`docs/reply.md` §四）把手机存储故障分成三个状态，这是第二个：
+///
+/// > 状态 2：镜像可打开，但数据异常 · **尝试修复**
+///
+/// 与状态 3 的区别只在**怎么发现的**：状态 3 是 `openMirror()` 直接抛（打不开），
+/// 这里是**开得起来但内容不对**（坏页 / 结构损坏）。处置是同一条路
+/// （抢队列 → 留档 → 重建 → 重拉），所以没有第二套流程。
+///
+/// ⚠️ `PRAGMA quick_check` 的返回值是**英文**（`database disk image is malformed`），
+/// 一律翻译成人话再上界面 —— 与「原始异常只进日志」同一条纪律。
+/// 实测代价（478 MB 主库）：`quick_check` **850 ms**、`integrity_check` 3105 ms，
+/// 所以这里用 `quick_check`（见 `backup.dart` 的同一条裁定）。
+String? mirrorHealthProblemOf(Db mirror) {
+  try {
+    final List<String> rows = mirror.raw
+        .select('PRAGMA quick_check')
+        .map((Row row) => '${row.values.first}')
+        .toList();
+    return quickCheckProblem(rows);
+  } on SqliteException catch (error) {
+    // ⚠️ 实测（2026-10-31）：坏页严重到 `quick_check` 自己跑不完时，
+    // 它**不是返回一行错误**，而是**抛** `SqliteException(11) database disk image
+    // is malformed`。不接住的话这个异常会一路冒到启动流程的通用 catch，
+    // 被当成「打不开」（状态 3）—— 而它其实是「开得起来但内容不对」（状态 2）。
+    return quickCheckProblem(<String>[error.message]);
+  }
+}
+
+/// `PRAGMA quick_check` 的输出 → 人话（纯函数，测试直接喂字符串）。
+String? quickCheckProblem(List<String> rows) {
+  if (rows.isEmpty) return null;
+  if (rows.length == 1 && rows.first.trim().toLowerCase() == 'ok') return null;
+  final String raw = rows.join('；').toLowerCase();
+  if (raw.contains('malformed') || raw.contains('corrupt')) {
+    return '文件内部有坏页';
+  }
+  if (raw.contains('not a database') || raw.contains('encrypted')) {
+    return '文件认不出来';
+  }
+  return '自检没通过';
+}
+
 /// 隔离恢复的整体结果（抢救 + 留档 + 重建 + 回填）。
 class MirrorRecoveryResult {
   const MirrorRecoveryResult._({
@@ -196,6 +240,13 @@ MirrorQueueRescue rescueMirrorQueue({
     _deleteQuietly(copyPath);
     _deleteQuietly(copyWal);
     _deleteQuietly('$copyPath-shm');
+    // 2026-10-31 真机：只删文件会在 `mirror/` 下留一个空的 `rescue-tmp/`。
+    // 用户看数据目录时会疑惑「这是什么东西」，所以目录也一并收掉。
+    try {
+      if (work.existsSync() && work.listSync().isEmpty) work.deleteSync();
+    } on FileSystemException {
+      // 删不掉不影响结论
+    }
   }
 }
 
@@ -243,7 +294,7 @@ String queueRescueReport({
   }
   if (!rescue.ok) {
     out
-      ..writeln('抢救结果：**一条也没能读出来**。')
+      ..writeln('抢救结果：一条也没能读出来。')
       ..writeln('原因：${rescue.problem}')
       ..writeln()
       ..writeln('原件已经留档，没有删除，需要时可以找技术支持再试一次。');

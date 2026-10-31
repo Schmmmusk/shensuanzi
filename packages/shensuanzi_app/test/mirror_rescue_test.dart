@@ -133,15 +133,67 @@ void main() {
       expect(b.createdAt, 1700000002000);
     });
 
-    test('跑完把副本删干净（不许在用户目录里留半个库）', () {
+    test('跑完把副本删干净（连临时目录一起收，真机留过空目录）', () {
       final Db db = makeMirror(<SyncQueueEntry>[entry(id: 'a')]);
       db.close();
       rescueMirrorQueue(mirrorPath: mirrorPath, workDirectory: work);
-      final Directory workDir = Directory(work);
       expect(
-        workDir.existsSync() ? workDir.listSync() : <FileSystemEntity>[],
-        isEmpty,
-        reason: '副本（含 -wal / -shm）必须清掉',
+        Directory(work).existsSync(),
+        isFalse,
+        reason: '只删文件会在 mirror/ 下留一个空的 rescue-tmp/，用户看目录会疑惑',
+      );
+    });
+  });
+
+  group('自检（状态 2 的判据）', () {
+    test('quick_check 的输出 → 人话（英文一律不许上界面）', () {
+      expect(quickCheckProblem(<String>['ok']), isNull);
+      expect(quickCheckProblem(<String>[]), isNull);
+      expect(
+        quickCheckProblem(<String>['database disk image is malformed']),
+        '文件内部有坏页',
+      );
+      expect(quickCheckProblem(<String>['file is not a database']), '文件认不出来');
+      expect(quickCheckProblem(<String>['*** in database main ***']), '自检没通过');
+      for (final String raw in <String>[
+        'database disk image is malformed',
+        'file is not a database',
+      ]) {
+        expect(
+          quickCheckProblem(<String>[raw]),
+          isNot(contains('malformed')),
+          reason: '英文不许漏到界面',
+        );
+      }
+    });
+
+    test('库真的坏了 ⇒ 能开，但自检报「有坏页」（真机状态 2 的现场）', () {
+      final Db db = makeMirror(<SyncQueueEntry>[entry(id: 'a')]);
+      // 多灌点数据，保证不止一页
+      for (int i = 0; i < 200; i++) {
+        db.raw.execute(
+          'INSERT INTO products (id, code, name, unit, cost_price, sell_price, '
+          'is_active, created_at, updated_at) VALUES (?,?,?,?,0,0,1,0,0)',
+          <Object?>['p$i', 'C$i', '商品$i' * 20, '件'],
+        );
+      }
+      db.close();
+
+      // 破坏第 2 页（偏移 4096）：第 1 页（schema）完好 ⇒ **库还开得起来**，
+      // 但 quick_check 会报坏页（实测：它甚至直接抛 SqliteException(11)）
+      final RandomAccessFile raf = File(mirrorPath).openSync(
+        mode: FileMode.append,
+      );
+      raf.setPositionSync(4096);
+      raf.writeFromSync(List<int>.filled(2048, 0x5A));
+      raf.closeSync();
+
+      final Db broken = Db.open(mirrorPath, foreignKeys: false);
+      addTearDown(broken.close);
+      expect(
+        mirrorHealthProblemOf(broken),
+        '文件内部有坏页',
+        reason: '开得起来 ≠ 数据是对的 —— 这正是状态 2 与状态 3 的分界',
       );
     });
   });

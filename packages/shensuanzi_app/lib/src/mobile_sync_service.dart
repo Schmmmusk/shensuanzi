@@ -128,6 +128,9 @@ class MobileSyncService {
   /// 镜像的身份标记（哪台主机的镜像）。**判定换主机看它，不看 `pairing.json`。**
   MirrorMeta _meta() => MirrorMeta(openMirror());
 
+  /// 生产用的传输层 —— 把原始异常接到本服务的 [onError]（界面只给人话）。
+  Transport _defaultTransport() => HttpTransport(onError: onError);
+
   /// 打开（或创建）镜像库。库的生命周期跟随服务（app 退出时 close）。
   ///
   /// ⚠️ **先建父目录**（`mirror/`）—— sqlite3 只建文件、不建中间目录，
@@ -337,7 +340,7 @@ class MobileSyncService {
     }
     SyncClient(
       db: mirror,
-      transport: transport ?? HttpTransport(),
+      transport: transport ?? _defaultTransport(),
       baseUri: Uri.parse('http://127.0.0.1:1'), // 重建不需要网络
       token: '',
     ).rebuildMirror();
@@ -371,7 +374,7 @@ class MobileSyncService {
       return const SyncOutcome(SyncOutcomeKind.notPaired, '还没连接主机 —— 请先扫码配对');
     }
     final Db mirror = openMirror();
-    final Transport wire = transport ?? HttpTransport();
+    final Transport wire = transport ?? _defaultTransport();
     final SyncClient client = SyncClient(
       db: mirror,
       transport: wire,
@@ -549,7 +552,7 @@ class MobileSyncService {
     }
     final SyncClient client = SyncClient(
       db: openMirror(),
-      transport: transport ?? HttpTransport(),
+      transport: transport ?? _defaultTransport(),
       baseUri: pairing.baseUri,
       token: pairing.token,
     );
@@ -695,7 +698,7 @@ class MobileSyncService {
     try {
       final SyncClient client = SyncClient(
         db: openMirror(),
-        transport: transport ?? HttpTransport(),
+        transport: transport ?? _defaultTransport(),
         baseUri: pairing.baseUri,
         token: pairing.token,
       );
