@@ -44,6 +44,7 @@ import 'ui/mobile_shell.dart';
 import 'ui/pairing_scan_page.dart';
 import 'ui/recovery_dialog.dart';
 import 'ui/rescue_dialog.dart';
+import 'ui/emphasized_text.dart';
 import 'ui/notice.dart';
 
 class ShensuanziApp extends StatefulWidget {
@@ -320,9 +321,6 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 开单走 `QueueSink`（镜像 + 队列）—— **一次都不碰本地库**。
   /// 所以本地库坏掉不该让整个 App 停在错误页（真机实测的原始症状）。
   String? _localDbFailure;
-
-  /// 重建进行中（按钮置灰；也防「连点两次把刚建好的库又挪走」）。
-  bool _rebuildingLocalDb = false;
 
   /// 库的**真实数据格式版本**（`PRAGMA user_version`）。
   ///
@@ -810,17 +808,70 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       '那会从零开始，里面不会有以前的单据。\n\n'
       '（文件夹：$directory）';
 
-  /// 手机端「本机账本打不开」的**常驻说明**（2026-10-31 联调 #0，裁定 A）。
+  /// 手机端「本机账本打不开」的**常驻说明**（2026-10-31 联调 #0，裁定 A 第一阶段）。
   ///
-  /// 三句必须齐：① 出了什么事；② **什么照常**（账没丢、能看能开单 ——
-  /// 这一句是用户最想知道的）；③ 本机自动备份暂停。
-  /// 「怎么修」不写在这里 —— 那是按钮（「修复本机账本」）的事，
-  /// 长解释放确认框（`_rebuildLocalDatabase`）。
-  String _localDatabaseBrokenMessage() =>
-      '手机上的账本文件打不开（多半是被清理软件动过、或存储空间不够）。'
-      '账没丢：手机上显示的是从电脑同步过来的数据，查看、开单都照常，'
-      '新开的单先记在待同步队列里，连上电脑会自动传过去。'
-      '本机自动备份暂停。';
+  /// 三句必须齐：① 出了什么事；② **什么照常**（账没丢、能看能查）；③ 写入被关。
+  /// 按用户 `docs/reply.md` §三 的要求，**必须带上最近一次同步时间** ——
+  /// 「现在看到的是哪一刻的数据」是用户判断能不能信这屏数字的唯一依据。
+  /// 「怎么恢复」不写在这里 —— 那是「怎么办」按钮的事（[_showLocalDbAdvice]）。
+  String _localDatabaseBrokenMessage() {
+    final PairingInfo? pairing = _mobileSyncService?.pairingStore.load();
+    final int? lastSyncAt = pairing?.lastSyncAt;
+    final String syncLine = lastSyncAt == null
+        ? '还没和电脑成功同步过'
+        : '最近一次同步：${formatDateTime(lastSyncAt)}';
+    return '手机上的账本文件打不开（多半是被清理软件动过、或存储空间不够）。'
+        '账没丢：现在显示的是从电脑同步过来的数据（$syncLine），'
+        '看数、查库存、查往来都照常。'
+        '为了安全，这台手机暂时不能开单和改资料 —— 打不开的那个文件会原样留着，不会删。';
+  }
+
+  /// 「怎么办」—— 把**恢复路径**摆出来（裁定 A 第一阶段的唯一出口）。
+  ///
+  /// 为什么不是「一键重建本机账本」：用户 2026-10-31 的裁定明确说
+  /// 「既然它已经不再是主要业务数据源，我认为也没有必要急着重建。
+  /// 保留原文件、让 App 使用健康镜像，反而更加简单」——
+  /// 真正的「重建」要留给**镜像损坏**那条路（那里才有不可重建的 `sync_queue`）。
+  ///
+  /// 但用户不能永远停在只读：这里给一条**自己走得到**的路 ——
+  /// 先重试（可能只是被临时占用），再导出（把没传上去的单留一份），
+  /// 最后重装（会清掉手机上的一切副本，所以必须先导出）。
+  Future<void> _showLocalDbAdvice() async {
+    final BuildContext? dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null || !dialogContext.mounted) return;
+    final bool? retry = await showDialog<bool>(
+      context: dialogContext,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('账本打不开，怎么办'),
+        content: const SingleChildScrollView(
+          child: EmphasizedText(
+            '先说清楚：**你的账没有丢**。手机上的单据、库存都是从电脑同步过来的，'
+            '电脑上的才是正本；打不开的这个文件是手机上的旧账本，'
+            '它现在不装业务数据了，会原样留着、不会被删。\n\n'
+            '想恢复「开单」和「改资料」，按顺序做：\n'
+            '一、先点下面的「重试」—— 有时只是被清理软件或备份工具临时占着；\n'
+            '二、到设置页点「立即同步」，把还没传上去的单推给电脑；\n'
+            '三、再点「导出本机数据文件」，留一份带未同步单据清单的副本；\n'
+            '四、做完上面两步后重装神算子，重新扫码连接电脑即可。\n\n'
+            '⚠️ 重装会清掉手机上的一切副本，所以**第二步和第三步不能省**。',
+            style: TextStyle(height: 1.6),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('知道了'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('重试'),
+          ),
+        ],
+      ),
+    );
+    if (retry != true || !mounted) return;
+    await _retry();
+  }
 
   /// 错误页的**重试**（§审查 2026-10-05 真机）。
   ///
@@ -833,90 +884,6 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       _alreadyRunning = false;
     });
     await _prepare();
-  }
-
-  /// 「修复本机账本」= 裁定 **B**（2026-10-31 联调 #0，用户裁定 A + B 缺一不可）。
-  ///
-  /// ## 顺序
-  ///
-  /// 1. **先问**（不替用户决定）：说明会做两件事，并明说「不会删、账不会丢」；
-  /// 2. **留档**：坏文件（`.db` + `-wal` + `-shm`）改名成 `.broken-<时间>`；
-  /// 3. **重跑启动流程**（`_retry`）—— 与平常启动**同一段代码**，
-  ///    所以不存在「重建用的第二条开库路径」。
-  ///
-  /// ## 为什么是「留档 + 空账」而不是「删了重建」
-  ///
-  /// 手机上的主库**通常**是空壳（权威数据在镜像与主机），但我们**不知道**
-  /// 这个用户的那一份里到底有什么（真机联调时它就被灌过 81 张单据）。
-  /// 删掉 = 无法挽回；改名 = 随时能找回来。代价只是几十 KB 磁盘。
-  ///
-  /// ## 失败怎么说
-  ///
-  /// `archiveBrokenDatabase` 失败时**已经把改过名的改回去了**，
-  /// 所以那时说「数据没有动过」是**真的**（这句话在错误文案里）。
-  Future<void> _rebuildLocalDatabase() async {
-    if (_rebuildingLocalDb) return;
-    final DataLocation? location = _location;
-    if (location == null) return;
-    final BuildContext? dialogContext = _navigatorKey.currentContext;
-    if (dialogContext == null || !dialogContext.mounted) return;
-
-    final bool? confirmed = await showDialog<bool>(
-      context: dialogContext,
-      barrierDismissible: false,
-      builder: (BuildContext dialogContext) => AlertDialog(
-        title: const Text('修复本机账本？'),
-        content: SingleChildScrollView(
-          child: Text(
-            '会做两件事：\n'
-            '一、把打不开的那个文件改名留档（不会删掉，需要时还能找回来）；\n'
-            '二、重新开一本空账。\n\n'
-            '你的账不会丢 —— 单据都在电脑主机上，手机显示的是同步过来的数据。'
-            '修好之后查看、开单照常使用。\n\n'
-            '（要动的是手机里的 ${p.basename(location.databasePath)}）',
-            style: const TextStyle(height: 1.6),
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('先不修'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('修复'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    setState(() => _rebuildingLocalDb = true);
-    try {
-      // 旧句柄可能还握着（`_db` 通常已是 null，这里是保险）——
-      // 不关就改名，Windows 上会 EACCES，Android 上会留下一个悬空句柄
-      final Db? closing = _db;
-      _db = null;
-      closing?.close();
-
-      final ArchiveResult archived = archiveBrokenDatabase(
-        databasePath: location.databasePath,
-      );
-      if (!archived.ok) {
-        // 跨 async gap 后不持旧 context —— 每次从 navigatorKey 取新的
-        //（lint `use_build_context_synchronously` 的判定，仓内既有写法）
-        final BuildContext? retryContext = _navigatorKey.currentContext;
-        if (retryContext == null || !retryContext.mounted) return;
-        await _migrationMessage(retryContext, archived.problem!);
-        return;
-      }
-      _log.write(
-        '重建本机账本：旧文件留档 ${archived.archivedPath ?? '（没有旧文件）'}',
-      );
-      await _retry();
-    } finally {
-      if (mounted) setState(() => _rebuildingLocalDb = false);
-    }
   }
 
   /// 「新建一本空账」（只在「库文件不见了」时出现，2026-10-07）。
@@ -1077,8 +1044,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         _schemaVersion = schemaVersion;
         // M16：主库开成功 ⇒ 清掉上一次的镜像失败（重试成功后不再停在错误页）
         _mirrorFailure = null;
-        // 2026-10-31 联调 #0：本机账本开成功（含「修复本机账本」之后）⇒
-        // 降级状态清零，顶部那条常驻说明自动消失
+        // 2026-10-31 联调 #0：本机账本开成功（含「重试」之后）⇒
+        // 降级状态清零，顶部那条常驻说明自动消失、写入出口重新接上
         _localDbFailure = null;
         _queries = QueryDao(db);
         _backup = backup;
@@ -1192,10 +1159,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         // 界面只留结论 + 怎么办（中老年用户读不懂 SqliteException）
         _brokenDirectory = location.directory;
         if (_shellKind == ShellKind.mobile) {
-          // 2026-10-31 联调 #0（用户裁定 A + B）：**手机端不拦人**。
-          // 业务页全部读镜像、开单走队列 —— 本机这本空壳账坏了不影响使用。
-          // 于是 `_dbFailure` 保持 `null`（启动错误页不出现），改挂一条常驻说明
-          // + 「修复本机账本」（`_rebuildLocalDatabase`）。
+          // 2026-10-31 联调 #0（用户裁定 A 第一阶段）：**手机端不拦人**。
+          // 业务页全部读镜像 —— 本机这本空壳账坏了不该让整个 App 停在错误页。
+          // 于是 `_dbFailure` 保持 `null`，改挂一条常驻说明 + 降级**只读**
+          // （写入出口在 build 里按 `_localDbFailure != null` 全部摘掉）。
           _dbFailure = null;
           _localDbFailure = _localDatabaseBrokenMessage();
         } else {
@@ -1471,7 +1438,9 @@ class _ShensuanziAppState extends State<ShensuanziApp>
         context: context,
         builder: (BuildContext context) => AlertDialog(
           title: const Text('先停一下'),
-          content: Text(message, style: const TextStyle(height: 1.6)),
+          // 迁移结果的文案里有 `**先别删旧文件夹**`（`data_migrator.dart`）——
+          // 用 EmphasizedText 才会真的加粗，否则星号原样显示
+          content: EmphasizedText(message, style: const TextStyle(height: 1.6)),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -1960,10 +1929,16 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     // §BH B1a：壳参数**装配一份**，桌面直接摆 / 移动端交给 MobileShell 持有。
     // B3b（§CA）：开单提交出口 —— 页面对它编程，无「是不是客户端」分支：
     // 桌面 = ServiceSink（落库+规则，与直连逐字同行为）；手机 = QueueSink（入队）。
+    //
+    // ⚠️ 降级只读（2026-10-31 用户裁定 A 第一阶段，`docs/reply.md` §三）：
+    // 本机账本打不开时**不给提交出口** —— 这是「只读」真正落地的地方，
+    // 不是把界面按钮画灰。用户原话：「暂时禁用开单、主数据修改等写入操作」，
+    // 理由是还没逐页验证过每个提交出口都与旧主库解耦。
+    final bool readOnly = _localDbFailure != null;
     final DocumentSink? documentSink;
     if (_shellKind == ShellKind.mobile) {
       final MobileSyncService? sync = _mobileSyncService;
-      documentSink = sync == null
+      documentSink = sync == null || readOnly
           ? null
           : QueueSink(queue: SyncQueueDao(sync.openMirror()));
     } else {
@@ -2036,14 +2011,17 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     // 出口桌面 = 落库、手机 = **乐观写镜像 + 入队**（同一个 `mirror` 上还挂着队列，
     // 所以行与队列条目同库同事务 —— 不会出现「行写了、条目没写」）。
     final MasterDataPolicy masterDataPolicy = _shellKind == ShellKind.mobile
-        ? const MasterDataPolicy.mobile()
+        ? (readOnly
+              ? const MasterDataPolicy.readOnly()
+              : const MasterDataPolicy.mobile())
         : const MasterDataPolicy.desktop();
     final MasterDataSink? masterDataSink;
     // 2026-10-20（§CV·七十七）：**往来方**的手机队列出口。与商品同一条
     // `onEnqueued`（用户刚做完动作就推）；桌面恒 null ⇒ 走 PartyService。
     final QueuePartySink? partySink;
     if (_shellKind == ShellKind.mobile) {
-      masterDataSink = mirror == null
+      // 降级只读 ⇒ 出口全部为 null（与 `documentSink` 同一判据，见上）
+      masterDataSink = mirror == null || readOnly
           ? null
           : QueueMasterSink(
               mirror: mirror,
@@ -2054,7 +2032,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
               // ⇒ 与「开单后」同性质：**用户刚做完一个可推送的动作就推一次**
               onEnqueued: _onMasterDataSubmitted,
             );
-      partySink = mirror == null
+      partySink = mirror == null || readOnly
           ? null
           : QueuePartySink(
               mirror: mirror,
@@ -2085,9 +2063,13 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       databaseReady: _shellKind == ShellKind.mobile
           ? mirror != null
           : _db != null,
-      // 本机账本打不开时的常驻说明 + 修复出口（裁定 A + B；桌面恒 null）
+      // 本机账本打不开时的常驻说明 + 「怎么办」（降级只读；桌面恒 null）
       localDbNotice: _localDbFailure,
-      onRebuildLocalDb: _localDbFailure == null ? null : _rebuildLocalDatabase,
+      onLocalDbAdvice: _localDbFailure == null ? null : _showLocalDbAdvice,
+      // 写入被关的原因 —— 手机壳「开单」tab 据此把三个入口画成不可点并说明
+      readOnlyReason: _localDbFailure == null
+          ? null
+          : '本机账本打不开，开单和改资料暂时关闭（看数、查库存、查往来、导出都照常）。',
       products: shellProducts,
       purchases: shellPurchases,
       sales: shellSales,
@@ -2292,7 +2274,10 @@ class _StartupPage extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Text(message, textAlign: TextAlign.center),
+                // 文案里可能带 `**强调**`（如「更新版本」）——
+                // 用 EmphasizedText 渲染，否则星号会原样显示在屏幕上
+                //（2026-10-31 真机：`怎么办` 对话框里连星号一起显示）
+                EmphasizedText(message, textAlign: TextAlign.center),
                 const SizedBox(height: 24),
                 // 常驻可见的文字按钮，不用图标（`docs/ui_principles.md` §1.1）
                 Wrap(

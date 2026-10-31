@@ -1,28 +1,27 @@
-// 手机端「本机账本打不开」的两半修法 —— 2026-10-31 联调 #0，用户裁定 **A + B
-// 相结合，缺一不可**。
+// 手机端「本机账本打不开」的处理 —— 2026-10-31 联调 #0。
 //
-// ## 真机症状（这条测试要钉住的原始 bug）
+// ## 用户裁定（`docs/reply.md` §三/§四，2026-10-31）
 //
-// 把手机上 `files/data/shensuanzi.db` 换成一份 `integrity ok` 的同结构库
-// （或把它弄坏）后重启 App：**直接进「数据文件暂时打不开」页** ——
-// 尽管手机已配对、镜像完好、80 张单据都在镜像里。日志真因：
+// **A 第一阶段 = 降级只读**，不是「只把错误页去掉」：
 //
-//     SqliteException(522): disk I/O error
-//       Causing statement: PRAGMA journal_mode = WAL
+// - 旧主库 `data/shensuanzi.db` 打不开、但镜像完好 ⇒ **照常进主界面**；
+// - 能看的照常看（概览 / 库存 / 往来 / 导出 / 同步状态）；
+// - **开单、改资料暂时禁用** —— 理由是还没逐页验证每个提交出口都与旧主库解耦；
+// - 明确告知「现在用的是手机上的镜像数据」并**显示最近一次同步时间**；
+// - **不删除、不覆盖**损坏的旧主库。
 //
-// 而手机壳的业务页**全部读镜像**（主库在手机上是空壳，见 `app_shell.dart`
-// 里 `allowBackup` 那段注释）⇒ 本地库坏掉不该拦住整个 App。
+// 用户原话：「A 的真正工作量主要在于：不能只把 `_dbFailure` 清掉就算完事。」
 //
-// ## 两条断言的分工
+// ## 三条断言的分工
 //
 // | 断言 | 钉住的是 |
 // |---|---|
-// | 错误页文案 `findsNothing` + 5 个 tab 都在 | **A 降级**：不再整页拦人 |
-// | 点「修复本机账本」→ 确认 → 顶部说明消失、库能开、`.broken-*` 留档 | **B 重建** |
+// | 错误页文案 `findsNothing` + 5 个 tab 都在 | 不再整页拦人 |
+// | 开单 tab 三个入口不可点 + 原因在 + 提交出口为 null | **只读**是真的（不是画灰） |
+// | 说明条带「最近一次同步」+「怎么办」 | 用户知道自己看的是哪一刻的数据 |
 //
 // ⚠️ 反向灵敏度：把 `_openDatabase` 的 catch 退回「一律 `_dbFailure`」
-// ⇒ 第一条立刻红（错误页又回来了）。这是本批的判据，别把它改成
-// 「只要不崩就行」。
+// ⇒ 第一组立刻红（错误页又回来了）。
 //
 // 运行：`flutter test`
 import 'dart:io';
@@ -33,7 +32,6 @@ import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/app.dart';
 import 'package:shensuanzi/src/ui/app_shell.dart';
 import 'package:shensuanzi/src/ui/mobile_shell.dart';
-import 'package:shensuanzi/src/ui/sale_page.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
@@ -62,17 +60,25 @@ void main() {
   ///
   /// 必须走 `ensureInitialized` 造标记 —— 手写 `.shensuanzi-data` 会与真实
   /// 标记格式脱钩，哪天标记改结构，这条测试会变成「在测一个不存在的东西」。
-  Directory brokenRoot() {
+  Directory rootWithBrokenDb() {
     final Directory root = Directory(p.join(box.path, 'files'))..createSync();
-    final DataDirectoryService service = DataDirectoryService(
+    final DataLocation location = DataDirectoryService(
       environment: AppEnvironment.detect(),
       configStore: store,
-    );
-    final DataLocation location = service.ensureInitialized(
-      p.join(root.path, 'data'),
-    );
+    ).ensureInitialized(p.join(root.path, 'data'));
     // 不是 SQLite 的文件 —— `Db.open` 必炸（真机现场是 disk I/O error）
     File(location.databasePath).writeAsStringSync('坏掉的账本' * 200);
+    return root;
+  }
+
+  /// 健康的手机私有目录（库文件是一本完好的空账）。
+  Directory rootWithHealthyDb() {
+    final Directory root = Directory(p.join(box.path, 'files'))..createSync();
+    final DataLocation location = DataDirectoryService(
+      environment: AppEnvironment.detect(),
+      configStore: store,
+    ).ensureInitialized(p.join(root.path, 'data'));
+    Db.open(location.databasePath).close();
     return root;
   }
 
@@ -84,147 +90,145 @@ void main() {
     pickDirectory: () async => null,
   );
 
-  testWidgets('单据列表**不接本地库**（手机主库是空壳，联调 #4 的潜在缺口）', (WidgetTester tester) async {
-    // 这次本地库是**好的** —— 否则「documents == null」可能只是因为库打不开，
-    // 证明不了「手机端有意不接本地库」。
-    final Directory root = Directory(p.join(box.path, 'files'))..createSync();
-    final DataLocation location = DataDirectoryService(
-      environment: AppEnvironment.detect(),
-      configStore: store,
-    ).ensureInitialized(p.join(root.path, 'data'));
-    Db.open(location.databasePath).close(); // 一本完好的空账
+  AppShell shellOf(WidgetTester tester) =>
+      tester.widget<MobileShell>(find.byType(MobileShell)).shell;
 
-    await tester.pumpWidget(app(root));
-    await tester.pumpAndSettle();
+  group('A 降级：本地账本打不开，界面照进', () {
+    testWidgets('不再出现启动错误页，5 个 tab 齐', (WidgetTester tester) async {
+      await tester.pumpWidget(app(rootWithBrokenDb()));
+      await tester.pumpAndSettle();
 
-    expect(find.textContaining('账没丢'), findsNothing, reason: '库是好的，不该降级');
-    final AppShell shell = tester.widget<MobileShell>(find.byType(MobileShell)).shell;
-    expect(shell.databaseReady, isTrue, reason: '镜像开着 ⇒ 对用户来说数据是就绪的');
-    expect(
-      shell.documents,
-      isNull,
-      reason: '手机 5 个 tab 没有「单据」，一旦加了入口也**不许**读本地空壳库',
-    );
+      expect(
+        find.textContaining('数据文件暂时打不开'),
+        findsNothing,
+        reason: '镜像好好的，本地账本坏了不该拦人（联调 #0 的原始症状）',
+      );
+      expect(find.textContaining('找回数据'), findsNothing, reason: '那是桌面的出路，手机没有');
+      for (final String label in <String>['概览', '开单', '库存', '往来', '我的']) {
+        expect(find.text(label), findsWidgets, reason: 'tab $label 必须在');
+      }
+    });
+
+    testWidgets('说明条：账没丢 + 最近一次同步 + 「怎么办」', (WidgetTester tester) async {
+      await tester.pumpWidget(app(rootWithBrokenDb()));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('账没丢'), findsOneWidget);
+      // 用户裁定原文要求「显示最近一次同步时间」——没配对过时也要说清
+      expect(find.textContaining('还没和电脑成功同步过'), findsOneWidget);
+      expect(find.text('怎么办'), findsOneWidget);
+      // 措辞里不许出现「损坏 / 数据库」这类吓人的词（`docs/reply.md` 的基调）
+      expect(find.textContaining('数据库'), findsNothing);
+    });
+
+    testWidgets('概览按**镜像**说「数据已就绪」，不说「请到设置里换位置」', (WidgetTester tester) async {
+      await tester.pumpWidget(app(rootWithBrokenDb()));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('请到设置里换一个位置'), findsNothing);
+      expect(find.textContaining('数据文件已就绪'), findsOneWidget);
+    });
   });
 
-  testWidgets('A 降级：本机账本打不开 ⇒ 照样进主界面，顶部一条说明', (WidgetTester tester) async {
-    await tester.pumpWidget(app(brokenRoot()));
-    await tester.pumpAndSettle();
+  group('A 只读：写入出口真的摘掉了（不是把按钮画灰）', () {
+    testWidgets('开单 tab：三个入口不可点 + 原因在 + 点了也不推页', (WidgetTester tester) async {
+      await tester.pumpWidget(app(rootWithBrokenDb()));
+      await tester.pumpAndSettle();
 
-    // ① 原始 bug 的判据：**不许**再出现启动错误页
-    expect(
-      find.textContaining('数据文件暂时打不开'),
-      findsNothing,
-      reason: '镜像好好的，本地账本坏了不该拦人（联调 #0 的原始症状）',
-    );
-    expect(find.textContaining('找回数据'), findsNothing, reason: '那是桌面的出路，手机没有');
+      await tester.tap(find.text('开单'));
+      await tester.pumpAndSettle();
 
-    // ② 真的进了壳：5 个 tab 齐
-    for (final String label in <String>['概览', '开单', '库存', '往来', '我的']) {
-      expect(find.text(label), findsWidgets, reason: 'tab $label 必须在');
-    }
+      expect(find.textContaining('开单和改资料暂时关闭'), findsOneWidget);
+      for (final String label in <String>['销售开单', '采购入库', '送货']) {
+        expect(find.text(label), findsOneWidget, reason: '入口还在（别让人以为功能没了）');
+      }
+      // 不可点：点了不该推整屏（没有 AppBar 标题）
+      await tester.tap(find.text('销售开单'));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: find.byType(AppBar), matching: find.text('销售开单')),
+        findsNothing,
+        reason: '只读时入口必须真的点不动',
+      );
+    });
 
-    // ③ 说明条在，且说的是「账没丢 + 能开单」，不是「文件坏了」
-    expect(find.textContaining('账没丢'), findsOneWidget);
-    expect(find.textContaining('本机自动备份暂停'), findsOneWidget);
-    expect(find.text('修复本机账本'), findsOneWidget);
+    testWidgets('提交出口 / 主数据出口 / 建策全部为 null 或只读', (WidgetTester tester) async {
+      await tester.pumpWidget(app(rootWithBrokenDb()));
+      await tester.pumpAndSettle();
+
+      final AppShell shell = shellOf(tester);
+      expect(shell.documentSink, isNull, reason: '开单出口必须摘掉（不是只画灰）');
+      expect(shell.masterDataSink, isNull);
+      expect(shell.partySink, isNull);
+      expect(shell.masterDataPolicy.canCreateProducts, isFalse);
+      expect(shell.masterDataPolicy.canCreateParties, isFalse);
+      expect(shell.readOnlyReason, isNotNull);
+    });
+
+    testWidgets('库存页的「重新清点」也不给（没有提交出口就别开写入口）', (
+      WidgetTester tester,
+    ) async {
+      // 清点单走单据队列；只读时 sink 为 null ⇒ 清点只会写镜像、永远到不了电脑。
+      // 用户看到「清点成功」而主机上没有这张单，比没有入口糟得多。
+      // （原来这里是 `assert`，只读降级让这个组合变成合法状态，assert 会直接抛。）
+      await tester.pumpWidget(app(rootWithBrokenDb()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('库存'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('重新清点'), findsNothing);
+      expect(find.text('录入现有货物'), findsNothing);
+      expect(find.textContaining('导出库存'), findsOneWidget, reason: '导出是只读，要留着');
+    });
+
+    testWidgets('「怎么办」给出恢复路径（含重试），取消则什么都不动', (WidgetTester tester) async {
+      final Directory root = rootWithBrokenDb();
+      await tester.pumpWidget(app(root));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('怎么办'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('账本打不开，怎么办'), findsOneWidget);
+      // 三步自救：先重试、再导出、最后重装（重装会清副本，所以必须先导出）
+      expect(find.textContaining('重装'), findsOneWidget);
+      expect(find.textContaining('导出本机数据文件'), findsOneWidget);
+
+      await tester.tap(find.text('知道了'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('账没丢'), findsOneWidget, reason: '说明条不该消失');
+      expect(
+        File(p.join(root.path, 'data', 'shensuanzi.db')).readAsStringSync(),
+        '坏掉的账本' * 200,
+        reason: '裁定原文：不删除、不覆盖损坏的旧主库',
+      );
+      // 也没有偷偷改名留档（那是「镜像损坏」那条路才做的事）
+      expect(
+        Directory(p.join(root.path, 'data'))
+            .listSync()
+            .where((FileSystemEntity e) => p.basename(e.path).contains('.broken-')),
+        isEmpty,
+      );
+    });
   });
 
-  testWidgets('概览页按**镜像**说「数据已就绪」，不说「请到设置里换位置」', (WidgetTester tester) async {
-    await tester.pumpWidget(app(brokenRoot()));
-    await tester.pumpAndSettle();
+  group('正常态不受影响', () {
+    testWidgets('库是好的 ⇒ 无说明条、写入出口齐、单据列表仍不接本地库', (WidgetTester tester) async {
+      await tester.pumpWidget(app(rootWithHealthyDb()));
+      await tester.pumpAndSettle();
 
-    // 手机上根本没有「换一个位置」这个设置项（私有目录系统管）——
-    // 判据跟壳走（`databaseReady: mirror != null`），否则这句话是死路
-    expect(find.textContaining('请到设置里换一个位置'), findsNothing);
-    expect(find.textContaining('数据文件已就绪'), findsOneWidget);
-  });
-
-  testWidgets('A 降级**不是只读**：开单页照常能进（走镜像 + 队列，不碰本地库）', (
-    WidgetTester tester,
-  ) async {
-    // 裁定原文里 A 是「降级为镜像只读」，但落到代码上**不该只读**：
-    // 手机壳的开单出口是 `QueueSink(mirror)`（镜像 + 待同步队列），
-    // 读面也全是镜像 —— 这条路**一次都不碰**本地库。
-    // 让店主在本机账本坏掉时只能看不能记单，比 bug 本身更糟。
-    await tester.pumpWidget(app(brokenRoot()));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('开单'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('销售开单'));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(SalePage), findsOneWidget, reason: '开单页要真的装配出来');
-    expect(
-      find.textContaining('正在开发'),
-      findsNothing,
-      reason: '不许退化成「数据未就绪」占位页',
-    );
-    // 提交出口存在（`SalePage.sink` 非空即证明）⇒ 单据会入队，不会写本地库
-    expect(tester.widget<SalePage>(find.byType(SalePage)).sink, isNotNull);
-  });
-
-  testWidgets('B 重建：确认后留档坏文件、开一本空账、说明条消失', (WidgetTester tester) async {
-    final Directory root = brokenRoot();
-    await tester.pumpWidget(app(root));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('修复本机账本'));
-    await tester.pumpAndSettle();
-
-    // 先问，并明说「不会删、账不会丢」（不替用户决定）
-    expect(find.text('修复本机账本？'), findsOneWidget);
-    expect(find.textContaining('不会删掉'), findsOneWidget);
-
-    await tester.tap(find.text('修复'));
-    await tester.pumpAndSettle();
-
-    // ① 说明条消失（说明本地库开成功了 —— 它由 `_localDbFailure` 驱动）
-    expect(find.textContaining('账没丢'), findsNothing);
-    expect(find.text('修复本机账本'), findsNothing);
-
-    // ② 库真的能开了，而且是**空账**（旧数据只在留档里）
-    final String databasePath = p.join(root.path, 'data', 'shensuanzi.db');
-    expect(File(databasePath).existsSync(), isTrue);
-    final Db db = Db.open(databasePath);
-    addTearDown(db.close);
-    expect(db.schemaVersion, Schema.version);
-    expect(
-      db.raw.select('SELECT COUNT(*) FROM documents').first.values.first,
-      0,
-    );
-
-    // ③ 坏文件**留档**了（不删是这条的底线）
-    final List<String> archived = Directory(p.join(root.path, 'data'))
-        .listSync()
-        .map((FileSystemEntity e) => p.basename(e.path))
-        .where((String n) => n.contains('.broken-'))
-        .toList();
-    expect(archived, hasLength(1), reason: '一个坏文件 ⇒ 一份留档');
-    expect(
-      File(p.join(root.path, 'data', archived.single)).readAsStringSync(),
-      '坏掉的账本' * 200,
-      reason: '留档内容一个字节都不许变',
-    );
-  });
-
-  testWidgets('「先不修」⇒ 什么都不动，说明条还在', (WidgetTester tester) async {
-    final Directory root = brokenRoot();
-    await tester.pumpWidget(app(root));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('修复本机账本'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('先不修'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('账没丢'), findsOneWidget, reason: '说明条不该消失');
-    final String databasePath = p.join(root.path, 'data', 'shensuanzi.db');
-    expect(
-      File(databasePath).readAsStringSync(),
-      '坏掉的账本' * 200,
-      reason: '取消 = 一个字节都不动',
-    );
+      expect(find.textContaining('账没丢'), findsNothing, reason: '库是好的，不该降级');
+      final AppShell shell = shellOf(tester);
+      expect(shell.localDbNotice, isNull);
+      expect(shell.readOnlyReason, isNull);
+      expect(shell.documentSink, isNotNull, reason: '正常态开单要能入队');
+      expect(shell.masterDataPolicy.canCreateProducts, isTrue);
+      expect(shell.databaseReady, isTrue, reason: '镜像开着 ⇒ 对用户来说数据是就绪的');
+      // 联调 #4 的潜在缺口：手机 5 个 tab 没有「单据」，一旦加了入口也**不许**
+      // 读本地空壳库（主库在手机上是空壳，单据全在镜像里）
+      expect(shell.documents, isNull);
+    });
   });
 }

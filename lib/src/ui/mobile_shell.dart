@@ -94,36 +94,93 @@ class _MobileShellState extends State<MobileShell> {
   }
 
   /// 「开单」tab：三个入口（B3 已接入 `QueueSink`：开单入队 → 自动推给电脑）。
-  Widget _billingTab(ThemeData theme) => ListView(
-    padding: const EdgeInsets.all(16),
-    children: <Widget>[
-      for (final String id in <String>['sale', 'purchase', 'delivery'])
-        Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          child: ListTile(
-            // 文字标签必须有（UI 基线），图标只作辅助
-            title: Text(
-              AppNavigation.byId(id)?.label ?? id,
-              style: const TextStyle(height: 1.6, fontSize: 18),
+  ///
+  /// ## 降级只读（2026-10-31 用户裁定 A 第一阶段）
+  ///
+  /// `shell.readOnlyReason != null` 时三个入口**画成不可点**，并把原因写在上面。
+  /// 为什么要在**这一层**画灰而不是只把 sink 置空：置空后页面会掉进
+  /// `_PendingPage`（「销售开单：正在开发」）—— 那是在骗用户，看起来像功能没做。
+  /// 真正的原因是「本机账本打不开」，必须原话说出来。
+  Widget _billingTab(ThemeData theme) {
+    final String? readOnly = widget.shell.readOnlyReason;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: <Widget>[
+        if (readOnly != null) ...<Widget>[
+          Card(
+            color: theme.colorScheme.errorContainer,
+            margin: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Icon(
+                    Icons.lock_outline,
+                    size: 20,
+                    color: theme.colorScheme.onErrorContainer,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      readOnly,
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.colorScheme.onErrorContainer,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              final NavDestination? destination = AppNavigation.byId(id);
-              if (destination != null) _openFull(destination);
-            },
+          ),
+        ],
+        for (final String id in <String>['sale', 'purchase', 'delivery'])
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: ListTile(
+              // 文字标签必须有（UI 基线），图标只作辅助
+              title: Text(
+                AppNavigation.byId(id)?.label ?? id,
+                style: TextStyle(
+                  height: 1.6,
+                  fontSize: 18,
+                  // 只读 ⇒ 明确「不可点」：颜色 + 无箭头，点了也不推页
+                  color: readOnly == null
+                      ? null
+                      : theme.textTheme.bodySmall?.color,
+                ),
+              ),
+              trailing: readOnly == null
+                  ? const Icon(Icons.chevron_right)
+                  : const Icon(Icons.lock_outline, size: 18),
+              enabled: readOnly == null,
+              onTap: readOnly != null
+                  ? null
+                  : () {
+                      final NavDestination? destination = AppNavigation.byId(id);
+                      if (destination != null) _openFull(destination);
+                    },
+            ),
+          ),
+        Text(
+          readOnly != null
+              ? '等本机账本的问题解决后（见顶部提示条里的「怎么办」），'
+                    '这三个入口会自己恢复。现在先把单据记在纸上、或直接在电脑上开单。'
+              // 2026-10-07 裁定（`docs/reply.md` §一）：自动补传 = 开单后 + **回前台**
+              // + 手动按钮。**不许再承诺「联网自动补传」** —— 那是暗行为，
+              // 而且（没有网络监听时）根本不成立（M02 报告的问题）。
+              : '开单后会自动推送到电脑；断网时先记在待同步队列，'
+                    '回到这个界面时再自动试一次，也可以点「立即同步」——'
+                    '先到「我的 → 设置」扫码连接电脑。',
+          style: TextStyle(
+            height: 1.6,
+            color: theme.textTheme.bodySmall?.color,
           ),
         ),
-      Text(
-        // 2026-10-07 裁定（`docs/reply.md` §一）：自动补传 = 开单后 + **回前台**
-        // + 手动按钮。**不许再承诺「联网自动补传」** —— 那是暗行为，
-        // 而且（没有网络监听时）根本不成立（M02 报告的问题）。
-        '开单后会自动推送到电脑；断网时先记在待同步队列，'
-        '回到这个界面时再自动试一次，也可以点「立即同步」——'
-        '先到「我的 → 设置」扫码连接电脑。',
-        style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 
   /// 「我的」tab：设置 / 帮助 / 版本（§BH B1 待确认 1 的默认形态）。
   Widget _mineTab(ThemeData theme) => ListView(
@@ -221,7 +278,7 @@ class _MobileShellState extends State<MobileShell> {
             if (widget.shell.localDbNotice != null)
               LocalDbBanner(
                 message: widget.shell.localDbNotice!,
-                onRebuild: widget.shell.onRebuildLocalDb,
+                onAdvice: widget.shell.onLocalDbAdvice,
               ),
             // #42 甲 · L4（2026-10-14）：读数据不全的提示条 —— 与桌面壳**共用
             // 同一个 widget**（`read_failure_banner.dart`，照 `appShellPage` 的先例）。

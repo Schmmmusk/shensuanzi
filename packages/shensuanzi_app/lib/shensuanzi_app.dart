@@ -158,6 +158,7 @@ export 'src/export_tables.dart'
         partyFlowExportTable,
         productExportTable,
         stockExportTable;
+export 'src/emphasis.dart' show EmphasisSegment, emphasisSegments;
 export 'src/format.dart'
     show
         activeLabel,

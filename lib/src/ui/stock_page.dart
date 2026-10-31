@@ -220,6 +220,11 @@ class _StockPageState extends State<StockPage> {
     final Map<String, int> inTransit = widget.queries.inTransitByProduct();
     final bool hasAnyLedger = agg.isNotEmpty;
 
+    // 2026-10-31（裁定 A 第一阶段，降级只读）：手机壳**没有提交出口**时不给清点
+    // 入口 —— 清点单走单据队列，没有 sink 就只会写进镜像、永远到不了电脑
+    // （用户看到「清点成功」而主机上没有这张单，比没有入口糟得多）。
+    final bool canStocktake = !(widget.mobileShell && widget.documentSink == null);
+
     // §AD 遗漏 2：期初录入入口（就地打开，完成后 setState 刷新数字）
     if (_showOpening) {
       // ⚠️ 期初录入当前**只在主机开放**（§CV·七 缺口 2，2026-10-09）。
@@ -227,12 +232,11 @@ class _StockPageState extends State<StockPage> {
       // 2026-10-20（§CV·七十八）：**手机上也能清点了** —— 裁定「走 stocktake 单据」
       // （§CV·七 缺口 2 的 A 案）：清点单走**单据队列**，差额由主机算，客户端零规则。
       //
-      // ⇒ 这道门改为拦「**手机壳但没装配 documentSink**」：那意味着写进镜像就到不了电脑。
-      assert(
-        !(widget.mobileShell && widget.documentSink == null),
-        '手机壳开放清点必须装配 documentSink（QueueSink）——'
-        '否则清点单只写镜像、到不了电脑',
-      );
+      // ⇒ 这道门拦「**手机壳但没装配 documentSink**」：那意味着写进镜像就到不了电脑。
+      //
+      // 2026-10-31（裁定 A 第一阶段，降级只读）：这个组合**变成了合法状态**
+      // —— 本机账本打不开时提交出口全部摘掉。所以原来的 `assert` 换成
+      // 上面的 `canStocktake` 判据（入口直接不显示），不然调试包里点一下就抛。
       return OpeningStockPage(
         service: StocktakeService(
           engine: widget.engine,
@@ -341,14 +345,17 @@ class _StockPageState extends State<StockPage> {
                         ),
                       ),
                     ),
-                  TextButton.icon(
-                    key: const Key('stock-open-entry'),
-                    // 2026-10-20（§CV·七十八）：手机端**也能清点** —— 清点单走
-                    // 单据通道入队，差额由主机算（客户端零规则）。原引导删除。
-                    onPressed: () => setState(() => _showOpening = true),
-                    icon: const Icon(Icons.inventory_2_outlined, size: 18),
-                    label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
-                  ),
+                  if (canStocktake)
+                    TextButton.icon(
+                      key: const Key('stock-open-entry'),
+                      // 2026-10-20（§CV·七十八）：手机端**也能清点** —— 清点单走
+                      // 单据通道入队，差额由主机算（客户端零规则）。原引导删除。
+                      //
+                      // 2026-10-31：只读降级时**整个入口不显示**（见 `canStocktake`）
+                      onPressed: () => setState(() => _showOpening = true),
+                      icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                      label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
+                    ),
                   // #27 批 2（2026-10-17 裁定乙）：库存页的「新建商品」= **补充
                   // 快速建档入口**（手机壳专属；桌面建档在「商品」页，期初在同页
                   // 「录入现有货物」）。手机壳 ⇒ 对话框带「当前库存」字段（#31

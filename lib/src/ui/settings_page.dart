@@ -28,7 +28,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
-import 'package:shensuanzi_core/shensuanzi_core.dart';
+
+import 'emphasized_text.dart';import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 
 import 'host_service_section.dart';
@@ -258,7 +259,7 @@ class _SettingsPageState extends State<SettingsPage> {
       showSnack(
         context,
         SnackBar(
-          content: Text(
+          content: EmphasizedText(
             '没能存到磁盘（$error）。\n'
             '这次的改动**现在已生效**，但重启软件后会变回原来的设置。',
           ),

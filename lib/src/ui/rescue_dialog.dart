@@ -13,6 +13,7 @@
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
+import 'emphasized_text.dart';
 /// 跑一次抢救：确认 → 执行 → 报告。返回 `true` 表示产出了结果文件。
 Future<bool> showRescueFlow(
   BuildContext context, {
@@ -24,7 +25,7 @@ Future<bool> showRescueFlow(
     context: context,
     builder: (BuildContext dialogContext) => AlertDialog(
       title: const Text('从坏掉的文件里尽量找回'),
-      content: const Text(
+      content: const EmphasizedText(
         '这个办法用在「备份也没有、或者备份都坏了」的时候。\n\n'
         '它会尽量把还能读出来的单据读出来，另存成一个新文件 —— '
         '**你原来的文件一个字节都不会动**，还会被设成只读，防止误改。\n\n'
@@ -211,7 +212,11 @@ class _ReportDialog extends StatelessWidget {
                           '${issue.totalAmount == null ? '' : ' · ${_money(issue.totalAmount!)}'}'
                           '${issue.occurredAt == null ? '' : ' · ${_day(issue.occurredAt!)}'}',
                         ),
-                        subtitle: Text(issue.detail ?? issue.summary),
+                        // 抢救报告里有 `**方向反了**`（`rescue.dart`）——
+                        // 用 EmphasizedText 才会真的加粗
+                        subtitle: EmphasizedText(
+                          issue.detail ?? issue.summary,
+                        ),
                       );
                     },
                   ),

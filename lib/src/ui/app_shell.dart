@@ -87,7 +87,8 @@ class AppShell extends StatefulWidget {
     this.onChangeBackupLocation,
     this.initialDestinationId,
     this.localDbNotice,
-    this.onRebuildLocalDb,
+    this.onLocalDbAdvice,
+    this.readOnlyReason,
   });
 
   final String dataDirectory;
@@ -109,9 +110,17 @@ class AppShell extends StatefulWidget {
   /// 文案由 `app.dart` 给（UI 只取值、不造句）。
   final String? localDbNotice;
 
-  /// 「修复本机账本」= 留档坏文件 + 开一本空账（裁定 B）。
+  /// 「怎么办」= 把恢复路径摆出来（重试 / 导出 / 重装前要做什么）。
   /// `null` = 不给出口（只说明）。
-  final VoidCallback? onRebuildLocalDb;
+  final VoidCallback? onLocalDbAdvice;
+
+  /// **写入为什么被关**（降级只读时非空；`null` = 正常可写）。
+  ///
+  /// 2026-10-31 用户裁定 A 第一阶段（`docs/reply.md` §三）：本机账本打不开时
+  /// 暂时禁用开单 / 主数据修改。判据在 `app.dart` 装配处（sink 全为 `null`），
+  /// 这里只负责**把原因说给用户听** —— 否则开单 tab 上三个按钮点了没反应，
+  /// 看起来像坏了。
+  final String? readOnlyReason;
 
   /// 商品建档服务（数据库打开成功才有；为 `null` 时商品页显示「数据文件还没就绪」）
   final ProductService? products;

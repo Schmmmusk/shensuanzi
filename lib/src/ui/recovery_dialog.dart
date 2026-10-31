@@ -20,6 +20,7 @@
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
+import 'emphasized_text.dart';
 /// 打开「数据体检与恢复」。返回 `true` = 已经接回了一份（调用方应当重试打开库）。
 Future<bool> showRecoveryDialog(
   BuildContext context, {
@@ -102,7 +103,7 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
       context: context,
       builder: (BuildContext confirmContext) => AlertDialog(
         title: const Text('用这份接回去？'),
-        content: Text(
+        content: EmphasizedText(
           '${_describe(candidate)}\n\n'
           '接回去之后：\n'
           '· 现在打不开的那个数据文件会**改名保存**（名字带 broken），不会删除；\n'

@@ -43,6 +43,18 @@ class MasterDataPolicy {
       canCreateParties = true,
       canCreateAccounts = false;
 
+  /// **降级只读**（2026-10-31 用户裁定 A 第一阶段，`docs/reply.md` §三）。
+  ///
+  /// 手机上的旧主库 `data/shensuanzi.db` 打不开、但镜像完好时用它：
+  /// 三族主数据**一律不给建**。为什么连镜像上的建档也要关 ——
+  /// 用户的原话是「暂时禁用开单、主数据修改等写入操作」，理由是
+  /// **我们还没有逐页验证**旧主库不可用时每个提交出口都真的与它解耦。
+  /// 关掉写入 = 把「未验证」的风险换成「少一个功能」，第二阶段再放开。
+  const MasterDataPolicy.readOnly()
+    : canCreateProducts = false,
+      canCreateParties = false,
+      canCreateAccounts = false;
+
   /// 商品建档（手机 v1 = `true`）。
   final bool canCreateProducts;
 
