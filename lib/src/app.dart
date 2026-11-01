@@ -46,6 +46,7 @@ import 'ui/recovery_dialog.dart';
 import 'ui/rescue_dialog.dart';
 import 'ui/emphasized_text.dart';
 import 'integrity.dart';
+import 'write_blocked.dart';
 import 'ui/notice.dart';
 
 class ShensuanziApp extends StatefulWidget {
@@ -332,18 +333,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   ///
   /// 两种原因**话不一样**：一个是「本机账本打不开」，一个是「低权限启动」——
   /// 用户看到的下一步动作也不同（前者重装/重试，后者复制到别的位置）。
-  String? _readOnlyReason() {
-    if (_integrity == IntegrityLevel.low ||
-        _integrity == IntegrityLevel.untrusted) {
-      return '这个程序是以「低权限」方式启动的，**什么都存不下来**，'
-          '所以现在只能看、不能录单和改资料。'
-          '把程序文件夹复制到别的位置再打开就能恢复（详见启动时的提示）。';
-    }
-    if (_localDbFailure != null) {
-      return '本机账本打不开，开单和改资料暂时关闭（看数、查库存、查往来、导出都照常）。';
-    }
-    return null;
-  }
+  String? _readOnlyReason() => writeBlockedReason(
+    integrity: _integrity,
+    localDbFailed: _localDbFailure != null,
+  );
 
   /// **低完整性自检**（2026-11-01，联调 #1 的根因）。
   ///
@@ -2260,10 +2253,11 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     // 所以 Low / Untrusted ⇒ **禁掉所有写入出口**（与「本机账本打不开」同一条路）。
     // ⚠️ `unknown`（检测失败）**不禁用** —— 不能因为查不出来就擅自废掉功能，
     // 只在日志里记一笔（见 `_checkIntegrity`）。
-    final bool readOnly =
-        _localDbFailure != null ||
-        _integrity == IntegrityLevel.low ||
-        _integrity == IntegrityLevel.untrusted;
+    // 判据与原因都在 `write_blocked.dart`（纯函数 ⇒ 可单测，不必靠真机造 Low）
+    final bool readOnly = isWriteBlocked(
+      integrity: _integrity,
+      localDbFailed: _localDbFailure != null,
+    );
     final DocumentSink? documentSink;
     if (_shellKind == ShellKind.mobile) {
       final MobileSyncService? sync = _mobileSyncService;
