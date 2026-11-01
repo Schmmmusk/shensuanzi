@@ -345,6 +345,11 @@ class HostIdentityStore {
     _lastProtectProblem = protectedToken == null
         ? (_protector.isSupported ? '系统加密失败' : '这台电脑不支持加密存储')
         : null;
+    // 刚生成的令牌**就在手上**（明文在内存里）⇒ 此刻的恢复状态就是「有明文」。
+    // 不更新的话 `snapshot.tokenRestore` 会停在启动时读到的 `hashOnly`，
+    // 与 `qrAvailable == true` 自相矛盾（2026-11-01 迁移验收时发现）。
+    _lastRestoreState = TokenRestoreState.restored;
+    _lastRestoreProblem = null;
     try {
       _write(next, protectedToken: protectedToken);
       _lastWriteFailed = false;

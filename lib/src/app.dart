@@ -45,6 +45,7 @@ import 'ui/pairing_scan_page.dart';
 import 'ui/recovery_dialog.dart';
 import 'ui/rescue_dialog.dart';
 import 'ui/emphasized_text.dart';
+import 'integrity.dart';
 import 'ui/notice.dart';
 
 class ShensuanziApp extends StatefulWidget {
@@ -322,6 +323,48 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 且不能给假进度（拿不到总字节就报百分比是骗人）。整页一句话最诚实。
   bool _recoveringMirror = false;
 
+  /// **低完整性自检**（2026-11-01，联调 #1 的根因）。
+  ///
+  /// ## 为什么必须在启动时说
+  ///
+  /// 进程跑在 Low 完整性级别时，**什么都存不下来**：改设置、生成配对码、
+  /// 录单全部「拒绝访问」（`errno 5`）。但**读一切正常** ——
+  /// 所以用户会觉得「软件偶尔抽风」，很可能先用半小时录单才发现白干。
+  ///
+  /// 触发条件很具体：**exe 文件带了 Low 完整性标签**（整包从别处拷来、
+  /// 解压来的文件夹常见），Windows 就会以 Low 启动它。程序本身没坏。
+  ///
+  /// 只提示**一次**（每次启动一次），不挡路：`知道了` 之后照常进界面
+  /// （此时是只读状态，比直接不让进好 —— 用户还能查账、导出）。
+  void _checkIntegrity() {
+    final IntegrityLevel level = detectIntegrityLevel();
+    final String? notice = lowIntegrityNotice(level);
+    _log.write('进程完整性 = ${level.name}');
+    if (notice == null) return;
+    unawaited(_showIntegrityNotice(notice));
+  }
+
+  Future<void> _showIntegrityNotice(String notice) async {
+    final BuildContext? context = _navigatorKey.currentContext;
+    if (context == null || !context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('这个程序存不了东西'),
+        content: SingleChildScrollView(
+          child: EmphasizedText(notice, style: const TextStyle(height: 1.6)),
+        ),
+        actions: <Widget>[
+          FilledButton(
+            key: const Key('integrity-notice-ok'),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// 手机端**本机账本打不开**的原因（2026-10-31 联调 #0，用户裁定 A 第一阶段）。
   ///
   /// 与 [_dbFailure] 的分工：`_dbFailure` = **什么都用不了**，停在启动错误页；
@@ -354,7 +397,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     // —— 回前台这条要观察生命周期（零新依赖，用 `WidgetsBindingObserver`）
     WidgetsBinding.instance.addObserver(this);
     // 首帧之后再弹对话框：此时才有可用的 Navigator
-    WidgetsBinding.instance.addPostFrameCallback((_) => _prepare());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _prepare();
+      _checkIntegrity();
+    });
   }
 
   @override

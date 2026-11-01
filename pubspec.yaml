@@ -31,6 +31,11 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # 2026-11-01：读**当前进程的完整性级别**（`lib/src/integrity.dart`）——
+  # 联调 #1 的根因就是「exe 带 Low 标签 ⇒ 进程跑在 Low ⇒ 什么都写不进去」。
+  # 只用 `calloc`/`free`，与 host 包的 `dpapi.dart` 同一个依赖。
+  ffi: ^2.1.0
+
   # 界面本地化（§BK·一，2026-10-05 用户反馈 1）：日期选择器等 Material
   # 组件的文字跟随系统语言。SDK 自带（与 Flutter 同版本，无 pub.dev 版本风险）。
   flutter_localizations:

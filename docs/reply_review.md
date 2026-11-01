@@ -17994,3 +17994,119 @@ L2 inplace = ok
 - **真机/GUI 验收**：需要在那台电脑上跑一次真实应用 —— 开服务 → 记下码 → 关掉重开 →
   码应当**一模一样**、手机不用重扫。这一步必须在 GUI 上点（`probe_restart_token` 只到进程级）。
 - 提案 56 ③ 的 `schema v8`：仍按裁定暂缓。
+
+#### ④ 2026-11-01 迁移验收：用**用户真实身份文件**跑通「升级 → 重生成一次 → 之后不再需要」
+
+用户打好两个平台的调试包后开始验收。**没有直接动 `D:/神算子数据`**（那是真身份），
+而是把它整份复制到临时目录，用 `tool/probe_controller_restart.dart` 走三步：
+
+| 步 | 命令 | 结果 |
+|---|---|---|
+| ① 升级后第一次启动（真实 v1 文件） | `start` | `token_restore=hashOnly`、`qr_available=false`、`needs_reset=true` —— **正是裁定 ⑧ 说的「升级后要重生成一次」** |
+| ② 点一次「重新生成配对码」 | `reset` | `qr_available=true`、`host_id` **不变**（`01a1572b-…`）、令牌换新 |
+| ③ 重启（新进程） | `start` | `token_restore=restored`、**`payload_text` 与 ② 逐字相同**、`needs_reset=false` |
+
+落盘的 `host.json` 变成 v2：`host_id` 不变、`token_hash` 换新、多出
+`token_protected{scheme:"dpapi-user-v1", blob:"AQAAANCMnd8…"}`，**没有明文**。
+
+> 真身份文件**没被动过**（复核：仍是 `version: 1`，mtime 还是 10-31 23:13）。
+> 用户真正的迁移只需在自己点一次「重新生成」时发生 —— 那一次手机会重扫，
+> 之后不再需要（裁定 ⑧ 的一次性成本）。
+
+#### ⑤ 迁移验收时抓到一处**自相矛盾**（已修）
+
+第 ② 步的 snapshot 里 `token_restore` 还停在启动时读到的 `hashOnly`，
+而 `qr_available` 已经是 `true` —— 两个字段互相打脸。
+根因：`reset()` 只写了新令牌，没更新 `_lastRestoreState`（它是 `load()` 的产物）。
+已修：`reset()` 成功后置 `_lastRestoreState = restored`（明文就在手上）。
+UI 上本来不显形（`tokenRestore` 只在 `needsReset` 分支用），但**快照自相矛盾是定时炸弹**。
+
+#### ⑥ 文案抽到纯 Dart 层（`lib/src/ui/host_service_hints.dart`）
+
+裁定要求「原因不同，话就不一样」，而这几句原来埋在 widget 里 —— 只能靠人眼在真机上点。
+现在 `hostPersistHint()` / `hostRestoreHint()` 是纯函数，`test/host_service_hints_test.dart`
+**9 条**直接钉住每个分支，包括**不许出现「已保存 / 保存成功」**（裁定 ③）与
+「四句话互不相同（不许退化成同一句）」。
+
+门禁：root **448** · host **199** · selfcheck **93/93** · analyze 0。
+
+### 七十二、2026-11-01 **联调 #1 结案**：不是权限、不是杀软 —— 是进程跑在 **Low 完整性级别**
+
+查了两天的「`host.json` 写不进去（`errno = 5`）」，根因终于定死，而且**不是**我们代码的问题：
+
+#### ① 现场（用户截图里的那一行是关键）
+
+设置改不动时弹的错误里带着诊断：
+
+```
+PathAccessException: Cannot open file, path = 'D:/神算子数据/shensuanzi-config.json'
+  (OS Error: 拒绝访问。, errno = 5)
+C:/Users/yzx/AppData/Roaming/神算子 不可写 …
+C:/Users/yzx/AppData/Local/神算子 不可写 …
+进程身份 = desktop-bj3a5q\yzx; 令牌组数=17; 含 Administrators=true; 含 BUILTIN\Users=true;
+完整性 = Mandatory Label\Low Mandatory Level 标签 S-1-16-4096      ← 就是这个
+```
+
+#### ② 往上一层：标签在**仓库目录**上
+
+```
+D:/shensuanzi/shensuanzi                    → Low Mandatory Level:(OI)(CI)(NW)
+D:/shensuanzi/shensuanzi/build/.../Release  → Low Mandatory Level:(I)(OI)(CI)(NW)
+build\...\Release\shensuanzi.exe            → Low Mandatory Level:(I)(NW)
+```
+
+**带 Low 标签的 exe，Windows 会以 Low 完整性启动它**；而 Low 进程**不能写** Medium 标签的对象
+（`%APPDATA%` / `%LOCALAPPDATA%` / 数据目录全是 Medium）⇒ 每次写都是「拒绝访问」。
+
+这解释了全部现象，也解释了为什么查了两天：
+
+| 现象 | 为什么被误导 |
+|---|---|
+| 读一切正常 | MIC 只管「向上写」，读不受限 |
+| 同一用户 `dart run` 能写 | 那个进程是 **Medium**（正常终端启动） |
+| ACL / SDDL / 只读属性都正常 | 问题是**进程令牌的标签**，不是文件权限 |
+| 同一目录昨天能写 | 昨天跑的是**别的 exe**（标签不同） |
+
+> 顺带更正我 2026-10-22 在 `app_config.dart` 里留的那句「`%APPDATA%` 一直写不进去，
+> `dart run` 却能写，根因未定」—— **根因就是这个**，当时只做了降级（退到 `%LOCALAPPDATA%`），
+> 而 `%LOCALAPPDATA%` 同样是 Medium，所以那条兜底其实也写不进去（截图里两处都「不可写」）。
+
+#### ③ 修复
+
+1. 把仓库根的标签重置成 Medium：`icacls D:/shensuanzi/shensuanzi /setintegritylevel Medium /T`
+   （处理 15630 项；**根**变成 Medium，以后新编出来的文件不会再继承 Low）。
+2. 已经存在的子文件改不动（Medium 身份去改 Low 对象上的标签被 `(NW)` 拦，`icacls` 报「拒绝访问」，
+   `/reset` 也没能重新继承）⇒ 把 Release 包**复制到仓库外**的干净目录（`D:/ssz-run/`）再跑。
+
+**用户实测结果（11:19）**：
+
+```
+host.json  612 字节  version=2  host_id 不变  token_hash 换新  + token_protected
+日志       恢复记录：启动 神算子 v0.7.1 · schema v7 · Windows 10 Pro
+界面缩放   能改了（设置已变更 ×2 进了日志）
+橙字       消失
+```
+
+⇒ **提案 57 的 DPAPI 路径在真实环境下首次跑通**；「重启后同码」只差最后一步重启验证。
+
+#### ④ 顺带被证实的一条：提案 56 的 L2 边界
+
+Low 进程下 L1（rename）与 L2（原地写）**都失败** —— 因为被拦的是「写权限」本身，
+不是「delete 权限」。这与提案 56 裁定里那句「不得假设 L2 一定能绕过文件占用」完全一致：
+**L2 只绕过 delete，不绕过 write**，而 Low 完整性拦的是 write。
+
+#### ⑤ 产品改进：启动自检（用户点名要）
+
+`lib/src/integrity.dart`：`detectIntegrityLevel()`（`OpenProcessToken` +
+`GetTokenInformation(TokenIntegrityLevel)` + `GetSidSubAuthority`，读 SID 尾部 RID）
++ `lowIntegrityNotice()`（纯函数，文案可测）。
+
+启动首帧后自检，是 Low 就弹一次「这个程序存不了东西」：
+说清**什么都存不下来**（设置 / 配对码 / 录单）、**程序没坏账目没丢**、
+给三条自救路径（**复制到别的位置** / 右键属性勾「解除锁定」 / 找技术支持并报
+「进程完整性 = Low」），最后一句警告「修好之前别在这个窗口里录单」。
+
+> 为什么值得做：这种状态下**读一切正常**，用户很可能录半小时单才发现白干。
+> 一句人话，比日志里一行 `errno = 5` 有用得多。
+
+门禁：root **457**（1 条按平台跳过）· analyze 0。
