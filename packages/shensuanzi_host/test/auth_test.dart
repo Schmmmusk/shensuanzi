@@ -58,15 +58,38 @@ void main() {
       expect(identity.authorizes(identity.plaintextToken), isTrue);
     });
 
-    test('再次 loadOrCreate 读回同一身份，但**没有明文**（哈希不可逆）', () {
-      final HostIdentityStore store = HostIdentityStore.inMemory();
+    // ⚠️ 2026-11-01 语义变更（用户裁定，提案 57）：从前的断言是
+    // 「重启后**一定**画不出码（哈希不可逆）」—— 那是**旧设计**。现在明文
+    // 由 DPAPI 加密存下来，重启后能解回来 ⇒ 能画码。旧行为保留在下面那条
+    // 「没有加密器时」的对照用例里，两种路径都有护栏。
+    test('再次 loadOrCreate 读回同一身份，且**明文能恢复**（提案 57 之后）', () {
+      final HostIdentityStore store = HostIdentityStore.inMemory(
+        protector: FakeProtector(),
+      );
       final HostIdentity first = store.loadOrCreate(now: 1000);
 
       final HostIdentity loaded = store.loadOrCreate(now: 2000);
 
       expect(loaded.hostId, first.hostId, reason: 'host_id 不变');
       expect(loaded.tokenHash, first.tokenHash);
-      expect(loaded.canShowQr, isFalse, reason: '重启后画不出二维码');
+      expect(
+        loaded.canShowQr,
+        isTrue,
+        reason: '密文能解回明文 ⇒ 重启后仍能画同一个码（这才是提案 57 要的）',
+      );
+      expect(loaded.plaintextToken, first.plaintextToken, reason: '令牌不许变');
+      expect(loaded.authorizes(first.plaintextToken), isTrue);
+    });
+
+    test('（对照）没有加密器时回到旧语义：画不出码，但校验照旧', () {
+      final HostIdentityStore store = HostIdentityStore.inMemory(
+        protector: const NoTokenProtector(),
+      );
+      final HostIdentity first = store.loadOrCreate(now: 1000);
+      final HostIdentity loaded = store.loadOrCreate(now: 2000);
+
+      expect(loaded.hostId, first.hostId);
+      expect(loaded.canShowQr, isFalse, reason: '只存哈希 ⇒ 画不出码');
       expect(
         loaded.authorizes(first.plaintextToken),
         isTrue,
@@ -183,4 +206,308 @@ void main() {
       expect(store.lastWriteProblem, contains(blocker.path));
     });
   });
+  // 2026-11-01（提案 57 裁定 ⑤⑥）：DPAPI × 写盘的**四种组合**，以及
+  // 「密文缺失 / 损坏 / 格式不支持 / 解不开 / 哈希不符」五条读取路径。
+  //
+  // 这一组的意义：单独测 DPAPI 和单独测写盘都不够 —— 用户真正会遇到的
+  // 是两者组合出来的四种状态，而它们对「下次开机能不能画码」的结论完全不同。
+  group('令牌加密持久化（DPAPI × 写盘）', () {
+    late Directory box;
+    late File file;
+
+    setUp(() {
+      box = Directory.systemTemp.createTempSync('ssz_token_protect_');
+      file = File('${box.path}${Platform.pathSeparator}host.json');
+    });
+
+    tearDown(() {
+      try {
+        box.deleteSync(recursive: true);
+      } catch (_) {}
+    });
+
+    /// 可编程的假加密器（真 DPAPI 造不出「失败」）
+    ///
+    /// 密文格式故意做成 `enc:<hostId>:<base64>` —— 顺便能验「熵绑定」：
+    /// `hostId` 对不上就解不开。
+    FakeProtector fake({
+      bool failProtect = false,
+      bool failUnprotect = false,
+      bool tamper = false,
+      bool supported = true,
+    }) => FakeProtector(
+      failProtect: failProtect,
+      failUnprotect: failUnprotect,
+      tamper: tamper,
+      supported: supported,
+    );
+
+    /// 写盘必失败的文件操作（模拟 2026-10-31 真机那个 errno 5）
+    HostWriteIo failingIo() => _FailingIo();
+
+    test('组合 1：加密成功 + 写盘成功 ⇒ 重启后能恢复明文', () {
+      final HostIdentityStore first = HostIdentityStore(
+        file,
+        protector: fake(),
+      );
+      final HostIdentity created = first.reset(now: 1000);
+      expect(first.lastProtectProblem, isNull);
+      expect(first.lastWriteFailed, isFalse);
+      // 文件里是密文，不是明文
+      final String raw = file.readAsStringSync();
+      expect(raw, contains('token_protected'));
+      expect(raw, isNot(contains(created.plaintextToken!)));
+
+      // 「重启」= 同一文件上新建一个 store
+      final HostIdentityStore second = HostIdentityStore(
+        file,
+        protector: fake(),
+      );
+      final HostIdentity? restored = second.load();
+      expect(restored, isNotNull);
+      expect(second.lastRestoreState, TokenRestoreState.restored);
+      expect(restored!.plaintextToken, created.plaintextToken);
+      expect(restored.canShowQr, isTrue);
+      expect(restored.authorizes(created.plaintextToken), isTrue);
+    });
+
+    test('组合 2：加密成功 + 写盘失败 ⇒ 本次可用，但不能说「已保存」', () {
+      final HostIdentityStore store = HostIdentityStore(
+        file,
+        io: failingIo(),
+        protector: fake(),
+      );
+      final HostIdentity created = store.reset(now: 1000);
+
+      expect(created.plaintextToken, isNotNull, reason: '本次必须能用');
+      expect(store.lastWriteFailed, isTrue, reason: '写盘失败必须如实记');
+      expect(store.lastProtectProblem, isNull);
+      // 文件没写成功 ⇒ 重启后当然画不出码（这里连文件都没有）
+      expect(file.existsSync(), isFalse);
+    });
+
+    test('组合 3：加密失败 + 写盘成功 ⇒ 只存哈希，重启后 hashOnly，但令牌仍可验证', () {
+      final HostIdentityStore store = HostIdentityStore(
+        file,
+        protector: fake(failProtect: true),
+      );
+      final HostIdentity created = store.reset(now: 1000);
+
+      expect(created.plaintextToken, isNotNull, reason: '加密失败不该阻断本次配对');
+      expect(store.lastProtectProblem, isNotNull, reason: '必须记下来给界面提示');
+      expect(store.lastWriteFailed, isFalse);
+      expect(file.readAsStringSync(), isNot(contains('token_protected')));
+
+      final HostIdentityStore second = HostIdentityStore(
+        file,
+        protector: fake(failProtect: true),
+      );
+      final HostIdentity? reloaded = second.load();
+      expect(second.lastRestoreState, TokenRestoreState.hashOnly);
+      expect(reloaded!.canShowQr, isFalse, reason: '只存哈希 ⇒ 画不出码');
+      expect(
+        reloaded.authorizes(created.plaintextToken),
+        isTrue,
+        reason: '校验只靠哈希，加密失败**不能**让手机连不上',
+      );
+    });
+
+    test('组合 4：加密失败 + 写盘失败 ⇒ 两个都记，本次仍可配对', () {
+      final HostIdentityStore store = HostIdentityStore(
+        file,
+        io: failingIo(),
+        protector: fake(failProtect: true),
+      );
+      final HostIdentity created = store.reset(now: 1000);
+      expect(created.plaintextToken, isNotNull);
+      expect(store.lastProtectProblem, isNotNull);
+      expect(store.lastWriteFailed, isTrue);
+    });
+
+    test('密文解不开（换用户/换机器）⇒ undecryptable，且**绝不轮换令牌**', () {
+      final HostIdentityStore first = HostIdentityStore(
+        file,
+        protector: fake(),
+      );
+      final HostIdentity created = first.reset(now: 1000);
+
+      final HostIdentityStore second = HostIdentityStore(
+        file,
+        protector: fake(failUnprotect: true),
+      );
+      final HostIdentity? reloaded = second.load();
+      expect(second.lastRestoreState, TokenRestoreState.undecryptable);
+      expect(second.lastRestoreProblem, isNotNull);
+      expect(reloaded!.canShowQr, isFalse);
+      expect(reloaded.hostId, created.hostId, reason: '身份不能变');
+      expect(reloaded.tokenHash, created.tokenHash, reason: '令牌不能轮换');
+      // loadOrCreate 走的是 load()（非 null）⇒ 不会静默 reset
+      final HostIdentity again = second.loadOrCreate(now: 2000);
+      expect(again.tokenHash, created.tokenHash, reason: 'loadOrCreate 不许静默换令牌');
+    });
+
+    test('密文与哈希不符 ⇒ mismatch，明文丢弃且不轮换', () {
+      final HostIdentityStore first = HostIdentityStore(
+        file,
+        protector: fake(),
+      );
+      first.reset(now: 1000);
+      final HostIdentityStore second = HostIdentityStore(
+        file,
+        protector: fake(tamper: true),
+      );
+      final HostIdentity? reloaded = second.load();
+      expect(second.lastRestoreState, TokenRestoreState.mismatch);
+      expect(reloaded!.plaintextToken, isNull, reason: '两份数据矛盾时谁的都不信');
+      expect(reloaded.canShowQr, isFalse);
+    });
+
+    test('scheme 不认识 ⇒ unsupported（不猜、不崩）', () {
+      file.writeAsStringSync(
+        jsonEncode(<String, Object?>{
+          'version': 2,
+          'host_id': 'h-1',
+          'token_hash': HostToken.hashOf('tok'),
+          'created_at': 1,
+          'token_protected': <String, Object?>{
+            'scheme': 'something-else-v9',
+            'blob': 'AAAA',
+          },
+        }),
+      );
+      final HostIdentityStore store = HostIdentityStore(
+        file,
+        protector: fake(),
+      );
+      final HostIdentity? loaded = store.load();
+      expect(store.lastRestoreState, TokenRestoreState.unsupported);
+      expect(loaded, isNotNull, reason: '身份还在，只是画不出码');
+      expect(loaded!.canShowQr, isFalse);
+    });
+
+    test('老文件（v1，没有 token_protected）⇒ hashOnly，行为与升级前一致', () {
+      file.writeAsStringSync(
+        jsonEncode(<String, Object?>{
+          'version': 1,
+          'host_id': 'h-1',
+          'token_hash': HostToken.hashOf('tok'),
+          'created_at': 1,
+        }),
+      );
+      final HostIdentityStore store = HostIdentityStore(
+        file,
+        protector: fake(),
+      );
+      final HostIdentity? loaded = store.load();
+      expect(store.lastRestoreState, TokenRestoreState.hashOnly);
+      expect(loaded!.canShowQr, isFalse);
+      expect(loaded.authorizes('tok'), isTrue);
+    });
+
+    test('旧版程序重写文件会丢掉 token_protected ⇒ 新版按 hashOnly 处理，不崩', () {
+      // 裁定 ④ 的边界：不承诺新旧版本无损往返
+      final HostIdentityStore first = HostIdentityStore(
+        file,
+        protector: fake(),
+      );
+      final HostIdentity created = first.reset(now: 1000);
+      // 模拟「旧版重写了这个文件」（只写 v1 字段）
+      file.writeAsStringSync(
+        jsonEncode(<String, Object?>{
+          'version': 1,
+          'host_id': created.hostId,
+          'token_hash': created.tokenHash,
+          'created_at': created.createdAt,
+        }),
+      );
+      final HostIdentityStore second = HostIdentityStore(
+        file,
+        protector: fake(),
+      );
+      final HostIdentity? loaded = second.load();
+      expect(second.lastRestoreState, TokenRestoreState.hashOnly);
+      expect(loaded!.canShowQr, isFalse, reason: '密文没了 ⇒ 要重新生成一次');
+      expect(loaded.authorizes(created.plaintextToken), isTrue, reason: '哈希还在，手机照连');
+    });
+
+    test('不支持加密的平台 ⇒ 只写哈希（与今天一致），不报错', () {
+      final HostIdentityStore store = HostIdentityStore(
+        file,
+        protector: fake(supported: false, failProtect: true),
+      );
+      final HostIdentity created = store.reset(now: 1000);
+      expect(created.plaintextToken, isNotNull);
+      expect(store.lastProtectProblem, isNotNull);
+      expect(file.readAsStringSync(), isNot(contains('token_protected')));
+    });
+  });
+
+}
+
+/// 可编程的假加密器：真 DPAPI 造不出「加密失败 / 解密失败 / 哈希不符」。
+class FakeProtector implements TokenProtector {
+  FakeProtector({
+    this.failProtect = false,
+    this.failUnprotect = false,
+    this.tamper = false,
+    this.supported = true,
+  });
+
+  final bool failProtect;
+  final bool failUnprotect;
+
+  /// 解出来的令牌故意改一个字（模拟「密文与哈希不一致」）
+  final bool tamper;
+  final bool supported;
+
+  @override
+  bool get isSupported => supported;
+
+  @override
+  String? protect(String plaintext, {required String hostId}) {
+    if (!supported || failProtect) return null;
+    return 'enc:$hostId:${base64.encode(utf8.encode(plaintext))}';
+  }
+
+  @override
+  String? unprotect(String blob, {required String hostId}) {
+    if (!supported || failUnprotect) return null;
+    final List<String> parts = blob.split(':');
+    if (parts.length != 3 || parts[0] != 'enc') return null;
+    if (parts[1] != hostId) return null; // 熵绑定
+    final String plain = utf8.decode(base64.decode(parts[2]));
+    return tamper ? '${plain}x' : plain;
+  }
+}
+
+/// 写盘必失败（模拟 `host.json` 被拒写）
+class _FailingIo extends HostWriteIo {
+  const _FailingIo();
+
+  Never _deny() => throw const FileSystemException(
+    '拒绝访问。',
+    null,
+    OSError('拒绝访问。', 5),
+  );
+
+  @override
+  bool exists(File file) => file.existsSync();
+
+  @override
+  void createParent(File file) {}
+
+  @override
+  void writeString(File file, String text) => _deny();
+
+  @override
+  void rename(File from, File to) => _deny();
+
+  @override
+  String readString(File file) => file.readAsStringSync();
+
+  @override
+  void truncateAndWrite(File file, String text) => _deny();
+
+  @override
+  void delete(File file) {}
 }

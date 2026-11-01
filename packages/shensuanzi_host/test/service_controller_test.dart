@@ -423,18 +423,63 @@ void main() {
       );
     });
 
-    test('**重启后画不出码**（明文不落盘）—— 但服务本身没坏', () async {
-      await controller.start();
-      final String token = controller.pairingPayload!.token;
-      await controller.stop();
+    // ⚠️ 2026-11-01 语义变更（用户裁定，提案 57）：从前这条叫「重启后画不出码」，
+    // 断言 `qrAvailable == false` —— 那是**旧设计**（只存哈希）。现在明文由
+    // DPAPI 加密落盘、重启能解回来 ⇒ **重启后照样画同一个码**。
+    // 旧行为没有消失：它现在是「加密器不可用」那条降级路径，见下一个用例。
+    test('重启后**仍能画同一个码**（DPAPI 解回明文）—— 手机不用重扫', () async {
+      if (!const DpapiTokenProtector().isSupported) {
+        markTestSkipped('本条要真 DPAPI；非 Windows 上由下一条（降级）覆盖');
+        return;
+      }
+      // 用**独立的** store（不共用 setUp 那个），模拟「同一个 host.json」
+      final HostIdentityStore shared = HostIdentityStore.inMemory();
+      final HostServiceController first = build(identities: shared);
+      addTearDown(first.stop);
+      await first.start();
+      final String token = first.pairingPayload!.token;
+      final String hostId = first.pairingPayload!.hostId;
+      await first.stop();
 
-      // 同一个 host.json（里面只有 sha256），新一个控制器 = 模拟应用重启
-      final HostServiceController restarted = build();
+      // 同一个 store（里面有 DPAPI 密文），新控制器 = 模拟应用重启
+      final HostServiceController restarted = build(identities: shared);
       addTearDown(restarted.stop);
       final HostServiceSnapshot snapshot = await restarted.start();
 
       expect(snapshot.state, HostServiceState.running);
-      expect(snapshot.qrAvailable, isFalse, reason: '明文不可逆：重启后拿不到它，就画不出二维码');
+      expect(
+        snapshot.tokenRestore,
+        TokenRestoreState.restored,
+        reason: '密文解回来了',
+      );
+      expect(snapshot.qrAvailable, isTrue, reason: '重启后能画码 —— 这才是提案 57 的目的');
+      expect(snapshot.needsReset, isFalse, reason: '不再需要「重新生成配对码」');
+      expect(restarted.pairingPayload!.token, token, reason: '令牌逐字相同');
+      expect(restarted.pairingPayload!.hostId, hostId);
+      expect(
+        await get(snapshot.port!, '/api/sync/pull', token: token),
+        200,
+        reason: '已配对的手机照常连（本来就不受影响）',
+      );
+    });
+
+    test('（降级）没有加密器时回到旧语义：重启后画不出码，但手机照连', () async {
+      // 用 NoTokenProtector 的 store 模拟「这台机器不支持加密存储」
+      final HostIdentityStore plain = HostIdentityStore.inMemory(
+        protector: const NoTokenProtector(),
+      );
+      final HostServiceController legacy = build(identities: plain);
+      addTearDown(legacy.stop);
+      await legacy.start();
+      final String token = legacy.pairingPayload!.token;
+      await legacy.stop();
+
+      final HostServiceController restarted = build(identities: plain);
+      addTearDown(restarted.stop);
+      final HostServiceSnapshot snapshot = await restarted.start();
+
+      expect(snapshot.tokenRestore, TokenRestoreState.hashOnly);
+      expect(snapshot.qrAvailable, isFalse, reason: '只存哈希 ⇒ 画不出码');
       expect(snapshot.needsReset, isTrue, reason: 'UI 据此给「重新生成配对码」');
       expect(restarted.pairingPayload, isNull);
       expect(

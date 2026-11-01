@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'dpapi.dart';
 import 'host_write.dart';
 
 import 'package:crypto/crypto.dart';
@@ -44,6 +45,31 @@ class HostToken {
   }
 }
 
+/// 启动时**令牌明文能不能恢复**（2026-11-01，提案 57 裁定 ②③⑤）。
+///
+/// 为什么要一个显式状态而不是 `plaintextToken == null` 一个布尔：
+/// 「只存了哈希」「密文解不开」「密文与哈希不符」对用户是**三件不同的事**，
+/// 提示语和下一步动作都不一样（前者重新生成一次就好，后两者要先说清原因）。
+enum TokenRestoreState {
+  /// 没有身份记录（全新安装 / 文件不在）
+  missing,
+
+  /// 明文恢复了 —— 能画码
+  restored,
+
+  /// 只有哈希：老文件（v1），或本次加密失败
+  hashOnly,
+
+  /// 密文在，但解不开（换了 Windows 用户 / 换了机器 / 密文损坏）
+  undecryptable,
+
+  /// 解出来了，但 `sha256(明文) != token_hash` —— **两份身份数据互相矛盾**
+  mismatch,
+
+  /// `scheme` 不认识（将来换了算法 / 被手工改过）
+  unsupported,
+}
+
 /// 主机身份：`host_id` + 令牌哈希（+ 可选明文）。
 ///
 /// ## 为什么要区分「哈希」与「明文」
@@ -81,12 +107,25 @@ class HostIdentity {
   /// 校验一个客户端出示的 Bearer 令牌
   bool authorizes(String? candidate) => HostToken.matches(candidate, tokenHash);
 
-  Map<String, Object?> toJson() => <String, Object?>{
-    'version': 1,
+  /// 落盘用的 JSON。
+  ///
+  /// [protectedToken] = DPAPI 密文（base64）；`null` 时**只写哈希**，
+  /// 行为与升级前完全一致（重启后画不出码，要重新生成）。
+  ///
+  /// ⚠️ 写进去的**永远不是明文** —— 明文只在内存里活，密文由操作系统保管。
+  Map<String, Object?> toJson({String? protectedToken}) => <String, Object?>{
+    // v2 起多一个 `token_protected`；**读的时候不看版本号**（有字段就试），
+    // 所以老程序读新文件也不会崩（只是忽略这个字段）。
+    'version': protectedToken == null ? 1 : 2,
     'host_id': hostId,
     // ⚠️ 只写哈希。写明文就等于把「只存哈希」这条设计作废。
     'token_hash': tokenHash,
     'created_at': createdAt,
+    if (protectedToken != null)
+      'token_protected': <String, Object?>{
+        'scheme': dpapiScheme,
+        'blob': protectedToken,
+      },
   };
 }
 
@@ -101,25 +140,49 @@ class HostIdentity {
 ///
 /// [HostIdentityStore.inMemory] 不碰文件系统，供单测使用。
 class HostIdentityStore {
-  HostIdentityStore(this.file, {HostWriteIo io = const RealHostWriteIo()})
-    : _memory = null,
-      _io = io;
+  HostIdentityStore(
+    this.file, {
+    HostWriteIo io = const RealHostWriteIo(),
+    TokenProtector protector = const DpapiTokenProtector(),
+  }) : _memory = null,
+       _io = io,
+       _protector = protector;
 
   /// 不碰文件系统 —— 单测与自检用。
   ///
   /// `file == null` 就是「内存模式」的判据；[_memory] 是它的存储槽，
   /// **初值必须是 `null`（= 还没存过）**，而不是空 map ——
   /// 空 map 会让 [load] 误判成「已存过一条记录」。
-  HostIdentityStore.inMemory()
-    : file = null,
-      _memory = null,
-      _io = const RealHostWriteIo();
+  HostIdentityStore.inMemory({
+    TokenProtector protector = const DpapiTokenProtector(),
+  }) : file = null,
+       _memory = null,
+       _io = const RealHostWriteIo(),
+       _protector = protector;
 
   /// `null` = 纯内存模式
   final File? file;
 
   /// 文件操作（**测试注入故障的接缝**；生产用 `dart:io`）
   final HostWriteIo _io;
+
+  /// 令牌明文的加解密（**测试注入的接缝**：能强制「加密失败」）
+  final TokenProtector _protector;
+
+  /// 上一次「加密令牌」是否失败（`null` = 没失败 / 没试过）。
+  ///
+  /// 裁定 ③：加密失败时**允许**当前进程继续用内存令牌，但界面必须明说
+  /// 「配对码本次运行有效，重启后可能需要重新生成」—— 不能报成「保存成功」。
+  String? get lastProtectProblem => _lastProtectProblem;
+  String? _lastProtectProblem;
+
+  /// 上一次读取时**明文恢复到了什么程度**（裁定 ②③⑤）
+  TokenRestoreState get lastRestoreState => _lastRestoreState;
+  TokenRestoreState _lastRestoreState = TokenRestoreState.missing;
+
+  /// 上一次读取时恢复失败的原因（`null` = 没失败）
+  String? get lastRestoreProblem => _lastRestoreProblem;
+  String? _lastRestoreProblem;
 
   /// 上一次写盘的**完整现场**（一行日志；`null` = 没失败过）
   ///
@@ -181,10 +244,72 @@ class HostIdentityStore {
           '${file?.path ?? '（内存）'}';
       return null;
     }
-    return HostIdentity(
+    final HostIdentity identity = HostIdentity(
       hostId: hostId,
       tokenHash: tokenHash,
       createdAt: createdAt,
+    );
+    return _withRestoredToken(identity, stored);
+  }
+
+  /// 把 `token_protected` 里的密文解回明文（裁定 ②）。
+  ///
+  /// ## 三道关，缺一不可
+  ///
+  /// 1. `scheme` 必须认识（将来换算法靠它区分，不认识就**明说**，不猜）；
+  /// 2. 解密必须成功（换 Windows 用户 / 换机器 / 密文损坏 ⇒ 失败）；
+  /// 3. **`sha256(明文) == token_hash`**（裁定原文：不一致时不得展示二维码，
+  ///    也不得静默修正身份）。
+  ///
+  /// 任何一关不过 ⇒ 返回**原样的身份**（只有哈希），并把原因记进
+  /// [lastRestoreState] / [lastRestoreProblem]。
+  /// ⚠️ **绝不返回 `null`**：`loadOrCreate()` 是「没有身份就创建」，
+  /// 返回 `null` 会**静默轮换令牌**，把所有手机踢下线（裁定 ⑤ 明确禁止）。
+  HostIdentity _withRestoredToken(
+    HostIdentity identity,
+    Map<String, Object?> stored,
+  ) {
+    _lastRestoreProblem = null;
+    final Object? raw = stored['token_protected'];
+    if (raw == null) {
+      _lastRestoreState = TokenRestoreState.hashOnly;
+      return identity;
+    }
+    if (raw is! Map) {
+      _lastRestoreState = TokenRestoreState.unsupported;
+      _lastRestoreProblem = 'token_protected 不是对象（${raw.runtimeType}）';
+      return identity;
+    }
+    final Object? scheme = raw['scheme'];
+    final Object? blob = raw['blob'];
+    if (scheme != dpapiScheme || blob is! String || blob.isEmpty) {
+      _lastRestoreState = TokenRestoreState.unsupported;
+      _lastRestoreProblem = '不认识的加密方案：scheme=$scheme';
+      return identity;
+    }
+    final String? plaintext = _protector.unprotect(
+      blob,
+      hostId: identity.hostId,
+    );
+    if (plaintext == null) {
+      _lastRestoreState = TokenRestoreState.undecryptable;
+      _lastRestoreProblem = _protector.isSupported
+          ? '密文解不开（可能换了 Windows 用户或换了电脑）'
+          : '这台电脑不支持加密存储';
+      return identity;
+    }
+    if (HostToken.hashOf(plaintext) != identity.tokenHash) {
+      // 两份身份数据互相矛盾 ⇒ 谁的都不信，**明文丢弃**
+      _lastRestoreState = TokenRestoreState.mismatch;
+      _lastRestoreProblem = '密文解出来的令牌与 token_hash 不一致';
+      return identity;
+    }
+    _lastRestoreState = TokenRestoreState.restored;
+    return HostIdentity(
+      hostId: identity.hostId,
+      tokenHash: identity.tokenHash,
+      createdAt: identity.createdAt,
+      plaintextToken: plaintext,
     );
   }
 
@@ -211,8 +336,17 @@ class HostIdentityStore {
       createdAt: now,
       plaintextToken: plaintext,
     );
+    // 裁定 ②③：加密失败**不阻断**本次配对（内存令牌照用），但必须记下来 ——
+    // 界面据此提示「本次运行有效，重启后要重新生成」，不许报成保存成功。
+    final String? protectedToken = _protector.protect(
+      plaintext,
+      hostId: next.hostId,
+    );
+    _lastProtectProblem = protectedToken == null
+        ? (_protector.isSupported ? '系统加密失败' : '这台电脑不支持加密存储')
+        : null;
     try {
-      _write(next);
+      _write(next, protectedToken: protectedToken);
       _lastWriteFailed = false;
       _lastWriteProblem = null;
     } catch (error) {
@@ -271,8 +405,10 @@ class HostIdentityStore {
   ///
   /// 改成「写临时文件 → rename 覆盖」：临时文件是**新文件**，不会撞上任何锁；
   /// rename 只需要极短的独占窗口。仍然失败就重试三次（60/120/180ms）。
-  void _write(HostIdentity identity) {
-    final Map<String, Object?> json = identity.toJson();
+  void _write(HostIdentity identity, {String? protectedToken}) {
+    final Map<String, Object?> json = identity.toJson(
+      protectedToken: protectedToken,
+    );
     if (file == null) {
       _memory = json;
       return;

@@ -17925,3 +17925,72 @@ L2 inplace = ok
   按钮 `先不修 / 修复` 始终在底部可见。
 
 （验完已把字号改回 1.0、镜像写回备份，概览数字与动手前一致。）
+
+### 七十一、2026-11-01 提案 57 落地：令牌明文用 DPAPI 加密持久化（裁定 A，不做 C）
+
+用户裁定：**修改后批准方案 A；暂不批准方案 C**（八条意见）。核心动机写在裁定开头：
+「只存哈希导致重启后无法恢复二维码，用户每天被迫轮换令牌，所有手机重新配对」——
+**「重新生成」那个按钮才是把手机踢下线的元凶**。
+
+#### ① 实现（`packages/shensuanzi_host/lib/src/dpapi.dart` + `auth.dart`）
+
+| 裁定 | 落地 |
+|---|---|
+| ① 当前用户作用域 + `token_protected`，`token_hash` 保留 | `DpapiTokenProtector`（`CryptProtectData`/`CryptUnprotectData`，不加 `CRYPTPROTECT_LOCAL_MACHINE`）；`HostToken.matches` **一行没动** |
+| ② 附加熵 `sha256(host_id)` + **解密后校验哈希** | `_entropyOf(hostId)`；`_withRestoredToken` 三道关：scheme → 解密 → `sha256(明文)==token_hash` |
+| ③ **加密失败 ≠ 保存成功** | `lastProtectProblem` → `snapshot.tokenProtectFailed` → 设置页**独立**提示（与写盘失败分开措辞，用 `else if` 避免两句叠着说） |
+| ④ 旧版重写会丢密文 | 提案补「兼容边界」；`auth_test` 有专门用例 |
+| ⑤ 四种组合 + 五条读取路径 | `auth_test` **+10 条** |
+| ⑥ FFI 资源 / 非 Windows / 正式依赖 | `_call` 的 `finally` 统一 `LocalFree` + `malloc.free`；`available` **首次访问才加载**；`ffi` 从 dev 移到 `dependencies` |
+| ⑦ 不做 C | 未实现宽限期 |
+| ⑧ 一次性迁移成本 | 提案 §八：升级后第一次「重新生成」写密文，**手机重扫一次**，此后不再需要 |
+
+**五种读取状态**（`TokenRestoreState`）：`restored` / `hashOnly` / `undecryptable` /
+`mismatch` / `unsupported`；`missing` = 没有身份记录。
+设置页按状态给**不同的原因**（换 Windows 用户 / 换电脑 / 两份数据矛盾 / 格式不认识），
+而不是一句「重启过了」。
+
+> ⚠️ **`loadOrCreate` 的死角**（裁定 ⑤ 特别点出）：它是「没有身份就创建」。
+> 所以任何解密失败都**必须返回身份本身**（只是没有明文），**绝不能返回 `null`** ——
+> 返回 null 会静默轮换令牌，把所有手机踢下线。这条在 `_withRestoredToken` 的文档里
+> 写成了硬约束，并有专门用例（`loadOrCreate` 后 `tokenHash` 不变）。
+
+#### ② 跨进程实测：重启后仍能画同一个码
+
+`tool/probe_restart_token.dart`，**两个独立进程**读同一个 `host.json`（同进程 new store
+只能证明内存逻辑，证明不了 DPAPI 密文在别的进程里也能解）：
+
+```
+[create] host_id=01a194ff-…  token_hash=2b625780…  file_has_protected=true  file_has_plaintext=false
+[load  ] restore_state=restored  host_id/token_hash/plaintext 与 create 逐字相同  can_show_qr=true
+```
+
+文件内容：`{"version":2, …, "token_protected":{"scheme":"dpapi-user-v1","blob":"AQAAANCMnd8…"}}`
+—— 有密文、**没有明文**。
+
+#### ③ ⚠️ 两处**旧测试的语义**被裁定改掉了（按纪律 12 报备）
+
+这两条不是「为了让测试变绿而改」，而是**裁定改变了规格**；旧行为没有消失，
+都保留成了「没有加密器时」的**对照用例**：
+
+| 位置 | 旧断言 | 现在 |
+|---|---|---|
+| `auth_test`「再次 loadOrCreate 读回同一身份，但**没有明文**」 | `canShowQr == false` | 拆两条：有加密器 ⇒ **能画码**（新语义）；`NoTokenProtector` ⇒ 画不出码（旧语义，作对照） |
+| `service_controller_test`「**重启后画不出码**」 | `qrAvailable == false` + `needsReset` | 拆两条：「重启后仍能画同一个码」（`tokenRestore=restored`、令牌逐字相同）；`NoTokenProtector` ⇒ 旧行为 |
+| `selfcheck_service` 同名两条 | 同上 | 同上（test 与 selfcheck 成对镜像） |
+
+#### 测试与门禁
+
+- `dpapi_test`（host，**8 条**）：往返 / 熵绑定 / 非法 Base64 / 空密文 / 截断密文 /
+  篡改 1 字节 / 空令牌 / **循环 500 次**（输出缓冲区释放冒烟）/ 非 Windows 降级。
+- `auth_test` +**10 条**：四种组合（加密×写盘）+ 解不开 / 哈希不符 / scheme 不认识 /
+  老 v1 文件 / 旧版重写丢密文 / 平台不支持。
+- `service_controller_test`：重启后同码 + 降级对照。
+- `selfcheck_service` **93/93**（新增 6 条 DPAPI 段）。
+- 门禁：root **438** · host **199**（1 条按平台跳过）· analyze 0。
+
+#### 还没做的
+
+- **真机/GUI 验收**：需要在那台电脑上跑一次真实应用 —— 开服务 → 记下码 → 关掉重开 →
+  码应当**一模一样**、手机不用重扫。这一步必须在 GUI 上点（`probe_restart_token` 只到进程级）。
+- 提案 56 ③ 的 `schema v8`：仍按裁定暂缓。

@@ -333,16 +333,31 @@ Future<void> main() async {
     await get(reset.port!, '/api/sync/pull', token: oldToken) == 401,
   );
 
-  section('模拟重启：新控制器 + 同一个 host.json（只有哈希）');
+  // 2026-11-01 语义变更（提案 57 裁定）：从前这里是「重启后画不出码」。
+  // 现在明文由 DPAPI 加密落盘、重启能解回来 ⇒ **重启后照样画同一个码**。
+  // 「画不出」那条降级路径由下面「不支持加密」的 store 覆盖。
+  section('模拟重启：新控制器 + 同一个 host.json（含 DPAPI 密文）');
   await controller.stop();
   final HostServiceController restarted = build(db, store);
   final HostServiceSnapshot sRestart = await restarted.start();
   check('state = running', sRestart.state == HostServiceState.running);
-  check('**qrAvailable = false**（明文不可逆，画不出码）', !sRestart.qrAvailable);
-  check('**needsReset = true**（UI 据此给「重新生成」）', sRestart.needsReset);
-  check('pairingPayload = null', restarted.pairingPayload == null);
+  if (const DpapiTokenProtector().isSupported) {
+    check(
+      '**tokenRestore = restored**（密文解回明文）',
+      sRestart.tokenRestore == TokenRestoreState.restored,
+    );
+    check('**qrAvailable = true**（重启后仍能画码）', sRestart.qrAvailable);
+    check('**needsReset = false**（不再需要重新生成）', !sRestart.needsReset);
+    check(
+      '重启后画的还是**同一个令牌**',
+      restarted.pairingPayload?.token == fresh.token,
+    );
+  } else {
+    check('（本机不支持加密）qrAvailable = false', !sRestart.qrAvailable);
+    check('（本机不支持加密）needsReset = true', sRestart.needsReset);
+  }
   check(
-    '但**旧令牌照样能鉴权**（服务本身没坏）',
+    '**旧令牌照样能鉴权**（服务本身没坏）',
     await get(sRestart.port!, '/api/sync/pull', token: fresh.token) == 200,
   );
   check('重启后可重置出可扫的码', (await restarted.resetToken()).qrAvailable);
@@ -431,6 +446,44 @@ Future<void> main() async {
     '参数是路径字符串（与 DataLocation.directory 同型）',
     hostIdentityFile('D:/data').path.contains('data'),
   );
+
+  // 2026-11-01（提案 57 裁定 ②③⑤）：令牌明文的加密持久化。
+  // 与 `test/auth_test.dart` 的「令牌加密持久化」一组互为镜像。
+  section('令牌加密持久化（DPAPI）');
+  {
+    final Directory box = Directory.systemTemp.createTempSync('ssz_selfcheck_dpapi_');
+    try {
+      final File file = File(
+        '${box.path}${Platform.pathSeparator}host.json',
+      );
+      final HostIdentityStore store = HostIdentityStore(file);
+      final HostIdentity created = store.reset(now: 1000);
+      check('加密失败被记下来（本机支持时应当为空）', store.lastProtectProblem == null,
+          store.lastProtectProblem);
+      final String raw = file.readAsStringSync();
+      check('文件里有 token_protected（支持加密时）',
+          !const DpapiTokenProtector().isSupported || raw.contains('token_protected'));
+      check('文件里**没有明文令牌**', !raw.contains(created.plaintextToken!));
+
+      // 「重启」= 新 store 读同一个文件
+      final HostIdentityStore again = HostIdentityStore(file);
+      final HostIdentity? loaded = again.load();
+      check('重启后能读回身份', loaded != null);
+      check('令牌校验不变（手机照连）',
+          loaded?.tokenHash == created.tokenHash);
+      if (const DpapiTokenProtector().isSupported) {
+        check('重启后明文恢复 ⇒ 能画码',
+            again.lastRestoreState == TokenRestoreState.restored &&
+                loaded?.canShowQr == true);
+        check('恢复出来的令牌与原来逐字相同',
+            loaded?.plaintextToken == created.plaintextToken);
+      }
+    } finally {
+      try {
+        box.deleteSync(recursive: true);
+      } catch (_) {}
+    }
+  }
 
   stdout.writeln('');
   if (_failures.isEmpty) {

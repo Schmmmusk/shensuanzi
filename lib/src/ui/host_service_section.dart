@@ -329,6 +329,15 @@ class _HostServicePanelState extends State<HostServicePanel> {
               '配对码只对这次运行有效 —— 写不进数据文件夹里的 host.json。'
               '手机现在照样能连；下次开机再连时，要重新生成一次码。',
             ),
+          ]
+          // 2026-11-01（提案 57 裁定 ③）：**加密失败 ≠ 保存成功**。
+          // 只写进了哈希 ⇒ 重启后画不出码，必须提前说清楚。
+          else if (snapshot.tokenProtectFailed) ...<Widget>[
+            const SizedBox(height: 6),
+            _hintLine(
+              '这次的配对码没能加密存下来（系统加密不可用），只存了校验用的哈希。'
+              '手机现在照样能连；下次开机会需要重新生成一次码。',
+            ),
           ],
 
           // 能画码 ⇒ 给「显示二维码」；画不出（重启后）⇒ 给「重新生成」+ 说清后果
@@ -340,10 +349,7 @@ class _HostServicePanelState extends State<HostServicePanel> {
               label: const Text('显示二维码'),
             )
           else if (snapshot.needsReset) ...<Widget>[
-            _hintLine(
-              '这台电脑重启过了，之前的配对码显示不出来（为安全起见，'
-              '码上的令牌没有存到硬盘）。${HostServiceSnapshot.resetWarning}。',
-            ),
+            _hintLine(_needsResetHint(snapshot)),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               key: const Key('host-service-reset'),
@@ -369,6 +375,35 @@ class _HostServicePanelState extends State<HostServicePanel> {
   }
 
   /// 橙色内联提示（与开单页/核销页同一形态）
+  /// 「画不出码」时的说明 —— **原因不同，话就不一样**（提案 57 裁定 ②③⑤）。
+  ///
+  /// | `tokenRestore` | 对用户说什么 |
+  /// |---|---|
+  /// | `hashOnly` | 只存了哈希（旧文件 / 加密失败）⇒ 重新生成一次 |
+  /// | `undecryptable` | 换了 Windows 用户或换了电脑 ⇒ 说明原因再重新生成 |
+  /// | `mismatch` | 两份身份数据对不上 ⇒ 安全起见按不可信处理 |
+  /// | `unsupported` | 存储格式不认识（可能被别的版本改过） |
+  static String _needsResetHint(HostServiceSnapshot snapshot) {
+    final String tail = '${HostServiceSnapshot.resetWarning}。';
+    switch (snapshot.tokenRestore) {
+      case TokenRestoreState.undecryptable:
+        return '这台电脑换了 Windows 用户、或者换了一台电脑 —— '
+            '之前配对码的加密副本打不开（这是有意的：换机器本来就该重新配对）。'
+            '要连新手机请重新生成一次，手机会需要重扫。$tail';
+      case TokenRestoreState.mismatch:
+        return '身份文件里的两份数据对不上（密文解出来的令牌和哈希不一致）—— '
+            '安全起见按不可信处理，不会拿它画码。请重新生成一次。$tail';
+      case TokenRestoreState.unsupported:
+        return '配对码的存储格式这台电脑不认识（可能被别的版本改过）。'
+            '请重新生成一次。$tail';
+      case TokenRestoreState.hashOnly:
+      case TokenRestoreState.missing:
+      case TokenRestoreState.restored:
+        return '这台电脑重启过了，之前的配对码显示不出来（为安全起见，'
+            '码上的令牌没有存到硬盘）。$tail';
+    }
+  }
+
   Widget _hintLine(String text) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: <Widget>[

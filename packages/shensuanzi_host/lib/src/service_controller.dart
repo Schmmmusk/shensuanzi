@@ -37,6 +37,9 @@ class HostServiceSnapshot {
     this.addressHint,
     this.needsReset = false,
     this.qrAvailable = false,
+    this.tokenRestore = TokenRestoreState.missing,
+    this.tokenProtectFailed = false,
+    this.tokenRestoreProblem,
     this.trafficCount = 0,
     this.lastTrafficAt,
     this.addressOptions = const <NetAddressOption>[],
@@ -72,6 +75,22 @@ class HostServiceSnapshot {
 
   /// 现在能画二维码（= 在听 + 有明文 + 有地址）
   final bool qrAvailable;
+
+  /// 启动时**明文令牌恢复到了什么程度**（2026-11-01，提案 57 裁定 ②③⑤）。
+  ///
+  /// 与 [needsReset] 的关系：[needsReset] 只说「画不出码」，
+  /// 这个字段说**为什么** —— 「只存了哈希」和「密文解不开」对用户是两件事：
+  /// 前者重新生成一次就好，后者要先说清「换了 Windows 用户 / 换了电脑」。
+  final TokenRestoreState tokenRestore;
+
+  /// 本次**加密令牌**失败（DPAPI 不可用 / 系统拒绝）⇒ 只写进了哈希。
+  ///
+  /// 裁定 ③：这种情况**允许**本次继续用内存令牌，但界面必须明说
+  /// 「配对码本次运行有效，重启后可能需要重新生成」，不能报成保存成功。
+  final bool tokenProtectFailed;
+
+  /// [tokenRestore] 不是 `restored` 时的原因（人话；`null` = 没问题）
+  final String? tokenRestoreProblem;
 
   /// 本次启动后**通过鉴权**的请求次数（有人真的在用，不是被扫端口）
   final int trafficCount;
@@ -237,6 +256,9 @@ class HostServiceController {
     failureHint: _state == HostServiceState.failed ? _failureHint : null,
     addressHint: _addressHint,
     needsReset: _state == HostServiceState.running && !_canShowQr,
+    tokenRestore: _identities.lastRestoreState,
+    tokenProtectFailed: _identities.lastProtectProblem != null,
+    tokenRestoreProblem: _identities.lastRestoreProblem,
     qrAvailable: _state == HostServiceState.running && pairingPayload != null,
     trafficCount: _trafficCount,
     lastTrafficAt: _lastTrafficAt,

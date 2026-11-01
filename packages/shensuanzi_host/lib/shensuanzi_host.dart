@@ -31,7 +31,10 @@ export 'src/host_write.dart'
         RealHostWriteIo,
         collectEnvironment,
         writeIdentityFile;
-export 'src/auth.dart' show HostIdentity, HostIdentityStore, HostToken;
+export 'src/auth.dart'
+    show HostIdentity, HostIdentityStore, HostToken, TokenRestoreState;
+export 'src/dpapi.dart'
+    show DpapiTokenProtector, NoTokenProtector, TokenProtector, dpapiScheme;
 export 'src/http_server.dart' show HostHttpServer, PortRange;
 export 'src/local_ip.dart' show LocalIp, NetAddressOption, NetCandidate;
 // ⚠️ `PairingPayload`（协议 wire 格式）**归属 core**，不经这里转手 ——
