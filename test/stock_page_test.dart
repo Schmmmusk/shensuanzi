@@ -1018,6 +1018,50 @@ void main() {
   });
 
   // 批 3 第 16 条：库存页原先有搜索，但**没有 × 清空、没有真实总数**。
+  // 2026-11-01 真机（用户当场指出）：完整压货榜放最上面之后有半屏高，
+  // **把搜索框挤到了它下面** —— 而库存页 95% 的用法是「搜一个商品」。
+  // 现在默认收起成一行摘要：搜索框回到第一屏，「定位到压货榜」仍然成立。
+  testWidgets('A1 修正：压货榜默认收起，搜索框留在第一屏，点开才展开', (WidgetTester tester) async {
+    buy(3);
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('stock-top-expand')),
+      findsOneWidget,
+      reason: '收起态要有入口，否则用户找不到压货榜',
+    );
+    expect(
+      find.byKey(const Key('stock-top-collapse')),
+      findsNothing,
+      reason: '默认不许展开 —— 10 行榜会把搜索框顶下去',
+    );
+
+    // 搜索框必须落在第一屏内（不必滚动就能点）
+    final Rect search = tester.getRect(find.byKey(const Key('stock-search')));
+    final double screenH =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(
+      search.bottom,
+      lessThan(screenH),
+      reason: '搜索框被压到屏幕外（bottom=${search.bottom}，屏高=$screenH）',
+    );
+
+    await tester.tap(find.byKey(const Key('stock-top-expand')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('stock-top-collapse')),
+      findsOneWidget,
+      reason: '展开后要有收起按钮（否则只能靠切页复位）',
+    );
+    expect(find.byKey(const Key('stock-top-expand')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('stock-top-collapse')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stock-top-expand')), findsOneWidget);
+    expect(find.byKey(const Key('stock-top-collapse')), findsNothing);
+  });
+
   testWidgets('搜索：有真实总数、× 能清空', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();

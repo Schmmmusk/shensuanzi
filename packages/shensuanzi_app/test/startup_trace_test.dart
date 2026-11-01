@@ -11,6 +11,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:test/test.dart';
 
@@ -163,5 +164,15 @@ void main() {
   test('defaultFile 落在 %APPDATA%\\神算子\\日志\\ 下（与崩溃日志同目录）', () {
     final String path = StartupTrace.defaultFile().path;
     expect(path, endsWith(r'神算子\日志\startup-trace.jsonl'));
+  });
+
+  // 2026-11-01 真机：Android 上 `APPDATA` 为空、`Directory.systemTemp` 不可写
+  // ⇒ 埋点**一行都没写出来**（异常被 flushStartup 的 catch 吞掉）。
+  // 现在改成「跟着数据库走」：库在数据目录里，`日志/` 是它的兄弟。
+  test('traceFileFor：落在库文件旁边的「日志」目录（两端都成立）', () {
+    final String path = StartupTrace.traceFileFor(
+      p.join('data', '神算子', 'shensuanzi.db'),
+    ).path;
+    expect(path, p.join('data', '神算子', '日志', 'startup-trace.jsonl'));
   });
 }

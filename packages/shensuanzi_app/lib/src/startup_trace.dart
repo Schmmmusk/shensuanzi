@@ -60,11 +60,25 @@ class StartupTrace {
   static double? _dbMb;
 
   /// 开库之后调一次。
+  ///
+  /// ⚠️ **顺手把落盘位置也定下来**（2026-11-01 真机发现埋点一直是哑的）：
+  /// [defaultFile] 靠 `Platform.environment['APPDATA']`，那是 Windows 的写法；
+  /// Android 上它为空 ⇒ 退回 `Directory.systemTemp`，而 Android 上那是
+  /// `/tmp`（不存在、也不可写）⇒ 写盘抛异常、被 [flushStartup] 的 catch 吞掉
+  /// ⇒ **一行记录都不会有**。所以改成「跟着数据库走」：库在数据目录里，
+  /// `日志/` 是它的兄弟目录，两端都成立。
   static void noteDatabase(String path, double? sizeMb) {
     if (!kStartupTrace) return;
     _dbPath = path;
     _dbMb = sizeMb;
+    _file = traceFileFor(path);
   }
+
+  /// 落盘路径：**跟着数据库走** —— `<数据目录>/日志/startup-trace.jsonl`。
+  ///
+  /// 纯函数（可测）：Android 上没有 `APPDATA`，只能靠「库在哪、日志就在它旁边」。
+  static File traceFileFor(String databasePath) =>
+      File(p.join(p.dirname(databasePath), '日志', 'startup-trace.jsonl'));
 
   /// 本次进程的记录文件（首帧后第一次 flush 时才真正创建）。
   static File? _file;

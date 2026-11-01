@@ -160,6 +160,9 @@ class _StockPageState extends State<StockPage> {
   /// build 新建 widget），所以 `initState` 会跟着重跑 —— 切走再切回来就是最新值。
   late StockTopSummary _stockTop;
 
+  /// 压货榜是否展开（默认收起 —— 见 build 里那段注释）
+  bool _showTopAll = false;
+
   @override
   void initState() {
     super.initState();
@@ -170,6 +173,60 @@ class _StockPageState extends State<StockPage> {
   void dispose() {
     _query.dispose();
     super.dispose();
+  }
+
+  /// 收起状态的压货榜：**一行摘要 + 展开**。
+  ///
+  /// 只放数字与第一名，不画横条 —— 这不是「第二份图表渲染」（那种必然漂移），
+  /// 只是一句摘要。完整榜仍然只有 `StockTopCard` 一份实现。
+  Widget _stockTopSummaryRow(ThemeData theme) {
+    final StockValueRow first = _stockTop.rows.first;
+    final int count = _stockTop.rows.length;
+    return OutlinedButton(
+      key: const Key('stock-top-expand'),
+      onPressed: () => setState(() => _showTopAll = true),
+      style: OutlinedButton.styleFrom(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(Icons.expand_more, size: 18),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '压货最多的 $count 个商品',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+              Text(
+                '最多 ${_yuan(first.valueCents)}',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${first.name} · 按占用资金排，点开看全部',
+            style: TextStyle(
+              height: 1.6,
+              color: theme.textTheme.bodySmall?.color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 分 → `¥1,234.56`（与榜上的写法一致）
+  static String _yuan(int cents) {
+    final String sign = cents < 0 ? '-' : '';
+    final int abs = cents.abs();
+    return '$sign¥${abs ~/ 100}.${(abs % 100).toString().padLeft(2, '0')}';
   }
 
   /// **#27 批 2（裁定乙）**：库存页快速建档 —— 手机壳走 `masterDataSink`
@@ -403,14 +460,41 @@ class _StockPageState extends State<StockPage> {
               // 2026-11-01（用户裁定 A1）：完整压货榜从概览页搬到这里。
               //
               // 放**最上面**是有意的：概览那个「查看全部」按钮跳过来时，
-              // 「跳到库存页顶部」就等于「定位到压货榜」—— 不需要额外的
-              // 滚动锚点（用户裁定要求「直接定位到压货榜，而不是只跳顶部」）。
+              // 「跳到库存页顶部」就等于「定位到压货榜」。
+              //
+              // ⚠️ 但**默认收起**（2026-11-01 真机，用户当场指出）：
+              // 10 行榜展开时有半屏高，把**搜索框挤到了它下面** ——
+              // 而库存页 95% 的用法是「搜一个商品看还有多少」，搜索框必须留在
+              // 第一屏。收起后只剩一行摘要，「定位到压货榜」仍然成立
+              //（那一行就是榜），要细节点一下展开。
               if (!_stockTop.isEmpty) ...<Widget>[
                 const SizedBox(height: 12),
-                StockTopCard(
-                  summary: _stockTop,
-                  mobileShell: widget.mobileShell,
-                ),
+                // ⚠️ `_stockTop.isEmpty` 是「行 + 待校准 + 负成本」三者皆空，
+                // 所以「非空但一行都没有」（只有待校准/负成本计数）是可能的 ——
+                // 那种情况收起状态没有第一名可写，直接展开完整卡。
+                if (_showTopAll || _stockTop.rows.isEmpty)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      StockTopCard(
+                        summary: _stockTop,
+                        mobileShell: widget.mobileShell,
+                      ),
+                      if (_stockTop.rows.isNotEmpty)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            key: const Key('stock-top-collapse'),
+                            onPressed: () =>
+                                setState(() => _showTopAll = false),
+                            icon: const Icon(Icons.expand_less, size: 18),
+                            label: const Text('收起压货榜'),
+                          ),
+                        ),
+                    ],
+                  )
+                else
+                  _stockTopSummaryRow(theme),
               ],
               const SizedBox(height: 4),
               Text(
