@@ -63,6 +63,7 @@ class OverviewPage extends StatefulWidget {
   const OverviewPage({
     super.key,
     required this.dataDirectory,
+    this.remoteVersion = 0,
     required this.backupDirectory,
     required this.schemaVersion,
     required this.databaseReady,
@@ -88,6 +89,9 @@ class OverviewPage extends StatefulWidget {
 
   /// 数据库是否已成功打开
   final bool databaseReady;
+
+  /// 主机落库版本号（手机推上来单据 ⇒ 变了就重算，见 `app_shell.dart`）
+  final int remoteVersion;
 
   /// 店名（设置页采集；空则显示「概览」，SC-2）
   final String? shopName;
@@ -162,8 +166,11 @@ class _OverviewPageState extends State<OverviewPage> {
   @override
   void didUpdateWidget(OverviewPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 换库（桌面 ↔ 手机镜像、重连）必须重算；其余重建复用缓存
-    if (oldWidget.queries != widget.queries) {
+    // 换库（桌面 ↔ 手机镜像、重连）必须重算；其余重建复用缓存。
+    // 2026-11-01：主机**落库了**手机推上来的数据也要重算 —— 否则「今日 / 应收 / 应付」
+    // 停在旧数字，用户会以为没同步（真机报的就是这个）。
+    if (oldWidget.queries != widget.queries ||
+        oldWidget.remoteVersion != widget.remoteVersion) {
       _data = _load();
     }
   }

@@ -152,11 +152,15 @@ void main() {
     );
   }
 
-  Widget page({ExportSink? exports, bool withSettlement = false}) =>
-      MaterialApp(
+  Widget page({
+    ExportSink? exports,
+    bool withSettlement = false,
+    int remoteVersion = 0,
+  }) => MaterialApp(
         home: Scaffold(
           body: DocumentsPage(
             dao: dao,
+            remoteVersion: remoteVersion,
             exports: exports,
             // 默认**不接**核销服务：现有用例都是「只读列表」场景（行不可点）；
             // 需要测「点行进详情」时显式传 true（与其他可选服务同款判定）
@@ -971,6 +975,91 @@ void main() {
       reason: '换了筛选就必须重查，否则「筛了没反应」',
     );
   });
+  // 2026-11-01 真机：「手机上推了单、显示已同步，主机单据页却没变化，
+  // 切到别的页再切回来才对」。
+  //
+  // 根因不是没收到（库存都变了），而是这页把查询结果**缓存在 State 里**
+  // （性能裁定：26 万单上每次 build 重查 ≈227 ms），父级 `setState` 不重查。
+  // 修法：壳把「落库版本号」传下来，变了就重查 —— 但**不动筛选、不动滚动**。
+  group('主机落库后自动重查（2026-11-01 真机）', () {
+    testWidgets('版本号变了 ⇒ 不用切页也能看到新单；版本没变 ⇒ 仍复用缓存', (
+      WidgetTester tester,
+    ) async {
+      // ⚠️ 用**今天**的日期：列表默认只看最近 30 天，写死 2026-10-01
+      // 在 11-01 这天正好落在窗口边缘（实测过，会假红）
+      final DateTime now = DateTime.now();
+      final String today =
+          '${now.year}-${now.month.toString().padLeft(2, '0')}-'
+          '${now.day.toString().padLeft(2, '0')}';
+
+      // 先放一张采购单，保证列表非空
+      buy(date: today, qty: 10);
+
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      // 模拟「手机推上来一张销售单、主机落库」
+      final SaleSaved saved = sales.create(
+        SaleDraft(
+          // 散客（不挂往来方）：这条用例只关心「列表刷不刷新」
+          partyId: null,
+          date: today,
+          lines: <SaleLineDraft>[
+            SaleLineDraft(
+              productId: 'p1',
+              productName: '商品',
+              quantity: '1',
+              unitPrice: '5.00',
+            ),
+          ],
+          payments: <SalePaymentDraft>[
+            const SalePaymentDraft(accountId: 'a1', amount: '5.00'),
+          ],
+        ),
+        now: 1700000000000,
+      );
+      final String docNo = saved.docNo;
+
+      // ① 父级只是 setState（版本没变）⇒ **不该**出现（这就是 bug 的现场）
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining(docNo),
+        findsNothing,
+        reason: '缓存未失效时不该自己冒出来 —— 正是用户看到的现象',
+      );
+
+      // ② 版本变了（主机通知「落库了」）⇒ 重查
+      await tester.pumpWidget(page(remoteVersion: 1));
+      await tester.pumpAndSettle();
+      // 行里是「单号 · 对方」拼起来的，所以用 textContaining
+      expect(find.textContaining(docNo), findsOneWidget);
+    });
+
+    testWidgets('重查**不动筛选**：搜索词还在，只是结果按新数据重算', (
+      WidgetTester tester,
+    ) async {
+      buy(date: '2026-10-01', qty: 10);
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      // 输入搜索词（会切到「全部」档并重查）
+      await tester.enterText(find.byType(TextField).first, '采购');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('采购'), findsWidgets);
+
+      await tester.pumpWidget(page(remoteVersion: 1));
+      await tester.pumpAndSettle();
+
+      // 搜索框里的词还在（没有被重置）
+      expect(
+        find.text('采购'),
+        findsWidgets,
+        reason: '重查不许把用户正在用的筛选清掉',
+      );
+    });
+  });
+
 }
 
 /// 只数「查了几次库」的 DAO —— 钉住「查询不在 build 里」这条结构。

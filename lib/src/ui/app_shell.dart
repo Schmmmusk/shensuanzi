@@ -321,6 +321,9 @@ class AppShell extends StatefulWidget {
 Widget appShellPage(
   AppShell shell,
   NavDestination destination, {
+  // 2026-11-01 真机：主机落库了手机推上来的数据 ⇒ 会缓存的页面要重查。
+  // 由壳（`_AppShellState`）递增后传下来；默认 0 = 不触发。
+  int remoteVersion = 0,
   // #32：概览页「要开工？」快捷入口的跳转回调（两壳各给各的导航方式：
   // 桌面切 destination / 手机推整屏）。`null` = 概览不显示入口卡。
   void Function(String destinationId)? onNavigate,
@@ -340,6 +343,7 @@ Widget appShellPage(
   final bool allowBackup = !shell.mobileShell;
   if (destination.id == 'overview') {
     page = OverviewPage(
+      remoteVersion: remoteVersion,
       shopName: shell.shopName,
       monthComparePercent: shell.monthComparePercent,
       dataDirectory: shell.dataDirectory,
@@ -361,6 +365,7 @@ Widget appShellPage(
   } else if (destination.id == 'products') {
     // 商品是核心闭环的第一块 —— 已实现，不再是占位页
     page = ProductsPage(
+      remoteVersion: remoteVersion,
       service: shell.products,
       exports: shell.exports,
       pendingMarks: shell.pendingMarks,
@@ -464,6 +469,7 @@ Widget appShellPage(
     page = shell.documents == null
         ? _PendingPage(destination: destination)
         : DocumentsPage(
+            remoteVersion: remoteVersion,
             dao: shell.documents!,
             exports: shell.exports,
             settlements: shell.settlements,
@@ -571,6 +577,19 @@ class _AppShellState extends State<AppShell> {
     super.dispose();
   }
 
+  /// 主机**真的落库**了手机推上来的数据 ⇒ 递增，喂给**会缓存**的页面。
+  ///
+  /// ## 为什么光 `setState` 不够（2026-11-01 真机）
+  ///
+  /// 用户报：「手机上推了单、显示已同步，主机单据页却没变化，切到别的页再切回来才对。」
+  /// 根因：`单据 / 商品 / 概览` 这三页把查询结果**缓存在 State 里**
+  /// （性能裁定：26 万单上每次 build 重查 ≈227 ms），只在 `initState` 与
+  /// 「改筛选」时重查。父级 `setState` 只重建 `build()`，State 不重建 ⇒ 缓存不动。
+  ///
+  /// ⇒ 把版本号传下去，由各页在 `didUpdateWidget` 里**只重查、不动筛选/滚动**。
+  /// （库存页与往来页是「每次 build 现查」，本来就会刷新，不需要这个。）
+  int _remoteVersion = 0;
+
   void _onHostDataApplied() {
     if (!mounted) return;
     // `immersive` = 开单页（销售 / 送货 / 采购，`navigation.dart`）
@@ -579,7 +598,7 @@ class _AppShellState extends State<AppShell> {
     // （`docs/reply.md` 2026-10-18）。不需要「攒一个标志位」—— 切页本身就会
     // `setState` 重建，那一刻自然读到新数据。
     if (_current.immersive) return;
-    setState(() {});
+    setState(() => _remoteVersion++);
   }
 
   void _select(NavDestination destination) {
@@ -620,6 +639,8 @@ class _AppShellState extends State<AppShell> {
     final Widget page = appShellPage(
       widget,
       current,
+      // 主机落库了就变 ⇒ 会缓存的页面（单据/商品/概览）自己重查
+      remoteVersion: _remoteVersion,
       // #32：桌面 = 切左侧导航
       onNavigate: (String id) {
         final NavDestination? d = AppNavigation.byId(id);

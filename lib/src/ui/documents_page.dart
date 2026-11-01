@@ -45,6 +45,7 @@ class DocumentsPage extends StatefulWidget {
   const DocumentsPage({
     super.key,
     required this.dao,
+    this.remoteVersion = 0,
     this.exports,
     this.settlements,
     this.deliveries,
@@ -52,6 +53,12 @@ class DocumentsPage extends StatefulWidget {
     this.returnService,
     this.onStorageFailure,
   });
+
+  /// **主机落库版本号**（2026-11-01 真机）：手机推上来一张单，主机这边
+  /// 已经落库、库存都变了，但这页的查询结果**缓存在 State 里**（性能裁定：
+  /// 26 万单上每次 build 重查 ≈227 ms），父级 `setState` 不会让它重查。
+  /// ⇒ 壳把这个数字传下来，变了就**只重查**（不动筛选、不动滚动位置）。
+  final int remoteVersion;
 
   final DocumentDao dao;
 
@@ -149,6 +156,15 @@ class _DocumentsPageState extends State<DocumentsPage> {
     super.initState();
     // 首屏：build 之前查一次（不在 build 里查）
     _loadInto();
+  }
+
+  @override
+  void didUpdateWidget(DocumentsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 主机落库了 ⇒ 重查（**不**重置筛选、不跳回顶部：用户可能正看着某一张）
+    if (oldWidget.remoteVersion != widget.remoteVersion) {
+      setState(_loadInto);
+    }
   }
 
   @override

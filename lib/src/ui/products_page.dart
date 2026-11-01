@@ -28,12 +28,16 @@ class ProductsPage extends StatefulWidget {
   const ProductsPage({
     super.key,
     required this.service,
+    this.remoteVersion = 0,
     this.exports,
     this.pendingMarks,
   });
 
   /// `null` = 数据库没打开成功（启动时选的位置有问题）
   final ProductService? service;
+
+  /// 主机落库版本号（手机推了主数据/单据 ⇒ 变了就重查，见 `app_shell.dart`）
+  final int remoteVersion;
 
   /// 导出服务（`null` = 不显示导出按钮）
   final ExportSink? exports;
@@ -118,6 +122,15 @@ class _ProductsPageState extends State<ProductsPage> {
     super.initState();
     // 首屏：build 之前查一次（不在 build 里查）
     _loadInto();
+  }
+
+  @override
+  void didUpdateWidget(ProductsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 主机落库了（手机推上来主数据 / 单据）⇒ 重查；不动筛选
+    if (oldWidget.remoteVersion != widget.remoteVersion) {
+      setState(_loadInto);
+    }
   }
 
   Future<void> _create() async {
