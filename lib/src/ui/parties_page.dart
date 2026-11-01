@@ -168,8 +168,19 @@ class _PartiesPageState extends State<PartiesPage> {
                         ),
                       ),
                     ),
+                  // 2026-11-01（用户裁定 A3）：只读态**置灰**。
+                  //
+                  // 点下去本来就是安全的（`_canWriteParties` 为 false ⇒ 弹
+                  // 「这一步在电脑上做」），但三处写入口的表现不一致：
+                  // 开单页带锁发灰、商品页置灰，唯独这里还是蓝色实心。
+                  // 对不熟悉软件的人来说，**按钮外观就是操作能力的暗示**。
+                  //
+                  // 指路不丢：那句「要建往来方请在电脑上操作」搬进了顶部红条
+                  // （见 `write_blocked.dart` 的 `writeBlockedReason`）。
                   FilledButton.icon(
-                    onPressed: () => _editParty(context),
+                    onPressed: _canWriteParties
+                        ? () => _editParty(context)
+                        : null,
                     icon: const Icon(Icons.add),
                     label: const Text('新建往来方'),
                   ),

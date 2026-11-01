@@ -688,23 +688,32 @@ void main() {
     expect(entries.single.operation, SyncOpType.createMasterData);
   });
 
-  testWidgets('mobile()：**没装配 partySink** 时 ⇒ 仍然弹引导（不给写不通的路）', (
+  // ⚠️ 2026-11-01 规格变更（用户裁定 A3）：从前是「保留入口 + 点了弹引导」，
+  // 现在是**直接置灰**。理由：三处写入口（开单页带锁发灰 / 商品页置灰 /
+  // 这里蓝色实心）表现不一致，而「按钮外观就是操作能力的暗示」。
+  // 指路没有丢 —— 「要新建客户、商品请在电脑上操作」搬进了只读红条。
+  testWidgets('mobile()：**没装配 partySink** 时 ⇒ 按钮置灰（不再「点了才拦」）', (
     WidgetTester tester,
   ) async {
-    // 手机壳 + **没装出口** ⇒ 仍然引导（门控开了但没出口 = 会写进镜像到不了电脑）
+    // 手机壳 + **没装出口** = 只读降级（app.dart 在 readOnly 时把 sink 摘掉）
     await tester.pumpWidget(
       page(policy: const MasterDataPolicy.mobile(), mobileShell: true),
     );
     await tester.pumpAndSettle();
 
+    final FilledButton button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '新建往来方'),
+    );
+    expect(
+      button.onPressed,
+      isNull,
+      reason: '出口没装配 ⇒ 按钮必须置灰（不给写不通的路，也不给看着能点的假象）',
+    );
+
+    // 点它**什么都不会发生**（既不弹引导，也不开表单）
     await tester.tap(find.text('新建往来方'));
     await tester.pumpAndSettle();
-
-    expect(
-      find.text('这一步在电脑上做'),
-      findsOneWidget,
-      reason: '出口没装配 ⇒ 保留入口 + 引导到电脑（不给写不通的路）',
-    );
+    expect(find.text('这一步在电脑上做'), findsNothing);
     expect(
       find.byKey(const Key('party-name')),
       findsNothing,

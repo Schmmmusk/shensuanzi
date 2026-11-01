@@ -620,7 +620,10 @@ void main() {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
 
-    expect(find.text('红富士苹果'), findsOneWidget);
+    // 2026-11-01（用户裁定 A1）：压货榜搬到库存页顶部后，
+    // 同一个商品名会**出现两次**（榜上一行 + 列表一行）——
+    // 这里只关心「它出现了」，不关心出现几次。
+    expect(find.text('红富士苹果'), findsAtLeastNWidgets(1));
     expect(find.text('没进过货的商品'), findsNothing);
     expect(find.textContaining('已隐藏 1 个'), findsOneWidget);
 
@@ -722,7 +725,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // 行 tap = 打开本商品的流水页
-    await tester.tap(find.text('红富士苹果'));
+    await tester.tap(find.text('红富士苹果').last);
     await tester.pumpAndSettle();
 
     expect(find.byType(StockFlowPage), findsOneWidget);
@@ -762,7 +765,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('红富士苹果'));
+    await tester.tap(find.text('红富士苹果').last);
     await tester.pumpAndSettle();
 
     expect(find.byType(StockFlowPage), findsOneWidget);
@@ -843,7 +846,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.textContaining('红富士').first);
+      // 压货榜（页面顶部）里也有这个名字，`.first` 会点到榜上那一行（不可点）
+      await tester.tap(find.textContaining('红富士').last);
       await tester.pumpAndSettle();
       expect(find.byType(StockFlowPage), findsOneWidget);
       expect(tester.takeException(), isNull, reason: '$scale× 下流水页溢出');

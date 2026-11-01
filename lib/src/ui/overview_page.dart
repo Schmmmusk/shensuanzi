@@ -632,9 +632,30 @@ class _OverviewPageState extends State<OverviewPage> {
             mobileShell: widget.mobileShell,
           ),
         ],
+        // 2026-11-01（用户裁定 A1）：完整压货榜**搬到库存页**，概览只留前三名。
+        //
+        // 概览回答「今天要干什么」，压货榜回答「去库存看看」—— 后者本来就
+        // 属于库存页。真机上这一屏要滚两三屏，砍掉 Top10 是最直接的减负。
+        // 但前三名必须留：全撤掉的话用户根本不知道「有货压着」。
         if (!data.stockTop.isEmpty) ...<Widget>[
           const SizedBox(height: 12),
-          StockTopCard(summary: data.stockTop, mobileShell: widget.mobileShell),
+          // 复用**同一个** `StockTopCard`，只截前 3 行 + 给一个出口。
+          // 不另写一份「精简版」渲染逻辑：两份渲染必然漂移
+          // （数量/单位/待校准底注/横条 key 都要各维护一遍）。
+          StockTopCard(
+            summary: StockTopSummary(
+              rows: data.stockTop.rows.take(3).toList(growable: false),
+              uncalibratedCount: data.stockTop.uncalibratedCount,
+              negativeCostCount: data.stockTop.negativeCostCount,
+            ),
+            mobileShell: widget.mobileShell,
+            totalCount: data.stockTop.rows.length,
+            // 压货榜就在库存页顶部 ⇒ 「跳到库存页」= 「定位到压货榜」，
+            // 不需要额外的滚动锚点（用户裁定要求「直接定位到压货榜」）。
+            onOpenAll: widget.onNavigate == null
+                ? null
+                : () => widget.onNavigate!('stock'),
+          ),
         ],
       ],
     );

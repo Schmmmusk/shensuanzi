@@ -29,10 +29,25 @@ class StockTopCard extends StatelessWidget {
     super.key,
     required this.summary,
     this.mobileShell = false,
+    this.onOpenAll,
+    this.totalCount,
   });
 
   final StockTopSummary summary;
   final bool mobileShell;
+
+  /// 「查看全部」的出口（2026-11-01，用户裁定 A1）。
+  ///
+  /// `null` = 不显示按钮。概览页传它（点一下切到库存页 —— 完整榜就在那一页顶部），
+  /// 库存页自己**不传**（它已经是全部了）。
+  final VoidCallback? onOpenAll;
+
+  /// 完整榜的总行数（用于「查看全部 N 个」的 N）。
+  ///
+  /// 概览页只渲染前 3 行，但按钮上要写「全部有几个」—— 所以这个数必须
+  /// 由调用方给（`summary.rows.length` 在概览页是截断后的 3）。
+  /// `null` = 与 [summary] 一致。
+  final int? totalCount;
 
   @override
   Widget build(BuildContext context) {
@@ -102,6 +117,24 @@ class StockTopCard extends StatelessWidget {
                     '还有 ${summary.negativeCostCount} 种商品成本为负'
                     '（超卖或退货把成本摊穿了），见「库存」页。',
               ),
+            // 「查看全部」只在**概览页**出现（库存页自己就是全部，不传它）。
+            // 文字用「全部 N 个」而不是「查看更多」：用户要的是数量感
+            //（知道还有多少个没看到），不是一个模糊的方向词。
+            if (onOpenAll != null) ...<Widget>[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  key: const Key('stock-top-open-all'),
+                  onPressed: onOpenAll,
+                  child: Text(
+                    (totalCount ?? rows.length) > rows.length
+                        ? '查看全部 ${totalCount ?? rows.length} 个'
+                        : '去库存页看',
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

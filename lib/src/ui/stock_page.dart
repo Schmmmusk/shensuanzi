@@ -33,6 +33,7 @@ import 'document_detail_page.dart';
 import 'export_button.dart';
 import 'list_scaffold.dart';
 import 'opening_stock_page.dart';
+import 'stock_top.dart';
 import 'product_form_dialog.dart';
 import 'stock_flow_page.dart';
 
@@ -148,6 +149,22 @@ class _StockPageState extends State<StockPage> {
   bool _showAll = false;
   String _searchText = '';
   bool _showOpening = false;
+
+  /// 压货榜（2026-11-01，用户裁定 A1：从概览页搬过来）。
+  ///
+  /// **在 `initState` 算一次**，不在 `build` 里现算：它是**全历史聚合**
+  /// （`QueryDao.stockTop` 要扫所有流水），26 万单下 ~35 ms ——
+  /// 放在 build 里会变成「每敲一个搜索字符重算一次全库」。
+  ///
+  /// 刷新时机：两壳切页都会**重建**本页（`appShellPage` / `_pageFor` 每次
+  /// build 新建 widget），所以 `initState` 会跟着重跑 —— 切走再切回来就是最新值。
+  late StockTopSummary _stockTop;
+
+  @override
+  void initState() {
+    super.initState();
+    _stockTop = widget.queries.stockTop();
+  }
 
   @override
   void dispose() {
@@ -382,6 +399,19 @@ class _StockPageState extends State<StockPage> {
                     ),
                 ],
               ),
+
+              // 2026-11-01（用户裁定 A1）：完整压货榜从概览页搬到这里。
+              //
+              // 放**最上面**是有意的：概览那个「查看全部」按钮跳过来时，
+              // 「跳到库存页顶部」就等于「定位到压货榜」—— 不需要额外的
+              // 滚动锚点（用户裁定要求「直接定位到压货榜，而不是只跳顶部」）。
+              if (!_stockTop.isEmpty) ...<Widget>[
+                const SizedBox(height: 12),
+                StockTopCard(
+                  summary: _stockTop,
+                  mobileShell: widget.mobileShell,
+                ),
+              ],
               const SizedBox(height: 4),
               Text(
                 '「在店可售」= 账面库存 − 送货在途；低库存按它判断。',

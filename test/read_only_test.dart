@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi/src/ui/app_shell.dart';
+import 'package:shensuanzi/src/ui/parties_page.dart';
 import 'package:shensuanzi/src/ui/products_page.dart';
 import 'package:shensuanzi/src/ui/sale_page.dart';
 import 'package:shensuanzi/src/ui/stock_page.dart';
@@ -162,6 +163,58 @@ void main() {
         isNot(isA<SalePage>()),
         reason: '只读时绝不能渲染开单页 —— 那是写入口本体',
       );
+    });
+  });
+
+  // 2026-11-01 用户裁定 A3：只读态下「+ 新建往来方」还是蓝色实心，看着能点。
+  //
+  // 点下去是**安全**的（`_canWriteParties` 为 false ⇒ 弹「这一步在电脑上做」，
+  // 写不进库），但三处写入口的表现不一致：开单页带锁发灰、商品页置灰，
+  // 唯独这里没变。对不熟悉软件的人来说，**按钮外观就是操作能力的暗示**。
+  //
+  // 裁定：置灰 + 把「要建往来方请在电脑上操作」放进红色提示条
+  // （指路不能丢，所以从引导框搬到红条）。
+  group('往来页：只读态「新建往来方」必须置灰', () {
+    // 只读用例走**手机壳**（真实场景）；可写用例走桌面壳 ——
+    // `partySink` 是具体类 `QueuePartySink`，造不了假实现，
+    // 而桌面壳不需要出口（`_canWriteParties` 只在手机壳上多判那一条）。
+    Widget page({required bool canWrite}) => wrap(
+      PartiesPage(
+        service: PartyService(PartyDao(db)),
+        masterDataPolicy: canWrite
+            ? const MasterDataPolicy.desktop()
+            : const MasterDataPolicy.readOnly(),
+        mobileShell: !canWrite,
+        partySink: null,
+      ),
+    );
+
+    testWidgets('只读 ⇒ 按钮 onPressed 为 null（置灰，不是「点了才告诉你去电脑上」）', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(page(canWrite: false));
+      await tester.pumpAndSettle();
+
+      final FilledButton button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '新建往来方'),
+      );
+      expect(
+        button.onPressed,
+        isNull,
+        reason: '只读时按钮该置灰 —— 与开单页、商品页保持一致',
+      );
+    });
+
+    testWidgets('可写 ⇒ 按钮照常可用（别把正常路径一起关掉）', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(page(canWrite: true));
+      await tester.pumpAndSettle();
+
+      final FilledButton button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '新建往来方'),
+      );
+      expect(button.onPressed, isNotNull);
     });
   });
 
