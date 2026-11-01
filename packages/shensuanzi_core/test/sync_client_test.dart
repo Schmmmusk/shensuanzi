@@ -524,6 +524,51 @@ void main() {
       );
     });
 
+    // 2026-11-01 用户裁定 A5（P0）：上限从 200 页提到 2000 页。
+    // 真机实测的库是 **26.4 万单 / 529 页** —— 旧上限 200 页把它拦腰截断，
+    // 而且第二次同步还因为身份问题从头拉（见 app 包那条）。
+    test('A5：默认上限 2000 页 ⇒ 26.4 万单的页数（529）能一轮拉到底', () async {
+      // 用「每页 1 条 × 529 页」等价模拟那个页数（不必真造 26 万行）
+      const int pages = 529;
+      for (int i = 0; i < pages; i++) {
+        transport.replyJson(
+          pullBody(
+            documents: <Map<String, Object?>>[
+              docRow('d$i', createdAt: 1700000000000 + i, docNo: 'CG-$i'),
+            ],
+            cursors: <String, String>{
+              SyncCursorKeys.doc: '${1700000000000 + i}|d$i',
+            },
+            hasMore: i < pages - 1,
+          ),
+        );
+      }
+
+      final SyncPullReport report = await client.pull();
+
+      expect(report.pages, pages);
+      expect(
+        report.hasMore,
+        isFalse,
+        reason: '529 页必须拉到底 —— 旧上限 200 页会停在第 200 页并说「只同步了一部分」',
+      );
+      expect(report.entities[Schema.documents], pages);
+      expect(
+        db.raw.select('SELECT COUNT(*) AS n FROM documents').first['n'],
+        pages,
+      );
+    });
+
+    test('A5：默认上限是 2000 页（=100 万行/实体），不再是 10 万', () {
+      expect(SyncClient.defaultMaxPullPages, 2000);
+      expect(client.maxPullPages, SyncClient.defaultMaxPullPages);
+      expect(
+        SyncClient.defaultMaxPullPages * client.pageLimit,
+        greaterThanOrEqualTo(1000000),
+        reason: '2000 页 × 500 = 100 万行，这才是「容量上限」该有的量级',
+      );
+    });
+
     test('循环撞上 maxPullPages ⇒ hasMore 仍为 true（不许假装拉完）', () async {
       final SyncClient capped = SyncClient(
         db: db,

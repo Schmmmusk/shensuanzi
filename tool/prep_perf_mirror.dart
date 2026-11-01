@@ -31,7 +31,6 @@ void main(List<String> args) {
     stderr.writeln('源库不存在：$src');
     exit(2);
   }
-  final File target = File(dst);
   for (final String suffix in <String>['', '-wal', '-shm']) {
     final File f = File('$dst$suffix');
     if (f.existsSync()) f.deleteSync();

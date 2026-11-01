@@ -60,7 +60,7 @@ class SyncClient {
     this.pageLimit = 500,
     this.batchLimit = 200,
     this.docUpdateWindow = const Duration(days: 7),
-    this.maxPullPages = 200,
+    this.maxPullPages = defaultMaxPullPages,
     this.pushBatchCap = 5,
   }) : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
        cursors = SyncCursorDao(db),
@@ -110,10 +110,24 @@ class SyncClient {
 
   /// `pull` 一次最多循环多少页（防主机分页出错时**无限循环**）。
   ///
-  /// 200 页 × `pageLimit` 500 = 10 万行/实体，远超个体户的年度体量。
+  /// 2000 页 × [pageLimit] 500 = **100 万行/实体**。这是一个**容量上限**，
+  /// 不是对「用户十年内能攒多少单」的承诺 —— 它只负责把「主机分页出错导致的
+  /// 无限循环」挡住，同时留足真实业务量的余量。
+  ///
+  /// ## ⚠️ 为什么从 200 提到 2000（2026-11-01，用户裁定 A5）
+  ///
+  /// 200 页 × 500 = **10 万条/次**，而真机实测的库有 **26.4 万单**（需 529 页）。
+  /// 撞上限时这里会如实标 `hasMore: true`、UI 说「只同步了一部分」——
+  /// 但用户要连点三次才拉得完，且第二次因为身份问题**根本没前进**
+  /// （见 `MobileSyncService.syncNow` 里 `writeHostId` 的注释）。
+  /// 上限本身是「防死循环」，不该变成「大库的墙」。
+  ///
   /// 到顶仍 `has_more` ⇒ 结果如实标 `hasMore: true`，让 UI 说「还没同步完」
   /// —— 与「假装完成」相比，这是唯一诚实的处置。
   final int maxPullPages;
+
+  /// [maxPullPages] 的默认值（**公开**：测试与文档都引用同一个数）
+  static const int defaultMaxPullPages = 2000;
 
   /// **连续推送**的批数上限（#48，2026-10-15 裁定 3–5 批、取 5）。
   ///

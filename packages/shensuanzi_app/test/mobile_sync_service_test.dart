@@ -499,6 +499,20 @@ void main() {
               .first['n']!
           as int;
 
+  /// 一条最小可用的商品行（镜像 upsert 用）
+  Map<String, Object?> productRow(String id) => <String, Object?>{
+    'id': id,
+    'code': 'P-$id',
+    'name': '商品$id',
+    'unit': '件',
+    'cost_price': 100,
+    'sell_price': 150,
+    'safety_stock': 0,
+    'is_active': 1,
+    'created_at': 1,
+    'updated_at': 1,
+  };
+
   String pairCode(String hostId, {String ip = '127.0.0.1'}) =>
       'shensuanzi://pair?host_id=$hostId&ip=$ip&port=${host.baseUri.port}'
       '&token=tok-$hostId&v=1';
@@ -717,4 +731,121 @@ void main() {
     );
     expect(service.lastHostSwitchHeldEntries, 0);
   });
+  // 2026-11-01 用户裁定 A5（P0）：**大库全量同步拉不完**。
+  //
+  // 两个根因，这里各钉一条：
+  // ① `maxPullPages = 200` × 每页 500 = 10 万条/次（改 2000，见 core 的用例）；
+  // ② ⭐ **新镜像从不写 `mirror_meta.host_id`** ⇒ 第二次同步判「身份不明 + 有数据」
+  //    ⇒ 归档重建 ⇒ 从头拉 ⇒ 大库永远前进不了。
+  //
+  // 小库完全掩盖了这个 bug：80 条重拉一次 1 秒，用户无感。
+  // 所以这组用例的价值不在「验证功能」，在**守住「不重复重建」这个性质**。
+  group('A5：镜像身份（新镜像必须写 host_id，否则第二次同步会重建）', () {
+    /// 模拟真机那个现场：**镜像被外部删掉 / 重建后，`mirror_meta` 是空的**。
+    ///
+    /// 为什么要这样造：`pairFromCode` 自己会写 `host_id`（`mobile_sync_service.dart:637`），
+    /// 所以「扫码配对 → 同步」这条路**永远不会**缺身份 —— 测试直接走那条路会假绿。
+    /// 真机上是「镜像文件坏了/被删 → App 自动新建一本空账」（状态 3 恢复、
+    /// 或用户手工清理），这条路径上**没有任何地方写 `host_id`**。
+    void clearMirrorIdentity() {
+      service.openMirror().raw.execute('DELETE FROM mirror_meta');
+    }
+
+    test('① 镜像没有身份时同步一次，必须把 host_id 写回去', () async {
+      service.pairFromCode(pairCode('h-1'));
+      host.pullBody['products'] = <Object?>[productRow('p1')];
+      clearMirrorIdentity();
+
+      final SyncOutcome outcome = await service.syncNow();
+      expect(outcome.kind, SyncOutcomeKind.ok, reason: outcome.message);
+
+      final Db mirror = service.openMirror();
+      expect(
+        MirrorMeta(mirror).hostId,
+        'h-1',
+        reason: '不写的话：第二次同步会判「身份不明 + 有数据」⇒ 归档重建 ⇒ 从头拉',
+      );
+    });
+
+    test('② 遗留的「有数据但没身份」镜像：重建一次之后**不再重复重建**', () async {
+      service.pairFromCode(pairCode('h-1'));
+      host.pullBody['products'] = <Object?>[productRow('p1')];
+      await service.syncNow();
+      // 模拟「旧版本拉完数据但没写身份」的现场（升级用户、或真机第一次同步后）
+      clearMirrorIdentity();
+      final int archivesBefore = service.archives().length;
+
+      // 第一轮：身份不明 + 有数据 ⇒ 保守地归档重建（这是安全的，不能省）
+      final SyncOutcome first = await service.syncNow();
+      expect(first.kind, SyncOutcomeKind.ok, reason: first.message);
+      expect(
+        service.archives().length,
+        archivesBefore + 1,
+        reason: '身份不明又已有数据 ⇒ 必须归档重建（不能为了省事把旧店的数据混进来）',
+      );
+
+      // 第二轮：身份已经写回去了 ⇒ **不许**再重建（大库拉不完就死在这里）
+      final SyncOutcome second = await service.syncNow();
+
+      expect(second.kind, SyncOutcomeKind.ok, reason: second.message);
+      expect(
+        service.archives().length,
+        archivesBefore + 1,
+        reason: '身份已写回 ⇒ 第二轮**不该**再归档 —— 这正是大库拉不完的直接原因',
+      );
+      expect(second.rebuilt, isFalse, reason: '不该重建镜像');
+      final Db mirror = service.openMirror();
+      expect(
+        mirror.raw.select('SELECT COUNT(*) AS n FROM products').first['n'],
+        1,
+        reason: '重建会清空数据、再从头拉 —— 小库看不出来，大库永远拉不完',
+      );
+    });
+
+    test('③ 真的换了主机：旧数据归档 + 新镜像写新 host_id', () async {
+      service.pairFromCode(pairCode('h-1'));
+      host.pullBody['products'] = <Object?>[productRow('p1')];
+      await service.syncNow();
+      final int archivesBefore = service.archives().length;
+
+      // 换一台电脑（host_id 变了）
+      service.pairFromCode(pairCode('h-2'));
+      final SyncOutcome outcome = await service.syncNow();
+
+      expect(outcome.kind, SyncOutcomeKind.ok, reason: outcome.message);
+      expect(
+        service.archives().length,
+        archivesBefore + 1,
+        reason: '换主机必须归档旧数据（F14）—— 「统一写 host_id」不能把这一步吞掉',
+      );
+      expect(MirrorMeta(service.openMirror()).hostId, 'h-2');
+    });
+
+    test('④ 同步中途断网 ⇒ 下次能续（每页一个事务、游标已推进）', () async {
+      service.pairFromCode(pairCode('h-1'));
+      host.pullBody['products'] = <Object?>[productRow('p1')];
+      await service.syncNow();
+      final Db before = service.openMirror();
+      final String? cursorBefore = SyncCursorDao(
+        before,
+      ).getAll()['products_since'];
+
+      // 第二页失败（模拟断网）
+      host.pullStatus = 500;
+      final SyncOutcome failed = await service.syncNow();
+      expect(failed.kind, isNot(SyncOutcomeKind.ok));
+      host.pullStatus = 200;
+
+      // 恢复后能继续，且**不重建**
+      final SyncOutcome resumed = await service.syncNow();
+      expect(resumed.kind, SyncOutcomeKind.ok, reason: resumed.message);
+      expect(resumed.rebuilt, isFalse, reason: '断网重试不该被当成换主机');
+      expect(
+        SyncCursorDao(service.openMirror()).getAll()['products_since'],
+        cursorBefore,
+        reason: '失败那一轮不该倒退游标',
+      );
+    });
+  });
+
 }

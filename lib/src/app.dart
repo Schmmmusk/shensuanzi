@@ -47,6 +47,7 @@ import 'ui/rescue_dialog.dart';
 import 'ui/emphasized_text.dart';
 import 'integrity.dart';
 import 'write_blocked.dart';
+import 'sync_frame_trace.dart';
 import 'ui/notice.dart';
 
 class ShensuanziApp extends StatefulWidget {
@@ -1809,6 +1810,15 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       ).whenComplete(dialogClosed.complete),
     );
 
+    // 2026-11-01（用户裁定 A5 额外要求）：**同步期间的 UI 帧耗时**。
+    //
+    // 真机实测「进度条明显掉帧」是个体感词，没有数字就判断不了该不该优化：
+    // 偶发几个长帧（不用管）vs 全程每帧都超 16.7 ms（主 isolate 被 JSON 解析
+    // 和落库占满，才值得考虑挪到独立 isolate）。
+    //
+    // 默认 `null`（零副作用）；要采集就编 `--dart-define=SSZ_SYNC_FRAME_TRACE=true`。
+    final SyncFrameTrace? frameTrace = SyncFrameTrace.start();
+
     SyncOutcome outcome;
     try {
       outcome = await service.syncNow();
@@ -1829,6 +1839,12 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       const Duration(seconds: 2),
       onTimeout: () {},
     );
+
+    // 采集收尾：一行固定格式的日志（`同步帧耗时 frames=… p50=… p99=… slow=…`）
+    final FrameTraceSummary? frameSummary = frameTrace?.stop();
+    if (frameSummary != null) {
+      _log.write(frameSummary.describe());
+    }
     if (!mounted) return;
 
     // P2 #8（2026-10-24）：清配对已收进 `MobileSyncService._authExpired`
