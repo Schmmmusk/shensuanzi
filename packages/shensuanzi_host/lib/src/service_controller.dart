@@ -5,6 +5,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'auth.dart';
 import 'http_server.dart';
 import 'local_ip.dart';
+import 'pair_requests.dart';
 
 /// 主机服务的启停状态（`docs/reply_review.md` §AH · AH-A）。
 enum HostServiceState {
@@ -247,6 +248,12 @@ class HostServiceController {
   int _trafficCount = 0;
   int? _lastTrafficAt;
 
+  /// 6 位短码配对的状态机（提案 58 · A4 乙）。
+  ///
+  /// 与 HTTP 层**共用同一个实例** —— 设置页点「允许」改的就是手机轮询读的那份。
+  /// 时钟跟着控制器走，测试注入同一个假时钟即可复现「5 分钟过期」。
+  late final PairRequests pairRequests = PairRequests(clock: _clock);
+
   HostServiceState get state => _state;
 
   HostServiceSnapshot get snapshot => HostServiceSnapshot(
@@ -391,6 +398,8 @@ class HostServiceController {
     _state = HostServiceState.starting;
     _failureHint = null;
     _addressHint = null;
+    // 重新开始 = 上一轮那些码和待确认请求全部作废（服务没在听，谁也用不了）
+    pairRequests.clear();
     try {
       // ⚠️ 先看**会话内已有的**那份（可能带着明文），再退回读盘 / 新建。
       // 直接 `load() ?? reset()` 会把 [resetToken] 刚生成的明文丢掉 ——
@@ -413,6 +422,9 @@ class HostServiceController {
         onAuthenticated: _noteTraffic,
         onDataApplied: _noteDataApplied,
         onInternalError: onInternalError,
+        pairRequests: pairRequests,
+        // 批准后下发的码**现取**：端口要等绑完才知道，地址还可能被用户换过
+        pairingUri: () => pairingPayload?.uri,
       );
       _state = HostServiceState.running;
     } on StateError {
@@ -447,7 +459,26 @@ class HostServiceController {
     _addressHint = null;
     _trafficCount = 0;
     _lastTrafficAt = null;
+    // 关掉服务 ⇒ 屏幕上那个 6 位码立即作废（不然用户可能正对着一个死码在输）
+    pairRequests.clear();
     return snapshot;
+  }
+
+  /// 电脑前的人点了「允许」（A4 约束 4）。
+  ///
+  /// 返回 `false` = 这条请求已经不在等确认（超时 / 已被处理）——
+  /// 界面据此把那一行撤掉，而不是假装点成功了。
+  bool approvePairing(String requestId) {
+    final bool ok = pairRequests.approve(requestId);
+    if (ok) _notifyListeners();
+    return ok;
+  }
+
+  /// 电脑前的人点了「拒绝」
+  bool denyPairing(String requestId) {
+    final bool ok = pairRequests.deny(requestId);
+    if (ok) _notifyListeners();
+    return ok;
   }
 
   /// **手动换一个地址**（2026-10-25 D 批）—— 自动挑选猜错时用户的唯一自救手段。

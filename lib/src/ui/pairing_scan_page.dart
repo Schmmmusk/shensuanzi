@@ -92,7 +92,7 @@ class _PairingScanPageState extends State<PairingScanPage> {
     await _firstSync();
   }
 
-  /// **手动填地址**（2026-10-25 D 批）—— 扫码扫不了、或扫了连不上时的兜底。
+  /// **用配对码连接**（2026-10-25 D 批的兜底；2026-11-01 A4 改成 6 位短码）。
   ///
   /// 对话框里已经完成配对（校验 + 落盘），这里只做首拉 —— 与扫码路径共用
   /// [_firstSync]，两条路的「连上之后干什么」必须一模一样。
@@ -277,11 +277,15 @@ class _PairingScanPageState extends State<PairingScanPage> {
                   // D 批（2026-10-25）：**零兜底 → 有兜底**。
                   // 现场是电脑挑错了网卡（穿透工具抢了 WLAN），二维码扫得到、
                   // 手机连不上，而从前这一页只有「开始扫码」——用户没有出路。
+                  //
+                  // A4（2026-11-01 用户裁定）：入口名从「手动填地址」改成
+                  // 「用 6 位配对码」—— 旧名字本身就在误导（用户以为只填 IP 就行，
+                  // 而真正的配对码有 100 个字符，没人愿意抄）。
                   OutlinedButton.icon(
                     key: const Key('pairing-manual-entry'),
                     onPressed: _manual,
-                    icon: const Icon(Icons.keyboard_alt_outlined),
-                    label: const Text('扫不了码 / 连不上？手动填地址'),
+                    icon: const Icon(Icons.pin_outlined),
+                    label: const Text('扫不了码？用 6 位配对码'),
                   ),
                 ],
               ),
@@ -290,33 +294,50 @@ class _PairingScanPageState extends State<PairingScanPage> {
   }
 }
 
-/// 「手动填地址」对话框（2026-10-25 D 批）。
+/// 「用配对码连接」对话框（2026-10-25 D 批；2026-11-01 A4 改成 6 位短码）。
 ///
-/// ## 两种输入都收（分流见 `PairingAddress`）
+/// ## 三种输入都收（分流见 `PairingAddress` / `MobileSyncService`）
 ///
-/// | 粘进来的 | 结果 |
+/// | 用户手上有的 | 结果 |
 /// |---|---|
+/// | **6 位数字**（+ 地址） | 走短码配对：手机发请求 → **电脑上点「允许」** → 拿到凭据（A4） |
 /// | 完整配对码 `shensuanzi://pair?...` | 等同扫码，**能完成配对**（含身份与令牌） |
 /// | 光一个地址 `192.168.1.5:17890` | **只换地址**（前提：之前配对过，令牌沿用） |
 ///
-/// ## 为什么它只配对、**不联网**
+/// ## 为什么不再叫「手动填地址」
 ///
-/// 首拉（`syncNow`）由调用方做。两个原因：
-/// ① 对话框里转圈时用户不知道在等什么，错误也没地方显示；
-/// ② 它因此能被 widget 测试**直接钉住**（不碰网络就不会在假时钟下卡死）。
+/// 用户 2026-11-01 的原话：入口叫「手动填地址」、输入框写「电脑地址」，
+/// 于是一直以为「填个 IP 就行」—— 而真正的配对码是 100 个字符，
+/// 谁也不愿意抄。名字改成「用 6 位配对码」之后，**入口名本身就是说明书**。
+///
+/// ## 只有短码这一条路要联网（其余两条仍是纯本地）
+///
+/// 首拉（`syncNow`）仍由调用方做。短码要发 HTTP 是绕不开的 ——
+/// 但它跑在注入的 `Transport` 上，widget 测试可以喂假传输，不会碰真网络
+///（真网络在 `testWidgets` 的假时钟下会卡死，这是本仓踩过的坑）。
 ///
 /// 格式错误的提示留在对话框里（红字），用户能当场改 —— 不用关掉重开。
 class ManualAddressDialog extends StatefulWidget {
-  const ManualAddressDialog({super.key, required this.service});
+  const ManualAddressDialog({
+    super.key,
+    required this.service,
+    this.title = '用配对码连接',
+  });
 
   final MobileSyncService service;
+
+  /// 对话框标题。**两处入口的场景不同，标题就该不同**：
+  /// 扫码页是「第一次配对」（用配对码连接），设置页是「已配对的手机换地址」
+  /// （换电脑地址）—— 用同一个标题会让后一种用户以为要重新配对。
+  final String title;
 
   @override
   State<ManualAddressDialog> createState() => _ManualAddressDialogState();
 }
 
 class _ManualAddressDialogState extends State<ManualAddressDialog> {
-  final TextEditingController _controller = TextEditingController();
+  final TextEditingController _address = TextEditingController();
+  final TextEditingController _code = TextEditingController();
 
   /// 格式/前置条件错误（红字，留在对话框里）
   String? _error;
@@ -328,25 +349,71 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
   /// 地按半角处理 —— 用户根本不知道它到底认没认对，只会怀疑「是不是这里错了」。
   bool _hadFullWidth = false;
 
+  /// 已经告诉电脑、正等它那边点「允许」
+  bool _waiting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 配对过的手机把地址预填上：它多半是「同一台电脑换了条路进来」，
+    // 让用户重新抄一遍 IP 纯属折腾（端口也可能不是默认的 17890）。
+    final PairingInfo? previous = widget.service.pairingStore.load();
+    if (previous != null) {
+      _address.text = '${previous.ip}:${previous.port}';
+    }
+  }
+
   @override
   void dispose() {
-    _controller.dispose();
+    _address.dispose();
+    _code.dispose();
     super.dispose();
   }
 
-  void _submit() {
-    final String raw = _controller.text;
+  Future<void> _submit() async {
+    if (_waiting) return;
+    final String rawAddress = _address.text;
+    final String rawCode = _code.text;
     try {
-      if (PairingAddress.isPairingCode(raw)) {
-        widget.service.pairFromCode(raw);
+      if (PairingAddress.isPairingCode(rawAddress)) {
+        // 整段配对码（从电脑上复制来的）—— 与扫码等价，纯本地
+        widget.service.pairFromCode(rawAddress);
+      } else if (PairingAddress.normalizeShortCode(rawCode).isNotEmpty) {
+        // 6 位短码：要联网，等电脑前的人点「允许」
+        setState(() {
+          _waiting = true;
+          _error = null;
+        });
+        await widget.service.pairFromShortCode(
+          address: rawAddress,
+          code: rawCode,
+        );
+        if (!mounted) return;
       } else {
-        widget.service.pairFromAddress(raw);
+        widget.service.pairFromAddress(rawAddress);
       }
     } on FormatException catch (error) {
       // `FormatException.message` 就是给人看的中文（见 `PairingAddress.parse`）
-      setState(() => _error = error.message);
+      if (!mounted) return;
+      setState(() {
+        _waiting = false;
+        _error = error.message;
+      });
+      return;
+    } catch (error) {
+      // 兜底：领域层已经把网络异常翻成中文，走到这里说明是没预料到的
+      //（原始异常进日志，界面只给中文 —— M03）
+      widget.service.onError?.call(error, StackTrace.current, '短码配对');
+      if (!mounted) return;
+      setState(() {
+        _waiting = false;
+        _error =
+            '连接没成功 —— 请确认电脑开着神算子、'
+            '手机和电脑连的是同一个 Wi-Fi，再试一次。';
+      });
       return;
     }
+    if (!mounted) return;
     Navigator.of(context).pop(true);
   }
 
@@ -355,7 +422,7 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
     final ThemeData theme = Theme.of(context);
     final Color secondary = theme.textTheme.bodySmall?.color ?? theme.hintColor;
     return AlertDialog(
-      title: const Text('手动填地址'),
+      title: Text(widget.title),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -369,11 +436,11 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
               // 放最上面之后，键盘最多盖住下面的说明文字（那部分盖住也无所谓）。
               TextField(
                 key: const Key('manual-address-field'),
-                controller: _controller,
+                controller: _address,
                 // ⚠️ **不要 autofocus**：一进对话框就弹键盘，用户还没看清
                 // 该填什么，输入框先被盖住了。让他点一下再弹。
                 keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.done,
+                textInputAction: TextInputAction.next,
                 decoration: InputDecoration(
                   labelText: '电脑地址',
                   hintText: '192.168.1.5:17890',
@@ -399,28 +466,66 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
                   style: TextStyle(height: 1.6, fontSize: 13, color: secondary),
                 ),
               ],
-              const SizedBox(height: 12),
-              Text(
-                '在电脑「设置 → 多设备同步」里能看到这个地址。',
-                style: TextStyle(height: 1.6, color: secondary),
+              const SizedBox(height: 10),
+              TextField(
+                key: const Key('pairing-short-code-field'),
+                controller: _code,
+                // 数字键盘：6 位数字不该让用户去翻符号页
+                keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.done,
+                decoration: const InputDecoration(
+                  labelText: '6 位配对码',
+                  hintText: '482913',
+                  isDense: true,
+                ),
+                onSubmitted: (_) => _submit(),
               ),
-              const SizedBox(height: 4),
-              Text(
-                '没连过电脑的，把电脑上那段配对码文字整段粘进来。',
-                style: TextStyle(height: 1.6, color: secondary),
-              ),
+              const SizedBox(height: 10),
+              if (_waiting)
+                Row(
+                  key: const Key('pairing-waiting'),
+                  children: <Widget>[
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '已经告诉电脑了 —— 请在电脑上点「允许」。',
+                        style: TextStyle(height: 1.6, color: secondary),
+                      ),
+                    ),
+                  ],
+                )
+              else ...<Widget>[
+                Text(
+                  '电脑上「设置 → 多设备同步」→「用 6 位配对码连接」，'
+                  '屏幕上的 6 位数字填到上面。',
+                  style: TextStyle(height: 1.6, color: secondary),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '地址填电脑上「主机地址」那一行。'
+                  '手里有整段配对码文字的话，粘在「电脑地址」那一栏也能连。',
+                  style: TextStyle(height: 1.6, color: secondary),
+                ),
+              ],
             ],
           ),
         ),
       ),
       actions: <Widget>[
         TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
+          // 等待期间不许取消：请求已经发出去了，中途撤掉会留下一条
+          // 谁也不知道的待确认请求（用户只会觉得「电脑上怎么多了一台」）
+          onPressed: _waiting ? null : () => Navigator.of(context).pop(false),
           child: const Text('取消'),
         ),
         FilledButton(
           key: const Key('manual-address-ok'),
-          onPressed: _submit,
+          onPressed: _waiting ? null : _submit,
           child: const Text('连接'),
         ),
       ],

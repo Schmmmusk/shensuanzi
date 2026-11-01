@@ -22,10 +22,7 @@ void main() {
 
   group('持久化提示（写盘失败 / 加密失败）', () {
     test('都正常 ⇒ 不提示', () {
-      expect(
-        hostPersistHint(writeFailed: false, protectFailed: false),
-        isNull,
-      );
+      expect(hostPersistHint(writeFailed: false, protectFailed: false), isNull);
     });
 
     test('写盘失败 ⇒ 说「只对这次运行有效」+ 指出 host.json', () {
@@ -124,6 +121,75 @@ void main() {
           reason: '$s 缺了「怎么办」',
         );
       }
+    });
+  });
+
+  // ---------------------------------------------------------------- 6 位短码（A4）
+  //
+  // 用户裁定 ④ 要求「电脑端必须明确显示待配对设备，并由用户主动确认」——
+  // 这几句就是那块界面上的全部文字，所以逐条钉住。
+  group('6 位短码的倒计时', () {
+    test('没有可用码 ⇒ null（不显示倒计时，别编一个 0）', () {
+      expect(shortCodeCountdown(null, 1000), isNull);
+    });
+
+    test('超过一分钟：说「几分几秒」，秒补零', () {
+      expect(shortCodeCountdown(1000 + 272000, 1000), '还有 4 分 32 秒有效');
+      expect(shortCodeCountdown(1000 + 65000, 1000), '还有 1 分 05 秒有效');
+    });
+
+    test('最后一分钟：只说秒（少一层换算）', () {
+      expect(shortCodeCountdown(1000 + 38000, 1000), '还有 38 秒有效');
+    });
+
+    test('到期 / 已过期 ⇒ 说「已经过期」', () {
+      expect(shortCodeCountdown(1000, 1000), '这个码已经过期了');
+      expect(shortCodeCountdown(900, 1000), '这个码已经过期了');
+    });
+  });
+
+  group('码不能用的四种原因（话不能混成一句）', () {
+    test('四种原因四句话，互不相同', () {
+      final Set<String> hints = <String>{
+        for (final PairRejection r in <PairRejection>[
+          PairRejection.noCode,
+          PairRejection.codeConsumed,
+          PairRejection.codeExhausted,
+          PairRejection.codeExpired,
+        ])
+          shortCodeProblemHint(r),
+      };
+      expect(hints.length, 4);
+    });
+
+    test('除「已被用掉」外，都指向「换一个新码」', () {
+      for (final PairRejection r in <PairRejection>[
+        PairRejection.noCode,
+        PairRejection.codeExhausted,
+        PairRejection.codeExpired,
+      ]) {
+        expect(shortCodeProblemHint(r), contains('换一个新码'), reason: '$r');
+      }
+    });
+
+    test('「已被手机用掉」⇒ 指向下面那排确认按钮（这时候换码是错的）', () {
+      expect(shortCodeProblemHint(PairRejection.codeConsumed), contains('允许'));
+      expect(
+        shortCodeProblemHint(PairRejection.codeConsumed),
+        isNot(contains('换一个新码')),
+        reason: '码被用掉正是因为有人在对——这时候让用户换码会把人引偏',
+      );
+    });
+  });
+
+  group('待确认设备等了多久', () {
+    test('5 秒内说「刚刚」', () {
+      expect(pendingWaitLabel(1000, 4000), '刚刚');
+    });
+
+    test('一分钟内说秒，之后说分钟', () {
+      expect(pendingWaitLabel(0, 12000), '12 秒前');
+      expect(pendingWaitLabel(0, 125000), '2 分钟前');
     });
   });
 }

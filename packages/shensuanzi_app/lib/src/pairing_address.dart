@@ -13,6 +13,7 @@
 /// |---|---|
 /// | 完整配对码 `shensuanzi://pair?...` | 等同扫码（拿到 host_id + 令牌，**能完成配对**） |
 /// | 光一个地址 `192.168.1.5:17890` | **只换地址**，令牌沿用上次配对的 |
+/// | 6 位数字（+ 地址） | 走短码配对：见 `MobileSyncService.pairFromShortCode`（A4） |
 ///
 /// ## 为什么「光填地址」必须已有配对
 ///
@@ -34,6 +35,18 @@ class PairingAddress {
   /// 用户粘进来的是不是一整段配对码。
   static bool isPairingCode(String raw) =>
       normalize(raw).toLowerCase().startsWith(codeScheme);
+
+  /// 6 位短码的判定（提案 58 · A4 乙，2026-11-01 用户裁定）。
+  ///
+  /// 只认**纯 6 位数字**（全角数字先掰成半角、空格去掉）。
+  /// 为什么不宽松一点收 5 位 / 7 位：主机那边只发 6 位，
+  /// 多一位少一位都是抄错了 —— 早点说「是 6 位」比发出去等主机回「码不对」快。
+  static bool isShortCode(String raw) =>
+      RegExp(r'^\d{6}$').hasMatch(normalizeShortCode(raw));
+
+  /// 短码的归一化：全角数字 → 半角、去掉空格（用户从屏幕上抄数字常带空格）。
+  static String normalizeShortCode(String raw) =>
+      normalize(raw).replaceAll(' ', '');
 
   /// **把中文输入法的全角字符掰回半角**（2026-10-27 真机实测）。
   ///

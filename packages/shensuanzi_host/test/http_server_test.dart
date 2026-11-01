@@ -58,6 +58,11 @@ void main() {
       clock: () => hostClock,
       onInternalError: (String label, Object error, StackTrace stack) =>
           internalErrors.add('$label｜$error'),
+      // A4：批准后下发的配对码 —— 生产里由控制器现取（端口要等绑完才知道），
+      // 测试里用同一份形状的字符串，好让「手机能解析」这件事真的被验到
+      pairingUri: () =>
+          'shensuanzi://pair?host_id=${identity.hostId}&ip=127.0.0.1'
+          '&port=${server.port}&token=${identity.plaintextToken}&v=1',
     );
     base = 'http://127.0.0.1:${server.port}';
   });
@@ -695,6 +700,184 @@ void main() {
       );
       expect(ok, 200);
       expect(json['products'], isNotEmpty, reason: 'limit=1 合法，取 1 条主数据');
+    });
+  });
+
+  // ============================================================ 6 位短码配对
+  //
+  // 提案 58 · A4 乙（2026-11-01 用户裁定）：手机端不再抄 100 个字符的配对码，
+  // 改成输电脑屏幕上的 6 位数字。**码本身不是凭据** —— 拿到它只能建一条
+  // 待确认请求，令牌要等电脑前的人点「允许」。这一组盯的就是这条链路。
+  group('6 位短码配对', () {
+    /// 建一条待确认请求，返回 request_id
+    Future<String> requestPairing(String code, {String device = '安卓手机'}) async {
+      final (int status, Map<String, Object?> json) = await call(
+        'POST',
+        '/api/pair/request',
+        body: <String, Object?>{'code': code, 'device_name': device},
+      );
+      expect(status, 200, reason: '$json');
+      return json['request_id']! as String;
+    }
+
+    test('正确码 ⇒ 200 + request_id，主机侧出现待确认设备（含来源地址）', () async {
+      final String code = server.pairRequests.issueCode();
+      final (int status, Map<String, Object?> json) = await call(
+        'POST',
+        '/api/pair/request',
+        body: <String, Object?>{
+          'code': code,
+          'device_name': '安卓手机（Android 14）',
+        },
+      );
+      expect(status, 200, reason: '$json');
+      expect(json['status'], 'awaiting');
+      final String id = json['request_id']! as String;
+      expect(id.length, 16);
+
+      final PairPending pending = server.pairRequests.pendingAwaiting().single;
+      expect(pending.id, id);
+      expect(pending.deviceName, contains('Android'));
+      expect(
+        pending.ip,
+        '127.0.0.1',
+        reason: '来源地址由服务端从 socket 取 —— 请求体里没有这一项，编不出来',
+      );
+    });
+
+    test('错码 ⇒ 400 + 说清「再看一眼电脑上的 6 位」+ 剩余次数递减', () async {
+      final String code = server.pairRequests.issueCode();
+      final String wrong = code == '000000' ? '111111' : '000000';
+      final (int status, Map<String, Object?> json) = await call(
+        'POST',
+        '/api/pair/request',
+        body: <String, Object?>{'code': wrong, 'device_name': 'x'},
+      );
+      expect(status, 400);
+      expect('${json['error']}', contains('6 位数字'));
+      expect(json['remaining'], PairRequests.maxAttemptsPerCode - 1);
+      expect(server.pairRequests.pendingAwaiting(), isEmpty);
+    });
+
+    test('试错用完 ⇒ 409 作废，之后输对也不认', () async {
+      final String code = server.pairRequests.issueCode();
+      final String wrong = code == '000000' ? '111111' : '000000';
+      for (int i = 0; i < PairRequests.maxAttemptsPerCode - 1; i++) {
+        await call(
+          'POST',
+          '/api/pair/request',
+          body: <String, Object?>{'code': wrong, 'device_name': 'x'},
+        );
+      }
+      final (int status, Map<String, Object?> json) = await call(
+        'POST',
+        '/api/pair/request',
+        body: <String, Object?>{'code': wrong, 'device_name': 'x'},
+      );
+      expect(status, 409);
+      expect('${json['error']}', contains('作废'));
+
+      final (int status2, _) = await call(
+        'POST',
+        '/api/pair/request',
+        body: <String, Object?>{'code': code, 'device_name': 'x'},
+      );
+      expect(status2, 409, reason: '作废后连正确码也不能再用');
+    });
+
+    test('未批准 ⇒ awaiting 且不下发凭据；批准后下发可解析的配对码', () async {
+      final String id = await requestPairing(server.pairRequests.issueCode());
+
+      final (int s1, Map<String, Object?> j1) = await call(
+        'GET',
+        '/api/pair/status?request_id=$id',
+      );
+      expect(s1, 200);
+      expect(j1['status'], 'awaiting');
+      expect(
+        j1.containsKey('pairing_code'),
+        isFalse,
+        reason: '没点允许之前，一个字节的凭据都不能给',
+      );
+
+      expect(server.pairRequests.approve(id), isTrue);
+      final (int s2, Map<String, Object?> j2) = await call(
+        'GET',
+        '/api/pair/status?request_id=$id',
+      );
+      expect(s2, 200);
+      expect(j2['status'], 'approved');
+      final PairingPayload payload = PairingPayload.parse(
+        j2['pairing_code']! as String,
+      );
+      expect(payload.hostId, identity.hostId);
+      expect(payload.token, identity.plaintextToken);
+      expect(payload.port, server.port);
+    });
+
+    test('拒绝 ⇒ denied（手机据此说「电脑上点了拒绝」）', () async {
+      final String id = await requestPairing(server.pairRequests.issueCode());
+      expect(server.pairRequests.deny(id), isTrue);
+      final (int status, Map<String, Object?> json) = await call(
+        'GET',
+        '/api/pair/status?request_id=$id',
+      );
+      expect(status, 200);
+      expect(json['status'], 'denied');
+    });
+
+    test('不认识的 request_id ⇒ 404（不按「最新一条」兜底）', () async {
+      await requestPairing(server.pairRequests.issueCode());
+      final (int status, Map<String, Object?> json) = await call(
+        'GET',
+        '/api/pair/status?request_id=0123456789abcdef',
+      );
+      expect(status, 404);
+      expect('${json['error']}', contains('失效'));
+    });
+
+    test('请求体不是 JSON ⇒ 400，且日志里**不出现短码**（约束 5）', () async {
+      final String code = server.pairRequests.issueCode();
+      // ⚠️ 用「少一个右括号」而不是「数字没加引号」：后者是合法 JSON。
+      // `jsonDecode` 抛的 `FormatException.toString()` 会**把整行源文本打出来**
+      //（实测：`FormatException: Unexpected end of input (at character 17)` +
+      // 下一行原文）—— 而这一行里就有短码。日志若记 `'$error'` 就泄了。
+      final (int status, Map<String, Object?> json) = await call(
+        'POST',
+        '/api/pair/request',
+        rawBody: '{"code":"$code"',
+      );
+      expect(status, 400);
+      expect(json['error'], isNotNull);
+      expect(internalErrors, isNotEmpty, reason: '内部错误仍要留痕');
+      for (final String line in internalErrors) {
+        expect(line.contains(code), isFalse, reason: '短码不许进日志：$line');
+      }
+      expect('${json['error']}'.contains(code), isFalse);
+    });
+
+    test('同一 IP 一分钟超过 10 次 ⇒ 429（先于码的判断）', () async {
+      server.pairRequests.issueCode();
+      int last = 0;
+      Map<String, Object?> json = <String, Object?>{};
+      for (int i = 0; i < PairRequests.maxRequestsPerIp; i++) {
+        final (int status, Map<String, Object?> body) = await call(
+          'POST',
+          '/api/pair/request',
+          body: <String, Object?>{'code': '999999', 'device_name': 'x'},
+        );
+        last = status;
+        json = body;
+      }
+      expect(last, isNot(429), reason: '前 10 次不该被限流');
+      final (int status, Map<String, Object?> body) = await call(
+        'POST',
+        '/api/pair/request',
+        body: <String, Object?>{'code': '999999', 'device_name': 'x'},
+      );
+      expect(status, 429);
+      expect('${body['error']}', contains('等一分钟'));
+      expect(json, isNotNull);
     });
   });
 }

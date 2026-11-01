@@ -85,7 +85,15 @@ Future<void> main() async {
   // ============================================================ 主机身份
   section('HostIdentityStore');
   {
-    final HostIdentityStore store = HostIdentityStore.inMemory();
+    // ⚠️ 2026-11-01 语义变更（用户裁定，提案 57）：从前的断言是
+    // 「再次读取**一定**没有明文（哈希不可逆）」—— 那是**旧设计**。
+    // 现在明文由加密器存下来、重启能解回来 ⇒ 能画码。旧行为保留在下面那条
+    // 「没有加密器时」的对照里，两种路径都有护栏。
+    // ⚠️ 这条自检原本漏改（`test/auth_test.dart` 已按裁定拆成两条，
+    // selfcheck 还停在旧语义）⇒ 本机 DPAPI 可用时它自己变红，2026-11-01 补上。
+    final HostIdentityStore store = HostIdentityStore.inMemory(
+      protector: const _EchoProtector(),
+    );
     final HostIdentity first = store.loadOrCreate(now: _fixedNow);
 
     check('首次生成 host_id', first.hostId.isNotEmpty);
@@ -95,8 +103,20 @@ Future<void> main() async {
     final HostIdentity loaded = store.loadOrCreate(now: _fixedNow + 1);
     check('再次读取 host_id 不变', loaded.hostId == first.hostId);
     check('再次读取哈希不变', loaded.tokenHash == first.tokenHash);
-    check('再次读取**没有明文**（哈希不可逆）', !loaded.canShowQr);
-    check('重启后仍能校验旧令牌（只需哈希）', loaded.authorizes(first.plaintextToken));
+    check('再次读取**明文能恢复**（提案 57 之后）', loaded.canShowQr);
+    check('恢复的明文与原令牌逐字相同', loaded.plaintextToken == first.plaintextToken);
+    check('重启后仍能校验旧令牌', loaded.authorizes(first.plaintextToken));
+
+    // 对照：没有加密器 ⇒ 回到旧语义（画不出码，但校验照旧）
+    final HostIdentityStore plainStore = HostIdentityStore.inMemory(
+      protector: const NoTokenProtector(),
+    );
+    final HostIdentity plainFirst = plainStore.loadOrCreate(now: _fixedNow);
+    final HostIdentity plainLoaded = plainStore.loadOrCreate(
+      now: _fixedNow + 1,
+    );
+    check('（对照）没有加密器 ⇒ 画不出码', !plainLoaded.canShowQr);
+    check('（对照）但校验照旧', plainLoaded.authorizes(plainFirst.plaintextToken));
 
     final HostIdentity after = store.reset(now: _fixedNow + 2);
     // C-3（2026-10-24，⑦甲）：主机身份持久化 —— reset 只换令牌
@@ -254,6 +274,120 @@ Future<void> main() async {
     check(
       '不同内容矩阵不同',
       matrix.length != otherMatrix.length || matrix != otherMatrix,
+    );
+  }
+
+  // ============================================================ 6 位短码
+  //
+  // 与 `test/pair_requests_test.dart` 断言等价（本机 `dart test` 编译不了
+  // 测试文件时靠这一份兜底）。六条安全约束逐条对应。
+  section('PairRequests');
+  {
+    int now = _fixedNow;
+    PairRequests make() => PairRequests(random: Random(7), clock: () => now);
+
+    final PairRequests store = make();
+    final String code = store.issueCode();
+    check('码是 6 位数字', RegExp(r'^\d{6}$').hasMatch(code), code);
+
+    final PairRequestResult ok = store.request(
+      code: code,
+      deviceName: '自检手机',
+      ip: '10.0.0.1',
+    );
+    check('正确码 → 建一条待确认', ok.ok);
+    check('码被一次性消耗', store.code == null);
+    check(
+      '同一个码第二台被拒（不串号）',
+      store.request(code: code, deviceName: '第二台', ip: '10.0.0.2').rejection ==
+          PairRejection.codeConsumed,
+    );
+
+    final String pendingId = ok.request!.id;
+    check(
+      '未确认前是 awaiting',
+      store.statusOf(pendingId) == PairRequestStatus.awaiting,
+    );
+    check('批准成功', store.approve(pendingId));
+    check(
+      '批准后 approved',
+      store.statusOf(pendingId) == PairRequestStatus.approved,
+    );
+    check('不认识的 id → null', store.statusOf('0123456789abcdef') == null);
+
+    final PairRequests store2 = make();
+    final String code2 = store2.issueCode();
+    final String wrong = code2 == '000000' ? '111111' : '000000';
+    for (int i = 0; i < PairRequests.maxAttemptsPerCode - 1; i++) {
+      store2.request(code: wrong, deviceName: 'x', ip: '10.1.0.1');
+    }
+    check(
+      '错满 5 次 → 作废',
+      store2.request(code: wrong, deviceName: 'x', ip: '10.1.0.1').rejection ==
+          PairRejection.codeExhausted,
+    );
+    check(
+      '作废后正确码也不认',
+      store2.request(code: code2, deviceName: 'x', ip: '10.1.0.1').rejection ==
+          PairRejection.codeExhausted,
+    );
+
+    final PairRequests store3 = make();
+    store3.issueCode();
+    for (int i = 0; i < PairRequests.maxRequestsPerIp; i++) {
+      store3.request(code: '999999', deviceName: 'x', ip: '10.2.0.1');
+    }
+    check(
+      '同 IP 一分钟超 10 次 → 限流',
+      store3
+              .request(code: '999999', deviceName: 'x', ip: '10.2.0.1')
+              .rejection ==
+          PairRejection.rateLimited,
+    );
+    check(
+      '换 IP 不受影响',
+      store3
+              .request(code: '999999', deviceName: 'x', ip: '10.2.0.2')
+              .rejection !=
+          PairRejection.rateLimited,
+    );
+
+    final PairRequests store4 = make();
+    final String code4 = store4.issueCode();
+    final PairPending p4 = store4
+        .request(code: code4, deviceName: 'x', ip: '10.3.0.1')
+        .request!;
+    check('对象里没有短码（toString 也不含）', !p4.toString().contains(code4));
+    now += PairRequests.requestTtl.inMilliseconds;
+    check(
+      '5 分钟没人处理 → expired',
+      store4.statusOf(p4.id) == PairRequestStatus.expired,
+    );
+    check('过期的不能再批准', !store4.approve(p4.id));
+
+    final PairRequests store5 = make();
+    final String code5 = store5.issueCode();
+    final String fullWidth = code5
+        .split('')
+        .map((String c) => String.fromCharCode(c.codeUnitAt(0) - 0x30 + 0xFF10))
+        .join();
+    check(
+      '全角数字被掰回半角（服务端兜底）',
+      store5.request(code: ' $fullWidth ', deviceName: 'x', ip: '10.4.0.1').ok,
+    );
+
+    final PairRequests store6 = make();
+    final String code6 = store6.issueCode();
+    check(
+      '换新码 ⇒ 旧码作废',
+      (() {
+        final String newer = store6.issueCode();
+        return newer != code6 &&
+            store6
+                    .request(code: code6, deviceName: 'x', ip: '10.5.0.1')
+                    .rejection ==
+                PairRejection.badCode;
+      })(),
     );
   }
 
@@ -789,6 +923,40 @@ Future<void> main() async {
           130,
     );
 
+    // ---- 6 位短码配对（提案 58 · A4 乙）----
+    final String shortCode = server.pairRequests.issueCode();
+    final (int pairStatus, Map<String, Object?> pairJson) = await call(
+      'POST',
+      '/api/pair/request',
+      body: <String, Object?>{'code': shortCode, 'device_name': '自检手机'},
+    );
+    check('短码请求 → 200', pairStatus == 200, '$pairStatus');
+    check('回 request_id', pairJson['request_id'] is String);
+    check('状态是 awaiting（还没批准）', pairJson['status'] == 'awaiting');
+    final PairPending pending = server.pairRequests.pendingAwaiting().single;
+    check('主机侧出现待确认设备', pending.deviceName == '自检手机');
+    check('来源地址由服务端取', pending.ip == '127.0.0.1', pending.ip);
+
+    final String requestId = pairJson['request_id']! as String;
+    final (_, Map<String, Object?> beforeApprove) = await call(
+      'GET',
+      '/api/pair/status?request_id=$requestId',
+    );
+    check('未批准前不给凭据', !beforeApprove.containsKey('pairing_code'));
+    check('批准成功', server.pairRequests.approve(requestId));
+    final (_, Map<String, Object?> afterApprove) = await call(
+      'GET',
+      '/api/pair/status?request_id=$requestId',
+    );
+    check('批准后状态 approved', afterApprove['status'] == 'approved');
+    check('批准后仍不下发凭据（自检没注入 pairingUri）', afterApprove['pairing_code'] == null);
+    final (int wrongStatus, _) = await call(
+      'POST',
+      '/api/pair/request',
+      body: <String, Object?>{'code': shortCode, 'device_name': '第二台'},
+    );
+    check('一次性：同一个码第二次 → 409', wrongStatus == 409, '$wrongStatus');
+
     await server.close(force: true);
     db.close();
   }
@@ -803,6 +971,33 @@ Future<void> main() async {
     stdout.writeln('  - $failure');
   }
   exit(1);
+}
+
+/// 自检用的「加密器」：base64 往返。
+///
+/// **不用真 DPAPI** —— 自检必须可重复、且不受本机加密可用性影响
+///（与 `test/auth_test.dart` 的 `FakeProtector` 同款思路）。
+class _EchoProtector implements TokenProtector {
+  const _EchoProtector();
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  String? protect(String plaintext, {required String hostId}) =>
+      base64Encode(utf8.encode('$hostId|$plaintext'));
+
+  @override
+  String? unprotect(String blob, {required String hostId}) {
+    try {
+      final String text = utf8.decode(base64Decode(blob));
+      final String prefix = '$hostId|';
+      if (!text.startsWith(prefix)) return null;
+      return text.substring(prefix.length);
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 /// 把一条推送回执渲染成 `status (reason)`（自检侧不带 `entity_id` 前缀）。

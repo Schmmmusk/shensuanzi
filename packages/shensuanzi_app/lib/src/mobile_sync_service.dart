@@ -25,7 +25,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Directory;
+import 'dart:io' show Directory, Platform;
 
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi_core/shensuanzi_core.dart'
@@ -219,7 +219,9 @@ class MobileSyncService {
     _mirror = null;
 
     // ③ 原件留档（`.db` / `-wal` / `-shm` 一起，一个字节都不删）
-    final ArchiveResult archived = archiveBrokenDatabase(databasePath: mirrorPath);
+    final ArchiveResult archived = archiveBrokenDatabase(
+      databasePath: mirrorPath,
+    );
     if (!archived.ok) {
       return MirrorRecoveryResult.failure(
         rescue: rescue,
@@ -680,8 +682,9 @@ class MobileSyncService {
     final PairingInfo? previous = pairingStore.load();
     if (previous == null) {
       throw const FormatException(
-        '这台手机还没连过电脑，光填地址不够（还缺配对令牌）。'
-        '请扫一次电脑上的二维码；扫不了码就把二维码下面那段配对码文字整段粘进来。',
+        '这台手机还没连过电脑，只填地址不够。'
+        '请在电脑上点「用 6 位配对码连接」，把屏幕上的 6 位数字填进「配对码」那一栏；'
+        '或者扫一次电脑上的二维码。',
       );
     }
     final PairingInfo info = previous.withAddress(
@@ -691,6 +694,167 @@ class MobileSyncService {
     );
     pairingStore.save(info);
     return info;
+  }
+
+  /// **6 位短码配对**（提案 58 · A4 乙，2026-11-01 用户裁定）。
+  ///
+  /// ## 流程（两条 HTTP 路由，见 `docs/sync_protocol.md` §9.4）
+  ///
+  /// 1. `POST /api/pair/request`，带上 `{code, device_name}` ⇒ 拿到 `request_id`；
+  /// 2. 电脑前的人看到「XX 请求连接」，点「允许」（**没有这一步谁也拿不到令牌**）；
+  /// 3. 本机每 [pollInterval] 问一次 `/api/pair/status`，`approved` 时拿到
+  ///    `pairing_code` —— 那与二维码里是**同一段字符串**。
+  ///
+  /// ## 为什么最后一定要走 [pairFromCode]
+  ///
+  /// 落盘、换主机归档重建（F14）、写 `mirror_meta.host_id`（A5）全在那一条路上。
+  /// 这里再实现一遍必然与它漂移 —— 而这类漂移的后果是「镜像和主机对不上」，
+  /// 是本仓最难查的一类故障。
+  ///
+  /// ## 失败一律抛 [FormatException]
+  ///
+  /// `message` 就是给用户看的中文（对话框只负责摆出来，不造句）。
+  /// 网络层的原始英文异常由 [Transport] 转成中文（`SyncHttpException.detail`）。
+  Future<PairingInfo> pairFromShortCode({
+    required String address,
+    required String code,
+    Duration pollInterval = const Duration(seconds: 2),
+    Duration timeout = const Duration(minutes: 3),
+  }) async {
+    final ({String ip, int? port}) parsed = PairingAddress.parse(address);
+    final PairingInfo? previous = pairingStore.load();
+    final int? port = parsed.port ?? previous?.port;
+    if (port == null) {
+      throw const FormatException(
+        '地址要带上端口，例如 192.168.1.5:17890 —— '
+        '电脑上「主机地址」那一行就是完整的。',
+      );
+    }
+    final String digits = PairingAddress.normalizeShortCode(code);
+    if (!PairingAddress.isShortCode(digits)) {
+      throw const FormatException('配对码是电脑上显示的那 6 位数字。');
+    }
+
+    final Uri base = Uri.parse('http://${parsed.ip}:$port');
+    final Transport wire = transport ?? _defaultTransport();
+
+    final TransportResponse created;
+    try {
+      created = await wire.send(
+        TransportRequest(
+          method: 'POST',
+          uri: base.replace(path: '/api/pair/request'),
+          headers: const <String, String>{
+            'content-type': 'application/json; charset=utf-8',
+          },
+          body: jsonEncode(<String, Object?>{
+            'code': digits,
+            'device_name': _deviceLabel(),
+          }),
+        ),
+      );
+    } on SyncHttpException catch (error) {
+      throw FormatException(error.detail);
+    }
+    if (created.statusCode == 404) {
+      throw const FormatException(
+        '这台电脑的软件版本太旧，还不认 6 位配对码 —— '
+        '请先在电脑上把神算子升级到最新版。',
+      );
+    }
+    if (created.statusCode != 200) {
+      throw FormatException(_pairError(created.body, '电脑那边没能接受这次配对，请再试一次。'));
+    }
+    final Object? requestId = _decodeJson(created.body)['request_id'];
+    if (requestId is! String || requestId.isEmpty) {
+      throw const FormatException('电脑回的应答看不懂 —— 请再试一次。');
+    }
+
+    // 轮询：条数按「超时 ÷ 间隔」算，不用挂钟（`testWidgets` 的假时钟下也能跑）
+    final int rounds = timeout.inMilliseconds ~/ pollInterval.inMilliseconds;
+    for (int i = 0; i < (rounds < 1 ? 1 : rounds); i++) {
+      if (i > 0) await Future<void>.delayed(pollInterval);
+      final TransportResponse status;
+      try {
+        status = await wire.send(
+          TransportRequest(
+            method: 'GET',
+            uri: base.replace(
+              path: '/api/pair/status',
+              queryParameters: <String, String>{'request_id': requestId},
+            ),
+          ),
+        );
+      } on SyncHttpException catch (error) {
+        throw FormatException(error.detail);
+      }
+      if (status.statusCode == 404) {
+        throw const FormatException('这次配对已经失效了 —— 请在手机上重新点一次「连接」。');
+      }
+      if (status.statusCode != 200) {
+        throw FormatException(_pairError(status.body, '电脑那边出错了 —— 请再试一次。'));
+      }
+      final Map<String, Object?> json = _decodeJson(status.body);
+      switch (json['status']) {
+        case 'approved':
+          final Object? pairingCode = json['pairing_code'];
+          if (pairingCode is! String || pairingCode.isEmpty) {
+            throw const FormatException(
+              '电脑上批准了，但它现在给不出配对码 —— '
+              '请在电脑上点「重新生成配对码」再试一次。',
+            );
+          }
+          // ⚠️ 与扫码走同一条落盘路径（F14 / A5 的判据都在里面）
+          return pairFromCode(pairingCode);
+        case 'denied':
+          throw const FormatException(
+            '电脑上点了「拒绝」。如果是你自己点的，可以再试一次；'
+            '不是你点的，请留意是不是有人在乱试配对码。',
+          );
+        case 'expired':
+          throw const FormatException('电脑那边这次请求超时了 —— 请重新点一次「连接」。');
+        case 'awaiting':
+          break;
+        default:
+          throw const FormatException('电脑回的应答看不懂 —— 请再试一次。');
+      }
+    }
+    throw const FormatException(
+      '电脑上一直没人点「允许」。请确认电脑上「多设备同步」那一屏有没有出现'
+      '「…请求连接」，然后再试一次。',
+    );
+  }
+
+  /// 电脑上要显示「是哪台设备」—— 裁定里的「最好显示手机设备信息或请求来源」。
+  ///
+  /// 不引 `device_info_plus`：这个字段只用来**让人认得出是哪台**，
+  /// 系统版本（+ 主机侧取的来源 IP）已经够；为一个纯展示字段加一个原生插件
+  /// 不划算，而且新依赖要单独过一遍「手机能不能装」。
+  String _deviceLabel() {
+    final String kind = Platform.isAndroid ? '安卓手机' : '手机';
+    String version = Platform.operatingSystemVersion;
+    final int paren = version.indexOf(' (');
+    if (paren > 0) version = version.substring(0, paren);
+    version = version.trim();
+    return version.isEmpty ? kind : '$kind（$version）';
+  }
+
+  /// 解析 JSON 对象；解析不了就返回空表（调用方按「字段缺失」处理）
+  static Map<String, Object?> _decodeJson(String body) {
+    try {
+      final Object? parsed = jsonDecode(body);
+      if (parsed is Map) return Map<String, Object?>.from(parsed);
+    } catch (_) {
+      // 落到下面的空表
+    }
+    return <String, Object?>{};
+  }
+
+  /// 主机回的错误文案（它已经是给用户看的中文）；拿不到就用兜底那句
+  static String _pairError(String body, String fallback) {
+    final Object? message = _decodeJson(body)['error'];
+    if (message is String && message.trim().isNotEmpty) return message.trim();
+    return fallback;
   }
 
   /// 上一次 [pairFromCode] 因**换主机**而挂起的队列条目数（0 = 没换主机）。

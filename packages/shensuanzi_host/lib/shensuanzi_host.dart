@@ -41,6 +41,15 @@ export 'src/local_ip.dart' show LocalIp, NetAddressOption, NetCandidate;
 // 用它的地方直接 `import 'package:shensuanzi_core/shensuanzi_core.dart'`。
 // 本包只导出渲染侧那一半（`PairingQr`）：见 `src/pairing.dart` 的头注释。
 export 'src/pairing.dart' show PairingQr;
+// 6 位短码配对（提案 58 · A4 乙）：状态机在 host（只有主机生成码 / 判确认），
+// 手机端走 HTTP 两条路由，不依赖本包。
+export 'src/pair_requests.dart'
+    show
+        PairPending,
+        PairRejection,
+        PairRequestResult,
+        PairRequestStatus,
+        PairRequests;
 export 'src/service_controller.dart'
     show
         HostServiceController,

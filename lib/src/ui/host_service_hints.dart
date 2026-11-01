@@ -67,3 +67,51 @@ String hostRestoreHint(HostServiceSnapshot snapshot) {
           '码上的令牌没有存到硬盘）。$tail';
   }
 }
+
+// ---------------------------------------------------------------- 6 位短码（A4）
+
+/// 6 位短码的倒计时（`null` = 现在没有可用码，不显示）。
+///
+/// 只说到「秒」而不给进度条：用户要的是「还来得及吗」，不是一个动画。
+/// 超过 1 分钟说「4 分 32 秒」，最后一分钟说「38 秒」—— 少一层读数的换算。
+String? shortCodeCountdown(int? expiresAt, int now) {
+  if (expiresAt == null) return null;
+  final int left = expiresAt - now;
+  if (left <= 0) return '这个码已经过期了';
+  final int minutes = left ~/ 60000;
+  final int seconds = (left % 60000) ~/ 1000;
+  if (minutes <= 0) return '还有 $seconds 秒有效';
+  return '还有 $minutes 分 ${seconds.toString().padLeft(2, '0')} 秒有效';
+}
+
+/// 码不能用的原因 —— 与 `PairRequests.codeProblem` **一一对应**。
+///
+/// ⚠️ 四种原因对用户是四件不同的事：还没生成 / 被手机用掉了（正在等确认）/
+/// 试错作废 / 过期。混成一句「配对码不可用」，用户就不知道该不该换码。
+String shortCodeProblemHint(PairRejection problem) {
+  switch (problem) {
+    case PairRejection.noCode:
+      return '现在没有可用的配对码 —— 点下面的「换一个新码」。';
+    case PairRejection.codeConsumed:
+      return '这个码已经被手机用掉了 —— 等你在下面点「允许」。';
+    case PairRejection.codeExhausted:
+      return '这个码试错的次数用完了，已经作废 —— 点下面的「换一个新码」。';
+    case PairRejection.codeExpired:
+      return '这个码过期了（只有 5 分钟）—— 点下面的「换一个新码」。';
+    case PairRejection.badCode:
+    case PairRejection.rateLimited:
+    case PairRejection.tooManyPending:
+      // 这三种只会出现在「手机发请求」的那一刻，不会成为界面上码的状态
+      return '这个码现在用不了 —— 点下面的「换一个新码」。';
+  }
+}
+
+/// 待确认设备「等了多久」。
+///
+/// 用它而不是绝对时间：用户看的是「是不是刚才那台」，不是几点几分。
+String pendingWaitLabel(int createdAt, int now) {
+  final int seconds = (now - createdAt) ~/ 1000;
+  if (seconds < 5) return '刚刚';
+  if (seconds < 60) return '$seconds 秒前';
+  return '${seconds ~/ 60} 分钟前';
+}

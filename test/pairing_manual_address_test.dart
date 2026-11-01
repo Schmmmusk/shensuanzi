@@ -79,7 +79,9 @@ void main() {
       findsOneWidget,
       reason: '扫码失败时用户必须有别的路可走',
     );
-    expect(find.textContaining('手动填地址'), findsOneWidget);
+    // A4（2026-11-01 用户裁定）：入口名从「手动填地址」改成「用 6 位配对码」——
+    // 旧名字本身就在误导（用户以为只填 IP 就行）
+    expect(find.textContaining('用 6 位配对码'), findsOneWidget);
   });
 
   testWidgets('格式不对 ⇒ 红字留在对话框里，配对没被改', (WidgetTester tester) async {
@@ -106,7 +108,7 @@ void main() {
     expect(store.load(), isNull, reason: '填错了不能凭空造一份配对出来');
   });
 
-  testWidgets('没配对过就只填地址 ⇒ 说清「还缺配对令牌」', (WidgetTester tester) async {
+  testWidgets('没配对过就只填地址 ⇒ 指路到 6 位配对码（A4 改写文案）', (WidgetTester tester) async {
     await openDialog(tester);
 
     await tester.enterText(
@@ -119,9 +121,16 @@ void main() {
     expect(find.textContaining('还没连过电脑'), findsOneWidget);
     // ⚠️ 不能只断言「配对码」三个字：对话框里那段常驻说明也含它（会数到 2 个）
     expect(
-      find.textContaining('光填地址不够'),
+      find.textContaining('只填地址不够'),
       findsOneWidget,
-      reason: '要告诉用户下一步怎么办（去扫码 / 粘整段配对码）',
+      reason: '要告诉用户下一步怎么办（去电脑上点「用 6 位配对码连接」）',
+    );
+    expect(
+      // ⚠️ 不能断言「6 位数字」/「那一栏」：对话框里那段常驻说明也含它们
+      //（会数到 2 个）—— 只认错误文案里独有的那半句
+      find.textContaining('「配对码」那一栏'),
+      findsOneWidget,
+      reason: 'A4：指路必须具体到「填哪一栏」，不能只说「还缺令牌」',
     );
     expect(find.byType(ManualAddressDialog), findsOneWidget);
   });

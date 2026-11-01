@@ -7,6 +7,7 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'auth.dart';
+import 'pair_requests.dart';
 import 'sync_server.dart';
 
 /// 端口范围（`docs/sync_protocol.md` §9.1：**从 17890 起探测到 17900**）。
@@ -34,14 +35,20 @@ class PortRange {
 /// | 方法 | 路径 | 鉴权 | 说明 |
 /// |---|---|---|---|
 /// | GET | `/api/health` | **否** | 连通性探测（配对前就要能探到） |
+/// | POST | `/api/pair/request` | **否**（限次） | 6 位短码 → 建一条待确认请求 |
+/// | GET | `/api/pair/status` | **否** | 手机轮询确认结果（批准后才下发配对码） |
 /// | POST | `/api/sync/push` | 是 | 推送队列条目 |
 /// | GET | `/api/sync/pull` | 是 | 增量拉取 |
 ///
 /// `health` 不鉴权是刻意的：客户端在**扫码之前**就要能判断
 /// 「这个 IP:端口是不是主机」。它只返回 `ok` / 服务器时间 / schema 版本，
 /// 不含任何业务数据。
+///
+/// 两条 `pair` 路由同样免鉴权 —— **手机此时还没有令牌**，这正是它们存在的意义。
+/// 安全靠三层（提案 58 · A4 用户裁定的六条约束，实现见 [PairRequests]）：
+/// 6 位密码学随机码 5 分钟一次性、限次防爆破、**必须由电脑前的人点允许**。
 class HostHttpServer {
-  HostHttpServer._(this._server, this.sync, this.identity);
+  HostHttpServer._(this._server, this.sync, this.identity, this.pairRequests);
 
   static const String apiVersion = '1';
 
@@ -51,6 +58,12 @@ class HostHttpServer {
   final SyncServer sync;
 
   final HostIdentity identity;
+
+  /// 6 位短码的状态机。
+  ///
+  /// **公开**是为了让宿主（设置页）能显示码、批准设备，也让测试不必绕 HTTP
+  /// 就能把「限次 / 串号」这类分支钉住。没注入时 [start] 会自己建一个。
+  final PairRequests pairRequests;
 
   int get port => _server.port;
 
@@ -77,6 +90,8 @@ class HostHttpServer {
     void Function(int appliedCount)? onDataApplied,
     void Function(String label, Object error, StackTrace stack)?
     onInternalError,
+    PairRequests? pairRequests,
+    String? Function()? pairingUri,
   }) async {
     final int Function() now =
         clock ?? () => DateTime.now().millisecondsSinceEpoch;
@@ -93,6 +108,10 @@ class HostHttpServer {
       onAuthenticated: onAuthenticated,
       // HTTP 层自己的 400 / 500 也走同一出口（§CV·十五：响应体不许有动态异常内容）
       onInternalError: onInternalError,
+      pairRequests: pairRequests ?? PairRequests(clock: now),
+      // 批准之后要下发的配对码：**由调用方现取**（端口要等绑完才知道，
+      // 而且用户可能换过网卡地址 —— 现取才能与二维码里那张逐字相同）
+      pairingUri: pairingUri,
     );
     final InternetAddress bind = address ?? InternetAddress.anyIPv4;
 
@@ -107,7 +126,12 @@ class HostHttpServer {
         // ⚠️ 时钟**只交给 _HostRoutes**：它才是真正取时间的地方
         // （`health` 的 `server_time`、`occurred_at` 回填）。
         // 这里曾经也存了一份 `_clock` 字段，但从未读过 —— 死状态，已删。
-        return HostHttpServer._(server, routes.sync, identity);
+        return HostHttpServer._(
+          server,
+          routes.sync,
+          identity,
+          routes.pairRequests,
+        );
       } on SocketException catch (error) {
         lastError = error;
       }
@@ -125,6 +149,8 @@ class _HostRoutes {
     required this.sync,
     required this.identity,
     required this.clock,
+    required this.pairRequests,
+    this.pairingUri,
     this.onAuthenticated,
     this.onInternalError,
   });
@@ -132,6 +158,13 @@ class _HostRoutes {
   final SyncServer sync;
   final HostIdentity identity;
   final int Function() clock;
+
+  /// 6 位短码状态机（与宿主共用同一个实例 —— 设置页点「允许」改的就是它）
+  final PairRequests pairRequests;
+
+  /// 批准后下发的那段配对码；`null` = 主机此刻拿不出明文令牌
+  ///（重启后只有哈希），此时手机端会说「请在电脑上重新生成配对码」。
+  final String? Function()? pairingUri;
 
   /// 鉴权通过一次调一次（`null` = 不关心）
   final void Function()? onAuthenticated;
@@ -164,6 +197,9 @@ class _HostRoutes {
   Handler get handler {
     final Router router = Router()
       ..get('/api/health', _health)
+      // 6 位短码配对（提案 58 · A4 乙）—— 手机此时还没有令牌，所以免鉴权
+      ..post('/api/pair/request', _pairRequest)
+      ..get('/api/pair/status', _pairStatus)
       ..post('/api/sync/push', _withAuth(_push))
       ..get('/api/sync/pull', _withAuth(_pull));
 
@@ -181,6 +217,109 @@ class _HostRoutes {
     'server_time': clock(),
     'schema_version': Schema.version,
   });
+
+  // ---------------------------------------------------- 6 位短码配对（A4）
+
+  /// `POST /api/pair/request` —— 手机带着 6 位码来建一条**待确认**请求。
+  ///
+  /// 请求体：`{"code":"482913","device_name":"安卓手机（Android 14）"}`
+  /// 成功：`{"request_id":"…","status":"awaiting","expires_in":300}`
+  ///
+  /// ⚠️ 拿到 `request_id` **不等于配对成功** —— 令牌要等电脑前的人点「允许」，
+  /// 手机再去 [statusOf] 那条路由取（约束 4）。
+  Future<Response> _pairRequest(Request request) async {
+    final Map<String, Object?> body;
+    try {
+      final String raw = await request.readAsString();
+      body = Map<String, Object?>.from(
+        jsonDecode(raw) as Map<Object?, Object?>,
+      );
+    } catch (error, stack) {
+      // ⚠️ **原文不进日志**（约束 5）：`jsonDecode` 抛的 `FormatException`
+      // 会在 message 里带一小段源文本，而这段请求体里就有短码。只记类型。
+      onInternalError?.call(
+        '配对请求体解析失败（内容不入日志：可能含短码）',
+        error.runtimeType,
+        stack,
+      );
+      return _error(400, _badRequestReason);
+    }
+
+    final Object? code = body['code'];
+    final Object? device = body['device_name'];
+    final PairRequestResult result = pairRequests.request(
+      code: code is String ? code : '',
+      deviceName: device is String ? device : '',
+      // 来源地址由**服务端**从 socket 取，不信请求体（约束 4 的「请求来源」）
+      ip: _remoteAddress(request),
+      now: clock(),
+    );
+
+    final PairPending? pending = result.request;
+    if (pending != null) {
+      return _json(<String, Object?>{
+        'request_id': pending.id,
+        'status': pending.status.name,
+        'expires_in': PairRequests.requestTtl.inSeconds,
+      });
+    }
+    return _pairRejected(result.rejection!, result.remaining);
+  }
+
+  /// `GET /api/pair/status?request_id=…` —— 手机轮询确认结果。
+  ///
+  /// 批准后才带 `pairing_code`（与二维码里那段**逐字相同**，含 host_id / 令牌）。
+  Response _pairStatus(Request request) {
+    final String id = request.url.queryParameters['request_id'] ?? '';
+    final PairRequestStatus? status = pairRequests.statusOf(id, now: clock());
+    if (status == null) {
+      return _error(404, '这次配对已经失效了 —— 请在手机上重新点一次「连接」。');
+    }
+    return _json(<String, Object?>{
+      'status': status.name,
+      if (status == PairRequestStatus.approved)
+        'pairing_code': pairingUri?.call(),
+    });
+  }
+
+  /// 拒绝时的**固定文案 + 状态码**（每一句都说清「下一步做什么」）。
+  ///
+  /// ⚠️ 这些字符串会被手机端**原样展示**给用户（领域层给话、UI 不造句），
+  /// 所以不许出现 `bad_code` 这类内部代号，也不许带任何动态内容。
+  Response _pairRejected(PairRejection rejection, int remaining) {
+    switch (rejection) {
+      case PairRejection.badCode:
+        return _json(<String, Object?>{
+          'error': '配对码不对，请在电脑上再看一眼那 6 位数字。',
+          'remaining': remaining,
+        }, status: 400);
+      case PairRejection.codeExhausted:
+        return _error(409, '这个配对码试错的次数太多了，已经作废 —— 请在电脑上点「换一个新码」。');
+      case PairRejection.codeExpired:
+        return _error(400, '这个配对码过期了（只有 5 分钟）—— 请在电脑上点「换一个新码」。');
+      case PairRejection.codeConsumed:
+        return _error(409, '这个码已经被用掉了 —— 请在电脑上点「换一个新码」。');
+      case PairRejection.noCode:
+        return _error(
+          409,
+          '电脑上还没显示配对码 —— 请在电脑上打开「设置 → 多设备同步」，'
+          '点「用 6 位配对码连接」。',
+        );
+      case PairRejection.rateLimited:
+        return _error(429, '试的次数太多了，请等一分钟再试。');
+      case PairRejection.tooManyPending:
+        return _error(409, '电脑上还有几台手机等着确认 —— 请先在电脑上处理完。');
+    }
+  }
+
+  /// 请求的**真实来源地址**（`shelf_io` 在 context 里塞的 `HttpConnectionInfo`）。
+  ///
+  /// 拿不到就写「未知地址」—— 宁可少显示一项，也不拿客户端自报的值冒充。
+  static String _remoteAddress(Request request) {
+    final Object? info = request.context['shelf.io.connection_info'];
+    if (info is HttpConnectionInfo) return info.remoteAddress.address;
+    return '未知地址';
+  }
 
   Future<Response> _push(Request request) async {
     final String body = await request.readAsString();

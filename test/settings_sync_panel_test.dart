@@ -151,7 +151,9 @@ void main() {
     );
 
     await tapKey(tester, 'mobile-manual-address');
-    expect(find.text('手动填地址'), findsOneWidget, reason: '点开的是同一个对话框');
+    // A4（2026-11-01）：对话框标题改成「换电脑地址」——
+    // 这一处入口是「已配对的手机换地址」，不是「第一次配对」
+    expect(find.text('换电脑地址'), findsOneWidget, reason: '点开的是同一个对话框');
 
     await tester.enterText(
       find.byKey(const Key('manual-address-field')),
@@ -160,7 +162,7 @@ void main() {
     await tester.tap(find.byKey(const Key('manual-address-ok')));
     await tester.pumpAndSettle();
 
-    expect(find.text('手动填地址'), findsNothing, reason: '换好了就关掉');
+    expect(find.text('换电脑地址'), findsNothing, reason: '换好了就关掉');
     expect(
       find.textContaining('已连接主机（10.102.43.94:17890）'),
       findsOneWidget,

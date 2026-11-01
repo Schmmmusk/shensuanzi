@@ -29,7 +29,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
-import 'emphasized_text.dart';import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'emphasized_text.dart';
+import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 
 import 'host_service_section.dart';
@@ -681,8 +682,10 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
   Future<void> _manualAddress() async {
     final bool? paired = await showDialog<bool>(
       context: context,
+      // 这一处入口是「已配对的手机连不上，换个地址」——
+      // 标题不能沿用扫码页那句「用配对码连接」，否则用户以为要重新配对
       builder: (BuildContext context) =>
-          ManualAddressDialog(service: widget.service),
+          ManualAddressDialog(service: widget.service, title: '换电脑地址'),
     );
     if (paired != true || !mounted) return;
     // 地址换了 ⇒ 立刻试一次：成功就是「连上了」，失败也有中文原因可看

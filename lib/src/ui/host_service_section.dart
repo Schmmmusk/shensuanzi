@@ -62,11 +62,15 @@ class _HostServicePanelState extends State<HostServicePanel> {
     // #40⑤：手机推上来的数据**真的落库**后，这一块（「最近连接」/流量）
     // 必须跟着走 —— 否则它永远停在打开设置页那一刻的快照上
     widget.controller.addDataListener(_onHostData);
+    // A4：手机来请求配对时要**立刻**看出来（否则用户会对着一个死码干等）。
+    // 订阅的是 6 位短码那台状态机，不是快照 —— 它不经过 controller 的启停流程。
+    widget.controller.pairRequests.addListener(_onHostData);
   }
 
   @override
   void dispose() {
     widget.controller.removeDataListener(_onHostData);
+    widget.controller.pairRequests.removeListener(_onHostData);
     super.dispose();
   }
 
@@ -190,6 +194,21 @@ class _HostServicePanelState extends State<HostServicePanel> {
     setState(() => _snapshot = widget.controller.snapshot);
   }
 
+  /// **用 6 位配对码连接**（提案 58 · A4 乙，2026-11-01 用户裁定）。
+  ///
+  /// 每次打开都发一个新码：旧码可能已经过期 / 被上一台手机用掉了，
+  /// 让用户对着一个死码输入是这一屏最容易发生的挫败。
+  Future<void> _showShortCode() async {
+    widget.controller.pairRequests.issueCode();
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext context) =>
+          _ShortCodeDialog(controller: widget.controller),
+    );
+    if (!mounted) return;
+    setState(() => _snapshot = widget.controller.snapshot);
+  }
+
   /// 重新生成配对码 —— **会作废所有已配对的手机**，所以先要一次确认。
   Future<void> _regenerate() async {
     final bool confirmed =
@@ -237,6 +256,10 @@ class _HostServicePanelState extends State<HostServicePanel> {
     final String? traffic = snapshot.trafficLabel(
       DateTime.now().millisecondsSinceEpoch,
     );
+    // 有几台手机正等着确认（A4）—— 面板上要说出来，否则用户看不见
+    final int waitingCount = widget.controller.pairRequests
+        .pendingAwaiting()
+        .length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -335,14 +358,37 @@ class _HostServicePanelState extends State<HostServicePanel> {
           ],
 
           // 能画码 ⇒ 给「显示二维码」；画不出（重启后）⇒ 给「重新生成」+ 说清后果
-          if (snapshot.qrAvailable)
-            OutlinedButton.icon(
-              key: const Key('host-service-show-qr'),
-              onPressed: _busy ? null : _showQr,
-              icon: const Icon(Icons.qr_code_2),
-              label: const Text('显示二维码'),
-            )
-          else if (snapshot.needsReset) ...<Widget>[
+          if (snapshot.qrAvailable) ...<Widget>[
+            // 有手机在等确认 ⇒ 面板上就得看得见（对话框可能已经被收起）。
+            // 不提示的话，手机那边一直转圈，电脑这边毫无动静。
+            if (waitingCount > 0) ...<Widget>[
+              const SizedBox(height: 6),
+              _hintLine(
+                '有 $waitingCount 台手机在请求配对 —— '
+                '点「用 6 位配对码连接」去允许或拒绝。',
+              ),
+            ],
+            // Wrap 而不是 Row：2.0 字号下两个按钮并排会溢出（批 3 的老账）
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                OutlinedButton.icon(
+                  key: const Key('host-service-show-qr'),
+                  onPressed: _busy ? null : _showQr,
+                  icon: const Icon(Icons.qr_code_2),
+                  label: const Text('显示二维码'),
+                ),
+                // A4：不想扫码 / 扫不上时的第二条路 —— 抄 6 位数字
+                OutlinedButton.icon(
+                  key: const Key('host-service-short-code'),
+                  onPressed: _busy ? null : _showShortCode,
+                  icon: const Icon(Icons.pin_outlined),
+                  label: const Text('用 6 位配对码连接'),
+                ),
+              ],
+            ),
+          ] else if (snapshot.needsReset) ...<Widget>[
             _hintLine(hostRestoreHint(snapshot)),
             const SizedBox(height: 8),
             OutlinedButton.icon(
@@ -524,6 +570,217 @@ class _PairingDialogState extends State<_PairingDialog> {
           // 中老年用户看到会以为关掉之后手机就连不上了，于是**不敢点**
           // （`ui_principles` §1.2 的「给用户明确预期」）。
           // 「收起」说的是「码还能再拿出来」—— 事实也如此（令牌仍在内存）。
+          child: const Text('收起'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 「用 6 位配对码连接」对话框（提案 58 · A4 乙，2026-11-01 用户裁定）。
+///
+/// ## 它替掉的是什么
+///
+/// 从前手机端唯一的兜底是「把 100 个字符的配对码整段粘过去」——
+/// 用户原话「又臭又长，没人愿意输入」。现在电脑这边给出 6 位数字，
+/// 手机那边输 6 个数字 + 一个地址。
+///
+/// ## 三件事必须同屏
+///
+/// | 显示什么 | 为什么 |
+/// |---|---|
+/// | **6 位数字**（大字号、可选中） | 用户要照着抄，字小了会抄错 |
+/// | **倒计时** | 5 分钟的有效期是安全约束，用户得知道还剩多少 |
+/// | **待确认设备 + 允许/拒绝** | 约束 4：**必须由电脑前的人主动确认**，还要看得见是哪台 |
+///
+/// ## 为什么有一个 1 秒定时器
+///
+/// 倒计时要走、码过期要当场变成「换一个新码」。定时器**只在对话框活着时**跑，
+/// `dispose` 里取消 —— 设置页常驻一个定时器会白白耗电、也会让 widget 测试
+/// 永远 `pumpAndSettle` 不完。
+class _ShortCodeDialog extends StatefulWidget {
+  const _ShortCodeDialog({required this.controller});
+
+  final HostServiceController controller;
+
+  @override
+  State<_ShortCodeDialog> createState() => _ShortCodeDialogState();
+}
+
+class _ShortCodeDialogState extends State<_ShortCodeDialog> {
+  late final PairRequests _store = widget.controller.pairRequests;
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    // 手机来请求 / 被批准 ⇒ 立刻重画（不用等下一个整秒）
+    _store.addListener(_refresh);
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _refresh());
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    _store.removeListener(_refresh);
+    super.dispose();
+  }
+
+  void _refresh() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  /// 把 `482913` 摆成 `4 8 2 9 1 3` —— 抄数字时眼睛不容易串位
+  static String spaced(String code) => code.split('').join(' ');
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Color secondary = theme.textTheme.bodySmall?.color ?? theme.hintColor;
+    final int now = DateTime.now().millisecondsSinceEpoch;
+    final String? code = _store.code;
+    final String? countdown = shortCodeCountdown(_store.codeExpiresAt, now);
+    final List<PairPending> pending = _store.pendingAwaiting();
+    final String? address = widget.controller.snapshot.addressLine;
+
+    return AlertDialog(
+      title: const Text('用 6 位配对码连接'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text(
+                '手机上打开「扫码连接主机」，点「扫不了码？用 6 位配对码」，'
+                '把下面这两样填进去。',
+                style: TextStyle(height: 1.6),
+              ),
+              const SizedBox(height: 14),
+              if (code != null)
+                Center(
+                  child: SelectableText(
+                    spaced(code),
+                    key: const Key('host-short-code-value'),
+                    style: const TextStyle(
+                      fontSize: 32,
+                      letterSpacing: 6,
+                      height: 1.2,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                )
+              else
+                Text(
+                  // 原因不同话不同（被用掉了 / 试错作废 / 过期），文案在纯 Dart 层
+                  shortCodeProblemHint(
+                    _store.codeProblem ?? PairRejection.noCode,
+                  ),
+                  key: const Key('host-short-code-problem'),
+                  style: TextStyle(height: 1.6, color: theme.colorScheme.error),
+                ),
+              if (countdown != null) ...<Widget>[
+                const SizedBox(height: 6),
+                Center(
+                  child: Text(
+                    countdown,
+                    key: const Key('host-short-code-countdown'),
+                    style: TextStyle(height: 1.6, color: secondary),
+                  ),
+                ),
+              ],
+              if (address != null) ...<Widget>[
+                const SizedBox(height: 14),
+                Text(
+                  '手机上的「电脑地址」填这个：',
+                  style: TextStyle(height: 1.6, color: secondary),
+                ),
+                SelectableText(
+                  address,
+                  key: const Key('host-short-code-address'),
+                ),
+                // 自动挑网卡**永远可能挑错**（穿透工具 / 虚拟网卡 / VPN，
+                // 2026-10-25 与 2026-11-01 两次现场都撞上）。
+                // 短码这条路同样得能换地址 —— 否则用户只能关掉这一屏去二维码
+                // 那边换，回来时手上的码已经换了。
+                if (widget.controller.snapshot.hasAddressChoice) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text(
+                    '手机连不上？换一个地址试试'
+                    '（这台电脑有 '
+                    '${widget.controller.snapshot.addressOptions.length} 个）：',
+                    style: const TextStyle(height: 1.6),
+                  ),
+                  for (final NetAddressOption option
+                      in widget.controller.snapshot.addressOptions)
+                    _AddressChoice(
+                      key: Key('host-short-code-address-${option.address}'),
+                      option: option,
+                      selected: option.address == address,
+                      onTap: () {
+                        widget.controller.selectAddress(option.address);
+                        _refresh();
+                      },
+                    ),
+                ],
+              ],
+              const Divider(height: 28),
+              Text(
+                pending.isEmpty
+                    ? '还没有手机连过来 —— 手机上填完这两样，这里会出现确认按钮。'
+                    : '有手机在请求连接（看清楚是哪台，再点允许）：',
+                style: const TextStyle(height: 1.6),
+              ),
+              for (final PairPending request in pending)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        request.label,
+                        key: Key('host-pair-device-${request.id}'),
+                        style: const TextStyle(height: 1.6),
+                      ),
+                      Text(
+                        pendingWaitLabel(request.createdAt, now),
+                        style: TextStyle(height: 1.6, color: secondary),
+                      ),
+                      // Wrap：2.0 字号下「允许 / 拒绝」并排会溢出
+                      Wrap(
+                        spacing: 8,
+                        children: <Widget>[
+                          FilledButton(
+                            key: Key('host-pair-approve-${request.id}'),
+                            onPressed: () =>
+                                widget.controller.approvePairing(request.id),
+                            child: const Text('允许'),
+                          ),
+                          TextButton(
+                            key: Key('host-pair-deny-${request.id}'),
+                            onPressed: () =>
+                                widget.controller.denyPairing(request.id),
+                            child: const Text('拒绝'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          key: const Key('host-short-code-refresh'),
+          onPressed: () => _store.issueCode(),
+          child: const Text('换一个新码'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context),
           child: const Text('收起'),
         ),
       ],

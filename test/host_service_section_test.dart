@@ -251,4 +251,155 @@ void main() {
       reason: '开关必须还能点，否则用户只能重启软件',
     );
   });
+
+  // ---------------------------------------------------------------- A4（2026-11-01）
+  //
+  // 提案 58 · A4 乙：手机不再抄 100 个字符的配对码，改成输电脑屏幕上的 6 位数字。
+  // 用户裁定的六条约束里，有三条是**这一屏**负责的：显示待配对设备、
+  // 由用户主动确认、码 5 分钟一次性。所以这里逐条钉住「摆放」这一层。
+  testWidgets('A4：短码对话框显示 6 位码 + 地址，允许后设备行消失', (WidgetTester tester) async {
+    // 两个网卡候选：模拟「穿透工具抢了 WLAN」（2026-10-25 与 2026-11-01
+    // 两次现场都是这个形状）—— 短码这条路也必须能换地址
+    final HostServiceController host = HostServiceController(
+      db: db,
+      identities: HostIdentityStore.inMemory(),
+      ports: const PortRange(start: 17970, end: 17979),
+      detectLocalIp: () async => '192.168.1.7',
+      detectAddresses: () async => const <NetAddressOption>[
+        NetAddressOption(name: 'WLAN', address: '192.168.1.7'),
+        NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
+      ],
+    );
+    addTearDown(host.stop);
+    // 绑端口是真实 I/O —— 必须 runAsync，否则假时钟下等不到回调
+    await tester.runAsync(() => host.start());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: HostServicePanel(controller: host),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('host-service-short-code')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('host-short-code-value')),
+      findsOneWidget,
+      reason: '这一屏的全部意义就是把这 6 位数字给用户看',
+    );
+    expect(
+      find.byKey(const Key('host-short-code-countdown')),
+      findsOneWidget,
+      reason: '5 分钟有效期是安全约束，用户得知道还剩多少',
+    );
+    expect(
+      find.byKey(const Key('host-short-code-address')),
+      findsOneWidget,
+      reason: '手机上还要填地址 —— 不给出来用户就得自己找 IP',
+    );
+    expect(find.textContaining('还没有手机连过来'), findsOneWidget);
+    expect(
+      tester
+          .widget<SelectableText>(
+            find.byKey(const Key('host-short-code-address')),
+          )
+          .data,
+      contains('192.168.1.7'),
+      reason: '地址要摆出来给用户抄 —— 手机不知道往哪发',
+    );
+
+    // 换地址：挑错网卡时唯一的自救手段（这一屏也得有）
+    final Finder alt = find.byKey(
+      const Key('host-short-code-address-10.6.22.1'),
+    );
+    await tester.ensureVisible(alt);
+    await tester.pumpAndSettle();
+    await tester.tap(alt);
+    await tester.pump();
+    expect(
+      tester
+          .widget<SelectableText>(
+            find.byKey(const Key('host-short-code-address')),
+          )
+          .data,
+      contains('10.6.22.1'),
+      reason: '换完地址行要当场变（手机照着抄的就是它）',
+    );
+
+    // 模拟手机来请求（真机上是 HTTP 打进来的，这里直接打状态机）
+    final String code = host.pairRequests.code!;
+    expect(code.length, 6);
+    final PairPending pending = host.pairRequests
+        .request(code: code, deviceName: '安卓手机（Android 14）', ip: '192.168.1.23')
+        .request!;
+    await tester.pump();
+
+    expect(
+      find.textContaining('安卓手机（Android 14）'),
+      findsOneWidget,
+      reason: '约束 4：必须显示是哪台设备，用户才知道自己在批准谁',
+    );
+    expect(find.textContaining('192.168.1.23'), findsOneWidget);
+    expect(find.byKey(Key('host-pair-approve-${pending.id}')), findsOneWidget);
+
+    await tester.tap(find.byKey(Key('host-pair-approve-${pending.id}')));
+    await tester.pump();
+
+    expect(
+      find.byKey(Key('host-pair-device-${pending.id}')),
+      findsNothing,
+      reason: '批准过的行要撤掉 —— 留着会让人以为还能再批一次',
+    );
+    expect(host.pairRequests.statusOf(pending.id), PairRequestStatus.approved);
+
+    await tester.tap(find.text('收起'));
+    await tester.pumpAndSettle();
+    // ⚠️ 必须在用例体里停服务（tearDown 跑在「无遗留 Timer」检查之后）
+    await tester.runAsync(() => host.stop());
+  });
+
+  testWidgets('A4：有人等着确认时，面板上就看得见（不用打开对话框）', (WidgetTester tester) async {
+    final HostServiceController host = HostServiceController(
+      db: db,
+      identities: HostIdentityStore.inMemory(),
+      ports: const PortRange(start: 17970, end: 17979),
+      detectLocalIp: () async => '192.168.1.7',
+    );
+    addTearDown(host.stop);
+    await tester.runAsync(() => host.start());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: HostServicePanel(controller: host),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('台手机在请求配对'), findsNothing);
+
+    host.pairRequests.request(
+      code: host.pairRequests.issueCode(),
+      deviceName: '安卓手机',
+      ip: '192.168.1.23',
+    );
+    await tester.pump();
+
+    expect(
+      find.textContaining('台手机在请求配对'),
+      findsOneWidget,
+      reason: '对话框收起来之后，用户也得知道有人在等 —— 否则手机那边一直转圈',
+    );
+
+    await tester.runAsync(() => host.stop());
+  });
 }
