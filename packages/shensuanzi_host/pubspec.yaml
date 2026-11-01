@@ -30,3 +30,7 @@ dependencies:
 dev_dependencies:
   test: ^1.25.0
   lints: ^6.0.0
+
+  # 2026-11-01：`tool/probe_dpapi.dart` 用 `calloc` 分配 DATA_BLOB。
+  # 只进 dev —— 提案 57 若裁定落地，`ffi` 会提到 dependencies。
+  ffi: ^2.1.0
