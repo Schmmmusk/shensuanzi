@@ -82,6 +82,7 @@ class StockPage extends StatefulWidget {
     this.settlements,
     this.masterDataSink,
     this.documentSink,
+    this.canWrite = true,
     this.canCreateProducts = false,
   });
 
@@ -120,6 +121,9 @@ class StockPage extends StatefulWidget {
   /// 手机 = `QueueSink`；桌面 = `ServiceSink`（两支都由桌面/手机各自的
   /// 装配传入）。`null` = 未装配（摆放层测试）⇒ 期初页退回 `StocktakeService`。
   final DocumentSink? documentSink;
+
+  /// 能不能写（2026-11-01）：只读降级时 `false` ⇒ 不给「期初录入 / 重新清点」入口。
+  final bool canWrite;
 
   /// **#27 批 2**：本机能不能建商品（门控）—— 按钮显隐用。
   final bool canCreateProducts;
@@ -223,7 +227,14 @@ class _StockPageState extends State<StockPage> {
     // 2026-10-31（裁定 A 第一阶段，降级只读）：手机壳**没有提交出口**时不给清点
     // 入口 —— 清点单走单据队列，没有 sink 就只会写进镜像、永远到不了电脑
     // （用户看到「清点成功」而主机上没有这张单，比没有入口糟得多）。
-    final bool canStocktake = !(widget.mobileShell && widget.documentSink == null);
+    // 2026-11-01：只读降级（低权限 / 本机账本打不开）时不给清点入口。
+    //
+    // 判据分两种壳：
+    // - 手机壳：清点单走单据队列，**必须有 `documentSink`**（否则只写镜像、到不了电脑）；
+    // - 桌面：走 `StocktakeService` 直接落库，本来不需要 sink ⇒ 看 `canWrite`。
+    // 从前只判手机壳，桌面在只读态下会漏掉这条写入口。
+    final bool canStocktake =
+        widget.canWrite && (!widget.mobileShell || widget.documentSink != null);
 
     // §AD 遗漏 2：期初录入入口（就地打开，完成后 setState 刷新数字）
     if (_showOpening) {

@@ -29,6 +29,7 @@ class ProductsPage extends StatefulWidget {
     super.key,
     required this.service,
     this.remoteVersion = 0,
+    this.canWrite = true,
     this.exports,
     this.pendingMarks,
   });
@@ -38,6 +39,13 @@ class ProductsPage extends StatefulWidget {
 
   /// 主机落库版本号（手机推了主数据/单据 ⇒ 变了就重查，见 `app_shell.dart`）
   final int remoteVersion;
+
+  /// 能不能写（2026-11-01，提案 57 批复 §三）。
+  ///
+  /// ⚠️ 商品页**不走** `shell.masterDataSink`（桌面一直是 `ServiceMasterSink` 直连主库），
+  /// 所以「只读」不能靠 sink 为空来挡 —— 必须显式关掉三个写入口：
+  /// 新增 / 编辑 / 停用恢复。
+  final bool canWrite;
 
   /// 导出服务（`null` = 不显示导出按钮）
   final ExportSink? exports;
@@ -134,6 +142,7 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   Future<void> _create() async {
+    if (!widget.canWrite) return; // 双保险：按钮已置灰，代码路径也拦住
     final Product? saved = await showProductFormDialog(
       context,
       service: _service,
@@ -145,6 +154,7 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   Future<void> _edit(Product product) async {
+    if (!widget.canWrite) return;
     final Product? saved = await showProductFormDialog(
       context,
       service: _service,
@@ -158,6 +168,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
   /// 停用 / 恢复，并给一次**撤销**机会
   void _toggleActive(Product product) {
+    if (!widget.canWrite) return;
     final bool wasActive = product.isActive;
     _masterDataSink.setProductActive(product.id, !wasActive);
     _applyFilters(() {});
@@ -246,7 +257,7 @@ class _ProductsPageState extends State<ProductsPage> {
                 ),
               // 常驻可见的文字按钮（不是图标按钮）
               FilledButton.icon(
-                onPressed: _create,
+                onPressed: widget.canWrite ? _create : null,
                 icon: const Icon(Icons.add),
                 label: const Text('新增商品'),
               ),

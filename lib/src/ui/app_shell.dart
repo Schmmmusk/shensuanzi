@@ -366,6 +366,8 @@ Widget appShellPage(
     // 商品是核心闭环的第一块 —— 已实现，不再是占位页
     page = ProductsPage(
       remoteVersion: remoteVersion,
+      // 只读（低权限 / 本机账本打不开）⇒ 商品页三个写入口一并关掉
+      canWrite: shell.readOnlyReason == null,
       service: shell.products,
       exports: shell.exports,
       pendingMarks: shell.pendingMarks,
@@ -378,7 +380,12 @@ Widget appShellPage(
             shell.parties == null ||
             shell.documentSink == null ||
             shell.masterDataSink == null
-        ? _PendingPage(destination: destination)
+        // 2026-11-01：只读时**别说「正在开发」** —— 那是在撒谎，会让人以为
+        // 功能没做完。真原因是写入被关（低权限 / 本机账本打不开）。
+        ? _UnavailablePage(
+            destination: destination,
+            reason: shell.readOnlyReason,
+          )
         : SalePage(
             service: shell.sales!,
             productService: shell.products!,
@@ -410,7 +417,10 @@ Widget appShellPage(
             shell.parties == null ||
             shell.documentSink == null ||
             shell.masterDataSink == null
-        ? _PendingPage(destination: destination)
+        ? _UnavailablePage(
+            destination: destination,
+            reason: shell.readOnlyReason,
+          )
         : DeliveryPage(
             service: shell.deliveries!,
             productService: shell.products!,
@@ -447,6 +457,8 @@ Widget appShellPage(
             masterDataSink: shell.masterDataSink,
             // 2026-10-20（§CV·七十八）：手机「重新清点」走单据队列
             documentSink: shell.documentSink,
+            // 2026-11-01：只读降级时不给清点入口（桌面也要挡）
+            canWrite: shell.readOnlyReason == null,
             canCreateProducts: shell.masterDataPolicy.canCreateProducts,
             // 期初入口 + 镜像空态按**壳**走（不是主数据权限 —— 盘点 delta
             // 客户端算不出，见 `stock_page.dart`）
@@ -527,7 +539,10 @@ Widget appShellPage(
             shell.products == null ||
             shell.documentSink == null ||
             shell.masterDataSink == null
-        ? _PendingPage(destination: destination)
+        ? _UnavailablePage(
+            destination: destination,
+            reason: shell.readOnlyReason,
+          )
         : PurchasePage(
             service: shell.purchases!,
             productService: shell.products!,
@@ -827,6 +842,55 @@ class _Breadcrumb extends StatelessWidget {
 ///
 /// 刻意**把功能名写出来**（而不是一片空白）：用户点进来要能确认
 /// 「我点对了，只是还没做」，而不是以为软件坏了。
+/// 「这个入口现在用不了」—— 有**具体原因**时说原因，没有才说「正在开发」。
+///
+/// 2026-11-01：只读降级（低权限启动 / 本机账本打不开）时，开单页原本会掉进
+/// `_PendingPage` 显示「销售开单：正在开发」。那是在撒谎 —— 功能做完了，
+/// 是**写入被关**。用户看到真原因才知道下一步该干什么（复制到别的位置 / 重装）。
+class _UnavailablePage extends StatelessWidget {
+  const _UnavailablePage({required this.destination, required this.reason});
+
+  final NavDestination destination;
+
+  /// `null` = 没有特殊原因（真·没做完）
+  final String? reason;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final String? why = reason;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              why == null ? navIcon(destination.iconKey) : Icons.lock_outline,
+              size: 40,
+              color: theme.textTheme.bodySmall?.color,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              why == null ? '${destination.label}：正在开发' : '${destination.label}：暂时不能开',
+              style: const TextStyle(height: 1.6),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              why ?? '这个功能还没做完，先用左边的其他功能。',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                height: 1.6,
+                color: theme.textTheme.bodySmall?.color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _PendingPage extends StatelessWidget {
   const _PendingPage({required this.destination});
 

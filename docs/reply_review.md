@@ -18172,3 +18172,61 @@ Low 进程下 L1（rename）与 L2（原地写）**都失败** —— 因为被�
 #### ④ 门禁
 
 root **459**（1 条按平台跳过）· analyze 0。
+
+### 七十四、2026-11-01 只读「说到做到」+ 版本 0.7.3 预览（发版前收口）
+
+用户裁定（`docs/reply.md` §三）：
+
+> 当前实现能够做到：提醒用户不能保存；警告用户不要录单；允许用户继续查看。
+> 但它并没有从应用层强制禁止写操作……**尤其要注意，不能只把开单按钮置灰**，
+> 还要覆盖库存调整、主数据修改、收付款、同步队列写入等实际写入出口。
+
+#### ① 低完整性 ⇒ **真只读**（`readOnly` 判据扩到两条）
+
+```dart
+final bool readOnly = _localDbFailure != null ||
+    _integrity == IntegrityLevel.low || _integrity == IntegrityLevel.untrusted;
+```
+
+- **Unknown 不禁用**（检测失败不能擅自废掉功能），只记日志 —— 与裁定一致；
+- 自检里**先 `setState` 再弹窗**，让界面先切成只读，弹窗背后看到的就是「已经拦住」。
+
+#### ② 逐个写入口收口（这才是裁定的重点）
+
+| 写入口 | 怎么断 | 备注 |
+|---|---|---|
+| 开单三页（销售/采购/送货） | `documentSink == null` ⇒ 整页换成 **「XX：暂时不能开」+ 原因** | 从前会掉进 `_PendingPage` 说「正在开发」——**那是在撒谎** |
+| 库存「期初录入 / 重新清点」 | 新增 `canWrite`；手机另需 `documentSink` | 从前只判手机壳，**桌面在只读态漏了这条** |
+| 商品新增 / 编辑 / 停用 | 新增 `canWrite`：按钮置灰 **且** 方法体直接 `return` | 商品页**不走** `shell.masterDataSink`（桌面一直 `ServiceMasterSink` 直连主库）⇒ 只读必须显式传，最容易漏 |
+| 收付款 / 退货 | `settlements` / `returns` 传 `null` | 核销会生成收付款单 + 流水，置灰按钮挡不住代码路径 |
+| 主数据（往来方 / 账户） | `MasterDataPolicy.readOnly()` | 两页本来就按 `canCreate*` 判定，零改动 |
+
+`readOnlyReason` 现在**按原因分话**：低权限说「什么都存不下来，复制到别的位置再打开」；
+本机账本打不开说「开单和改资料暂时关闭，看数/查库存/照常」。
+
+#### ③ 版本 0.7.3（第十一个可部署版本）
+
+| 位置 | 值 |
+|---|---|
+| `AppVersion.value` / `build` / `display` | `0.7.3` / `11` / `v0.7.3（第十一个可部署版本）` |
+| `pubspec.yaml` | `0.7.3+11` |
+| `packaging/使用说明.txt` 首行（含 BOM） | `神算子 v0.7.3（第十一个可部署版本）` |
+| `README.md` | 「版本 0.7.3（第十一个可部署版本，预览）」 |
+| `windows/runner/Runner.rc` | `ProductVersion "0.7.3"` + 注释里的 `0.7.3+11` |
+
+`version_test` 6 条全绿（含「首行逐字等于 `神算子 <AppVersion.display>` + BOM 字节校验」）。
+
+#### ④ 发行说明
+
+`docs/20261101-发行说明-v0.7.3预览版.md`：按「用户会遇到的症状 → 现在怎么表现」写，
+含**升级的一次性成本**（要点一次「重新生成」、手机重扫一次）与三步验证清单。
+
+#### 测试与门禁
+
+- 新增 `test/read_only_test.dart` **3 条**：商品页 `canWrite=false` 按钮置灰 / `true` 时可用；
+  库存页 `canWrite=false` 时**不渲染**清点入口（桌面壳）。
+- 既有 `stock_page_test` 两条因「清点判据」改动先红后绿 —— 那次红**是有价值的**：
+  它证明了「桌面清点走 `StocktakeService`、本来不需要 sink」，所以判据必须是
+  `canWrite && (手机 ? sink 非空 : true)`，而不是简单「sink 非空」。
+- 门禁：root **462**（1 条按平台跳过）· core **789** · app **472** · host **199** ·
+  analyze 0 · selfcheck **93/93**。

@@ -310,6 +310,11 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 界面却说「文件可能出了点小问题」，他以为数据坏了）。
   bool _dbTooNew = false;
 
+  /// 本进程的完整性级别（启动时探一次；`unknown` = 非 Windows / 查不出来）。
+  ///
+  /// 用途只有一个：**Low / Untrusted ⇒ 真只读**（见 `readOnly` 的注释）。
+  IntegrityLevel _integrity = IntegrityLevel.unknown;
+
   /// **镜像自检没通过**的原因（状态 2，2026-10-31 用户裁定）。
   ///
   /// 与 [_mirrorFailure] 的区别：那个是**打不开**（`openMirror()` 抛），
@@ -322,6 +327,23 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 为什么不弹进度框：这一步要复制几百 MB 的文件，必须在**首帧之后**才开始，
   /// 且不能给假进度（拿不到总字节就报百分比是骗人）。整页一句话最诚实。
   bool _recoveringMirror = false;
+
+  /// 「写入被关」的原因（`null` = 正常可写）。
+  ///
+  /// 两种原因**话不一样**：一个是「本机账本打不开」，一个是「低权限启动」——
+  /// 用户看到的下一步动作也不同（前者重装/重试，后者复制到别的位置）。
+  String? _readOnlyReason() {
+    if (_integrity == IntegrityLevel.low ||
+        _integrity == IntegrityLevel.untrusted) {
+      return '这个程序是以「低权限」方式启动的，**什么都存不下来**，'
+          '所以现在只能看、不能录单和改资料。'
+          '把程序文件夹复制到别的位置再打开就能恢复（详见启动时的提示）。';
+    }
+    if (_localDbFailure != null) {
+      return '本机账本打不开，开单和改资料暂时关闭（看数、查库存、查往来、导出都照常）。';
+    }
+    return null;
+  }
 
   /// **低完整性自检**（2026-11-01，联调 #1 的根因）。
   ///
@@ -338,9 +360,13 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// （此时是只读状态，比直接不让进好 —— 用户还能查账、导出）。
   void _checkIntegrity() {
     final IntegrityLevel level = detectIntegrityLevel();
+    _integrity = level;
     final String? notice = lowIntegrityNotice(level);
     _log.write('进程完整性 = ${level.name}');
     if (notice == null) return;
+    // ⚠️ 先 setState 再弹窗：`readOnly` 的判据含 `_integrity`，
+    // 要让界面先切成只读，弹窗后面看到的就是「已经拦住」的样子。
+    if (mounted) setState(() {});
     unawaited(_showIntegrityNotice(notice));
   }
 
@@ -2227,7 +2253,17 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     // 本机账本打不开时**不给提交出口** —— 这是「只读」真正落地的地方，
     // 不是把界面按钮画灰。用户原话：「暂时禁用开单、主数据修改等写入操作」，
     // 理由是还没逐页验证过每个提交出口都与旧主库解耦。
-    final bool readOnly = _localDbFailure != null;
+    // 2026-11-01（用户裁定，提案 57 批复 §三）：**低完整性也要真只读**。
+    //
+    // 自检弹窗只解决「告诉他」，不解决「拦住他」—— 用户可能没看清提示、
+    // 也可能以为「只是设置存不住」，继续录单，最后全白干。
+    // 所以 Low / Untrusted ⇒ **禁掉所有写入出口**（与「本机账本打不开」同一条路）。
+    // ⚠️ `unknown`（检测失败）**不禁用** —— 不能因为查不出来就擅自废掉功能，
+    // 只在日志里记一笔（见 `_checkIntegrity`）。
+    final bool readOnly =
+        _localDbFailure != null ||
+        _integrity == IntegrityLevel.low ||
+        _integrity == IntegrityLevel.untrusted;
     final DocumentSink? documentSink;
     if (_shellKind == ShellKind.mobile) {
       final MobileSyncService? sync = _mobileSyncService;
@@ -2360,9 +2396,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       localDbNotice: _localDbFailure,
       onLocalDbAdvice: _localDbFailure == null ? null : _showLocalDbAdvice,
       // 写入被关的原因 —— 手机壳「开单」tab 据此把三个入口画成不可点并说明
-      readOnlyReason: _localDbFailure == null
-          ? null
-          : '本机账本打不开，开单和改资料暂时关闭（看数、查库存、查往来、导出都照常）。',
+      readOnlyReason: _readOnlyReason(),
       products: shellProducts,
       purchases: shellPurchases,
       sales: shellSales,
@@ -2403,8 +2437,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       documents: _shellKind == ShellKind.mobile || _db == null
           ? null
           : DocumentDao(_db!),
-      settlements: _settlements,
-      returns: _returns,
+      // 2026-11-01：只读时**收付款与退货一并摘掉** —— 它们都直接写库
+      //（核销会生成收付款单 + 流水），只置灰按钮挡不住代码路径。
+      settlements: readOnly ? null : _settlements,
+      returns: readOnly ? null : _returns,
       engine: shellEngine,
       hostService: _hostService,
       uiScale: _config.uiScale,
