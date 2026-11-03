@@ -41,7 +41,12 @@ class Schema {
   /// 于是**要扫该类型的全部历史**再筛日期。478 MB / 26.2 万单实测：
   /// 近 30 天按类型分开查 **143.8 → 6.1 ms**（只查销售 **108.4 → 3.7 ms**），
   /// 建索引一次性 184 ms。只动索引、不碰任何行。
-  static const int version = 7;
+  ///
+  /// v8（2026-11-03，§AR #24 + #56 同批裁定）：`sync_queue` 加两列 ——
+  /// `reason_code TEXT NULL`（主机回执的机读拒绝码，`RejectCode.wire`）与
+  /// `discarded INTEGER NOT NULL DEFAULT 0`（用户主动放弃的可审计标记）。
+  /// 两列都可空 / 带默认 ⇒ 旧行不需要回填，`ALTER TABLE ADD COLUMN` 即可。
+  static const int version = 8;
 
   // ---------------------------------------------------------------- 表名
 
@@ -370,6 +375,8 @@ class Schema {
       status         TEXT NOT NULL DEFAULT 'pending',
       retry_count    INTEGER NOT NULL DEFAULT 0,
       last_error     TEXT,
+      reason_code    TEXT,
+      discarded      INTEGER NOT NULL DEFAULT 0,
       created_at     INTEGER NOT NULL,
       next_retry_at  INTEGER NOT NULL DEFAULT 0
     )
@@ -508,6 +515,21 @@ class Schema {
     6 => <String>[
       'CREATE INDEX IF NOT EXISTS idx_docs_type_bday '
           'ON $documents(doc_type, business_day)',
+    ],
+
+    // v7 → v8（2026-11-03，§AR #24 + #56 同批裁定）：`sync_queue` 加两列。
+    //
+    // | 列 | 语义 |
+    // |---|---|
+    // | `reason_code TEXT NULL` | 主机回执的**机读**拒绝码（`RejectCode.wire`）。#24：同步失败要能**分类**，不能只留一句中文 `last_error` |
+    // | `discarded INTEGER NOT NULL DEFAULT 0` | 用户**主动放弃**该条（可审计、可撤销）。#56：挂起 / 放弃要有可审计标记，而不是靠 `retry_count = 99` 猜 |
+    //
+    // 两列都可空 / 带默认 ⇒ 旧行不需要回填，`ALTER TABLE ADD COLUMN` 即可（纪律 14）。
+    // ⚠️ 本步**只加列**：`SyncClient.push` 写入 `reason_code`、UI 按码分支、
+    // 「放弃」按钮接线分别在后续段落地。
+    7 => <String>[
+      'ALTER TABLE $syncQueue ADD COLUMN reason_code TEXT NULL',
+      'ALTER TABLE $syncQueue ADD COLUMN discarded INTEGER NOT NULL DEFAULT 0',
     ],
 
     4 => <String>[

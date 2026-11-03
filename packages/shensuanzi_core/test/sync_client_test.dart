@@ -1894,4 +1894,158 @@ void main() {
       );
     });
   });
+
+  // v8（§AR #24 + #56，2026-11-03 裁定）：`sync_queue` 加 `reason_code` / `discarded`。
+  group('v8：reason_code 落库 + 用户放弃（discarded）', () {
+    SyncQueueEntry enqueueDoc(String id) => client.queue.enqueue(
+      SyncQueueEntry.create(
+        SyncOperation(
+          entity: Schema.documents,
+          entityId: id,
+          operation: SyncOpType.createDocument,
+          payload: <String, Object?>{
+            'document': <String, Object?>{'id': id, 'doc_type': 'sale'},
+            'lines': <Object?>[
+              <String, Object?>{
+                'product_id': productId,
+                'quantity': 3,
+                'unit_price': 100,
+                'amount': 300,
+              },
+            ],
+          },
+        ),
+        now: now(),
+      ),
+    );
+
+    Map<String, Object?> pushBody(List<Map<String, Object?>> results) =>
+        <String, Object?>{'results': results};
+
+    Map<String, Object?> receipt(
+      String entityId,
+      String status, {
+      String? reason,
+      String? reasonCode,
+    }) => <String, Object?>{
+      'entity_id': entityId,
+      'status': status,
+      'reason': ?reason,
+      'reason_code': ?reasonCode,
+    };
+
+    test('#24：rejected 后 reason_code 落库（机读码，供 UI 按码分支）', () async {
+      final SyncQueueEntry entry = enqueueDoc('d1');
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[
+          receipt(
+            'd1',
+            'rejected',
+            reason: '退货数量超过原单',
+            reasonCode: 'rule_validation_failed',
+          ),
+        ]),
+      );
+
+      await client.push();
+
+      final SyncQueueEntry after = client.queue.findById(entry.id)!;
+      expect(
+        after.reasonCode,
+        'rule_validation_failed',
+        reason: '#24：机读码必须落库，UI 才能按码分支（不能靠解析中文 last_error）',
+      );
+      expect(after.lastError, '退货数量超过原单');
+    });
+
+    test('#24：reference_missing 落库 reason_code，且仍退避重试', () async {
+      final SyncQueueEntry entry = enqueueDoc('d1');
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[
+          receipt(
+            'd1',
+            'rejected',
+            reason: '引用的客户还没同步',
+            reasonCode: 'reference_missing',
+          ),
+        ]),
+      );
+
+      await client.push();
+
+      final SyncQueueEntry after = client.queue.findById(entry.id)!;
+      expect(after.reasonCode, 'reference_missing');
+      expect(after.status, SyncQueueStatus.pending);
+      expect(after.retryCount, 1);
+    });
+
+    test('#24：传输层失败 ⇒ reason_code 清空（不拿上一次的码误导分支）', () async {
+      final SyncQueueEntry entry = enqueueDoc('d1');
+      // 先被拒绝一次，落一个码
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[
+          receipt('d1', 'rejected', reason: 'x', reasonCode: 'host_storage'),
+        ]),
+      );
+      await client.push();
+      expect(client.queue.findById(entry.id)!.reasonCode, 'host_storage');
+
+      // 把退避归零（模拟「等到期了再试」），否则第二次 push 时条目还在退避期、
+      // `due()` 返回空、不发请求，`reason_code` 不会被清
+      final SyncQueueEntry mid = client.queue.findById(entry.id)!;
+      client.queue.markFailed(
+        entry.id,
+        error: mid.lastError!,
+        retryCount: mid.retryCount,
+        nextRetryAt: 0,
+        dead: false,
+      );
+
+      // 再传输失败（连不上）⇒ 码应被清掉
+      transport.replyThrow(Exception('connection reset'));
+      await client.push();
+      final SyncQueueEntry after = client.queue.findById(entry.id)!;
+      expect(
+        after.reasonCode,
+        isNull,
+        reason: '#24：传输失败不是主机拒绝，不能留着上一次的码误导分支',
+      );
+    });
+
+    test('#56：discard ⇒ 转 failed + discarded=1，且 due 永不返回它', () {
+      final SyncQueueEntry entry = enqueueDoc('d-discard');
+      client.queue.discard(entry.id, reason: '用户决定不要这张单了');
+
+      final SyncQueueEntry after = client.queue.findById(entry.id)!;
+      expect(after.status, SyncQueueStatus.failed);
+      expect(after.discarded, isTrue);
+      expect(after.lastError, '用户决定不要这张单了');
+      expect(
+        client.queue.due(now()),
+        isEmpty,
+        reason: '#56：放弃的条目永不自动重推',
+      );
+      expect(
+        client.queue.due(now(), ignoreBackoff: true),
+        isEmpty,
+        reason: '#56：连对账（ignoreBackoff）也不该碰它',
+      );
+    });
+
+    test('#56：requeue 清掉 discarded ⇒ 重新参与推送', () {
+      final SyncQueueEntry entry = enqueueDoc('d-requeue');
+      client.queue.discard(entry.id, reason: 'x');
+      expect(client.queue.findById(entry.id)!.discarded, isTrue);
+
+      client.queue.requeue(entry.id);
+      final SyncQueueEntry requeued = client.queue.findById(entry.id)!;
+      expect(requeued.discarded, isFalse);
+      expect(requeued.status, SyncQueueStatus.pending);
+      expect(
+        client.queue.due(now()),
+        isNotEmpty,
+        reason: '#56：用户改主意后，这条重新参与推送',
+      );
+    });
+  });
 }

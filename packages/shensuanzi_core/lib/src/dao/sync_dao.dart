@@ -101,6 +101,8 @@ class SyncQueueDao {
     _raw.select(
       'SELECT * FROM ${Schema.syncQueue} '
       "WHERE status = '${SyncQueueStatus.pending.wire}' "
+      // v8（§AR #56）：用户放弃过的条目**永不**再自动推送
+      'AND discarded = 0 '
       '${ignoreBackoff ? '' : 'AND next_retry_at <= ? '}'
       'ORDER BY created_at, id LIMIT ?',
       ignoreBackoff ? <Object?>[limit] : <Object?>[now, limit],
@@ -111,9 +113,12 @@ class SyncQueueDao {
   );
 
   /// 把死信放回队列（人工处理之后调用）：重试计数清零、退避归零、清掉错误。
+  ///
+  /// v8（§AR #56）：一并清掉 `discarded` —— 用户改主意了，这条就该重新参与推送。
   void requeue(String id) => _raw.execute(
     'UPDATE ${Schema.syncQueue} SET status = ?, retry_count = 0, '
-    'last_error = NULL, next_retry_at = 0 WHERE id = ?',
+    'last_error = NULL, reason_code = NULL, discarded = 0, '
+    'next_retry_at = 0 WHERE id = ?',
     <Object?>[SyncQueueStatus.pending.wire, id],
   );
 
@@ -215,22 +220,41 @@ class SyncQueueDao {
   /// 推送失败 → 记失败、累加重试、排下次退避时间。
   ///
   /// [dead] 为 `true` 时状态置 `failed`（死信，需人工处理）。
+  ///
+  /// [reasonCode]（v8，§AR #24）：主机回执的**机读**拒绝码（`RejectCode.wire`）。
+  /// 与 [error] 分工 —— 那个是给人看的中文，这个是给程序分支用的。
+  /// `null` = 传输层失败 / 旧主机不带码 ⇒ **清掉旧码**（不能留着上一次的码误导分支）。
   void markFailed(
     String id, {
     required String error,
     required int retryCount,
     required int nextRetryAt,
     required bool dead,
+    String? reasonCode,
   }) => _raw.execute(
     'UPDATE ${Schema.syncQueue} SET status = ?, retry_count = ?, '
-    'last_error = ?, next_retry_at = ? WHERE id = ?',
+    'last_error = ?, reason_code = ?, next_retry_at = ? WHERE id = ?',
     <Object?>[
       (dead ? SyncQueueStatus.failed : SyncQueueStatus.pending).wire,
       retryCount,
       error,
+      reasonCode,
       nextRetryAt,
       id,
     ],
+  );
+
+  /// **用户主动放弃**该条（v8，§AR #56）。
+  ///
+  /// 与 [markHeld] 的区别：挂起是**系统**因换主机而做的（`retry_count = 99`），
+  /// 放弃是**用户**决定不要了。两者都转 `failed`（退出自动重试），
+  /// 但放弃额外置 `discarded = 1` ⇒ 可审计、可撤销（[requeue] 会一并清掉）。
+  ///
+  /// ⚠️ **不删行**：删了就查不出「用户放弃过什么」。
+  void discard(String id, {required String reason}) => _raw.execute(
+    'UPDATE ${Schema.syncQueue} SET status = ?, discarded = 1, '
+    'last_error = ?, next_retry_at = 0 WHERE id = ?',
+    <Object?>[SyncQueueStatus.failed.wire, reason, id],
   );
 
   void delete(String id) => _raw.execute(

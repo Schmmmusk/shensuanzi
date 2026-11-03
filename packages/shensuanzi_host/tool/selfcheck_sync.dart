@@ -83,7 +83,11 @@ int countOf(String table) =>
 Map<String, Object?> wireDocument(Document d) => d.toRow()
   ..remove('paid_amount')
   ..remove('created_at')
-  ..remove('updated_at');
+  ..remove('updated_at')
+  // v6（2026-10-29）：`business_day` 是**主机派生列**，客户端不发（主机按
+  // `occurred_at` + 主机本地时区派生）。与 `document_sink.dart` 的 `wireDocument`
+  // 保持一致 —— 漏了这条，`server.handle` 落库会因「客户端传了主机专属列」失败。
+  ..remove('business_day');
 
 Document pending({
   required DocType type,

@@ -585,9 +585,11 @@ Future<void> main() async {
 
     // 本地乐观写入的占位单据 → 被主机版本覆盖（doc_no 回填）
     db2.raw.execute(
+      // v6（2026-10-29）：`documents` 加 `business_day`（NOT NULL）⇒ 插入必须带上
       'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
-      'occurred_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
-      <Object?>['d9', '~local-1', 'purchase', 'confirmed', 0, 1, 1, 1],
+      'occurred_at, business_day, created_at, updated_at) '
+      'VALUES (?,?,?,?,?,?,?,?,?)',
+      <Object?>['d9', '~local-1', 'purchase', 'confirmed', 0, 1, 1, 1, 1],
     );
     t2.replyJson(
       pullBody(
@@ -1031,9 +1033,10 @@ Future<void> main() async {
       <Object?>[_productId, 'P001', '商品', 1, 1],
     );
     db5.raw.execute(
+      // v6（2026-10-29）：`documents` 加 `business_day`（NOT NULL）⇒ 插入必须带上
       'INSERT INTO documents (id, doc_no, doc_type, status, total_amount, '
-      'occurred_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
-      <Object?>['doc', 'X1', 'purchase', 'confirmed', 1000, 1, 1, 1],
+      'occurred_at, business_day, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      <Object?>['doc', 'X1', 'purchase', 'confirmed', 1000, 1, 1, 1, 1],
     );
     db5.raw.execute(
       'INSERT INTO stock_ledger (id, product_id, document_id, quantity, unit_cost, '

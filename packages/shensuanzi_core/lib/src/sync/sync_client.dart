@@ -315,10 +315,10 @@ class SyncClient {
                 code == RejectCode.referenceMissing ||
                 code == RejectCode.hostStorage;
             if (retryable) {
-              _retry(entry, receipt.reason ?? 'rejected', now);
+              _retry(entry, receipt.reason ?? 'rejected', now, code: code);
               retried++;
             } else {
-              _deadLetter(entry, receipt.reason ?? 'rejected');
+              _deadLetter(entry, receipt.reason ?? 'rejected', code: code);
             }
             errors.add('${entry.entityId}: ${receipt.reason ?? 'rejected'}');
         }
@@ -423,7 +423,16 @@ class SyncClient {
   }
 
   /// 单条排下次重试：指数退避 `1s, 4s, 16s, 64s …`，超限进死信（§六）。
-  void _retry(SyncQueueEntry entry, String error, int now) {
+  ///
+  /// [code]（v8，§AR #24）：主机回执的机读拒绝码 —— 落库，供 UI 按码分支
+  /// （如 `reference_missing` 说「引用的客户 / 商品还没同步成功」）。
+  /// 传输层失败传 `null` ⇒ 清掉旧码，不拿上一次的码误导分支。
+  void _retry(
+    SyncQueueEntry entry,
+    String error,
+    int now, {
+    RejectCode? code,
+  }) {
     final int retryCount = entry.retryCount + 1;
     queue.markFailed(
       entry.id,
@@ -431,18 +440,20 @@ class SyncClient {
       retryCount: retryCount,
       nextRetryAt: now + _backoffMs(retryCount),
       dead: retryCount > maxRetries,
+      reasonCode: code?.wire,
     );
   }
 
   /// 直接进死信（P2 #7）：重试无意义的拒绝 —— `retry_count` 置为超限、
   /// `next_retry_at = 0`（不再自动到期），状态 `failed`（等人工处理）。
-  void _deadLetter(SyncQueueEntry entry, String error) {
+  void _deadLetter(SyncQueueEntry entry, String error, {RejectCode? code}) {
     queue.markFailed(
       entry.id,
       error: error,
       retryCount: maxRetries + 1,
       nextRetryAt: 0,
       dead: true,
+      reasonCode: code?.wire,
     );
   }
 

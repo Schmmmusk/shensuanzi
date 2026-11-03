@@ -508,7 +508,9 @@ CREATE UNIQUE INDEX idx_stock_seq ON stock_ledger(seq_no);
 | `payload` | TEXT | JSON |
 | `status` | TEXT | `pending` / `sent` / `failed` —— 生命周期见下 |
 | `retry_count` | INTEGER | 默认 0 |
-| `last_error` | TEXT NULL | |
+| `last_error` | TEXT NULL | 给人看的中文错误 |
+| `reason_code` | TEXT NULL | **主机回执的机读拒绝码**（`RejectCode.wire`，v8 新增，§AR #24）—— 与 `last_error` 分工：那个给人看，这个给程序分支用 |
+| `discarded` | INTEGER | 默认 0；**用户主动放弃**该条（v8 新增，§AR #56）—— 可审计、可撤销 |
 | `created_at` | INTEGER | |
 | `next_retry_at` | INTEGER | 默认 0 |
 
@@ -547,6 +549,12 @@ CREATE UNIQUE INDEX idx_stock_seq ON stock_ledger(seq_no);
 
 ⚠️ **`failed` 必须退出自动重试**：`retry_count > 10` 之后继续自动重试
 等于无限重试（只是越来越慢），而规范要的是「UI 提示人工处理」。
+
+⚠️ **`discarded`（v8，§AR #56）是 `failed` 的一个子标记，不是新状态**：
+用户**主动放弃**某条时，状态仍转 `failed`（退出自动重试），但额外置
+`discarded = 1` —— 与「重试超限」的 `failed` 区分开（前者可自动恢复，
+后者不该被自动重推）。`requeue` 会一并清掉 `discarded`（用户改主意后重新参与推送）。
+`SyncQueueDao.due` **永不**返回 `discarded = 1` 的条目（连 `ignoreBackoff` 对账也不碰它）。
 
 ⚠️ **清除 `sent` 按 `entity_id` 逐条确认，不是「pull 成功就清全部」**：
 `pull` 是**分页**的，刚 push 的单可能落在本页之外（`seq_no` 更大）；

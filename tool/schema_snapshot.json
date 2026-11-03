@@ -1,5 +1,5 @@
 {
-  "schema_version": 6,
+  "schema_version": 8,
   "statements": [
     "CREATE TABLE products (\nid TEXT PRIMARY KEY,\ncode TEXT NOT NULL UNIQUE,\nname TEXT NOT NULL,\nbarcode TEXT,\nunit TEXT NOT NULL DEFAULT '件',\ncost_price INTEGER NOT NULL DEFAULT 0,\nsell_price INTEGER NOT NULL DEFAULT 0,\nsafety_stock INTEGER NOT NULL DEFAULT 0,\ncategory TEXT,\nis_active INTEGER NOT NULL DEFAULT 1,\nremark TEXT,\npackage_note TEXT,\npackage_unit TEXT,\npackage_size INTEGER,\ncreated_at INTEGER NOT NULL,\nupdated_at INTEGER NOT NULL,\nsync_version INTEGER NOT NULL DEFAULT 0\n);",
     "CREATE INDEX idx_products_barcode ON products(barcode);",
@@ -16,6 +16,7 @@
     "CREATE INDEX idx_documents_ref ON documents(ref_doc_id);",
     "CREATE INDEX idx_documents_created ON documents(created_at, id);",
     "CREATE INDEX idx_docs_bday_created ON documents(business_day, created_at, id);",
+    "CREATE INDEX idx_docs_type_bday ON documents(doc_type, business_day);",
     "CREATE INDEX idx_documents_updated ON documents(updated_at, id);",
     "CREATE TABLE document_lines (\nid TEXT PRIMARY KEY,\ndocument_id TEXT NOT NULL,\nproduct_id TEXT NOT NULL,\nquantity INTEGER NOT NULL,\nunit_price INTEGER NOT NULL,\namount INTEGER NOT NULL,\ndiscount_amount INTEGER NOT NULL DEFAULT 0,\nentry_quantity INTEGER,\nentry_unit TEXT,\nremark TEXT,\nFOREIGN KEY (document_id) REFERENCES documents(id),\nFOREIGN KEY (product_id) REFERENCES products(id)\n);",
     "CREATE INDEX idx_lines_document ON document_lines(document_id);",
@@ -36,11 +37,11 @@
     "CREATE INDEX idx_settle_receipt ON settlements(receipt_doc_id);",
     "CREATE INDEX idx_settle_target ON settlements(target_doc_id);",
     "CREATE UNIQUE INDEX idx_settle_seq ON settlements(seq_no);",
-    "CREATE TABLE sync_queue (\nid TEXT PRIMARY KEY,\nentity TEXT NOT NULL,\nentity_id TEXT NOT NULL,\noperation TEXT NOT NULL,\nbase_version INTEGER,\npayload TEXT NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'pending',\nretry_count INTEGER NOT NULL DEFAULT 0,\nlast_error TEXT,\ncreated_at INTEGER NOT NULL,\nnext_retry_at INTEGER NOT NULL DEFAULT 0\n);",
+    "CREATE TABLE sync_queue (\nid TEXT PRIMARY KEY,\nentity TEXT NOT NULL,\nentity_id TEXT NOT NULL,\noperation TEXT NOT NULL,\nbase_version INTEGER,\npayload TEXT NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'pending',\nretry_count INTEGER NOT NULL DEFAULT 0,\nlast_error TEXT,\nreason_code TEXT,\ndiscarded INTEGER NOT NULL DEFAULT 0,\ncreated_at INTEGER NOT NULL,\nnext_retry_at INTEGER NOT NULL DEFAULT 0\n);",
     "CREATE INDEX idx_sync_status ON sync_queue(status, next_retry_at);",
     "CREATE INDEX idx_sync_entity ON sync_queue(entity_id, operation);",
     "CREATE TABLE clock_offset (\nid INTEGER PRIMARY KEY CHECK (id = 1),\noffset_ms INTEGER NOT NULL DEFAULT 0,\nupdated_at INTEGER NOT NULL\n);",
     "CREATE TABLE sync_cursor (\nentity TEXT PRIMARY KEY,\ncursor TEXT NOT NULL,\nupdated_at INTEGER NOT NULL\n);"
   ],
-  "fingerprint": "940e2245c291c3ac"
+  "fingerprint": "3edce2c60207af96"
 }

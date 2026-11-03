@@ -706,6 +706,12 @@ GET    /api/party_ledger?party_id=&since=
 
 **客户端只需展示 `reason`，不要解析它**（中文会改；判分支一律用 `reason_code`）。
 
+> **v8（§AR #24，2026-11-03）：`reason_code` 必须落库** —— `SyncClient.push`
+> 在 `rejected` 分支把 `receipt.reasonCode` 写进 `sync_queue.reason_code`。
+> 这样 UI 能**按码分支**（如 `reference_missing` 说「引用的客户 / 商品还没同步成功，
+> 主数据同步后自动重试」），而不是靠解析中文 `last_error`。
+> 传输层失败（连不上）⇒ `reason_code` **清空**（不拿上一次的码误导分支）。
+
 #### 「引用的主数据尚未同步」的 rejected（D2 契约，2026-10-08）
 
 若一条 `createDocument` 引用的主数据（`party_id` / `product_id` / `account_id`）

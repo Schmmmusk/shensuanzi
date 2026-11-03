@@ -296,11 +296,36 @@ void main() {
       for (final String statement in Schema.createStatements) {
         if (statement.contains('idx_documents_updated') ||
             statement.contains('idx_stock_covering') ||
-            statement.contains('idx_party_covering')) {
+            statement.contains('idx_party_covering') ||
+            // v8（§AR #24 + #56）：建表语句已含 `reason_code` / `discarded`，
+            // 造 v3 库必须**跳过**，否则迁移到 v8 时 `ADD COLUMN` 报 duplicate column。
+            // ⚠️ 连同 sync_queue 的**索引**一起跳（它们引用 sync_queue 表，
+            // 表被跳过而索引保留会报 no such table）。
+            statement.contains('reason_code') ||
+            statement.contains('discarded') ||
+            statement.contains('idx_sync_status') ||
+            statement.contains('idx_sync_entity')) {
           continue;
         }
         raw.execute(statement);
       }
+      // ⚠️ 上面跳过了整条 sync_queue 建表语句（它含 v8 两列）⇒ 补一条 **v3 形态**的
+      // sync_queue（无 reason_code / discarded）+ 它的两个索引，否则 v8 迁移
+      // `ALTER TABLE sync_queue` 会报 no such table。
+      raw.execute(
+        'CREATE TABLE sync_queue ('
+        'id TEXT PRIMARY KEY, entity TEXT NOT NULL, entity_id TEXT NOT NULL, '
+        'operation TEXT NOT NULL, base_version INTEGER, payload TEXT NOT NULL, '
+        "status TEXT NOT NULL DEFAULT 'pending', retry_count INTEGER NOT NULL DEFAULT 0, "
+        'last_error TEXT, created_at INTEGER NOT NULL, '
+        'next_retry_at INTEGER NOT NULL DEFAULT 0)',
+      );
+      raw.execute(
+        'CREATE INDEX idx_sync_status ON sync_queue(status, next_retry_at)',
+      );
+      raw.execute(
+        'CREATE INDEX idx_sync_entity ON sync_queue(entity_id, operation)',
+      );
       raw.execute(
         'CREATE INDEX idx_stock_product_seq ON stock_ledger(product_id, seq_no)',
       );
@@ -344,7 +369,7 @@ void main() {
         'PRAGMA user_version',
       );
       expect(version.single.values.single, Schema.version);
-      expect(Schema.version, 7, reason: '本测试就是为 v7 写的');
+      expect(Schema.version, 8, reason: '本测试就是为 v8 写的');
       migrated.close();
     });
 
@@ -577,7 +602,7 @@ void main() {
       final Db upgraded = Db.open(path);
       addTearDown(upgraded.close);
       expect(upgraded.schemaVersion, Schema.version);
-      expect(Schema.version, 7, reason: '本测试就是为 v3 → v7 写的');
+      expect(Schema.version, 8, reason: '本测试就是为 v3 → v8 写的');
 
       // ---- ③ 数据一行不少、金额没变
       expect(
@@ -615,7 +640,7 @@ void main() {
       );
     });
 
-    test('化石升至 v7：**六环都跑**（v1→…→v7），列 + 索引到齐', () {
+    test('化石升至 v8：**七环都跑**（v1→…→v8），列 + 索引到齐', () {
       final File fixture = File('test/fixtures/v1_empty.db');
       final Directory box = Directory.systemTemp.createTempSync('sz_ring_ok_');
       addTearDown(() => deleteQuietly(box));
@@ -624,7 +649,7 @@ void main() {
 
       final Db migrated = Db.open(path);
       addTearDown(migrated.close);
-      expect(migrated.schemaVersion, 7);
+      expect(migrated.schemaVersion, 8);
 
       Set<Object?> columnsOf(String table) => migrated.raw
           .select('PRAGMA table_info($table)')

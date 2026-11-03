@@ -276,6 +276,8 @@ class MobileSyncService {
         : entry.status,
     retryCount: entry.retryCount,
     lastError: entry.lastError,
+    reasonCode: entry.reasonCode,
+    discarded: entry.discarded,
     createdAt: entry.createdAt,
     nextRetryAt: 0,
   );

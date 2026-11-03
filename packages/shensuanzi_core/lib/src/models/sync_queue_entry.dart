@@ -66,6 +66,8 @@ class SyncQueueEntry {
     this.status = SyncQueueStatus.pending,
     this.retryCount = 0,
     this.lastError,
+    this.reasonCode,
+    this.discarded = false,
     required this.createdAt,
     this.nextRetryAt = 0,
   });
@@ -104,6 +106,8 @@ class SyncQueueEntry {
       status: status,
       retryCount: row['retry_count']! as int,
       lastError: row['last_error'] as String?,
+      reasonCode: row['reason_code'] as String?,
+      discarded: (row['discarded'] as int? ?? 0) != 0,
       createdAt: row['created_at']! as int,
       nextRetryAt: row['next_retry_at']! as int,
     );
@@ -131,6 +135,21 @@ class SyncQueueEntry {
   final SyncQueueStatus status;
   final int retryCount;
   final String? lastError;
+
+  /// 主机回执的**机读**拒绝码（`RejectCode.wire`，v8 新增，§AR #24）。
+  ///
+  /// 与 [lastError] 分工：那个是**给人看**的中文，这个是**给程序分支**用的。
+  /// `null` = 还没被拒绝过 / 旧主机不带码（旧主机不带码时按可重试处理，
+  /// 见 `SyncClient.push` 的 `retryable` 判据）。
+  final String? reasonCode;
+
+  /// 用户**主动放弃**该条（v8 新增，§AR #56）。
+  ///
+  /// 为什么不用 `retry_count = 99` 表示：那是「重试超限」的副作用，
+  /// 与「用户决定不要了」是两件事 —— 前者可自动恢复，后者不该被自动重推。
+  /// 保留行而不删，是为了**可审计**（用户能看见自己放弃过什么）。
+  final bool discarded;
+
   final int createdAt;
 
   /// 到期时间（毫秒）。`0` = 立即可送。
@@ -161,6 +180,8 @@ class SyncQueueEntry {
     'status': status.wire,
     'retry_count': retryCount,
     'last_error': lastError,
+    'reason_code': reasonCode,
+    'discarded': discarded ? 1 : 0,
     'created_at': createdAt,
     'next_retry_at': nextRetryAt,
   };
@@ -169,6 +190,8 @@ class SyncQueueEntry {
     SyncQueueStatus? status,
     int? retryCount,
     String? lastError,
+    String? reasonCode,
+    bool? discarded,
     int? nextRetryAt,
   }) => SyncQueueEntry(
     id: id,
@@ -180,6 +203,8 @@ class SyncQueueEntry {
     status: status ?? this.status,
     retryCount: retryCount ?? this.retryCount,
     lastError: lastError ?? this.lastError,
+    reasonCode: reasonCode ?? this.reasonCode,
+    discarded: discarded ?? this.discarded,
     createdAt: createdAt,
     nextRetryAt: nextRetryAt ?? this.nextRetryAt,
   );

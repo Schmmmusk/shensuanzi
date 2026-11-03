@@ -56,9 +56,11 @@ void insertAccount(Database db, String id) {
 void insertDocument(Database db, String id, {String docNo = 'X20260925-001'}) {
   final int t = now();
   db.execute(
-    'INSERT INTO documents (id, doc_no, doc_type, status, occurred_at, created_at, updated_at) '
-    'VALUES (?,?,?,?,?,?,?)',
-    <Object?>[id, docNo, 'purchase', 'confirmed', t, t, t],
+    // v6（2026-10-29）：`documents` 加 `business_day`（NOT NULL）⇒ 插入必须带上
+    'INSERT INTO documents (id, doc_no, doc_type, status, occurred_at, '
+    'business_day, created_at, updated_at) '
+    'VALUES (?,?,?,?,?,?,?,?)',
+    <Object?>[id, docNo, 'purchase', 'confirmed', t, t, t, t],
   );
 }
 
@@ -119,6 +121,8 @@ void main() {
   );
 
   section('B. 索引');
+  // ⚠️ 这份清单必须与 `Schema.createStatements` 的索引**逐字一致**（v4/v5/v6/v7 都加过索引）。
+  // 改 schema 加索引时，这里要同步补 —— 漏了 selfcheck 会红（这正是它存在的意义）。
   const List<String> expectedIndexes = <String>[
     'idx_products_barcode',
     'idx_products_updated',
@@ -130,15 +134,18 @@ void main() {
     'idx_documents_occurred',
     'idx_documents_ref',
     'idx_documents_created',
+    'idx_docs_bday_created', // v6
+    'idx_docs_type_bday', // v7
+    'idx_documents_updated', // v4
     'idx_lines_document',
     'idx_lines_product',
-    'idx_stock_product_seq',
+    'idx_stock_covering', // v5（换掉 idx_stock_product_seq）
     'idx_stock_document',
     'idx_stock_seq',
     'idx_money_account_seq',
     'idx_money_document',
     'idx_money_seq',
-    'idx_party_ledger_party_seq',
+    'idx_party_covering', // v5（换掉 idx_party_ledger_party_seq）
     'idx_party_ledger_document',
     'idx_party_ledger_seq',
     'idx_settle_receipt',
@@ -790,10 +797,23 @@ void main() {
 
   // ---- 兜底政策：DocStatus ⇒ confirmed（**不是 draft**，裁定 §二·①）
   bad.raw.execute(
+    // v6（2026-10-29）：`documents` 加 `business_day`（NOT NULL）⇒ 插入必须带上
     'INSERT INTO ${Schema.documents} (id, doc_no, doc_type, status, total_amount, '
-    'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    <Object?>['doc-bad', 'XS-BAD', 'sale', 'weird_status', 5000, 0, 1, 0, 1, 1],
+    'paid_amount, occurred_at, time_estimated, business_day, created_at, updated_at) '
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    <Object?>[
+      'doc-bad',
+      'XS-BAD',
+      'sale',
+      'weird_status',
+      5000,
+      0,
+      1,
+      0,
+      1,
+      1,
+      1,
+    ],
   );
   final Document? doc = DocumentDao(bad).findById('doc-bad');
   check(
@@ -805,9 +825,10 @@ void main() {
 
   // ---- 跳过政策：DocType 认不出 ⇒ **跳过该行**（类型决定一切，猜错比看不见更坏）
   bad.raw.execute(
+    // v6（2026-10-29）：`documents` 加 `business_day`（NOT NULL）⇒ 插入必须带上
     'INSERT INTO ${Schema.documents} (id, doc_no, doc_type, status, total_amount, '
-    'paid_amount, occurred_at, time_estimated, created_at, updated_at) '
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'paid_amount, occurred_at, time_estimated, business_day, created_at, updated_at) '
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     <Object?>[
       'doc-worse',
       'XS-WORSE',
@@ -817,6 +838,7 @@ void main() {
       0,
       1,
       0,
+      1,
       1,
       1,
     ],

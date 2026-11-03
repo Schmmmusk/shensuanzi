@@ -18725,3 +18725,63 @@ A1 把完整压货榜放在库存页最上面之后，10 行榜有半屏高 ⇒ 
 （库本身是好的，只是 WAL 对不上）。已清掉。这条**不是产品 bug**，但暴露一个
 观察点：**镜像读不出来时，界面给的是「还在从电脑同步」而不是「读不出来」** ——
 值得下一轮评估要不要加一条读失败提示。
+
+---
+
+## §CV·一百一十 **S1 schema 批落地（#24 + #56 + #43② 同批，schema v8）**（2026-11-03）
+
+📄 裁定：`docs/proposals/59-待裁未动事项-2026-11-02.md`（S1 开）+ 用户 `docs/reply.md` 全盘同意。
+
+**为什么三件同批**：都动 `sync_queue` 这张表，走迁移链（`Agents.md` 纪律 14）必须一次做完。
+
+### 一、schema v8（`sync_queue` 加两列）
+
+| 列 | 语义 | 对应 |
+|---|---|---|
+| `reason_code TEXT NULL` | 主机回执的**机读**拒绝码（`RejectCode.wire`） | #24 |
+| `discarded INTEGER NOT NULL DEFAULT 0` | 用户**主动放弃**该条（可审计、可撤销） | #56 |
+
+两列都可空 / 带默认 ⇒ 旧行不需要回填，`ALTER TABLE ADD COLUMN` 即可（纪律 14）。
+
+### 二、落地清单
+
+| 文件 | 改了什么 |
+|---|---|
+| `core/lib/src/db/schema.dart` | `version = 8`；`sync_queue` 建表加两列；`migrationStep(7)` 补 `ALTER TABLE ADD COLUMN` ×2 |
+| `core/lib/src/models/sync_queue_entry.dart` | 加 `reasonCode` / `discarded` 字段 + `fromRow` / `toRow` / `copyWith` |
+| `core/lib/src/dao/sync_dao.dart` | `markFailed` 加 `reasonCode` 参数（落库）；新增 `discard()`；`requeue` 清 `discarded`；`due` 排除 `discarded = 1`（连 `ignoreBackoff` 也不碰） |
+| `core/lib/src/sync/sync_client.dart` | `push` 的 `rejected` 分支把 `receipt.reasonCode` 传给 `_retry` / `_deadLetter`；传输层失败 ⇒ `reason_code` 清空 |
+| `app/lib/src/mobile_sync_service.dart` | `_requeued` 保留 `reasonCode` / `discarded` |
+
+### 三、测试
+
+- `core/test/schema_test.dart`：v7→v8 断言更新（3 处）+ v5 真实迁移夹具补 v3 形态 sync_queue（跳过 v8 两列 + 补索引）
+- `core/test/sync_client_test.dart`：新增 v8 组 5 条 —— #24 reason_code 落库 / reference_missing 落库 / 传输失败清码 / #56 discard / requeue 清 discarded
+
+### 四、顺带修掉的 selfcheck 过期（v6/v7 遗留，非本次引入）
+
+| 文件 | 问题 | 修法 |
+|---|---|---|
+| `core/tool/selfcheck.dart` | ① 3 处直接 INSERT documents 没带 `business_day`（NOT NULL）⇒ 落库失败；② `expectedIndexes` 清单**过时**（含 v5 换掉的旧窄索引、缺 v4/v5/v6/v7 新索引） | ① 补 `business_day`；② 清单与 `Schema.createStatements` 逐字对齐 |
+| `core/tool/selfcheck_sync_client.dart` | 2 处直接 INSERT documents 没带 `business_day` | 补 `business_day` |
+| `host/tool/selfcheck_sync.dart` | `wireDocument` 没移除 `business_day`（主机派生列，客户端不该发）⇒ `server.handle` 落库失败 | 补 `..remove('business_day')`（与 `document_sink.dart` 一致） |
+
+### 五、文档
+
+- `docs/data_model.md`：`sync_queue` 表加两列 + `discarded` 是 `failed` 子标记的说明
+- `docs/sync_protocol.md` §8.5.2：补「`reason_code` 必须落库」说明
+- `README.md`：版本表 v7→v8 + 补 v8 行
+- `tool/schema_snapshot.json`：重新生成（v8 / 41 条语句 / 指纹 3edce2c60207af96）
+
+### 六、门禁
+
+| 项 | 结果 |
+|---|---|
+| core | **796**（+5） |
+| app | **490** |
+| host | **226**（1 条按平台跳过） |
+| root（Flutter） | **501**（1 条按平台跳过） |
+| `flutter analyze` | 0 |
+| selfcheck | core 156 · sync_client 118 · sync 91 · service 93 · queue_sink 4 · host 54 · app 164 全绿 |
+
+**状态**：✅ 已落地。**#43②（同步类 6 处原始异常直出）** 与 **#24 的 UI 按码分支**（`reference_missing` 文案）留待下一批 —— 前者等 `reason_code` 落库后接线，后者是纯 UI 展示。
