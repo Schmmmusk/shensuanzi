@@ -45,6 +45,11 @@ class ExportButton extends StatefulWidget {
 class _ExportButtonState extends State<ExportButton> {
   bool _busy = false;
 
+  /// 5c-2（2026-11-04）：**上次导出**的展示文案 —— 导出成功后留在页面上，
+  /// 不再只靠 6 秒就消失的 SnackBar（低配用户导出慢，SnackBar 退了他还没找到文件）。
+  /// `null` = 本页还没导出过。
+  String? _lastExport;
+
   Future<void> _run() async {
     if (_busy) return;
     // ⚠️ 先取 messenger：await 之后再用 context 会被
@@ -57,7 +62,13 @@ class _ExportButtonState extends State<ExportButton> {
 
     final ExportOutcome outcome = await widget.export();
     if (!mounted) return;
-    setState(() => _busy = false);
+    setState(() {
+      _busy = false;
+      // 5c-2：**成功**才留「上次导出」小字（失败 / 空筛选不留 —— 那没有文件可找）
+      if (outcome is ExportSuccess) {
+        _lastExport = _lastExportText(outcome);
+      }
+    });
 
     // ⚠️ 这里**故意**不用 `showSnack`：await 之后 `context` 可能已经失效，
     // 只能用 await 之前取好的 messenger。它自带 removeCurrentSnackBar（F12 的两条规矩都满足）。
@@ -82,10 +93,41 @@ class _ExportButtonState extends State<ExportButton> {
       );
   }
 
+  /// 5c-2：拼「上次导出：文件名（今天 HH:mm）」。
+  ///
+  /// 只取**文件名**（不取完整路径 —— 那太长，SnackBar 里已有完整路径可复制）。
+  /// 时间用**本地时区**（`DateTime.now()`），格式「今天 HH:mm」。
+  static String _lastExportText(ExportSuccess outcome) {
+    final String fileName = outcome.path.split(Platform.pathSeparator).last;
+    final DateTime now = DateTime.now();
+    final String hh = now.hour.toString().padLeft(2, '0');
+    final String mm = now.minute.toString().padLeft(2, '0');
+    return '上次导出：$fileName（今天 $hh:$mm）';
+  }
+
   @override
-  Widget build(BuildContext context) => TextButton.icon(
-    onPressed: _busy ? null : _run,
-    icon: const Icon(Icons.ios_share, size: 18),
-    label: Text(_busy ? '导出中…' : widget.label),
-  );
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Widget button = TextButton.icon(
+      onPressed: _busy ? null : _run,
+      icon: const Icon(Icons.ios_share, size: 18),
+      label: Text(_busy ? '导出中…' : widget.label),
+    );
+    // 5c-2：按钮下方留一行「上次导出」小字（成功导出过才显示）
+    final String? last = _lastExport;
+    if (last == null) return button;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: <Widget>[
+        button,
+        Text(
+          last,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
 }

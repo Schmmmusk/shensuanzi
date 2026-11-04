@@ -38,8 +38,14 @@
 | `recent_products` | 开单页商品选择器的「最近使用」 |
 | `pull_*` | 手机同步一次 pull 的分页 + 最近更新窗口 |
 | `doc_count` | 概览「有没有单据」（**裸 COUNT，不是页面跑的**） |
-| `count_roots` | 单据页「共 N 条」= `countDocuments(rootsOnly)` —— **每帧都跑** |
-| `list_roots` | 单据页首屏 = `listDocuments(rootsOnly)` —— **每帧都跑** |
+| `count_roots` | 单据页「共 N 条」= `countDocuments(rootsOnly)` —— **每帧都跑**（门禁） |
+| `list_roots` | 单据页首屏 = `listDocuments(rootsOnly)` 两段 —— **每帧都跑**（门禁） |
+
+⚠️ **改了 DAO 的 SQL 必须同步这里**，否则数字就不代表软件了。2026-11-04 踩过一次：
+DAO 换成 `business_day` + 两段式后 bench 没跟上，在**健康库**上门禁照样判红
+（bench 529 ms vs 真跑 18 ms）—— 假红会让人去优化一个不存在的瓶颈。
+改完用 `--explain` 核对形状：`count_roots` 不该有 `MATERIALIZE`；
+列表第一段该是 `USING INDEX idx_docs_bday_created` 且无 `TEMP B-TREE FOR ORDER BY`。
 
 ## 安全
 
@@ -98,21 +104,65 @@ def q_in_transit(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
     )
 
 
-_STAGE1_LIST = (
-    "SELECT d.id FROM documents d "
-    "LEFT JOIN parties pa ON pa.id = d.party_id "
+# ---------------------------------------------------------------------------
+# 单据列表的 SQL —— 与 `DocumentDao._summaries` / `countDocuments` **逐字同形**。
+#
+# ⚠️ 2026-11-04 校正：这里曾经落后了**一整次重构**。DAO 在 2026-10-29（`c3946f7`）
+# 把排序从表达式 `((occurred_at + 偏移) / 86400000)` 换成**固化列** `business_day`
+# 并加了 `INDEXED BY idx_docs_bday_created`，`countDocuments` 也从 `_docFrom`
+# （三个 join）换成 `_fromFor`（只带 WHERE 引用的表）。bench 没跟上 ⇒
+# 在一份**健康**的库上门禁照样判红（实测 bench 276 / 529 ms，DAO 真跑 62.6 / 18.1 ms）。
+# 这正是本文件头立的规矩「改了那边要同步这里，否则又变成测的不是跑的」被违反。
+#
+# 判据（改 DAO 后怎么确认 bench 没漂）：`--explain` 里
+# `count_roots` 必须是 `SCAN documents`（不带任何 `MATERIALIZE`）；
+# 列表第一段必须是 `SEARCH documents USING INDEX idx_docs_bday_created`
+# 且**没有** `USE TEMP B-TREE FOR ORDER BY`。
+# ---------------------------------------------------------------------------
+
+#: 根单据的过滤条件（`rootsOnly: true`）—— 与 `DocumentDao._docFilter` 同源。
+_DOC_ROOTS = (
     "WHERE d.ref_doc_id IS NULL AND NOT ("
-    "  d.doc_type IN ('receipt','payment') AND ("
-    "    SELECT COUNT(DISTINCT s.target_doc_id) FROM settlements s "
-    "    WHERE s.receipt_doc_id = d.id AND s.target_doc_id IS NOT NULL) = 1) "
-    "ORDER BY ((d.occurred_at + 28800000) / 86400000) DESC, d.created_at DESC "
-    "LIMIT ?"
+    "d.doc_type IN ('receipt','payment') AND ("
+    "SELECT COUNT(DISTINCT s.target_doc_id) FROM settlements s "
+    "WHERE s.receipt_doc_id = d.id AND s.target_doc_id IS NOT NULL) = 1)"
 )
 
-_STAGE2_LIST = (
+#: `_listOrder`：业务日 → 录入时刻 → id 兜底。**不带参数**
+#: （`business_day` 是写入时固化的列，不再需要时区偏移实参）。
+_DOC_ORDER = "ORDER BY d.business_day DESC, d.created_at DESC, d.id DESC "
+
+#: 列表第二段的整行 + 聚合列（`_summaryColumns`）。
+_SUMMARY_COLUMNS = (
     "SELECT d.*, pa.name AS party_name, COALESCE(r.rsum, 0) AS returned_sum, "
     "COALESCE(r.rcnt, 0) AS returned_count, COALESCE(s.psum, 0) AS paid_sum "
-    "FROM documents d "
+)
+
+#: 第一段（取 id）：`_fromFor(filter, ordered: true)`。
+#:
+#: 两处**不能省**：① `INDEXED BY` 是硬提示，沿索引直接取前 N 行，省掉
+#: 全量排序（实测 120 ms → 0.1 ms）；② **不带** `parties` / 两个派生表 ——
+#: 默认筛选下 WHERE 只引用 `d`，带上它们第一段会从 124 ms 变 316 ms。
+_STAGE1_LIST = (
+    "SELECT d.id FROM documents d INDEXED BY idx_docs_bday_created "
+    + _DOC_ORDER
+    + "LIMIT ?"
+)
+
+#: 第一段（rootsOnly）：同上，多一个根过滤。
+_STAGE1_ROOTS = (
+    "SELECT d.id FROM documents d INDEXED BY idx_docs_bday_created "
+    + _DOC_ROOTS
+    + " "
+    + _DOC_ORDER
+    + "LIMIT ?"
+)
+
+#: 第二段：只对这 N 个 id 聚合（派生表**必须**加 `IN (...)` 限制，
+#: 否则 `s` 仍全量物化，实测只省了排序没省聚合）。
+_STAGE2_LIST = (
+    _SUMMARY_COLUMNS
+    + "FROM documents d "
     "LEFT JOIN parties pa ON pa.id = d.party_id "
     "LEFT JOIN (SELECT ref_doc_id AS ref, SUM(total_amount) AS rsum, COUNT(*) AS rcnt "
     "  FROM documents WHERE ref_doc_id IN (%s) "
@@ -124,22 +174,31 @@ _STAGE2_LIST = (
 )
 
 
-def q_list_documents(limit: int, window_ms: int):
-    """单据列表 —— **两段查询**（与 `DocumentDao._summaries` 同形，4c / §CV·九十九）。
-
-    单条 SQL 表示不了「第二段的参数来自第一段的结果」，所以这里用 callable
-    逐轮跑两次 —— 硬凑成 `IN (SELECT … LIMIT ?)` 会得到不同的计划，基线就不可信。
-    """
+def _two_stage(stage1: str, limit: int):
+    """把「先取 id、再按 id 取整行」包成 bench 的 callable（见 `run_one`）。"""
 
     def measure(conn: sqlite3.Connection) -> int:
-        ids = [row[0] for row in conn.execute(_STAGE1_LIST, (limit,)).fetchall()]
+        ids = [row[0] for row in conn.execute(stage1, (limit,)).fetchall()]
         if not ids:
             return 0
         marks = ",".join("?" * len(ids))
         sql = _STAGE2_LIST % (marks, marks, marks)
         return len(conn.execute(sql, (*ids, *ids, *ids)).fetchall())
 
+    # 给 --explain 用：callable 本身没法 EXPLAIN，但**第一段**才是索引
+    # 有没有用上的关键（第二段是按 id 点查，形状固定）。挂个属性比返回
+    # 一句「见下方 *_stage 键」诚实 —— 之前那句是空头承诺，下面并没有那些键。
+    measure.explain_sql = stage1  # type: ignore[attr-defined]
     return measure, ()
+
+
+def q_list_documents(limit: int, window_ms: int):
+    """单据列表 —— **两段查询**（与 `DocumentDao._summaries` 同形，4c / §CV·九十九）。
+
+    单条 SQL 表示不了「第二段的参数来自第一段的结果」，所以这里用 callable
+    逐轮跑两次 —— 硬凑成 `IN (SELECT … LIMIT ?)` 会得到不同的计划，基线就不可信。
+    """
+    return _two_stage(_STAGE1_LIST, limit)
 
 
 def _like_escape(term: str) -> str:
@@ -261,62 +320,62 @@ def q_doc_count(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
 
 
 # ---------------------------------------------------------------------------
-# 下面两条是**单据页每帧真正跑的东西**（2026-10-28 补）。
+# 下面两条是**单据页每帧真正跑的东西**（2026-10-28 补，2026-11-04 对齐重构）。
 #
 # 为什么必须单独列出来：`doc_count` 是裸 `COUNT(*)`（3.5 ms），可单据页跑的是
-# `countDocuments(rootsOnly: true)` —— 带两个全表聚合 + 逐行 `COUNT(DISTINCT)`
-# 子查询。真机实测 **267 ms**，而 bench 报 3.5 ms ⇒ 报告里一片绿，页面上 2 秒。
-# 这个盲区让我们在上一轮把「页面卡」误判成「界面重建慢」。
+# `countDocuments(rootsOnly: true)`。真机实测 **267 ms**，而 bench 报 3.5 ms
+# ⇒ 报告里一片绿，页面上 2 秒。这个盲区让我们在上一轮把「页面卡」
+# 误判成「界面重建慢」。
 #
-# SQL 与 `DocumentDao._docFrom` / `_docFilter` **逐字一致**（改了那边要同步这里，
-# 否则又变成「测的不是跑的」）。
-#: 根单据的过滤条件（`rootsOnly: true`）——与 `DocumentDao._docFilter` 同源。
-_DOC_ROOTS = (
-    "WHERE d.ref_doc_id IS NULL AND NOT ("
-    "d.doc_type IN ('receipt','payment') AND ("
-    "SELECT COUNT(DISTINCT s.target_doc_id) FROM settlements s "
-    "WHERE s.receipt_doc_id = d.id AND s.target_doc_id IS NOT NULL) = 1)"
-)
-
-#: `_docFrom` 的三个 join（当事人名 / 退货汇总 / 已收已付汇总）。
-_DOC_FROM = (
-    "FROM documents d "
-    "LEFT JOIN parties pa ON pa.id = d.party_id "
-    "LEFT JOIN (SELECT ref_doc_id AS ref, SUM(total_amount) AS rsum, COUNT(*) AS rcnt "
-    "FROM documents WHERE ref_doc_id IS NOT NULL AND "
-    "doc_type IN ('sale_return','purchase_return') GROUP BY ref_doc_id) r ON r.ref = d.id "
-    "LEFT JOIN (SELECT target_doc_id AS tgt, SUM(amount) AS psum FROM settlements "
-    "WHERE target_doc_id IS NOT NULL GROUP BY target_doc_id) s ON s.tgt = d.id "
-)
+# ⚠️ 反方向的同一个坑（2026-11-04）：DAO 在 2026-10-29 换成
+# `_fromFor`（不带无用 join）+ 两段式 + `business_day` 索引后，这两条**没跟上**，
+# 于是在健康库上门禁照样判红（bench 276 / 529 ms vs DAO 真跑 62.6 / 18.1 ms）。
+# 「测的不是跑的」两个方向都会骗人 —— 假红和假绿一样有害，假红会让人去优化
+# 一个根本不存在的瓶颈。SQL 现在与 `countDocuments` / `_summaries` 逐字同形。
+# ---------------------------------------------------------------------------
 
 
 def q_count_roots(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
-    """单据页的「共 N 条」（`countDocuments(rootsOnly: true)`）。"""
-    return ("SELECT COUNT(*) AS c " + _DOC_FROM + _DOC_ROOTS, ())
+    """单据页的「共 N 条」（`countDocuments(rootsOnly: true)`）。
+
+    ⚠️ 用 `_fromFor` 的形状（**只有 `documents`**），不是 `_docFrom` 的三个 join：
+    `COUNT(*)` 用不到「退货汇总 / 核销汇总」两个派生表，带上它们会被整表物化
+    （实测 300 ms vs 61 ms，2026-10-28，26 万单库）。
+    """
+    return ("SELECT COUNT(*) AS c FROM documents d " + _DOC_ROOTS, ())
 
 
-def q_list_roots(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
-    """单据页首屏（`listDocuments(rootsOnly: true, limit: 200)`）。"""
-    return (
-        "SELECT d.*, pa.name AS party_name, COALESCE(r.rsum,0) AS returned_sum, "
-        "COALESCE(r.rcnt,0) AS returned_count, COALESCE(s.psum,0) AS paid_sum "
-        + _DOC_FROM + _DOC_ROOTS +
-        " ORDER BY d.created_at DESC, d.id DESC LIMIT ?",
-        (limit,),
-    )
+def q_list_roots(limit: int, window_ms: int):
+    """单据页首屏（`listDocuments(rootsOnly: true, limit: 200)`）—— **两段**。
+
+    与 `list_documents` 同一形状，只差第一段的 roots 过滤（DAO 里也是同一份
+    `_summaries`，靠 `_docFilter(rootsOnly:)` 分派）。
+    """
+    return _two_stage(_STAGE1_ROOTS, limit)
 
 
 #: **性能门禁**：这些查询的 p95 超过阈值即判红（退出码 4）。
 #:
 #: 为什么只给这两条：它们是**页面每帧真正跑的**（`countDocuments(rootsOnly)` /
-#: `listDocuments(rootsOnly, 200)`）。2026-10-28 真机实测 26 万单库上分别是
-#: 64 ms / 57.6 ms（默认 30 天档）与 267 ms / 131 ms（全部档），阈值取「留一倍余量」。
+#: `listDocuments(rootsOnly, 200)`）。
 #:
-#: ⚠️ 阈值不是性能目标，是**防退化护栏**：谁把 `_docFrom` 的派生表又加回来
-#: （实测会从 64 ms 变成 300 ms），这条立刻红。要放宽就改这里并写明理由。
+#: ## 阈值怎么来的（2026-11-04 重定，裁定「甲」）
+#:
+#: 旧阈值（120 / 200 ms）是照**重构前**的单段 SQL 定的，重构后照样判红 ⇒
+#: 门禁拦的是不存在的性能问题。新阈值取「当前实测 p95 的 3 倍」，
+#: 在 498.7 MB / 262,693 单 / schema v8 的库上（`perf_seed.py --min-rows 100000`）：
+#:
+#: | 查询 | 实测 p50 | 实测 p95 | 阈值 | 倍数 |
+#: |---|---|---|---|---|
+#: | `count_roots` | 62.6 | 64.1 | 200 | 3.1× |
+#: | `list_roots`（两段合计） | 18.1 | 24.3 | 80 | 3.3× |
+#:
+#: ⚠️ 阈值不是性能目标，是**防退化护栏**：谁把 `_fromFor` 的派生表又加回来
+#: （实测 62 → 300 ms）、或把 `INDEXED BY` / `business_day` 排序弄丢
+#: （实测第一段 0.1 → 120 ms），这条立刻红。要放宽就改这里并写明理由。
 GATES: Dict[str, float] = {
-    "count_roots": 120.0,
-    "list_roots": 200.0,
+    "count_roots": 200.0,
+    "list_roots": 80.0,
 }
 
 QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]], ...] = (
@@ -336,7 +395,7 @@ QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]],
     ("pull_window", "同步 pull：最近更新窗口", q_pull_window),
     ("doc_count", "单据总数", q_doc_count),
     ("count_roots", "单据页「共 N 条」（rootsOnly，每帧都跑）", q_count_roots),
-    ("list_roots", "单据页首屏（rootsOnly + LIMIT，每帧都跑）", q_list_roots),
+    ("list_roots", "单据页首屏（rootsOnly 两段，每帧都跑）", q_list_roots),
 )
 
 
@@ -436,7 +495,14 @@ def run_one(
 
 def explain(conn: sqlite3.Connection, sql: str, params: Sequence[Any]) -> List[str]:
     if callable(sql):
-        return ["（多步查询，逐段计划见下方 *_stage 键）"]
+        # 多步查询：EXPLAIN **第一段**（索引是否生效只看第一段；第二段是
+        # 按 id 点查，形状固定）。没有可 EXPLAIN 的第一段就明说，不编。
+        first = getattr(sql, "explain_sql", None)
+        if not first:
+            return ["（多步查询，无法 EXPLAIN）"]
+        sql, params = first, (200,)
+        rows = conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
+        return ["第一段：" + str(r[-1]) for r in rows]
     try:
         rows = conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
     except sqlite3.Error as exc:

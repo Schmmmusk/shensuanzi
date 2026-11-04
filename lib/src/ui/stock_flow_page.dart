@@ -18,7 +18,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'scaled.dart';
 
-import 'export_button.dart';
+import 'flow_page_scaffold.dart';
 
 /// 某商品的流水页。
 class StockFlowPage extends StatelessWidget {
@@ -57,65 +57,39 @@ class StockFlowPage extends StatelessWidget {
           constraints.maxWidth,
           base: flowNarrowBase,
         );
-        final Widget page = Scaffold(
-          appBar: AppBar(
-            title: Text('${product.name} 的流水'),
-            actions: <Widget>[
-              if (exports != null)
-                ExportButton(
-                  key: const Key('export-stock-flow'),
-                  // 与「导出库存」（库存页）/「导出流水」（往来方 / 账户）同款四字按钮
-                  label: '导出流水',
-                  export: () => exports!.write(
-                    stockFlowExportTable(flow: flow),
-                    // AF-7：文件名带商品名 —— 否则导几个商品的文件名一模一样
-                    extra: product.name,
-                  ),
-                ),
-            ],
+        // 导出按钮在 body 表头（不在 AppBar.actions）—— 原因见
+        // flow_page_scaffold.dart 文件头（5c-2 的小字塞不进 56px 的 AppBar
+        // 高度）。三个流水页共用同一骨架，纪律 18。
+        final Widget page = FlowPageScaffold(
+          title: '${product.name} 的流水',
+          emptyText: '还没有出入库流水。',
+          narrow: narrow,
+          exports: exports,
+          exportKey: const Key('export-stock-flow'),
+          // 与「导出库存」（库存页）/「导出流水」（往来方 / 账户）同款四字按钮
+          exportExtra: product.name, // AF-7：文件名带商品名
+          buildExportTable: () => stockFlowExportTable(flow: flow),
+          itemCount: flow.length,
+          footer: _footerNote(
+            context,
+            narrow,
+            mobileShell,
+            onOpenDocument != null,
           ),
-          body: SafeArea(
-            child: flow.isEmpty
-                ? Center(
-                    child: Text(
-                      '还没有出入库流水。',
-                      style: TextStyle(
-                        height: 1.8,
-                        color: Theme.of(context).hintColor,
-                      ),
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    itemCount: flow.length + 1, // 末尾多一行灰字说明
-                    itemBuilder: (BuildContext context, int index) {
-                      if (index == flow.length) {
-                        return _footerNote(
-                          context,
-                          narrow,
-                          mobileShell,
-                          onOpenDocument != null,
-                        );
-                      }
-                      final StockFlowEntry entry = flow[index];
-                      final Widget row = narrow
-                          ? _NarrowFlowCard(
-                              entry: entry,
-                              showCost: !mobileShell,
-                            )
-                          : _WideFlowTile(entry: entry, showCost: !mobileShell);
-                      final bool canTap =
-                          !mobileShell && onOpenDocument != null;
-                      return InkWell(
-                        key: Key('stock-flow-row-${entry.documentId}'),
-                        onTap: canTap
-                            ? () => onOpenDocument!(context, entry.documentId)
-                            : null,
-                        child: row,
-                      );
-                    },
-                  ),
-          ),
+          itemBuilder: (BuildContext context, int index) {
+            final StockFlowEntry entry = flow[index];
+            final Widget row = narrow
+                ? _NarrowFlowCard(entry: entry, showCost: !mobileShell)
+                : _WideFlowTile(entry: entry, showCost: !mobileShell);
+            final bool canTap = !mobileShell && onOpenDocument != null;
+            return InkWell(
+              key: Key('stock-flow-row-${entry.documentId}'),
+              onTap: canTap
+                  ? () => onOpenDocument!(context, entry.documentId)
+                  : null,
+              child: row,
+            );
+          },
         );
         // 2026-10-21（§CV·八十 Q1）：**不再夹字号**（原 1.15 会静默压掉用户的超大档）。
         // 窄屏靠 `_NarrowFlowCard` 重排（类型/数量用 Wrap，单号+日期单独一行）。

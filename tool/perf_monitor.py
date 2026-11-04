@@ -5,8 +5,19 @@
     # ① 打开软件，进入主界面（建议全屏，别最小化）
     # ② 另开一个窗口跑：
     python tool/perf_monitor.py run --data-dir "D:\\神算子数据" --out D:\\perf-run1
-    # ③ 按提示做动作：开始计时 / 结束计时 / 记一条观察
-    # ④ 结束后看 D:\\perf-run1\\report.md
+    # ③ **正常用软件，不用碰这个窗口** —— 动作按 CPU/读写自动切分，
+    #    写库的动作还会从账本里查出「刚才是哪张单」
+    # ④ 关掉软件 ⇒ 脚本自动收尾；看 D:\\perf-run1\\report.md
+    #    （报告 §七 是「事后补全表」：把脚本猜不出的部分列成一张表，测完再填）
+
+## 防呆三件（2026-11-03 裁定「必须选流程甲」：测试者全程不碰控制台）
+
+1. **挂错进程 = 整轮作废** ⇒ 标题命中后**验 exe 名**，并在报告 §⓪ 用线程数/
+   工作集/CPU 判「这数据到底能不能用」（第三台机器 711 个采样点全废那次）。
+   `--process` 认任务管理器里显示的那个名字（FileDescription），不必是 exe 文件名。
+2. **忘了记录 = 漏数据** ⇒ 不依赖按键，自动切分事件；写库动作直接查账本命名。
+3. **细节说不清 = 事后补** ⇒ 报告 §七 列出每条自动事件的时间窗、CPU 峰值、
+   读写量、账本里刚落的单据，留一列「你刚才在做什么」给人填。
 
 ## 它记什么（全部写进 CSV，一行一个采样点）
 
@@ -63,6 +74,7 @@ import os
 import platform
 
 import machine_info
+import queue
 import sqlite3
 import statistics
 import sys
@@ -95,7 +107,23 @@ CHECKLIST: Tuple[Tuple[str, str], ...] = (
     ("二次冷启动", "关掉软件再打开（这次 page cache 是热的）"),
 )
 
+#: 单据类型 → 中文名。**与 `packages/shensuanzi_core/lib/src/models/document.dart`
+#: 的 `DocType.label` 逐字一致**（纪律 17：描述要跟实现一致）。
+#: 只用来给「自动识别」的事件贴名字，不参与任何计算。
+DOC_TYPE_LABEL: Dict[str, str] = {
+    "purchase": "采购入库",
+    "sale": "店内销售",
+    "delivery": "送货",
+    "sale_return": "销售退货",
+    "purchase_return": "采购退货",
+    "stocktake": "盘点",
+    "receipt": "收款",
+    "payment": "付款",
+    "transfer": "调拨",
+}
+
 FEEL_LABEL: Dict[int, str] = {
+
     1: "顺畅",
     2: "一般",
     3: "卡顿",
@@ -215,27 +243,177 @@ class _WindowsWindow:
         return found
 
 
+def _exe_norm(name: str) -> str:
+    """exe 名 / 任务管理器显示名 → 可比较的形态（小写、去 .exe、去空格标点）。"""
+    s = (name or "").strip().lower()
+    if s.endswith(".exe"):
+        s = s[: -len(".exe")]
+    return "".join(ch for ch in s if ch.isalnum())
+
+
+def exe_name_matches(candidate: str, want: str) -> bool:
+    """`candidate` 是否就是 `want` 指的那个程序。
+
+    ## 为什么不直接比字符串（2026-11-03 用户实地指出）
+
+    任务管理器「名称」列显示的是 exe 版本资源里的 **FileDescription**，
+    不是 exe 文件名。神算子的 exe 是 `shensuanzi.exe`
+    （`windows/../CMakeLists.txt` 的 `BINARY_NAME`），任务管理器里却是
+    **「Shensuanzi - Inventory & Bookkeeping」**（`windows/runner/Runner.rc`
+    的 FileDescription）。测试者照任务管理器抄名字填给 `--process` 是**最自然
+    的做法** —— 他已经打开了正确的程序，只比文件名会把他挡在门外。
+
+    所以判据放宽成「归一化后互相包含」：`shensuanzi.exe` 与
+    `Shensuanzi - Inventory & Bookkeeping` 都归一到 `shensuanzi…` 前缀 ⇒ 认。
+    ⚠️ 这是**放宽匹配**，代价是理论上可能误认（如 `shensuanzi_updater`）；
+    权衡是「挂错进程」由 `sanity_check` 兜底，而「挂不上」直接毁掉一整轮实测。
+    """
+    a, b = _exe_norm(candidate), _exe_norm(want)
+    if not a or not b:
+        return False
+    return a == b or (len(a) >= 6 and (a in b or b in a))
+
+
 def discover_app(
     proc: Optional["_WindowsProcess"],
     window: Optional["_WindowsWindow"],
     keyword: str,
     exe_hint: str,
-) -> Tuple[int, str, str]:
-    """找软件进程。返回 `(pid, 依据, 窗口标题)`；找不到 = `(0, "", "")`。
+    exe_verifier: Optional[Callable[[int], str]] = None,
+) -> Tuple[int, str, str, str]:
+    """找软件进程。返回 `(pid, 依据, 窗口标题, 警告)`；找不到 = `(0, "", "", 警告)`。
 
-    顺序：**① 窗口标题含关键词**（最可靠，不怕改名）→ ② exe 名（兜底，
+    顺序：**① 窗口标题含关键词**（不怕软件改名）→ ② exe 名（兜底，
     比如软件最小化到托盘、窗口标题被临时改掉）。
+
+    ## 为什么标题命中后还要**验 exe 名**（2026-11-02，第三台机器）
+
+    标题匹配是**字符串包含**，会撞车：浏览器标签页写着「神算子」、
+    记事本打开一个叫「神算子」的文档，都会命中。第三台机器就挂到了
+    别的进程上，跑完 711 个采样点才发现 CPU 全程 0.0%、工作集 4.9 MB、
+    1 个线程 —— 整轮数据作废，而脚本从头到尾一声不吭。
+
+    现在：**标题命中但 exe 名对不上 ⇒ 不挂**，继续找下一个候选，
+    最后退回按 exe 名找，并把「跳过了哪些标题」写进警告。
+    判据用 exe 名而不是 CPU/内存阈值 —— 后者是猜，exe 名是事实。
+
+    `exe_verifier=None`（非 Windows、或 `--no-exe-check`）⇒ 退回旧行为，
+    并在警告里说明「没验 exe 名」。
     """
+    warn = ""
     if window is not None and keyword:
         hits = [w for w in window.top_windows() if keyword in w[2]]
-        if hits:
-            _hwnd, pid, title = hits[0]
-            return pid, "窗口标题含「%s」" % keyword, title
+        if exe_verifier is None:
+            if hits:
+                _hwnd, pid, title = hits[0]
+                if exe_hint:
+                    warn = "没验 exe 名（非 Windows 或 --no-exe-check）—— 标题撞车会挂错进程"
+                return pid, "窗口标题含「%s」" % keyword, title, warn
+        else:
+            want = (exe_hint or "").strip()
+            skipped: List[str] = []
+            for _hwnd, pid, title in hits:
+                got = exe_verifier(pid)
+                if not want or not got or exe_name_matches(got, want):
+                    return pid, "窗口标题含「%s」" % keyword, title, warn
+                skipped.append("「%s」→ %s" % (title, got))
+            if skipped:
+                warn = (
+                    "有窗口标题含「%s」但 exe 不是 %s，已跳过：%s。"
+                    % (keyword, exe_hint, "；".join(skipped))
+                )
     if proc is not None and exe_hint:
         pid = proc.find_by_name(exe_hint)
         if pid:
-            return pid, "进程名 %s" % exe_hint, ""
-    return 0, "", ""
+            return pid, "进程名 %s" % exe_hint, "", warn
+    if not warn:
+        warn = "没找到标题含「%s」的窗口，也没有 %s 进程 —— 先把软件打开" % (keyword, exe_hint or "对应 exe")
+    return 0, "", "", warn
+
+
+# --------------------------------------------------------------------------- 挂接体检
+
+
+#: Flutter 桌面应用**不可能**只有这么点线程：UI + raster + IO + platform
+#: 至少 4–5 个，加上 Dart VM / sqlite 更多。1 个线程 ⇒ 挂到的绝不是软件。
+MIN_PLAUSIBLE_THREADS = 3
+#: Flutter 桌面应用工作集不可能低于这个量级（引擎 + 字体 + 首屏）。
+MIN_PLAUSIBLE_RSS_MB = 40.0
+
+
+def sanity_check(
+    samples: Sequence[Dict[str, Any]],
+    min_threads: int = MIN_PLAUSIBLE_THREADS,
+    min_rss_mb: float = MIN_PLAUSIBLE_RSS_MB,
+) -> List[str]:
+    """跑完之后回答一句人话：**「这些进程指标是不是真的？」**
+
+    ## 为什么必须有这一步（2026-11-02，第三台机器）
+
+    那一轮 711 个采样点，CPU 全程 0.0%、工作集 4.9 MB、1 个线程、74 个句柄。
+    报告照样生成得漂漂亮亮，测试人员照样交回来 —— 因为**没有任何一步说
+    「这不可能」**。挂错进程时指标不是「缺失」而是「看起来正常地很小」，
+    人眼扫过去根本不会起疑。
+
+    ## 判据（只用「物理上不可能」的事实，不用「我觉得慢」）
+
+    | 现象 | 结论 |
+    |---|---|
+    | 有采样点，但**一个都没有**进程指标 | 全程没挂上进程 ⇒ 只有库体积可用 |
+    | 线程数中位数 < `min_threads` | 挂到的不是 Flutter 应用 |
+    | 工作集中位数 < `min_rss_mb` | 同上（Flutter 桌面版不可能这么小） |
+    | CPU **全程** ≤ 0.05% 且全程无读无写 | 那个进程根本没干活 ⇒ 大概率挂错 |
+
+    最后一条要**同时**满足「无 CPU 且无读写」才报警：软件开着不动时确实
+    CPU≈0，但那时也没有 IO；一旦有 IO 就说明进程在动、CPU 0 只是采样窗口太短。
+
+    返回**空列表 = 没发现问题**。返回的是给人看的句子，不是错误码。
+    """
+    if not samples:
+        return ["一个采样点都没有 —— 本轮没有任何数据。"]
+
+    def vals(key: str) -> List[float]:
+        out: List[float] = []
+        for s in samples:
+            v = s.get(key)
+            if v in ("", None):
+                continue
+            try:
+                out.append(float(v))
+            except (TypeError, ValueError):
+                pass
+        return out
+
+    problems: List[str] = []
+    cpu = vals("cpu_pct")
+    if not cpu:
+        problems.append(
+            "全程没有进程指标（CPU / 内存 / 线程全空）⇒ 一直没挂上软件进程，"
+            "本轮只有库体积与前台窗口可用。"
+        )
+        return problems
+
+    threads = vals("threads")
+    rss = vals("rss_mb")
+    if threads and percentile(threads, 0.5) < min_threads:
+        problems.append(
+            "线程数中位数只有 %.0f（Flutter 桌面应用至少 %d 个）⇒ **挂到的进程多半不是软件**，"
+            "本轮进程指标作废。" % (percentile(threads, 0.5), min_threads)
+        )
+    if rss and percentile(rss, 0.5) < min_rss_mb:
+        problems.append(
+            "工作集中位数只有 %.1f MB（Flutter 桌面应用不可能这么小）⇒ **挂到的进程多半不是软件**。"
+            % percentile(rss, 0.5)
+        )
+    reads = vals("read_kb")
+    writes = vals("write_kb")
+    ever_moved = max(reads or [0.0]) > 0 or max(writes or [0.0]) > 0
+    if max(cpu) <= 0.05 and not ever_moved:
+        problems.append(
+            "CPU 全程 ≤ 0.05% 且全程零读写 ⇒ 那个进程整轮没干过任何事，"
+            "**几乎可以确定挂错了**（软件被操作过就不可能一次读写都没有）。"
+        )
+    return problems
 
 
 # --------------------------------------------------------------------------- 动作自动识别
@@ -467,6 +645,12 @@ class _WindowsProcess:
 
     # -- 找进程
     def find_by_name(self, exe_name: str) -> Optional[int]:
+        """按 exe 名找 PID。也接受任务管理器显示名（FileDescription）。
+
+        见 `exe_name_matches`：测试者从任务管理器抄到的是
+        「Shensuanzi - Inventory & Bookkeeping」而不是 `shensuanzi.exe`，
+        照字面填进来必须能用，否则等于把他挡在门外。
+        """
         snapshot = self.kernel32.CreateToolhelp32Snapshot(self.TH32CS_SNAPPROCESS, 0)
         if not snapshot or snapshot == self.INVALID_HANDLE_VALUE:
             return None
@@ -477,10 +661,37 @@ class _WindowsProcess:
             target = exe_name.lower()
             while ok:
                 name = entry.szExeFile.decode("mbcs", "replace").lower()
-                if name == target:
+                # 先精确比（默认 `shensuanzi.exe` 走这条，行为与从前一致），
+                # 再放宽比（用户手填任务管理器显示名走这条）
+                if name == target or exe_name_matches(name, exe_name):
                     return int(entry.th32ProcessID)
                 ok = self.kernel32.Process32Next(snapshot, ctypes.byref(entry))
             return None
+        finally:
+            self.kernel32.CloseHandle(snapshot)
+
+    def exe_by_pid(self, pid: int) -> str:
+        """PID → exe 文件名（小写）。拿不到返回空串。
+
+        这是「挂错进程」的**唯一硬判据**：窗口标题会撞车（浏览器标签页、
+        记事本里打开一个叫「神算子」的文档，标题里都有「神算子」），
+        exe 名不会。2026-11-02 第三台机器就是这么挂错的 —— 全程 CPU 0.0%、
+        工作集 4.9 MB、1 个线程，711 个采样点**全部作废**，而脚本一声不吭。
+        """
+        if not pid:
+            return ""
+        snapshot = self.kernel32.CreateToolhelp32Snapshot(self.TH32CS_SNAPPROCESS, 0)
+        if not snapshot or snapshot == self.INVALID_HANDLE_VALUE:
+            return ""
+        try:
+            entry = self.PROCESSENTRY32()
+            entry.dwSize = ctypes.sizeof(self.PROCESSENTRY32)
+            ok = self.kernel32.Process32First(snapshot, ctypes.byref(entry))
+            while ok:
+                if int(entry.th32ProcessID) == int(pid):
+                    return entry.szExeFile.decode("mbcs", "replace").lower()
+                ok = self.kernel32.Process32Next(snapshot, ctypes.byref(entry))
+            return ""
         finally:
             self.kernel32.CloseHandle(snapshot)
 
@@ -731,9 +942,24 @@ class Session:
     # -- 进程挂接
     def _attach(self) -> None:
         if self.args.pid:
-            if self.proc and self.proc.open(int(self.args.pid)):
-                self.pid = int(self.args.pid)
+            pid = int(self.args.pid)
+            if self.proc and self.proc.open(pid):
+                self.pid = pid
                 self.attach_reason = "--pid 指定"
+                # --pid 也要验 exe 名：手填 PID 填错（挂到浏览器/资源管理器）
+                # 和标题撞车是同一类事故，判据也一样是 exe 名。
+                if not self.args.no_exe_check:
+                    got = self.proc.exe_by_pid(pid)
+                    self.attach_reason += "（exe %s）" % (got or "未知")
+                    want = (self.args.process or "").lower()
+                    if got and want and got != want:
+                        msg = (
+                            "--pid %d 的进程是 %s，不是 %s —— 进程指标大概率不是软件的！"
+                            % (pid, got, self.args.process)
+                        )
+                        print("⛔ %s" % msg)
+                        self.notes.append("%s ⛔ %s" % (time.strftime("%H:%M:%S"), msg))
+                        self.record_event("attach_warning", msg, source="auto")
             else:
                 print("⚠️ 打不开 PID %s 的进程（权限？）—— 进程指标将为 —" % self.args.pid)
             return
@@ -742,21 +968,23 @@ class Session:
         self._try_discover(announce=True)
 
     def _try_discover(self, announce: bool) -> bool:
-        """自动找软件进程（窗口标题优先，exe 名兜底）。
+        """自动找软件进程（窗口标题优先 + **exe 名验证**，exe 名兜底）。
 
         2026-10-27：从前只按 `--process shensuanzi.exe` 找，测试机上软件一改名
         就**静默没有进程指标**，测试人员只看到一列 `—`。
+        2026-11-02：反过来又栽在「标题命中但进程不对」—— 见 `discover_app`。
         """
-        pid, reason, title = discover_app(
-            self.proc, self.window, self.args.window_title, self.args.process
+        verifier = None
+        if self.proc is not None and not self.args.no_exe_check:
+            verifier = self.proc.exe_by_pid
+        pid, reason, title, warn = discover_app(
+            self.proc, self.window, self.args.window_title, self.args.process, verifier
         )
+        if warn and announce and time.monotonic() - self._last_warn >= 30.0:
+            self._last_warn = time.monotonic()
+            print("⚠️ %s" % warn)
+            self.notes.append("%s 挂接警告：%s" % (time.strftime("%H:%M:%S"), warn))
         if not pid:
-            if announce and time.monotonic() - self._last_warn >= 30.0:
-                self._last_warn = time.monotonic()
-                print(
-                    "⚠️ 没找到软件窗口（标题含「%s」）—— 先把软件打开；之后每次采样会再找。"
-                    % self.args.window_title
-                )
             return False
         if self.proc is None or not self.proc.open(pid):
             if announce:
@@ -874,11 +1102,23 @@ class Session:
         return row
 
     def _on_auto_event(self, event: Dict[str, Any]) -> None:
-        """把探测器识别出的一段「忙」记成事件（**标 source=auto，不冒充人工**）。"""
-        self.auto_events.append(event)
+        """把探测器识别出的一段「忙」记成事件（**标 source=auto，不冒充人工**）。
+
+        名字从**库里查**（`journal_label`）而不是让人按：测试人员只管用软件，
+        「刚保存了哪张单」由脚本自己回头看。查不到就老实写「读库/界面重建」，
+        进事后补填清单 —— 宁可留空，不编名字。
+        """
+        label = ""
+        if event.get("kind") == "写库":
+            try:
+                label = self.journal_label(int(event["start_ms"]), int(event["end_ms"]))
+            except Exception:
+                label = ""
+        name = "自动识别 #%d %s" % (event["id"], label or event["kind"])
+        self.auto_events.append(dict(event, label=label))
         self.record_event(
             "auto_action",
-            "自动识别 #%d %s" % (event["id"], event["kind"]),
+            name,
             duration_s=event["duration_s"],
             note="峰值 CPU %.0f%%；读 %.2f MB；写 %.2f MB；%d 个采样点"
             % (event["peak_cpu"], event["read_mb"], event["write_mb"], event["samples"]),
@@ -888,10 +1128,59 @@ class Session:
             write_mb=event["write_mb"],
         )
         if not self.args.quiet:
-            print(
-                "  · 自动识别 #%d：%.2f 秒（%s，峰值 CPU %.0f%%）"
-                % (event["id"], event["duration_s"], event["kind"], event["peak_cpu"])
-            )
+            print("  · %s：%.2f 秒（峰值 CPU %.0f%%）" % (name, event["duration_s"], event["peak_cpu"]))
+
+    # -- 事后归因：这段「忙」到底写了什么（2026-11-02）
+    def journal_label(self, start_ms: int, end_ms: int) -> str:
+        """从**库本身**读出「这段时间软件刚落了什么单」，给自动识别的事件贴名字。
+
+        ## 为什么这么做
+
+        软件是单窗口应用，窗口标题恒为「神算子」—— 从外面**看不出**用户点了
+        什么。而写库这一段不一样：本项目「业务数据只插入」（纪律 2），
+        任何动作最后都落成一张 `documents`（或一条主数据）。所以
+        「按 rowid 倒序取最后一行」就是「刚刚发生了什么」的**事实**，
+        不需要猜，也不需要测试人员按键。
+
+        读操作（进页面、搜索）库里不留痕，**不硬凑名字** —— 报告里仍写
+        「读库/界面重建」，并出现在事后补填清单里。
+
+        只读（`mode=ro`）、`ORDER BY rowid DESC LIMIT 1`（rowid 表上是 O(1)），
+        失败就返回空串，绝不影响采样。
+        """
+        try:
+            uri = "file:%s?mode=ro" % self.db_path.replace("\\", "/")
+            conn = sqlite3.connect(uri, uri=True, timeout=1.0)
+        except sqlite3.Error:
+            return ""
+        try:
+            conn.text_factory = str
+            row = conn.execute(
+                "SELECT doc_type, status, total_amount, created_at, ref_doc_id"
+                " FROM documents ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()
+            parts: List[str] = []
+            if row and int(row[3] or 0) >= start_ms - 2000 and int(row[3] or 0) <= end_ms + 5000:
+                label, amount, status = DOC_TYPE_LABEL.get(row[0], row[0]), row[2], row[1]
+                text = "落单：%s ¥%.2f" % (label, (amount or 0) / 100.0)
+                if status == "cancelled":
+                    text += "（已取消）"
+                if row[4]:
+                    text += "（挂原单）"
+                parts.append(text)
+            prow = conn.execute(
+                "SELECT name, updated_at FROM products ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()
+            if prow and int(prow[1] or 0) >= start_ms - 2000 and int(prow[1] or 0) <= end_ms + 5000:
+                parts.append("新建/改档案：%s" % prow[0])
+            return "；".join(parts)
+        except sqlite3.Error:
+            return ""
+        finally:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
 
     def _row_counts(self) -> Dict[str, int]:
         out: Dict[str, int] = {}
@@ -1122,6 +1411,27 @@ def build_report(session: Session) -> str:
     add("> 由 `tool/perf_monitor.py` 自动生成。**采样数据以 `samples.csv` 为准**，")
     add("> 本报告只做汇总与判读；人工动作的原始记录在 `events.csv`。")
     add("")
+
+    # ---- 先回答「这份数据能不能用」，再看内容（2026-11-02）
+    # 第三台机器那轮：CPU 全程 0.0%、工作集 4.9 MB、1 线程，报告照样生成，
+    # 测试人员照样交回来 —— 因为没有任何一步说「这不可能」。现在放在**第一屏**。
+    problems = sanity_check(samples)
+    if problems:
+        add("## ⓪ 这份数据可用吗 —— ⛔ 有问题，先看这里")
+        add("")
+        for p in problems:
+            add("- ⛔ %s" % p)
+        add("")
+        add("> **别把这一轮当性能结论用。** 常见处置：确认软件窗口开着（标题含「%s」）、"
+            % args.window_title)
+        add("> 用 `--pid` 手动指定（任务管理器 → 详细信息 → 找到 %s 那一行的 PID）。"
+            % (args.process or "软件 exe"))
+        add("> 报告后面的数字仍然照写，但**进程相关的一切都不作数**。")
+    else:
+        add("## ⓪ 这份数据可用吗 —— ✅ 挂接与指标自洽")
+        add("")
+        add("> 线程数、工作集、CPU/读写都落在「真的是那个软件」的范围内（判据见 `sanity_check`）。")
+    add("")
     add("## 一、会话")
     add("")
     add("| 项 | 值 |")
@@ -1178,16 +1488,17 @@ def build_report(session: Session) -> str:
             % (args.busy_cpu, args.busy_read_kb, args.busy_write_kb, args.idle_gap)
         )
         add("")
-        add("| # | 开始 | 用时 | 类型 | 峰值 CPU | 读 | 写 | 采样点 |")
-        add("|---|---|---|---|---|---|---|---|")
+        add("| # | 开始 | 用时 | 脚本查到的动作 | 类型 | 峰值 CPU | 读 | 写 | 采样点 |")
+        add("|---|---|---|---|---|---|---|---|---|")
         for e in auto:
             start = time.strftime("%H:%M:%S", time.localtime(e["start_ms"] / 1000.0))
             add(
-                "| %d | %s | **%.2f 秒** | %s | %.0f%% | %.2f MB | %.2f MB | %d |"
+                "| %d | %s | **%.2f 秒** | %s | %s | %.0f%% | %.2f MB | %.2f MB | %d |"
                 % (
                     e["id"],
                     start,
                     e["duration_s"],
+                    ("**%s**" % e["label"]) if e.get("label") else "（读操作，库里无痕）",
                     e["kind"],
                     e["peak_cpu"],
                     e["read_mb"],
@@ -1348,17 +1659,58 @@ def build_report(session: Session) -> str:
     add("## 六、标准动作覆盖")
     add("")
     done = {r["name"] for r in session.action_records}
+    # 自动识别 + 库里查到的动作名也算覆盖（2026-11-02）：测试人员不再按键，
+    # 只看「脚本记下的动作名」里有没有这一项 —— 有就算做过，不用他回忆。
+    auto_names = " ".join(str(e.get("label") or "") for e in session.auto_events)
     add("| 项 | 状态 |")
     add("|---|---|")
     for name, hint in CHECKLIST:
-        mark = "✅" if name in done else "—"
+        if name in done:
+            mark = "✅（人工计时）"
+        elif name in auto_names:
+            mark = "✅（自动识别 + 库里查到）"
+        else:
+            mark = "—"
         add("| %s | %s %s |" % (name, mark, hint))
-    missing = [name for name, _hint in CHECKLIST if name not in done]
+    missing = [name for name, _hint in CHECKLIST if name not in done and name not in auto_names]
     add("")
     if missing:
         add("**未记录 %d 项**：%s" % (len(missing), "、".join(missing)))
     else:
         add("**清单全部覆盖。**")
+    add("")
+
+    # ---- 事后补填（2026-11-02 裁定：现场只操作，细节事后填）
+    # 现场按键会打断操作、还会把「操作」变成「操作+切窗口」，测出来的
+    # 已经不是用户真实体验。所以现场什么都不用按，事后对着这张表填。
+    add("## 七、事后补填表（**交回前请填这一张**）")
+    add("")
+    add("> 现场只管用软件，**不用按任何键**。耗时、读写、刚落的单据，脚本都记下了；")
+    add("> 只有「当时在做什么」「感觉卡不卡」是机器猜不出来的，请事后补上。")
+    add("> 观感：1=顺畅 2=一般 3=卡顿 4=明显卡顿 5=无响应。")
+    add("")
+    todo_events = [
+        e for e in session.auto_events
+        if not e.get("label") or e["duration_s"] >= args.slow_action
+    ]
+    if not todo_events:
+        add("（本轮所有操作脚本都认出来了、且都不慢 —— 没有要补的。）")
+    else:
+        add("| # | 时刻 | 用时 | 脚本已查到 | 当时在做什么（请填） | 观感 1–5（请填） |")
+        add("|---|---|---|---|---|---|")
+        for e in todo_events:
+            start = time.strftime("%H:%M:%S", time.localtime(e["start_ms"] / 1000.0))
+            add(
+                "| %d | %s | %.2f 秒 | %s |  |  |"
+                % (
+                    e["id"],
+                    start,
+                    e["duration_s"],
+                    e.get("label") or "（读操作，库里无痕）",
+                )
+            )
+        add("")
+        add("> 只填**慢的**和**认不出名字**的即可，其余不必逐条补。")
     add("")
 
     # ---- 原始备注
@@ -1423,8 +1775,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="主窗口标题关键词（默认「%(default)s」）—— **优先按它找**，"
         "软件被改名也能找到；找不到才退回 --process",
     )
-    proc.add_argument("--process", default="shensuanzi.exe", help="exe 名（兜底用，默认 %(default)s）")
+    proc.add_argument(
+        "--process",
+        default="shensuanzi.exe",
+        help="exe 名（兜底用，默认 %(default)s）。**也接受任务管理器里显示的那个名字**"
+        "（神算子显示为「Shensuanzi - Inventory & Bookkeeping」，那是文件说明不是文件名，"
+        "照抄进来认）",
+    )
     proc.add_argument("--pid", default=None, help="直接指定 PID（优先级最高）")
+    proc.add_argument(
+        "--no-exe-check", action="store_true",
+        help="关掉「exe 名验证」。**默认开**：标题命中但 exe 对不上就不挂 —— "
+        "第三台机器按标题挂到了别的进程，711 个采样点全作废（见 discover_app）",
+    )
 
     how = run.add_argument_group("采样")
     how.add_argument(
@@ -1456,6 +1819,11 @@ def build_parser() -> argparse.ArgumentParser:
     how.add_argument("--window-days", type=int, default=7, help="同步窗口天数（探针用，默认 %(default)s）")
     how.add_argument("--duration", type=float, default=0.0, help="跑多少分钟后自动停（默认 0=手动 q 结束）")
     how.add_argument("--no-input", action="store_true", help="不读键盘（只采样；动作靠 --spool）")
+    how.add_argument(
+        "--keep-open", action="store_true",
+        help="软件关掉后**不**自动收尾（默认：关掉软件就自动结束并写报告 —— "
+        "测试人员不用记得回来按 q）",
+    )
 
     detect = run.add_argument_group("自动识别操作的阈值（默认值在开发机上验过）")
     detect.add_argument(
@@ -1575,6 +1943,31 @@ def cmd_mark(args: argparse.Namespace) -> int:
     return 0
 
 
+def _stdin_reader(q: "queue.Queue[Optional[str]]") -> None:
+    """后台线程：把键盘输入塞进队列。
+
+    为什么不能像从前那样在主循环里 `input()`：`input()` 会**阻塞**，
+    测试人员一旦去用软件（这才是正事），主循环就停在那儿不动 ——
+    想敲 `q` 得先切回窗口，想敲 `s` 得先切回窗口。而「切窗口」这个动作
+    本身就会打断被测的操作，测出来的耗时已经不是用户真实体验了。
+
+    现在：输入照收，但**不收也照常跑**。测试人员全程只碰软件。
+
+    ⚠️ **读到 EOF 就安静退出线程，绝不投「结束」信号**（2026-11-04 冒烟测试
+    踩到的坑）：stdin 被重定向、或终端没有真实键盘时 `readline()` 会立刻
+    返回空串，若据此结束，脚本会**开机即退**，只采到 1 个采样点。
+    结束只有三条路：敲 `q`、到 `--duration`、软件被关掉。
+    """
+    while True:
+        try:
+            line = sys.stdin.readline()
+        except Exception:
+            return
+        if not line:
+            return  # 没有键盘了 —— 停止读取，但**不**结束采样
+        q.put(line.rstrip("\r\n"))
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     if args.db and args.data_dir:
         print("⛔ --db 与 --data-dir 只能指定一个。", file=sys.stderr)
@@ -1607,12 +2000,19 @@ def cmd_run(args: argparse.Namespace) -> int:
     print("性能实测记录开始")
     print("  输出目录  %s" % session.out_dir)
     print("  库文件    %s" % db_path)
-    print("  进程      %s" % (("PID %s" % args.pid) if args.pid else args.process))
+    print("  进程      %s" % (("PID %s（已验 exe 名）" % session.pid) if session.pid
+                          else ("自动发现中（标题含「%s」，exe %s）"
+                                % (args.window_title, args.process))))
     print("  采样      %.1f 秒/次%s"
           % (args.interval, ("；探针每 %.0f 秒" % args.probe_interval) if args.probe_interval else ""))
     if args.spool:
         print("  事件文件  %s" % args.spool)
-    print("  ⚠️ 请保持本窗口开着；结束时按 q（会自动写报告）")
+    print("")
+    print("  ⭐ **现在起只管用软件，不用碰这个窗口。**")
+    print("     每次操作脚本自己认（写库的动作还会从库里查出是哪张单）；")
+    print("     「当时在做什么 / 卡不卡」写在报告末尾的「事后补填表」里。")
+    print("  ⚠️ 保持本窗口开着。**关掉软件后脚本会自动结束并写报告**；")
+    print("     想提前结束就在这个窗口敲 q（可选，见 h）。")
     if not args.quiet:
         print_help_commands()
     else:
@@ -1620,19 +2020,40 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     deadline = time.time() + args.duration * 60.0 if args.duration > 0 else None
     exit_code = 0
+    # 键盘输入走后台线程 ⇒ 主循环**永不阻塞在 input() 上**。
+    # 从前 `input()` 卡住时，采样线程照跑，但「软件关了就自动收尾」这类
+    # 判断全做不了 —— 而那正是「测试人员忘了按 q」时报告缺失的原因。
+    keys: "queue.Queue[Optional[str]]" = queue.Queue()
+    if not args.no_input:
+        # EOF 无害（见 `_stdin_reader`），所以不必先判 isatty：重定向进来的
+        # 命令照样能执行，没有键盘时线程自己安静退出、采样不受影响。
+        threading.Thread(target=_stdin_reader, args=(keys,), daemon=True).start()
+    # 软件退出后**再采一会儿**就收尾：让最后一次操作的「忙」段闭合完，
+    # 也留出时间把 WAL 归并的体积变化采到。
+    exit_grace = max(6.0, args.interval * 12)
+    saw_app = bool(session.pid)
+    gone_since: Optional[float] = None
     try:
         while True:
             if deadline is not None and time.time() >= deadline:
                 print("\n到 --duration 设定时间，自动结束。")
                 break
-            if args.no_input:
-                time.sleep(1.0)
-                continue
+            # 自动收尾：见过软件、之后连续一段时间再也找不到 ⇒ 用户测完关掉了
+            if session.pid:
+                saw_app = True
+                gone_since = None
+            elif saw_app and not args.keep_open:
+                gone_since = gone_since or time.monotonic()
+                if time.monotonic() - gone_since >= exit_grace:
+                    print("\n软件已关闭（%.0f 秒没再找到窗口），自动结束并写报告。" % exit_grace)
+                    break
             try:
-                raw = input("perf> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print("")
+                raw = keys.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if raw is None:
                 break
+            raw = raw.strip()
             if not raw:
                 continue
             cmd, _, rest = raw.partition(" ")
@@ -1909,26 +2330,78 @@ def cmd_selftest() -> int:
         def find_by_name(self, _name):
             return self._pid
 
+    # exe 名验证的假实现：pid 1000 是「标题也含神算子」的浏览器，1001 才是软件
+    def _exe(pid: int) -> str:
+        return "shensuanzi.exe" if pid == 1001 else "chrome.exe"
+
     discover_cases = [
-        ("窗口标题优先（exe 名不对也能找到）", _FakeWindow(["神算子", "记事本"]), _FakeProc(9), 1000),
-        ("标题里带后缀也认（「神算子 - 销售开单」）", _FakeWindow(["神算子 - 销售开单"]), _FakeProc(9), 1000),
-        ("没有窗口 ⇒ 退回 exe 名", _FakeWindow(["记事本"]), _FakeProc(777), 777),
-        ("都没有 ⇒ 0（不许瞎挂）", _FakeWindow(["记事本"]), _FakeProc(0), 0),
+        ("窗口标题优先（exe 名不对也能找到）", _FakeWindow(["神算子", "记事本"]), _FakeProc(9), 1000, None),
+        ("标题里带后缀也认（「神算子 - 销售开单」）", _FakeWindow(["神算子 - 销售开单"]), _FakeProc(9), 1000, None),
+        ("没有窗口 ⇒ 退回 exe 名", _FakeWindow(["记事本"]), _FakeProc(777), 777, None),
+        ("都没有 ⇒ 0（不许瞎挂）", _FakeWindow(["记事本"]), _FakeProc(0), 0, None),
+        # ⬇️ 2026-11-02 第三台机器的事故：标题命中但不是软件 ⇒ 必须跳过
+        ("标题撞车（浏览器标签也叫神算子）⇒ 跳过它、按 exe 名找",
+         _FakeWindow(["神算子 - 浏览器", "记事本"]), _FakeProc(777), 777, _exe),
+        ("两个候选：先验 exe 名，挂对的那个",
+         _FakeWindow(["神算子 - 浏览器", "神算子"]), _FakeProc(9), 1001, _exe),
+        ("关掉 exe 验证（--no-exe-check）⇒ 退回旧的标题优先",
+         _FakeWindow(["神算子 - 浏览器"]), _FakeProc(9), 1000, "OFF"),
     ]
+
+    # ---- 名字对不上怎么办：任务管理器显示的是 FileDescription，不是 exe 名
+    print("— 进程名识别（任务管理器显示名 vs exe 名）—")
+    name_cases = [
+        ("shensuanzi.exe", "shensuanzi.exe", True, "默认值精确相等"),
+        ("shensuanzi.exe", "Shensuanzi - Inventory & Bookkeeping", True, "任务管理器显示名"),
+        ("chrome.exe", "shensuanzi.exe", False, "浏览器不是软件"),
+        ("notepad.exe", "Shensuanzi - Inventory & Bookkeeping", False, "记事本不是软件"),
+        ("", "shensuanzi.exe", False, "取不到 exe 名时不硬认"),
+    ]
+    for got, want, expect, why in name_cases:
+        ok = exe_name_matches(got, want)
+        print("  %s %s：%s vs「%s」⇒ %s" % ("✅" if ok == expect else "❌", why, got or "(空)", want, ok))
+        if ok != expect:
+            failed_discover = True
+    print("")
 
     print("自动识别自检（合成序列，不需要软件）")
     print("")
     print("— 进程自动发现 —")
-    for name, window, proc, want in discover_cases:
-        pid, reason, _title = discover_app(proc, window, WINDOW_KEYWORD, "shensuanzi.exe")
+    for name, window, proc, want, verifier in discover_cases:
+        v = None if verifier in (None, "OFF") else verifier
+        pid, reason, _title, warn = discover_app(proc, window, WINDOW_KEYWORD, "shensuanzi.exe", v)
         ok = pid == want
+        if verifier == "OFF" and ok:
+            ok = bool(warn)  # 没验 exe 名时必须**明说**，不许静默
         if not ok:
             failed_discover = True
         print(
-            "  %s %s：期望 PID %s，实际 %s%s"
+            "  %s %s：期望 PID %s，实际 %s%s%s"
             % ("✅" if ok else "❌", name, want or "（找不到）", pid or "（找不到）",
-               ("（依据：%s）" % reason) if reason else "")
+               ("（依据：%s）" % reason) if reason else "",
+               ("；警告：%s" % warn) if warn else "")
         )
+    print("")
+    print("— 挂接体检（这份数据能不能用）—")
+    sanity_cases = [
+        ("正常一轮 ⇒ 无问题",
+         [{"cpu_pct": 12.0, "threads": 14, "rss_mb": 260.0, "read_kb": 100.0, "write_kb": 0.0}] * 20, 0),
+        ("第三台机器那种：CPU 全 0、4.9 MB、1 线程 ⇒ 必须报",
+         [{"cpu_pct": 0.0, "threads": 1, "rss_mb": 4.9, "read_kb": 0.0, "write_kb": 0.0}] * 711, 3),
+        ("全程没挂上进程（指标全空）⇒ 必须说清",
+         [{"cpu_pct": "", "threads": "", "rss_mb": "", "read_kb": "", "write_kb": ""}] * 50, 1),
+        ("CPU 0 但有读写 ⇒ 不报（进程在动，只是采样窗口短）",
+         [{"cpu_pct": 0.0, "threads": 12, "rss_mb": 300.0, "read_kb": 5000.0, "write_kb": 0.0}] * 30, 0),
+    ]
+    failed_sanity = False
+    for name, rows, want_n in sanity_cases:
+        got = sanity_check(rows)
+        ok = len(got) == want_n
+        if not ok:
+            failed_sanity = True
+        print("  %s %s：期望 %d 条警告，实际 %d 条%s"
+              % ("✅" if ok else "❌", name, want_n, len(got),
+                 ("\n        " + "\n        ".join(got)) if got else ""))
     print("")
     print("— 动作识别 —")
     failed = 0

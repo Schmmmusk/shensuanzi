@@ -1,6 +1,6 @@
 # `tool/` 测试脚本
 
-**九个**脚本：**七个 Python** 供**测试人员在干净机器上**使用（**Python 3.8+、只用标准库**，
+**十个**脚本：**八个 Python** 供**测试人员在干净机器上**使用（**Python 3.8+、只用标准库**，
 不需要 Dart / Flutter / pip 包 / 网络），**两个 Dart** 是**开发机专用**（要 Dart SDK，不随测试机分发）。
 
 | 脚本 | 干什么 | 会写库吗 | 会不会动软件进程 | 跑在哪 |
@@ -10,13 +10,14 @@
 | [`perf_seed.py`](perf_seed.py) | 造一份体量真实、内部自洽的账本（每张流水表 ≥ 10 万行） | ✅ 只写指定的测试库 | ❌ 不会 | 测试机 |
 | [`perf_bench.py`](perf_bench.py) | 15 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN` | ❌ 只读（`mode=ro`） | ❌ 不会 | 测试机 |
 | [`perf_monitor.py`](perf_monitor.py) | 实测期间按 0.2–0.5 秒记录进程/文件指标，并**自动发现进程、自动识别操作**（不用按键） | ❌ 只读 | ❌ 不会 | 测试机 |
-| [`downgrade_to_v5.py`](downgrade_to_v5.py) | 把 v6 库降级成 v5 形状，用来验「老库升级」的迁移路径（机房机器会被还原，发旧包还得再解决旧库造数） | ✅ 只改指定的测试库（有数据要 `--yes`） | ❌ 不会 | 测试机 |
+| [`downgrade_to_v7.py`](downgrade_to_v7.py) | 把 **v8** 库降级成 v7 形状，用来验「老库升级」的迁移路径（机房机器会被还原，发旧包还得再解决旧库造数） | ✅ 只改指定的测试库（有数据要 `--yes`） | ❌ 不会 | 测试机 |
+| [`downgrade_to_v5.py`](downgrade_to_v5.py) | 把 **v6** 库降级成 v5 形状，验**历史**迁移路径 v5→v6（v7→v8 用 `downgrade_to_v7.py`） | ✅ 只改指定的测试库（有数据要 `--yes`） | ❌ 不会 | 测试机 |
 | [`db_audit.py`](db_audit.py) | **只读审计**账务不变量 INV-1~8（单据金额 / 缓存 / 纪律 11 / 孤儿行 / `seq_no` 唯一 / 退货累计） | ❌ 只读（`mode=ro`） | ❌ 不会（软件开着也能跑） | 测试机 |
 | [`gen_schema_snapshot.py`](gen_schema_snapshot.py) | 从 `schema.dart` 生成/校验 `schema_snapshot.json` | ❌ 只写快照文件 | ❌ 不会 | 开发机 |
 | [`import_guard.dart`](import_guard.dart) | 根层 `lib/` `test/` 的**导入守卫**（缺 import 的桶导出 / 同集公开类型） | ❌ | ❌ | **开发机**（要 Dart SDK） |
 | [`selfcheck_import_guard.dart`](selfcheck_import_guard.dart) | 上面那个守卫的**自检**（造迷你仓库，断言它报的正好是那几条） | ❌ | ❌ | **开发机**（要 Dart SDK） |
 
-**分发到测试机时，必须整目录带走**（至少：上面六个测试机脚本 + `schema_snapshot.json`）——
+**分发到测试机时，必须整目录带走**（至少：上面七个测试机脚本 + `schema_snapshot.json`）——
 详见 §一·4 与 §七。**两个 `.dart` 不要分发**：测试机没装 Dart SDK 也跑不了。
 
 > ⚠️ 常规验收不会启动或结束 `shensuanzi.exe`。9.1 的 `--phase watch-write`
@@ -289,7 +290,8 @@ python tool/destructive_acceptance.py --phase all --data-dir /tmp/fixture --conf
 | [`perf_seed.py`](perf_seed.py) | 造一份**体量真实、内部自洽**的账本（每张流水表 ≥ 10 万行） | ✅ 只写指定的测试库 |
 | [`perf_bench.py`](perf_bench.py) | 15 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN` | ❌ 只读（`mode=ro`） |
 | [`perf_monitor.py`](perf_monitor.py) | 实测期间按 0.2–0.5 秒记录进程/文件指标 + **自动发现进程、自动识别操作**（不用按键） | ❌ 只读 |
-| [`downgrade_to_v5.py`](downgrade_to_v5.py) | 把 v6 库降级成 v5 形状，用来验迁移路径 | ✅ 只改指定的测试库 |
+| [`downgrade_to_v7.py`](downgrade_to_v7.py) | 把 **v8** 库降级成 v7 形状，验**当前**迁移路径 v7→v8 | ✅ 只改指定的测试库 |
+| [`downgrade_to_v5.py`](downgrade_to_v5.py) | 把 **v6** 库降级成 v5 形状，验**历史**迁移路径 v5→v6 | ✅ 只改指定的测试库 |
 | [`gen_schema_snapshot.py`](gen_schema_snapshot.py) | 从 `schema.dart` 重新生成 `schema_snapshot.json`（**改 schema 后必跑**） | ❌ 写快照 |
 
 参考基线（开发机实测，默认参数 ≈ 15–26 万单 / 36 万条库存流水 / 450–476 MB）：
@@ -351,12 +353,27 @@ python tool/perf_monitor.py selftest     # 两秒钟：钉住「进程发现 + �
 `读库/界面重建` 与 `写库` 两种 —— 宁可说「不知道你在哪页」，也不编一个像真的标签。
 想贴名字仍可 `s/e`，报告会把「自动 vs 人工」对齐并给出偏差（§二之一末尾）。
 
+**写库的动作会自己报出名字**（2026-11-03）：靠纪律 2「业务数据只插入」，
+每个写库动作都留下一行 `documents`，脚本按时间窗查账本（`ORDER BY rowid DESC`）
+就知道「刚才是销售单 / 收款单 / 建档」。读库查不到痕迹，老实写「读库/界面重建」。
+
+**测完再补细节**：报告 §七 是一张「事后补全表」—— 每条自动事件给出时间窗、
+CPU 峰值、读写量、账本里刚落的单据，留一列「你刚才在做什么」给人填。
+测试者全程**不需要碰控制台**；关掉软件脚本就自动收尾写报告（`--keep-open` 可关）。
+
+**挂错进程会被抓出来**：报告 §⓪ 用线程数 / 工作集 / CPU+读写判「这份数据能不能用」。
+`--process` 默认 `shensuanzi.exe`，但**照任务管理器里显示的名字填也认** ——
+任务管理器「名称」列显示的是 exe 的文件说明
+「Shensuanzi - Inventory & Bookkeeping」（`windows/runner/Runner.rc`），
+不是 exe 文件名（`CMakeLists.txt` 的 `BINARY_NAME`），窗口标题又是「神算子」，
+三个名字各不相同；照字面抄进来必须能用（判据 `exe_name_matches`，selftest 钉住）。
+
 阈值可调：`--busy-cpu`（默认 25%）· `--busy-read-kb`（2048）· `--busy-write-kb`（256）·
 `--idle-gap`（1.5 秒）。低配机上跑不动大查询时，`--busy-cpu 10 --busy-read-kb 512`。
 
 **开测前先跑 `python tool/perf_monitor.py selftest`**（两秒、不需要软件）：
-10 条合成用例钉住「进程发现 + 动作识别」（含「不许无中生有」「连点两下算一次」）。
-它红了就别去测 —— 那一轮数据全是废的。
+合成用例钉住「进程名识别 + 进程发现 + 挂接体检 + 动作识别」（含「不许无中生有」
+「连点两下算一次」「任务管理器显示名也要认」）。它红了就别去测 —— 那一轮数据全是废的。
 
 ### 六之四、默认参数实测（2026-10-27，开发机）—— 数据量够不够
 
@@ -401,7 +418,7 @@ python tool/gen_schema_snapshot.py          # 重新生成
 python tool/gen_schema_snapshot.py --check  # 只校验（CI / 发版前必跑）
 ```
 
-`--check` 一致时打印 `✅ 快照与源码一致：源码 v5 / 39 条语句 / 指纹 …`，不一致时以非 0 退出。
+`--check` 一致时打印 `✅ 快照与源码一致：源码 v8 / 41 条语句 / 指纹 …`，不一致时以非 0 退出。
 
 ### 7.3 出发前 30 秒自检（在**测试机**上，不需要源码）
 
@@ -410,12 +427,12 @@ cd /d D:/perf-tools
 python -c "import json;d=json.load(open('schema_snapshot.json',encoding='utf-8'));print(d['schema_version'],d['fingerprint'])"
 ```
 
-**随本仓库分发的快照**（2026-10-27 生成，对应 schema v5）：
+**随本仓库分发的快照**（2026-11-03 生成，对应 schema v8）：
 
 ```
-schema_version = 5
-statements     = 39
-fingerprint    = 96443aa85b0552bb
+schema_version = 8
+statements     = 41
+fingerprint    = 3edce2c60207af96
 ```
 
 > 这两个数对不上 ⇒ **停下**，回开发机跑一次 `gen_schema_snapshot.py`，别硬着头皮测 ——

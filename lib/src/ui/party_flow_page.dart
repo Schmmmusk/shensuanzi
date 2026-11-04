@@ -19,7 +19,7 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'scaled.dart';
 
-import 'export_button.dart';
+import 'flow_page_scaffold.dart';
 
 /// 某往来方的流水页。
 class PartyFlowPage extends StatelessWidget {
@@ -50,51 +50,29 @@ class PartyFlowPage extends StatelessWidget {
           constraints.maxWidth,
           base: flowNarrowBase,
         );
-        final Widget page = Scaffold(
-          appBar: AppBar(
-            title: Text('${party.name} 的流水'),
-            actions: <Widget>[
-              if (exports != null)
-                ExportButton(
-                  key: const Key('export-party-flow'),
-                  // C3·真机反馈 ③：原「导出该往来方的全部流水」在窄屏把
-                  // 标题挤成「平⋯」。改四字按钮 —— 语义仍完整（本页只有
-                  // 这一个人的流水）；Tooltip 不做兜底（悬浮提示不可用，
-                  // ui_principles §1.1：那是隐藏入口）
-                  label: '导出流水',
-                  export: () => exports!.write(
-                    partyFlowExportTable(flow: flow),
-                    // AF-7：文件名带往来方名 —— 否则导三个客户的文件名一模一样
-                    extra: party.name,
-                  ),
-                ),
-            ],
-          ),
-          body: SafeArea(
-            child: flow.isEmpty
-                ? Center(
-                    child: Text(
-                      '还没有往来流水。',
-                      style: TextStyle(
-                        height: 1.8,
-                        color: Theme.of(context).hintColor,
-                      ),
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    itemCount: flow.length + 1, // 末尾多一行灰字说明
-                    itemBuilder: (BuildContext context, int index) {
-                      if (index == flow.length) {
-                        return _footerNote(context, narrow);
-                      }
-                      final PartyFlowEntry entry = flow[index];
-                      return narrow
-                          ? _NarrowFlowCard(entry: entry)
-                          : _WideFlowTile(entry: entry);
-                    },
-                  ),
-          ),
+        // 导出按钮在 body 表头（不在 AppBar.actions）—— 原因见
+        // flow_page_scaffold.dart 文件头（5c-2 的一行小字塞不进 56px 的
+        // AppBar 高度，实测溢出 8px）。三个流水页共用同一骨架，纪律 18。
+        final Widget page = FlowPageScaffold(
+          title: '${party.name} 的流水',
+          emptyText: '还没有往来流水。',
+          narrow: narrow,
+          exports: exports,
+          exportKey: const Key('export-party-flow'),
+          // C3·真机反馈 ③：原「导出该往来方的全部流水」在窄屏把
+          // 标题挤成「平⋯」。改四字按钮 —— 语义仍完整（本页只有
+          // 这一个人的流水）；Tooltip 不做兜底（悬浮提示不可用，
+          // ui_principles §1.1：那是隐藏入口）
+          exportExtra: party.name, // AF-7：文件名带往来方名
+          buildExportTable: () => partyFlowExportTable(flow: flow),
+          itemCount: flow.length,
+          footer: _footerNote(context, narrow),
+          itemBuilder: (BuildContext context, int index) {
+            final PartyFlowEntry entry = flow[index];
+            return narrow
+                ? _NarrowFlowCard(entry: entry)
+                : _WideFlowTile(entry: entry);
+          },
         );
         // 2026-10-21（§CV·八十 Q1）：**不再夹字号**。
         //

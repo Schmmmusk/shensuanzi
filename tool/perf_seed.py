@@ -191,6 +191,17 @@ def iso_day(ms: int) -> str:
     return time.strftime("%Y%m%d", time.localtime(ms / 1000.0))
 
 
+def business_day(ms: int) -> int:
+    """与 Dart `businessDayOf` 一致：本地日序号（自 1970-01-01 起）。
+
+    `((occurred_ms + 本地时区偏移) / 86400000).floor()` —— 与
+    `packages/shensuanzi_core/lib/src/models/document.dart` 的 `businessDayOf`
+    逐字同口径。`documents.business_day` 是 `NOT NULL`（v6），造数必须带上。
+    """
+    offset = time.localtime(ms / 1000.0).tm_gmtoff * 1000
+    return int((ms + offset) // 86400000)
+
+
 def pct(n: int, d: int) -> str:
     return "%.0f%%" % (100.0 * n / d) if d else "—"
 
@@ -618,6 +629,7 @@ def build_doc(
         "paid_amount": 0,
         "ref_doc_id": ref_doc_id,
         "occurred_at": occurred_ms,
+        "business_day": business_day(occurred_ms),
         "time_estimated": 1 if rnd.random() < 0.02 else 0,
         "created_at": created_ms,
         "updated_at": created_ms,
@@ -658,6 +670,7 @@ def build_payment_doc(
         "paid_amount": 0,
         "ref_doc_id": ref_doc_id,
         "occurred_at": occurred_ms,
+        "business_day": business_day(occurred_ms),
         "time_estimated": 0,
         "created_at": occurred_ms,
         "updated_at": occurred_ms,
