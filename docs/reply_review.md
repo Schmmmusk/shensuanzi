@@ -18785,3 +18785,103 @@ A1 把完整压货榜放在库存页最上面之后，10 行榜有半屏高 ⇒ 
 | selfcheck | core 156 · sync_client 118 · sync 91 · service 93 · queue_sink 4 · host 54 · app 164 全绿 |
 
 **状态**：✅ 已落地。**#43②（同步类 6 处原始异常直出）** 与 **#24 的 UI 按码分支**（`reference_missing` 文案）留待下一批 —— 前者等 `reason_code` 落库后接线，后者是纯 UI 展示。
+
+---
+
+## §CV·一百一十一 **流水页表头溢出 + 实测脚本防呆（流程甲）+ 新增纪律 21「Agent 不执行 git commit」**（2026-11-03 ~ 11-04）
+
+📄 裁定：用户 `docs/reply.md`「必须选流程甲」（纪律 20 的延续）+ 2026-11-04「以后不要帮我直接提交」。
+
+### 一、本轮提交（三个，**均由用户自行执行**，见 §五）
+
+| 提交 | 内容 |
+|---|---|
+| `bbebffe` | fix(ui)+fix(tool)：流水页表头溢出 / 压测门禁对齐 DAO / 实测脚本防呆（11 文件，+1328 −291） |
+| `03b6d65` | chore：`.gitignore` 忽略 `tool/testResult/第三台真机测试/` |
+| `9f0cb7d` | docs(proposals)：`待裁事项-2026-11-04.md`（N-a~N-k 共 11 项，473 行） |
+
+### 二、流水页表头溢出（#34② 的一处实证修复）
+
+三个流水页（`stock_flow_page` / `party_flow_page` / `account_flow_page`）的表头在窄窗口下
+`RenderFlex overflowed`。**做法 = 抽共用组件**，不是三页各改一遍：
+
+- 新增 `lib/src/ui/flow_page_scaffold.dart`（表头与行共用宽度来源，`LayoutBuilder` 限幅）；
+- 三页改为消费该组件（各 −70 ~ −90 行）；
+- `export_button.dart` 一并收进脚手架，避免「导出按钮挤掉表头最后一列」这一类二次溢出。
+
+⚠️ 这是**纪律 18**（改一处必须 grep 同款模式）的正向执行：三页同构，第一轮只报了流水页，
+按符号名 grep 表头构造后确认**只有这三处**，没有第四处。
+
+### 三、`perf_monitor.py` 防呆三件（用户点名「任务管理器里叫 Shensuanzi - Inventory and bookkeeping」）
+
+**根因**：同一个软件有**三个不同的名字**，脚本原来只认第一个 ——
+
+| 名字 | 来源 | 原来能用吗 |
+|---|---|---|
+| `shensuanzi.exe` | `windows/CMakeLists.txt:7` 的 `BINARY_NAME` | ✅ 唯一被识别的 |
+| `Shensuanzi - Inventory & Bookkeeping` | `windows/runner/Runner.rc:93` 的 `FileDescription`（任务管理器「进程」页显示它） | ❌ 挂不上 |
+| `神算子` | `windows/runner/main.cpp:35` 窗口标题（`\u` 转义写法） | ❌ 挂不上 |
+
+**修法**：新增 `_exe_norm()` + `exe_name_matches()`（归一化后**互相包含**即算命中），
+`discover_app()` 与 `_WindowsProcess.find_by_name()` 都改成「先精确、再放宽」；
+`--process` 帮助文本写明三名不一致；selftest 加 5 条「进程名识别」用例。
+
+**另外两件防呆**（同批，都写进模块 docstring 的「防呆三件」段）：
+写操作名改为**从库里派生**（不再靠猜），`tool/README.md` 加 §⓪「这批数据能不能用」判定门 +
+§七 事后填写表。
+
+### 四、第三台真机的数据整轮作废（用户裁定）
+
+用户 2026-11-04：**「第三台真机测试就全部忽略吧，都是不能用的数据」** ——
+该轮 `perf_monitor` 挂错了进程（正是 §三 那个三名不一致导致的），整轮数字无效。
+处置：`.gitignore` 加 `/tool/testResult/第三台真机测试/`，**不删文件**（留在本机备查），
+**不采信任何数字**。这正是 §⓪ 判定门存在的理由。
+
+### 五、纪律 21：**Agent 不执行 `git commit`**（新增，`Agents.md` 二节）
+
+**触发事件**：`待裁事项-2026-11-04.md` 我第一次提交时用了
+`$msg | git commit --file=-`，**PowerShell 给原生命令的 stdin 用的是控制台代码页而不是
+UTF-8**，中文全部变成 `?` —— 提交标题成了 `docs(proposals): ??????? 2026-11-04?N-a~N-k ? 11 ??+ ?????`。
+
+**判据（三条路径，两条安全一条必坏）**：
+
+| 写法 | 结果 |
+|---|---|
+| 先写 UTF-8 无 BOM 文件 → `git commit -F <文件>` | ✅ 安全（`bbebffe` / `03b6d65` 完好） |
+| `git commit -m "中文"`（短消息） | ✅ 实测可用 |
+| `$hereString \| git commit --file=-` | ❌ **中文全毁**（`42fa249` 毁在这） |
+
+**验证也不能看控制台**：PowerShell 会把**正确的** UTF-8 中文渲染成乱码（假阳性）。
+要么先 `[Console]::OutputEncoding = UTF8` 再读，要么直接读 `.git` 里的字节。
+
+**处置**：坏提交 `42fa249` **尚未推送**，用户批准后 `git commit --amend -F <UTF-8 文件>`
+只改信息、不动任何文件 ⇒ 现为 `9f0cb7d`，标题与正文中文完好（已按上述判据复核）。
+`bbebffe` / `03b6d65` 无需处理。
+
+**从此以后**：Agent 只交付「改了哪些文件 + 一条可直接粘贴的提交信息」，最后一步由人执行。
+
+⚠️ **同一条坑当天又踩了一次**：追加本节时用 `powershell -File xxx.ps1`（脚本无 BOM）
+⇒ PowerShell 按系统代码页解码脚本源码 ⇒ 写进台账的全是乱码，只能 `git checkout` 回滚重来。
+**结论**：含中文的脚本一律**不要**走 `.ps1`，改成「`create` 工具写 UTF-8 文本 + PowerShell
+只做字节级拼接」。
+
+### 六、待裁事项打包（`docs/proposals/待裁事项-2026-11-04.md`）
+
+按 2026-10-26 那轮的格式，11 项分 5 组，每项带 `file:line` 证据、给甲乙丙、可一行懒汉回复。
+**写文档过程中自查纠正 6 处**（都是「凭印象写」被实测推翻，纪律 20 在文档侧的延伸）：
+
+| 我原本写的 | 实测 |
+|---|---|
+| N-f「10 处异常直出」按台账 11 处清单 | 台账清单**本身是错的**：5 处已干净、3 处活体未登记、6 处 grep 误报 |
+| N-i「`enabled: !_saving` 7 处 / 3 页」 | **11 处 / 4 文件**；漏的是 `return_page`（4 个 TextField） |
+| N-j「一处副本」 | **三处**（`reply_review.md` L27 / L3677 / L4560） |
+| N-a 毛利公式「待裁定」 | 公式**代码里已钉死**（`stock_ledger.dart:14` / `cost_policy.dart:11`），要裁的只是**时间口径与退货处理** |
+| N-d「`GATES` 四条」 | **只有 2 条**；最慢的两条（`doc_search` 446ms / `today_summary` 253ms）**根本没门禁** |
+| §六「4 处文档状态过期」 | **5 处**，并补了准确引用 |
+
+**顺带发现**：`reason_code` 的 schema v8 迁移成本已付、测试 5 条已写，但
+`mobile_shell.dart:509` 仍渲染 `entry.lastError ?? '推送没成功（原因不明）'` ——
+**UI 从不按码分支**，用户侧收益目前为零（N-e 就是催这件事）。
+
+**状态**：✅ 本轮已落地部分（表头 / 防呆 / 纪律 21 / 决策单）。**N-a ~ N-k 全部待用户回复**，
+回复前不动任何实现。
