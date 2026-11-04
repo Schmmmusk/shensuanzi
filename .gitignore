@@ -63,3 +63,6 @@ packages/shensuanzi_host/build/
 .dsh_acceptance/
 .scratch/
 packages/shensuanzi_app/build/test_cache/build/fa875cea96ff9eb23bebfb51f104f901.cache.dill.track.dill
+
+# 2026-11-04 第三台真机的实测数据全部作废（挂错进程，报告 §0 判不可用），不入库
+/tool/testResult/第三台真机测试/
