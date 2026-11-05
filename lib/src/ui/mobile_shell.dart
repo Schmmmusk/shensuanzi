@@ -486,9 +486,20 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
                 ),
                 // #53（外测 M02，二稿裁定 2026-10-16）：这里列的都是「没传上的」
                 // —— 直说补救动作，不承诺「联网自动推」。
-                subtitle: const Text(
-                  '待同步 —— 没传上的，切回来或点「立即同步」会继续',
-                  style: TextStyle(height: 1.4),
+                //
+                // #24 / N-e（2026-11-05 裁定甲）：**已经带 reason_code 的**待同步条目
+                // 显示该码的专属文案。理由：`reference_missing` / `host_storage` 是
+                // **可重试**码，要退避 11 次才转死信 —— 若只在失败列表分支，用户最想
+                // 看到的那句「先同步一次会自动重传」要等十几分钟才出现。
+                // 没码的（刚入队、从没被拒过）照旧显示那句通用说明。
+                subtitle: Text(
+                  entry.reasonCode == null
+                      ? '待同步 —— 没传上的，切回来或点「立即同步」会继续'
+                      : syncQueueFailureText(
+                          reasonCode: entry.reasonCode,
+                          lastError: entry.lastError,
+                        ),
+                  style: const TextStyle(height: 1.4),
                 ),
               ),
             for (final SyncQueueEntry entry in failed) ...<Widget>[
@@ -502,11 +513,14 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
                   style: const TextStyle(height: 1.4),
                 ),
                 subtitle: Text(
-                  // #47 丁（2026-10-16 裁定）：换主机挂起（`markHeld`）与普通推送失败
-                  // 共用 `failed` 状态；挂起的原因写在 `lastError`（机读标记 =
-                  // 登记待办，与 #24 同族）。有 reason 就如实显示 —— 挂起的
-                  // reason 本身就是写给用户看的一段话。
-                  entry.lastError ?? '推送没成功（原因不明）',
+                  // #24 / N-e（2026-11-05 裁定甲）：按 `reason_code` 分支，每码一句
+                  // 「怎么办」。#47 丁的挂起条目走同一入口 —— 挂起时 `markHeld`
+                  // 只写 `lastError` 且**清掉** `reason_code`，所以那句写给用户看的
+                  // 挂起原因会原样显示出来（映射规则见 core 的 sync_failure_copy.dart）。
+                  syncQueueFailureText(
+                    reasonCode: entry.reasonCode,
+                    lastError: entry.lastError,
+                  ),
                   style: const TextStyle(height: 1.4),
                 ),
               ),

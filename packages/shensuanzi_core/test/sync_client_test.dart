@@ -2012,6 +2012,31 @@ void main() {
       );
     });
 
+    test('#24（N-e 附带）：markHeld 挂起 ⇒ 清掉上一次的 reason_code', () async {
+      // 先被主机拒绝一次，落一个码
+      final SyncQueueEntry entry = enqueueDoc('d1');
+      transport.replyJson(
+        pushBody(<Map<String, Object?>>[
+          receipt('d1', 'rejected', reason: '磁盘满', reasonCode: 'host_storage'),
+        ]),
+      );
+      await client.push();
+      expect(client.queue.findById(entry.id)!.reasonCode, 'host_storage');
+
+      // 换主机 ⇒ 挂起。挂起原因写在 lastError，**不是**主机拒绝
+      client.queue.markHeld(entry.id, reason: '这条单是在连接上一台主机时开的');
+
+      final SyncQueueEntry after = client.queue.findById(entry.id)!;
+      expect(
+        after.reasonCode,
+        isNull,
+        reason:
+            'N-e：UI 按 reason_code 分支后，挂起条目若留着上一次的码，'
+            '会显示「电脑存不下这笔数据」而不是挂起原因 —— 与传输失败同一条纪律',
+      );
+      expect(after.lastError, '这条单是在连接上一台主机时开的');
+    });
+
     test('#56：discard ⇒ 转 failed + discarded=1，且 due 永不返回它', () {
       final SyncQueueEntry entry = enqueueDoc('d-discard');
       client.queue.discard(entry.id, reason: '用户决定不要这张单了');

@@ -357,6 +357,117 @@ void main() {
     expect(find.text('已同步'), findsWidgets, reason: '队列空了 ⇒ 三态条归零');
   });
 
+  // #24 / N-e（2026-11-05 裁定甲）：失败条目的话**按 reason_code 变**。
+  // 映射本身在 core 测（`sync_failure_copy_test`），这里只钉「壳真的调了它」——
+  // 否则 core 全绿而 UI 照旧显示 `lastError`，裁定等于没落地。
+  testWidgets('#24 N-e：失败条目按 reason_code 显示专属文案，不是主机原文', (
+    WidgetTester tester,
+  ) async {
+    final MobileSyncService sync = MobileSyncService(
+      mirrorPath: p.join(box.path, 'mirror', 'mirror.db'),
+      pairingStore: PairingStore(File(p.join(box.path, 'pairing.json'))),
+      transport: _HangingTransport(),
+    );
+    sync.pairingStore.save(
+      const PairingInfo(
+        hostId: 'h1',
+        ip: '127.0.0.1',
+        port: 17890,
+        token: 'tok-test',
+      ).withLastSyncAt(DateTime.now().millisecondsSinceEpoch),
+    );
+    final SyncQueueDao dao = SyncQueueDao(sync.openMirror());
+    final SyncQueueEntry entry = dao.enqueue(
+      SyncQueueEntry.create(
+        SyncOperation(
+          entity: Schema.documents,
+          entityId: 'd-rej-1',
+          operation: SyncOpType.createDocument,
+          payload: <String, Object?>{
+            'document': <String, Object?>{'id': 'd-rej-1', 'doc_type': 'sale'},
+            'lines': <Object?>[],
+          },
+        ),
+        now: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    // 直接落一条「死信 + 码」，绕开 11 次退避（退避行为由 core 测试覆盖）
+    dao.markFailed(
+      entry.id,
+      error: '这条数据引用的对象在主机上不存在',
+      retryCount: 99,
+      nextRetryAt: 0,
+      dead: true,
+      reasonCode: 'reference_missing',
+    );
+
+    await tester.pumpWidget(syncWiredPage(sync));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('失败 1 条'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('先同步一次'),
+      findsOneWidget,
+      reason: 'reference_missing ⇒ 说「先同步，会自动重传」（N-e 的核心诉求）',
+    );
+    expect(
+      find.textContaining('这条数据引用的对象在主机上不存在'),
+      findsNothing,
+      reason: '主机那句是给对账的人看的，会让人以为单子废了 ⇒ 必须替换',
+    );
+  });
+
+  testWidgets('#24 N-e：业务拒绝透传主机原文（数字是唯一有用的信息）', (
+    WidgetTester tester,
+  ) async {
+    final MobileSyncService sync = MobileSyncService(
+      mirrorPath: p.join(box.path, 'mirror', 'mirror.db'),
+      pairingStore: PairingStore(File(p.join(box.path, 'pairing.json'))),
+      transport: _HangingTransport(),
+    );
+    sync.pairingStore.save(
+      const PairingInfo(
+        hostId: 'h1',
+        ip: '127.0.0.1',
+        port: 17890,
+        token: 'tok-test',
+      ).withLastSyncAt(DateTime.now().millisecondsSinceEpoch),
+    );
+    final SyncQueueDao dao = SyncQueueDao(sync.openMirror());
+    const String hostText =
+        '这次要退的数量超过了原单剩的（原单共 2、算上这次累计 3）。请把数量改小后再退。';
+    final SyncQueueEntry entry = dao.enqueue(
+      SyncQueueEntry.create(
+        SyncOperation(
+          entity: Schema.documents,
+          entityId: 'd-rej-2',
+          operation: SyncOpType.createDocument,
+          payload: <String, Object?>{
+            'document': <String, Object?>{'id': 'd-rej-2', 'doc_type': 'sale'},
+            'lines': <Object?>[],
+          },
+        ),
+        now: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    dao.markFailed(
+      entry.id,
+      error: hostText,
+      retryCount: 99,
+      nextRetryAt: 0,
+      dead: true,
+      reasonCode: 'return_exceeds_original',
+    );
+
+    await tester.pumpWidget(syncWiredPage(sync));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('失败 1 条'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('原单共 2'), findsOneWidget);
+  });
+
   testWidgets('#47 丁：重试 ⇒ 回到待同步（发给现在这台电脑，语义在对话里讲清）', (
     WidgetTester tester,
   ) async {

@@ -129,9 +129,14 @@ class SyncQueueDao {
   ///
   /// 为什么不直接删：队列里是**用户刚开的单**，是手机端唯一真正会丢的数据
   /// （`docs/reply.md` §4）；推到**错的主机**才是真事故 —— 所以既不推也不删。
+  ///
+  /// ⚠️ **同时清 `reason_code`**（N-e，2026-11-05）：挂起不是主机拒绝。条目可能
+  /// 先被拒绝过一次（落了 `host_storage` 之类的码），随后换主机被挂起 —— 留着旧码，
+  /// UI 按码分支就会显示「电脑存不下这笔数据」而不是挂起原因。与「传输层失败也清码」
+  /// 是同一条纪律（`requeue` / `discard` 本来就清）。
   void markHeld(String id, {required String reason}) => _raw.execute(
     'UPDATE ${Schema.syncQueue} SET status = ?, retry_count = 99, '
-    'last_error = ?, next_retry_at = 0 WHERE id = ?',
+    'last_error = ?, reason_code = NULL, next_retry_at = 0 WHERE id = ?',
     <Object?>[SyncQueueStatus.failed.wire, reason, id],
   );
 
@@ -253,7 +258,7 @@ class SyncQueueDao {
   /// ⚠️ **不删行**：删了就查不出「用户放弃过什么」。
   void discard(String id, {required String reason}) => _raw.execute(
     'UPDATE ${Schema.syncQueue} SET status = ?, discarded = 1, '
-    'last_error = ?, next_retry_at = 0 WHERE id = ?',
+    'last_error = ?, reason_code = NULL, next_retry_at = 0 WHERE id = ?',
     <Object?>[SyncQueueStatus.failed.wire, reason, id],
   );
 
