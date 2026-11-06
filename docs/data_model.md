@@ -346,6 +346,20 @@ CREATE INDEX idx_documents_updated     ON documents(updated_at, id);
 
 **毛利计算**：`SUM(销售额) - SUM(出库 total_cost)`。精确，无累积误差。
 
+> ⚠️ **上面那行是「原理」，不是实现的口径**（N-a 落地时补，2026-11-04）。
+> `QueryDao.dailyGrossMargin()` 实际按 `business_day` 聚合，并且**三个地方必须收窄**，
+> 每一处都对应一个会「静默算错账」的坑：
+>
+> | 坑 | 错法 | 对法 |
+> |---|---|---|
+> | 把进货当成本 | 整表 `SUM(stock_ledger.total_cost)` —— **入库行也带 `total_cost`**（成本形成） | 只取销售 / 送货的出库行 |
+> | 把采购退货当销售成本 | 用 `quantity < 0` 判出库 —— `purchase_return` 也是负数 | **按 `doc_type` 分派** |
+> | 把盘盈当成本 | 盘盈亏一起取 —— `data_model.md` §3.3「盘盈同入库」 | 只取 `total_cost < 0`（盘亏） |
+>
+> 退货那一腿的收入与成本**必须用同一个「原单未作废」判定**（`LEFT JOIN` 原单 +
+> `o.id IS NULL OR o.status != 'cancelled'`）：只减收入不退成本 = 凭空多出一笔利润。
+> 口径裁定见 `docs/reply.md` §P2·3（甲），实现护栏见 `gross_margin_test.dart`。
+
 `unit_cost` 是派生展示字段。**`total_cost` 是真相。**
 
 **符号约定**：`total_cost` 是「成本的**变动**」，不是绝对值 —— 符号与 `quantity` **一致**：

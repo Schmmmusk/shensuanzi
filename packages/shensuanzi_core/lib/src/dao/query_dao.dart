@@ -1,6 +1,7 @@
 import 'package:sqlite3/sqlite3.dart';
 
 import '../charts/daily_series.dart';
+import '../charts/gross_margin.dart';
 import '../db/database.dart';
 import '../db/read_failures.dart';
 import '../db/schema.dart';
@@ -363,6 +364,148 @@ class QueryDao {
           inTransitCount: transit[day] ?? 0,
           inTransitCents: transitCents[day] ?? 0,
           returnCount: refundCount[day] ?? 0,
+        ),
+    ];
+  }
+
+  /// **毛利趋势的单日分项**（N-a 裁定甲，2026-11-06）。
+  ///
+  /// ## 口径（`docs/reply.md` §P2·3 的四条裁定）
+  ///
+  /// ```
+  /// 毛利 = 收入 − 销售成本 − 盘点损失 − 退货成本调整
+  /// 收入 = 销售 + 送货 − 原单仍有效的销售退货      （与 [dailyRevenue] 同一份实现）
+  /// ```
+  ///
+  /// - **按 `business_day` 归集**（裁定 ①甲）—— 不用 `occurred_at`，
+  ///   后者依赖查询时区，换台电脑历史曲线整体平移；
+  /// - **退货记在退货那天**、销售额与成本**双双记负**（裁定 ②甲）——
+  ///   「冲减原单那天」已否决，历史不能被改写；
+  /// - **成本 = 实际出库成本**（裁定 ③）—— 直接取 `stock_ledger.total_cost`，
+  ///   不重算移动加权平均；
+  /// - **盘亏计入成本**（裁定 ④）。
+  ///
+  /// ## 三个会静默算错的坑（每个都有测试钉住）
+  ///
+  /// 1. **不能 `SUM(stock_ledger.total_cost)` 整表求和** —— 进货分录也带
+  ///    `total_cost`（那是成本的**形成**），会把毛利算成大负数。**必须按
+  ///    `doc_type` 分派**。
+  /// 2. **`quantity < 0` 不够** —— `purchase_return` 的分录也是负数（货离店），
+  ///    但它是采购的逆操作，不是销售成本。
+  /// 3. **盘盈不是成本** —— `data_model.md` §3.3「盘盈同入库」，它是成本的
+  ///    形成。当成负成本等于凭空造出毛利。**只有盘亏进成本**（`docs/rules.md`）。
+  ///
+  /// ## 为什么收入腿要复用 [dailyRevenue]
+  ///
+  /// 拒收不双冲、原单读不到仍冲减、作废单排除 —— 这些边界都在那边测过了。
+  /// 重新推一遍就是**口径分叉**，两张图会对不上账（纪律 18 同源）。
+  ///
+  /// 返回**稀疏**结果（只含有毛利分量的天）；补零与分桶交给纯函数。
+  List<GrossMarginDay> dailyGrossMargin({
+    required int fromDay,
+    required int toDay,
+  }) {
+    if (fromDay > toDay) return const <GrossMarginDay>[];
+
+    // ① 收入腿：直接复用营收口径（见上方「为什么复用」）
+    final Map<int, RevenueDay> revenue = <int, RevenueDay>{
+      for (final RevenueDay d in dailyRevenue(
+        fromDay: fromDay,
+        toDay: toDay,
+      )) d.day: d,
+    };
+
+    final Map<int, int> saleCost = <int, int>{};
+    final Map<int, int> stocktakeLoss = <int, int>{};
+    final Map<int, int> returnAdjust = <int, int>{};
+
+    // ② 销售 / 送货的出库成本。`total_cost` 出库为**负** ⇒ 取相反数得正成本。
+    //
+    // 作废单必须一起排除：收入腿不算它的收入，这边若还结转成本，
+    // 就成了「只有成本没有收入」的纯亏损。
+    for (final Map<String, Object?> row in _raw.select(
+      'SELECT d.business_day AS day, COALESCE(SUM(s.total_cost), 0) AS cost '
+      'FROM ${Schema.stockLedger} s '
+      'JOIN ${Schema.documents} d ON d.id = s.document_id '
+      'WHERE d.doc_type IN (?, ?) AND d.status != ? '
+      '  AND d.business_day BETWEEN ? AND ? '
+      'GROUP BY d.business_day',
+      <Object?>[
+        DocType.sale.wire,
+        DocType.delivery.wire,
+        DocStatus.cancelled.wire,
+        fromDay,
+        toDay,
+      ],
+    )) {
+      final int day = row['day']! as int;
+      saleCost[day] = -(row['cost']! as int);
+    }
+
+    // ③ 盘亏：`total_cost` 为负（成本流出）。盘盈为正 ⇒ 用 `< 0` 挡在门外。
+    for (final Map<String, Object?> row in _raw.select(
+      'SELECT d.business_day AS day, COALESCE(SUM(s.total_cost), 0) AS cost '
+      'FROM ${Schema.stockLedger} s '
+      'JOIN ${Schema.documents} d ON d.id = s.document_id '
+      'WHERE d.doc_type = ? AND d.status != ? AND s.total_cost < 0 '
+      '  AND d.business_day BETWEEN ? AND ? '
+      'GROUP BY d.business_day',
+      <Object?>[
+        DocType.stocktake.wire,
+        DocStatus.cancelled.wire,
+        fromDay,
+        toDay,
+      ],
+    )) {
+      final int day = row['day']! as int;
+      stocktakeLoss[day] = -(row['cost']! as int);
+    }
+
+    // ④ 销售退货回吐的成本。`total_cost` 为**正**（货回库）⇒ 取相反数变负。
+    //
+    // ⚠️ 「原单必须存在且未作废」这条判据**必须与收入腿逐字相同**：
+    // 拒收时原送货单已置 `cancelled`、收入没被冲减，若这里照样回吐成本，
+    // 就等于「生意没做成却白赚一笔毛利」。原单读不到时**仍然回吐**，
+    // 与 [dailyRevenue] 第 ③ 条「不知道就别擅自加回来」一致。
+    for (final Map<String, Object?> row in _raw.select(
+      'SELECT r.business_day AS day, COALESCE(SUM(s.total_cost), 0) AS cost '
+      'FROM ${Schema.stockLedger} s '
+      'JOIN ${Schema.documents} r ON r.id = s.document_id '
+      'LEFT JOIN ${Schema.documents} o ON o.id = r.ref_doc_id '
+      'WHERE r.doc_type = ? AND r.status != ? '
+      '  AND (o.id IS NULL OR o.status != ?) '
+      '  AND r.business_day BETWEEN ? AND ? '
+      'GROUP BY r.business_day',
+      <Object?>[
+        DocType.saleReturn.wire,
+        DocStatus.cancelled.wire,
+        DocStatus.cancelled.wire,
+        fromDay,
+        toDay,
+      ],
+    )) {
+      final int day = row['day']! as int;
+      returnAdjust[day] = -(row['cost']! as int);
+    }
+
+    final Set<int> days = <int>{
+      ...revenue.keys,
+      ...saleCost.keys,
+      ...stocktakeLoss.keys,
+      ...returnAdjust.keys,
+    };
+    final List<int> sorted = days.toList()..sort();
+    return <GrossMarginDay>[
+      for (final int day in sorted)
+        GrossMarginDay(
+          day: day,
+          revenueCents: revenue[day]?.netCents ?? 0,
+          saleCostCents: saleCost[day] ?? 0,
+          stocktakeLossCents: stocktakeLoss[day] ?? 0,
+          returnCostAdjustCents: returnAdjust[day] ?? 0,
+          documentCount: revenue[day]?.documentCount ?? 0,
+          inTransitCount: revenue[day]?.inTransitCount ?? 0,
+          returnCount: revenue[day]?.returnCount ?? 0,
         ),
     ];
   }

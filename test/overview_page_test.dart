@@ -540,13 +540,69 @@ void main() {
         reason: '规则 4：图下面必有一句人话总结，不让人自己比',
       );
       expect(find.textContaining('最近 30 天合计'), findsOneWidget);
-      // 柱子是自绘的 —— 断言 painter 在，而不是断言「有个图」
+      // 柱子是自绘的 —— 断言 painter 在，而不是断言「有个图」。
+      // ⚠️ 必须限定在营收卡**子树**里数：毛利卡（N-a）用的是同一个 painter
+      // （见 `ChartBar` 的说明，故意不复制一份），全页数会变成 2。
       expect(
-        find.byWidgetPredicate(
-          (Widget w) => w is CustomPaint && w.painter is RevenueBarPainter,
+        find.descendant(
+          of: find.byKey(const Key('overview-revenue-chart')),
+          matching: find.byWidgetPredicate(
+            (Widget w) => w is CustomPaint && w.painter is RevenueBarPainter,
+          ),
         ),
         findsOneWidget,
       );
+    });
+
+    testWidgets('N-a：毛利卡出现，且能展开成**可解释的分项**', (tester) async {
+      final int nowMs = DateTime.now().millisecondsSinceEpoch;
+      final QueryDao q = await seedBiz(todayMs: nowMs);
+      await tester.pumpWidget(page(queries: q));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('overview-gross-margin-chart')), findsOneWidget);
+      expect(
+        find.byKey(const Key('overview-gross-margin-summary')),
+        findsOneWidget,
+        reason: '同营收卡：图下面必须有一句人话总结',
+      );
+      // 口径写在卡上（用户能自己核对）
+      expect(find.textContaining('进货花的钱不算在这里'), findsOneWidget);
+
+      final Finder toggle = find.byKey(
+        const Key('overview-gross-margin-daily-toggle'),
+      );
+      await tester.ensureVisible(toggle);
+      await tester.pumpAndSettle();
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+
+      // 裁定要求的「可解释性」：展开后必须出现**分量**，不是一个总数
+      expect(find.textContaining('收入 ¥'), findsWidgets);
+      expect(find.textContaining('卖货成本 ¥'), findsWidgets);
+    });
+
+    testWidgets('N-c：概览页有「近期单据 / 谁还欠着钱」入口', (tester) async {
+      final QueryDao q = await seedBiz(
+        todayMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      final List<String> went = <String>[];
+      await tester.pumpWidget(
+        page(queries: q, onNavigate: (String id) => went.add(id)),
+      );
+      await tester.pumpAndSettle();
+
+      for (final String key in <String>[
+        'overview-go-documents',
+        'overview-go-parties',
+      ]) {
+        final Finder f = find.byKey(Key(key));
+        expect(f, findsOneWidget, reason: 'N-c 裁定乙：两个入口都要有常驻入口');
+        await tester.ensureVisible(f);
+        await tester.pumpAndSettle();
+        await tester.tap(f);
+      }
+      expect(went, <String>['documents', 'parties']);
     });
 
     testWidgets('展开「看每天的数字」⇒ 每天一行，读屏也读得到', (tester) async {

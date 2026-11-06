@@ -122,7 +122,9 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
                   width: double.infinity,
                   child: CustomPaint(
                     painter: RevenueBarPainter(
-                      points: weeks,
+                      points: <ChartBar>[
+                        for (final RevenuePoint p in weeks) ChartBar.revenue(p),
+                      ],
                       barColor: theme.colorScheme.primary,
                       negativeColor: theme.colorScheme.error,
                       labelColor:
@@ -248,6 +250,36 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
   }
 }
 
+/// 柱状图的**一根柱子**：日期区间 + 要画的数。
+///
+/// 为什么不直接收 `RevenuePoint`：毛利图（N-a）要画的是 `grossMarginCents`，
+/// 而柱子的排版规则（负数朝下变红、标签退让顺序、基线抬升、`span == 0`
+/// 不能画空白）全是踩坑踩出来的 —— 复制一个 painter 就是纪律 18 说的
+/// 「同构代码漏改」。所以这里把「画哪个数」在**调用方**决定，
+/// painter 只认这一个中性结构。
+class ChartBar {
+  const ChartBar({
+    required this.startDay,
+    required this.endDay,
+    required this.value,
+  });
+
+  factory ChartBar.revenue(RevenuePoint p) =>
+      ChartBar(startDay: p.startDay, endDay: p.endDay, value: p.netCents);
+
+  factory ChartBar.grossMargin(GrossMarginPoint p) => ChartBar(
+    startDay: p.startDay,
+    endDay: p.endDay,
+    value: p.grossMarginCents,
+  );
+
+  final int startDay;
+  final int endDay;
+
+  /// 分。正数柱子朝上，负数朝下并换红色
+  final int value;
+}
+
 /// 柱子上方的金额文字。
 ///
 /// ## 两个决定（用户审查 2026-10-30）
@@ -307,7 +339,8 @@ String chooseBarLabel(
 
 /// 柱状图绘制。
 ///
-/// 只做两件事：按 `netCents` 画柱、把金额写在柱子上。
+/// 只做两件事：按 [ChartBar.value] 画柱、把金额写在柱子上。
+/// 营收图与毛利图共用它（见 [ChartBar] 的说明）。
 /// **不画网格线**（对中老年是噪音）、**不用渐变色**（规则 3：只用两种颜色）。
 class RevenueBarPainter extends CustomPainter {
   RevenueBarPainter({
@@ -319,7 +352,7 @@ class RevenueBarPainter extends CustomPainter {
     this.compact = false,
   });
 
-  final List<RevenuePoint> points;
+  final List<ChartBar> points;
   final Color barColor;
 
   /// 负数（退货多于销售的那一周）用的颜色 —— 就是规则 3 说的「第二种颜色」
@@ -340,9 +373,9 @@ class RevenueBarPainter extends CustomPainter {
 
     int maxPos = 0;
     int maxNeg = 0;
-    for (final RevenuePoint p in points) {
-      maxPos = math.max(maxPos, p.netCents);
-      maxNeg = math.max(maxNeg, -p.netCents);
+    for (final ChartBar p in points) {
+      maxPos = math.max(maxPos, p.value);
+      maxNeg = math.max(maxNeg, -p.value);
     }
     final int span = maxPos + maxNeg;
 
@@ -372,10 +405,10 @@ class RevenueBarPainter extends CustomPainter {
     final double barWidth = math.min(slot * 0.56, compact ? 36 : 72);
 
     for (int i = 0; i < points.length; i++) {
-      final RevenuePoint p = points[i];
+      final ChartBar p = points[i];
       final double centerX = slot * i + slot / 2;
-      final double h = p.netCents.abs() * unit;
-      final bool negative = p.netCents < 0;
+      final double h = p.value.abs() * unit;
+      final bool negative = p.value < 0;
 
       if (h > 0) {
         final Rect rect = negative
@@ -401,7 +434,7 @@ class RevenueBarPainter extends CustomPainter {
       // 宽度按**实际字体**量 —— 标签是画布上的字，Flutter 的布局检查看不见它。
       final TextPainter label = _layout(
         chooseBarLabel(
-          p.netCents,
+          p.value,
           slot: slot,
           measure: (String text) => _layout(text, 15).width,
         ),
@@ -434,7 +467,7 @@ class RevenueBarPainter extends CustomPainter {
   /// ⚠️ 用 **`startDay`/`endDay`** 而不是「周一起 + 6 天」：窗口的第一周
   /// 可能不是从周一开始的（`buildRevenueSeries` 会把 `startDay` 夹到窗口内），
   /// 按日历硬算会标出一个根本没统计的日期。
-  String _rangeLabel(RevenuePoint p, {required bool compact}) {
+  String _rangeLabel(ChartBar p, {required bool compact}) {
     final String start = _monthDay(p.startDay);
     if (compact || p.startDay == p.endDay) return start;
     return '$start–${_monthDay(p.endDay)}';

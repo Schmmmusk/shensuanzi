@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'balance_bars.dart';
+import 'gross_margin_chart.dart';
 import 'month_compare.dart';
 import 'notice.dart';
 import 'revenue_chart.dart';
@@ -33,6 +34,7 @@ class _OverviewData {
     required this.payables,
     required this.stockTop,
     required this.revenueRows,
+    required this.marginRows,
     required this.monthCompare,
     required this.fromDay,
     required this.toDay,
@@ -46,6 +48,10 @@ class _OverviewData {
   /// 按日营收（**可能含 30 天窗口外的天** —— 月度对比要上月同期；
   /// 营收卡自己按窗口裁）
   final List<RevenueDay> revenueRows;
+
+  /// 按日毛利分项（N-a）。**只查 30 天窗口**，不像营收那样查宽 ——
+  /// 毛利没有「月度对比」的需求，多查是白扫表。
+  final List<GrossMarginDay> marginRows;
 
   /// 本月至今 vs 上月同期
   final MonthCompare monthCompare;
@@ -203,6 +209,8 @@ class _OverviewPageState extends State<OverviewPage> {
       // 营收卡自己按 `fromDay..toDay` 裁，这样「平均每个有生意的日子」
       // 不会把上月的天算进去，也不依赖调用方记得裁。
       revenueRows: wide,
+      // 毛利只查 30 天窗口（毛利卡没有「上月同期」需求 ⇒ 跟着宽窗口查是白扫表）
+      marginRows: q.dailyGrossMargin(fromDay: fromDay, toDay: toDay),
       monthCompare: buildMonthCompare(rows: wide, window: window),
       fromDay: fromDay,
       toDay: toDay,
@@ -462,6 +470,38 @@ class _OverviewPageState extends State<OverviewPage> {
     );
   }
 
+  /// 「想看细节？」跳转卡（N-c 裁定乙：概览页补「近期单据 / 欠款」入口）。
+  ///
+  /// 为什么放在图表区末尾：概览页的阅读顺序是「今天干什么 → 卖得怎么样 →
+  /// 赚了多少」，看完数字才想查明细。放在最前面等于挡路。
+  ///
+  /// ⚠️ 按钮**只导航、不带筛选**（裁定⑦同款判断：带筛选跳转超范围）。
+  Widget _jumpCard(ThemeData theme) => _bizCard(
+    theme,
+    key: 'overview-card-jumps',
+    title: '想看细节？',
+    lines: <Widget>[
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: <Widget>[
+          OutlinedButton.icon(
+            key: const Key('overview-go-documents'),
+            onPressed: () => widget.onNavigate!('documents'),
+            icon: const Icon(Icons.receipt_long_outlined, size: 18),
+            label: const Text('近期单据'),
+          ),
+          OutlinedButton.icon(
+            key: const Key('overview-go-parties'),
+            onPressed: () => widget.onNavigate!('parties'),
+            icon: const Icon(Icons.people_outline, size: 18),
+            label: const Text('谁还欠着钱'),
+          ),
+        ],
+      ),
+    ],
+  );
+
   /// **#32**：经营速览三卡。桌面横排（各 1/3，裁定⑥）；手机紧凑竖排
   ///（padding 收窄 + 入口一行图标）。卡片**不可点**（裁定⑦：先做静态，
   /// 带筛选跳转超范围）。金额 `formatGrouped`（界面带千分位，裁定⑧）。
@@ -623,6 +663,22 @@ class _OverviewPageState extends State<OverviewPage> {
             mobileShell: widget.mobileShell,
             usePercent: widget.monthComparePercent,
           ),
+        ],
+        // 毛利卡（N-a，2026-11-06）。排在月度对比**之后**：前两张回答
+        // 「卖得怎么样」，这张回答「赚了多少」—— 是不同的问题，插进那两张
+        // 中间会把同一类信息劈开。
+        const SizedBox(height: 12),
+        GrossMarginChartCard(
+          rows: data.marginRows,
+          fromDay: data.fromDay,
+          toDay: data.toDay,
+          mobileShell: widget.mobileShell,
+        ),
+        // N-c（裁定乙「顺带补近期单据 / 欠款两个入口」）：毛利明细里看到
+        // 「哪天退货多了」之后，下一步就是去单据页查 —— 入口得在同一屏给。
+        if (widget.onNavigate != null) ...<Widget>[
+          const SizedBox(height: 12),
+          _jumpCard(theme),
         ],
         if (hasBalance) ...<Widget>[
           const SizedBox(height: 12),

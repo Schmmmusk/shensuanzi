@@ -373,6 +373,17 @@ def q_list_roots(limit: int, window_ms: int):
 #: ⚠️ 阈值不是性能目标，是**防退化护栏**：谁把 `_fromFor` 的派生表又加回来
 #: （实测 62 → 300 ms）、或把 `INDEXED BY` / `business_day` 排序弄丢
 #: （实测第一段 0.1 → 120 ms），这条立刻红。要放宽就改这里并写明理由。
+#:
+#: ## 判据只有一个：**p95**（三处描述以本表为准）
+#:
+#: 文件头、`--list` 的输出、下面的判定代码，说的都是同一件事 ——
+#: `--list` 的阈值是**从本表现取**的，不再抄一遍，所以不会漂移。
+#:
+#: **为什么是 p95 不是 p50**：门禁要拦的是「偶发的卡顿」——p50 是「平时多快」，
+#: 一次全表扫描混在 30 轮里几乎不动 p50，却会把 p95 抬起来。用户记住的正是那几次。
+#:
+#: ⏳ **N-d 未裁**：是否给 `doc_search` / `today_summary` 也加门禁（建议按同一
+#: 「实测 p95 × 3」的定法）。裁了就往本表加行，**别在别处另写一套判据**。
 GATES: Dict[str, float] = {
     "count_roots": 200.0,
     "list_roots": 80.0,
@@ -581,8 +592,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.list:
+        # 门禁信息**从 GATES 现取**，不在这里重述一遍 —— 三处各写一遍是
+        # 「描述与实现漂移」的温床（纪律 17）。判据统一是 **p95**，见 GATES 注释。
         for key, label, _fn in QUERIES:
-            print("%-16s %s" % (key, label))
+            gate = GATES.get(key)
+            mark = "  【门禁 p95 > %.0f ms】" % gate if gate is not None else ""
+            print("%-16s %s%s" % (key, label, mark))
+        print("")
+        print("门禁判据：只有标了【门禁】的键参与判定，比较的是 **p95**（不是 p50、不是 max）。")
+        print("          阈值 = 定阈值那台机器实测 p95 的约 3 倍，是防退化护栏不是性能目标；")
+        print("          单一来源是脚本里的 GATES 表，要改阈值改那里并写明理由。")
+        print("          调参 / 换机器时先加 --no-gate 只量不判。")
         return 0
 
     if args.db and args.data_dir:

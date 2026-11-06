@@ -91,6 +91,8 @@ export 'src/charts/daily_series.dart'
         monthCompareWindow,
         monthStartDay,
         weekStartDay;
+export 'src/charts/gross_margin.dart'
+    show GrossMarginDay, GrossMarginPoint, buildGrossMarginSeries;
 export 'src/dao/account_dao.dart' show AccountDao;
 export 'src/dao/document_dao.dart'
     show DocumentDao, DocumentStatusView, DocumentSummary, ReturnAgg;
