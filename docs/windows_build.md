@@ -272,6 +272,8 @@ target_compile_options(${BINARY_NAME} PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:/utf-
 
 > 目标：把 `flutter build windows --release` 的产物变成**用户能双击运行**的一包东西。
 > 当前分发形式是**便携 zip**（解压即用、不需要管理员权限、不写 `Program Files`）。
+> ⚠️ **「解压即用」有一个前提**：目标机要有 **VC++ 2015-2022 运行库** ——
+> LTSC / 裸系统上没有，会直接起不来。见 §8.4.1。
 
 ### 8.1 产物长什么样（实测，2026-09-29）
 
@@ -354,8 +356,12 @@ build/dist/神算子-v0.1.0-win64.zip.sha256
 
 用一台**没装过 Flutter 的电脑**（或新建一个 Windows 虚拟机 / 沙箱账户）：
 
+> ⚠️ **第 0 步：先装 Visual C++ 运行库**（见 §8.4.1）。**LTSC / 裸 Windows 上没装会
+> 直接起不来** —— 而开发机装了 Visual Studio，所以**在开发机上永远测不出来**。
+
 | # | 步骤 | 预期 |
 |---|---|---|
+| 0 | 装 `VC_redist.x64.exe`（**LTSC / 裸系统必装**，理由见 §8.4.1） | 安装成功；已装过的机器可跳过 |
 | 1 | 解压 zip 到 `D:\神算子\` | 目录里有 `shensuanzi.exe` 与 `data\` |
 | 2 | 双击 `shensuanzi.exe` | 出现蓝色 SmartScreen 提示（**未签名，预期行为**） |
 | 3 | 「更多信息」→「仍要运行」 | 数据目录对话框**出现在最前面**（⚠️ 见下） |
@@ -376,6 +382,42 @@ build/dist/神算子-v0.1.0-win64.zip.sha256
 > 对话框是否被挡住，**只有真机能回答**。如果被挡住，下一步是引入窗口置前能力
 > （`window_manager`，会成为本项目第一个「为了体验」而加的依赖）。
 > 这条已记录在 `docs/reply_review.md` §AG 遗漏 2。
+
+#### 8.4.1 前置条件：Visual C++ 运行库（**LTSC / 裸 Windows 会踩**，2026-11-06 实测）
+
+**结论**：当前 zip **不是完全自包含** —— 它依赖系统的 **VC++ 2015-2022 运行库**。
+干净系统（尤其 **LTSC**，不带任何运行库）上双击 `shensuanzi.exe` 会
+**「找不到 vcruntime140.dll / 无法启动此程序」，或者干脆没反应**。
+
+**证据**（解析 `build/windows/x64/runner/Release/` 里每个二进制的导入表，不是猜的）：
+
+| 文件 | 依赖的 VC++ 运行库 |
+|---|---|
+| `shensuanzi.exe` | `MSVCP140.dll` `VCRUNTIME140.dll` `VCRUNTIME140_1.dll` |
+| `file_selector_windows_plugin.dll` | 同上三个 |
+| `share_plus_plugin.dll` | 同上三个 |
+| `url_launcher_windows_plugin.dll` | 同上三个 |
+| `dartjni.dll` / `sqlite3.dll` / `sqlite3_flutter_libs_plugin.dll` | `VCRUNTIME140.dll` |
+| `flutter_windows.dll` | **不依赖**（Flutter 引擎自带） |
+
+**为什么开发机测不出来**：开发机装了 Visual Studio，`C:\Windows\System32\` 里
+已经有这三个 dll（实测 `14.51.36247.0`）。**「解压即用」这句话在有运行库的机器上成立，
+在 LTSC 上不成立** —— 与 §「Windows 构建前提」里 SQLite 下载失败那个坑同一类：
+**问题在 Dart 之外，`analyze` / `test` 全绿照样起不来。**
+
+**两条修法（未裁定，见 `docs/proposals/待裁事项-2026-11-04.md`）**：
+
+| 方案 | 做法 | 代价 |
+|---|---|---|
+| **甲：装运行库**（推荐先用它验 VM） | 目标机装一次 [`VC_redist.x64.exe`](https://aka.ms/vs/17/release/vc_redist.x64.exe)（微软官方，约 25 MB，需管理员） | 用户多一步；`使用说明.txt` 要写清楚 |
+| **乙：随包带 dll**（app-local） | 把 `vcruntime140.dll` `vcruntime140_1.dll` `msvcp140.dll` 放进 zip 根目录，与 exe 同目录 | 多约 0.8 MB；**要确认再分发许可**（微软允许 app-local 部署，但随包分发要按许可条款核对）；且**必须带对版本**，带旧了比不带更糟 |
+
+**判据（怎么确认某台机器缺不缺）**：`dir C:\Windows\System32\vcruntime140.dll`。
+缺 ⇒ 装运行库；有 ⇒ 直接跑。
+
+> ⚠️ 别用「拷开发机的 `System32` 版本」当乙方案的来源去随手试 —— 那台机器的版本号
+> 与目标机的其它组件未必匹配。真要随包，来源应是 **VC++ 可再分发组件包**解出来的
+> `x64\Release` 版本，并在干净机器上验过。
 
 ### 8.5 每次发布前的一次性检查
 

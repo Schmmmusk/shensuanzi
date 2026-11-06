@@ -19578,3 +19578,46 @@ N-c 主体在 §CV·一百一十七 已按裁定乙关闭，缺的就是这两�
 | **D1 · `perf_bench.py` 门禁判据三处统一** | `--list` 现在**从 `GATES` 现取阈值**打印「【门禁 p95 > N ms】」并在末尾说明判据 —— 之前文件头、`GATES` 注释、`--list` 各说各话（`--list` 干脆不提门禁）。**判据统一写明是 p95**，并补了「为什么不是 p50」：门禁要拦偶发卡顿，一次全表扫描混在 30 轮里几乎不动 p50，却会把 p95 抬起来，**而用户记住的正是那几次**。为 N-d 预留：裁了加门禁就只改 `GATES` 一处 |
 | **D2 · 5c-3 另一半 ⇒ 新提案 60** | 「校验失败后定位到出错字段」实测**四页都只 `_scrollToTop()`**。写成 `docs/proposals/60-校验失败定位到出错字段-方案.md`（三条路 + 实测代价）。**关键实测**：领域层 `SaleDraftInvalid` 已给**字段级 + 行级**错误 ⇒ **不用改 core**；但四页**零 `GlobalKey`** ⇒ 全量自动滚动要 24+ key × 4 页，正是纪律 18 的同构高发区。**推荐乙**（摘要卡拆可点 chip，只挂 5 个静态区块 key）。**本轮零实现代码** —— 你没裁，我不替你定 |
 | **D3 · `data_model.md` 漂移抽查** | 写脚本把 `schema.dart` 全部 `CREATE TABLE` 的列名逐个对照文档 ⇒ **114 列全部在文档出现**（12 表，实测数字；脚本是一次性的，跑完删掉）。⚠️ 只验了「列有没有写」，**没验语义描述是否仍准确** —— 751 行的全文核对仍未做，需要单独一轮 |
+
+### §CV·一百一十九 · 版本升 0.7.5 + 全脚本体检 + **发现 N-l：便携 zip 缺 VC++ 运行库**（2026-11-06）
+
+> 起因：用户建了 Win10 **LTSC** 虚拟机（2 逻辑处理器 / 4 GB / 60 GB 虚拟 SSD /
+> 基本显示适配器、**禁用 3D 加速**）准备跑 N-h 与 N-d，要求**先升版本、再体检所有脚本**。
+
+**① 版本 0.7.3+11 → 0.7.5+12**（`test/version_test.dart` 6 条全绿）：
+手工维护点**五处** + 一处生成物 —— `pubspec.yaml` / `version.dart`（`value`+`build`+`display`）/
+`Runner.rc` 的 `ProductVersion` / `README.md` / `packaging\使用说明.txt` 首行（**UTF-8 BOM 必须保住**）
++ 重新生成 `用户手册.html`。⚠️ `Runner.rc` 复核**仍是 0 个非 ASCII 字节**（rc.exe 按系统代码页解码）。
+
+**② 顺手抓到我自己上一轮写的 bug**（纪律 17 反向）：`help_page.dart` 的 `_Faq` 是
+`Text('A：$answer')` **纯文本**，我给它写的毛利 FAQ 里有 `**…**` ⇒ **会把星号原样印给用户**。已删。
+⚠️ **判据 = 看渲染器，不是看别处怎么写**：`manual_content.dart` 走 `manual_page.dart`
+（按 `**` 切分、奇数段加粗）与 `make_manual_html.dart`（`→ <strong>`），那里 `**` 是**对的**（已有 43 处）。
+
+**③ 全脚本体检**（10 个 `tool/*.py` + `packaging/make_release.py`）：`compileall` 干净、
+`--help` 全过；`gen_schema_snapshot.py --check` ✅（v8 / 41 条 / 指纹 `3edce2c60207af96`）·
+`db_audit` ✅ · `perf_bench` ✅ · `machine_info` ✅ · `perf_monitor selftest` ✅ ·
+`seed_test_data` ✅ · `downgrade_to_v7` ✅ · `perf_seed` ✅ · `destructive_acceptance --dry-run` ✅。
+⚠️ `downgrade_to_v5.py` 在 v8 库上**退出码 3 是设计行为**（只支持 v6→v5），不是脚本坏。
+
+**④ 🔴 N-l：便携 zip 不是完全自包含**（本轮最有价值的产出，**直接决定 N-h 能不能过**）：
+解析发布产物**每个二进制的导入表**（PE import directory，不是猜的）⇒
+`shensuanzi.exe` 与 `file_selector` / `share_plus` / `url_launcher` 三个插件依赖
+`VCRUNTIME140.dll` `VCRUNTIME140_1.dll` `MSVCP140.dll`；`dartjni` / `sqlite3` /
+`sqlite3_flutter_libs_plugin` 依赖 `VCRUNTIME140.dll`；**只有 `flutter_windows.dll` 自带**。
+**开发机测不出来** —— 装了 Visual Studio，`System32` 里有（实测 `14.51.36247.0`）。
+**LTSC 不带任何运行库 ⇒ 双击起不来**，而文档、脚本、`README` 一致写着「解压即用、不需要管理员权限」
+= **纪律 17 点名的「描述不存在的能力」**。
+**处置**：`docs/windows_build.md` 新增 **§8.4.1**（证据表 + 判据 `dir System32\vcruntime140.dll` +
+甲/乙/丙三方案）、15 步清单**加第 0 步**、§八 那句「解压即用」就地加前提、
+`make_release.py` **每次打包末尾打印提醒**（脚本能查的事实不该靠人记）、
+提案登记 **N-l**（推荐：**甲先跑通验证、乙作发行前待办** —— 目标用户是个体工商户，
+「装微软运行库」他们大概率做不到，长期乙才对；但乙要核许可 + 干净机验，不该在验证轮顺手做）。
+
+**⑤ 交付物整理**：重打 `神算子-v0.7.5-win64.zip`（14.3 MB，sha256 `8d4ac06e…28d82c46`，
+**独立复核过**）；旧 0.7.3 包移进 `build\dist\_旧版-勿用\`（**不删**，但拿错包的路径堵死）；
+`第15步夹具\说明.txt` 第 1 步**原来还写着解压 v0.7.3**（会让人照着走错包）⇒ 改指 0.7.5；
+夹具库 `wal_checkpoint(TRUNCATE)` 后删掉 `-wal` / `-shm` ⇒ **单文件交付**
+（复核：v7 / 5826 张单 / 8097 行 / `integrity_check` ok）。
+
+**⑥ 门禁**：root **524** · app **492** · host **229** · core **844** · `flutter analyze` **0 issues**。

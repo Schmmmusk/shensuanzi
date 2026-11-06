@@ -35,6 +35,9 @@
 
 见 §AG-2：解压即用、不需要管理员权限、符合「数据可携带性原则」。
 安装包（Inno / MSI）与代码签名都排在首发之后。
+⚠️ 「解压即用」有个前提：目标机要有 **VC++ 2015-2022 运行库**（本脚本不检查、也不打包它）。
+LTSC / 裸系统上没有 ⇒ 双击起不来。裁定项见 `docs/proposals/待裁事项-2026-11-04.md` N-l，
+判据与实测证据在 `docs/windows_build.md` §8.4.1。
 """
 
 import hashlib
@@ -224,6 +227,10 @@ def main():
     print(f'   sha256 {sha}')
     print()
     print('   发给用户前，按 docs/windows_build.md §8.4 的 15 步清单在干净环境验一遍。')
+    # 本包依赖系统 VC++ 运行库（exe 与插件 dll 的导入表里有 VCRUNTIME140/MSVCP140），
+    # 裸系统 / LTSC 上没装会起不来 —— 每次打包都提醒一次，别等用户反馈才知道。
+    print('   ⚠️ 目标机需先装 VC++ 2015-2022 运行库（LTSC / 裸系统必装），'
+          '见 docs/windows_build.md §8.4.1。')
 
 
 if __name__ == '__main__':
