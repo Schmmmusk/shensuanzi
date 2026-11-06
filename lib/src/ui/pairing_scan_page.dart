@@ -18,6 +18,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
+import 'package:shensuanzi_core/shensuanzi_core.dart'
+    show unexpectedFailureAdvice;
 
 /// 返回值：配对 + 首拉都成功时的提示语；取消/失败返回 `null`。
 ///
@@ -118,12 +120,23 @@ class _PairingScanPageState extends State<PairingScanPage> {
     SyncOutcome outcome;
     try {
       outcome = await widget.service.syncNow();
-    } catch (error) {
+    } catch (error, stack) {
+      // N-f 站点 3（2026-11-05 裁定甲）：`widget.log` 就在下面几十行的相机
+      // 分支里用着，这条 catch 却把 `$error`（英文原文）直接甩到页面上。
+      // 出口有，只是没调用 —— 现在补上，界面换成人话。
+      widget.log?.crash(error, stack, label: '配对后首拉兜底');
       if (mounted) {
         setState(() {
           _busy = false;
           _handled = false;
-          _error = '同步时出错（$error）—— 请回设置页重试，或重新扫码。';
+          // lead 只给结论，动作交给分类文案 —— 若把「请重新扫码」也塞进 lead，
+          // 认得出原因的那几档会变成「先让你扫码、再告诉你为什么失败」。
+          // 本页扫码 UI 仍在屏上，入口不用靠这句话指。
+          _error = unexpectedFailureAdvice(
+            error,
+            logged: widget.log != null,
+            lead: '同步时出错。',
+          );
         });
       }
       return;

@@ -371,10 +371,17 @@ class HostServiceController {
           StackTrace.current,
         );
       }
-    } catch (error) {
+    } catch (error, stack) {
       // 领域层**不往外抛**（2026-10-31 真机：抛到界面 ⇒ 按钮全灰、只能重启）。
       // 统一成「failed 快照 + 人话 hint」，与 `_startRaw` 同一个形状。
-      _failureHint = '生成新的配对码失败：$error。可以重试；一直失败请重启软件。';
+      //
+      // N-f 站点 7（2026-11-05 裁定甲）：`onInternalError` 是**本类已有的**日志
+      // 出口（同一个方法上面几行就调用过），之前这条 catch 只拼 `$error` 进
+      // 界面、原文哪儿都没留 ⇒ 现场丢了。现在两样都做。
+      onInternalError?.call('生成新的配对码失败', error, stack);
+      _failureHint =
+          '生成新的配对码失败。'
+          '${unexpectedFailureAdvice(error, logged: onInternalError != null)}';
       _state = HostServiceState.failed;
       if (wasRunning) await _startRaw(); // 至少把服务恢复，别把用户晾在 failed
       return snapshot;
@@ -433,8 +440,15 @@ class HostServiceController {
           '端口 ${_ports.start}~${_ports.end} 都被占用了。'
           '请关掉可能占用它们的程序，或检查防火墙有没有拦下本软件，然后重试。';
       _state = HostServiceState.failed;
-    } catch (error) {
-      _failureHint = '启动服务失败：$error。可以重试；若一直失败，请重启软件。';
+    } catch (error, stack) {
+      // N-f 站点 8（2026-11-05 裁定甲）：`onInternalError` 已经传给了
+      // `HostHttpServer.start`（就在上面几行），但这条 catch 自己没调用 ⇒
+      // 启动失败时日志里什么都没有。端口耗尽那条已有专门文案（上面的
+      // `on StateError`），这里兜住的是**其余**所有异常。
+      onInternalError?.call('启动同步服务失败', error, stack);
+      _failureHint =
+          '同步服务没能启动。'
+          '${unexpectedFailureAdvice(error, logged: onInternalError != null)}';
       _state = HostServiceState.failed;
     }
     return snapshot;

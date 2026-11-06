@@ -29,7 +29,7 @@ import 'package:path/path.dart' as p;
 
 import 'instance_lock.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart'
-    show localFileFailureAdvice, newId;
+    show localFileFailureAdvice, newId, unexpectedFailureAdvice;
 
 /// 一次迁移的**计划**（执行前算好，给确认对话框与空间校验用）。
 class MigrationPlan {
@@ -86,16 +86,31 @@ class MigrationProgress {
 /// 成功之后写说明抛异常，被同一个 `catch` 当成了搬迁失败）。
 class DataMigrationResult {
   const DataMigrationResult.ok(this.legacyNotePath, {this.warning})
-    : error = null;
+    : error = null,
+      failureDetail = null;
 
-  const DataMigrationResult.failed(this.error)
+  /// [error] = 给用户的**分类文案**（不含异常原文）；
+  /// [failureDetail] = 给日志的**原始异常文本**（N-f 站点 6，2026-11-05 裁定甲）。
+  ///
+  /// ⚠️ 为什么是 `String` 而不是 `Object`：本对象要**跨 isolate 边界**回传
+  /// （`app.dart` 的 `_runMigrationInIsolate`）。异常对象大多可发送，但
+  /// 「大多」不够 —— 一旦夹带不可发送的对象就是运行时 `unsendable` 崩在
+  /// 迁移中途（§BK·三·补 2 同一个坑）。文本永远可发送，而日志要的正是文本。
+  const DataMigrationResult.failed(this.error, {this.failureDetail})
     : legacyNotePath = null,
       warning = null;
 
   bool get ok => error == null;
 
-  /// 失败原因（给用户的原话；成功为 `null`）
+  /// 失败原因（**给用户**的分类文案；成功为 `null`）
   final String? error;
+
+  /// 失败现场（**只进日志**：异常原文 + 栈）。成功为 `null`。
+  ///
+  /// 迁移跑在 isolate 里、拿不到 `AppLog`，所以现场只能**带出去**给宿主写。
+  /// 之前它哪儿都没去 ⇒ 「迁移失败但日志里什么都没有」是已知限制
+  /// （台账 §CV·四十七），这一条把它补上。
+  final String? failureDetail;
 
   /// 旧目录里说明文件的路径（成功**且写成功**才有）
   final String? legacyNotePath;
@@ -103,6 +118,23 @@ class DataMigrationResult {
   /// **数据已搬成功、但说明文件没写成**时的说明（成功才可能有；可空）。
   /// 是给用户的原话：「不影响使用」+ 为什么。
   final String? warning;
+}
+
+/// 「目标位置已被占用」的**领域信号**（N-f 站点 6，2026-11-05 裁定甲）。
+///
+/// 为什么要有这个类型：兜底 catch 现在**默认把异常文本换成分类文案**，
+/// 而这一条的消息是本项目自己写的中文（含路径，用户看得懂、也需要看到），
+/// 属于「可以直接给用户」的那一类。判据必须是**专门的类型**而不是
+/// `is StateError` —— 测试钩子 `debugFailCopyFor` 抛的也是 `StateError`，
+/// 那是**模拟的真实异常**，按类型放行等于把内部文本发给用户。
+class MigrationTargetBlocked implements Exception {
+  const MigrationTargetBlocked(this.message);
+
+  /// 给用户看的原话（本项目写的中文，不是异常原文）
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 /// 迁移执行器。
@@ -263,12 +295,33 @@ class DataMigrator {
         }
       }
       return DataMigrationResult.ok(notePath, warning: noteWarning);
-    } catch (error) {
+    } catch (error, stack) {
       // 退路：只删**自己建的**暂存目录。用户在目标位置已有的任何文件不碰
       //（目标非空在选位置时就被拒了；这里连空的都不留——改名失败时清掉）
       _deleteIfExists(stagingData);
       _deleteIfExists(stagingBackup);
-      return DataMigrationResult.failed('$error');
+      // N-f 站点 6（2026-11-05 裁定甲）：原本 `'$error'` 直接当用户文案
+      // （里面是英文 + 绝对路径）。现在界面拿分类文案，原文交给
+      // [DataMigrationResult.failureDetail] 由宿主写进日志。
+      //
+      // ⚠️ 例外：[MigrationTargetBlocked] 是 [_prepareRenameTarget] 自己抛的
+      // **领域信号**，消息是本项目写的中文（「新数据目录（…）已存在且有内容」），
+      // 不是异常原文 ⇒ 照旧透传（它是「目标位置被占」唯一说得清的情况，
+      // `data_migrator_test.dart` 钉着这条）。
+      //
+      // 为什么不用 `error is StateError` 判：测试钩子 [debugFailCopyFor] 抛的
+      // 也是 `StateError`（「模拟拷贝失败」）—— 那是**模拟的真实异常**，
+      // 按类型放行等于把内部文本发给用户。⇒ 判据必须是**专门的类型**。
+      //
+      // ⚠️ 本 isolate 没有日志出口，所以「详情见日志」这句话在这里**不能说**
+      // （`logged` 默认 false）—— 宿主拿到 detail 写进日志后再自己补。
+      final String userText = error is MigrationTargetBlocked
+          ? error.message
+          : unexpectedFailureAdvice(error, lead: '没能把数据搬过去。');
+      return DataMigrationResult.failed(
+        userText,
+        failureDetail: '$error\n$stack',
+      );
     }
   }
 
@@ -282,7 +335,7 @@ class DataMigrator {
       dir.deleteSync();
       return;
     }
-    throw StateError('$what（$path）已存在且有内容');
+    throw MigrationTargetBlocked('$what（$path）已存在且有内容');
   }
 
   /// 两个路径是否同一个位置（Windows 大小写不敏感，`path` 包按平台处理）。

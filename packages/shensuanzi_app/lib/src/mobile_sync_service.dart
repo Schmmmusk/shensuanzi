@@ -44,7 +44,8 @@ import 'package:shensuanzi_core/shensuanzi_core.dart'
         Transport,
         TransportRequest,
         TransportResponse,
-        ensureSchemaIndexes;
+        ensureSchemaIndexes,
+        unexpectedFailureAdvice;
 
 import 'http_transport.dart';
 import 'sync_failure_message.dart';
@@ -246,10 +247,19 @@ class MobileSyncService {
           enqueueFailures++;
         }
       }
-    } catch (error) {
+    } catch (error, stack) {
+      // N-f 站点 5（2026-11-05 裁定甲）：这里原本把 `$error` 直接拼进界面文案。
+      // `onError` 是**本类已有的**日志出口（构造参数，`app.dart` 已接到
+      // `_log.crash`）—— 之前只是**没调用**，所以「详情见日志」在本页是假话。
+      // 现在：原文 + 栈进日志，界面只给人话。
+      onError?.call(error, stack, '镜像重建失败');
       return MirrorRecoveryResult.failure(
         rescue: rescue,
-        message: '新的数据副本建不起来（$error）',
+        message: unexpectedFailureAdvice(
+          error,
+          logged: onError != null,
+          lead: '新的数据副本建不起来。',
+        ),
         archivedPath: archived.archivedPath,
       );
     }

@@ -237,6 +237,53 @@ void main() {
     // 旧目录原样
     expect(File(p.join(oldData, 'shensuanzi.db')).existsSync(), isTrue);
   });
+
+  // N-f 站点 6（2026-11-05 裁定甲）：失败时**界面拿分类文案、日志拿原文**。
+  // 判据分两头 —— 只断言「有 detail」不够，还得断言用户那句里**没有**原文。
+  test('拷贝失败 ⇒ 用户文案不含异常原文，现场进 failureDetail', () {
+    final String newData = p.join(newParent, '神算子数据');
+    final String newBackup = p.join(newParent, '神算子备份');
+
+    final DataMigrationResult result = migrator(
+      newData: newData,
+      newBackup: newBackup,
+      failFor: (String path) => path.endsWith('shensuanzi.db'),
+    ).execute();
+
+    expect(result.ok, isFalse);
+    // ① 现场没丢：原文 + 栈都带出去了（宿主负责写进日志）
+    expect(result.failureDetail, isNotNull);
+    expect(result.failureDetail, contains('模拟拷贝失败'));
+    // ② 用户那句里**不许**有原文 / 内部路径 / 异常类型名
+    expect(result.error, contains('没能把数据搬过去'));
+    for (final String leak in <String>[
+      '模拟拷贝失败',
+      'StateError',
+      'Exception',
+      oldData,
+    ]) {
+      expect(result.error, isNot(contains(leak)), reason: '用户文案漏出「$leak」');
+    }
+    // ③ 本 isolate 没有日志出口 ⇒ 这句**不许**提日志（裁定 ③）
+    expect(result.error, isNot(contains('日志')));
+  });
+
+  test('目标被占的**领域信号**照旧透传（它是本项目写的中文，不是异常原文）', () {
+    final String newData = p.join(newParent, '神算子数据');
+    Directory(newData).createSync(recursive: true);
+    File(p.join(newData, '用户的文件.txt')).writeAsStringSync('x');
+
+    final DataMigrationResult result = migrator(
+      newData: newData,
+      newBackup: p.join(newParent, '神算子备份'),
+    ).execute();
+
+    expect(result.ok, isFalse);
+    expect(result.error, contains('已存在且有内容'));
+    expect(result.error, contains(newData), reason: '路径是这句话有用的部分');
+    // 现场仍然带出去（宿主写日志）
+    expect(result.failureDetail, contains('已存在且有内容'));
+  });
   // ============================================================ §审查 OBS-14
   //
   // 单实例锁文件是**本机运行态**文件：它被当前进程排他锁着（Windows 上带内容的

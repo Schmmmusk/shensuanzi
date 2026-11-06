@@ -814,6 +814,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
           _config.backupDirectory ??
           _service.policy.backupDirectoryFor(directory),
       currentSchemaVersion: Schema.version,
+      log: _log,
     );
     if (!restored || !mounted) return;
     // 接回来了 ⇒ 走「重试」那条路重新开库（它会清掉错误态再 `_prepare`）
@@ -1052,7 +1053,15 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       setState(() => _recoveringMirror = false);
       final BuildContext? ctx = _navigatorKey.currentContext;
       if (ctx != null && ctx.mounted) {
-        await _migrationMessage(ctx, '修复没能完成：$error。原来的文件没有动，可以重试。');
+        // N-f 站点 1：上面已 `_log.crash`（原文 + 栈都在），界面不必再拼 `$error`。
+        await _migrationMessage(
+          ctx,
+          unexpectedFailureAdvice(
+            error,
+            logged: true,
+            lead: '修复没能完成。原来的文件没有动，可以重试。',
+          ),
+        );
       }
       return;
     }
@@ -1660,7 +1669,9 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     } catch (error, stack) {
       // #43：原始异常进日志；界面给「本地文件」分类文案（迁移 = 文件操作）
       _log.crash(error, stack, label: '数据迁移失败');
-      result = DataMigrationResult.failed(localFileFailureAdvice(error));
+      result = DataMigrationResult.failed(
+        unexpectedFailureAdvice(error, logged: true, lead: '没能把数据搬过去。'),
+      );
     } finally {
       progressPort.close();
       await sub.cancel();
@@ -1696,7 +1707,14 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       );
     } else {
       _openDatabase(current); // 旧位置原样 —— 立刻恢复可用
-      _toast('没能搬过去（${result.error}）。数据还在原位置，软件已恢复。');
+      // N-f 站点 6：`result.error` 现在**本身就是完整的一句话**（分类文案），
+      // 不能再塞进括号里 —— 否则界面出现「没能搬过去（没能把数据搬过去。…）」。
+      // isolate 里那条失败若带出现场，这里补写进日志（那边没有日志出口）。
+      final String? detail = result.failureDetail;
+      if (detail != null) {
+        _log.write('数据迁移失败（isolate 内）：$detail');
+      }
+      _toast('${result.error} 数据还在原位置，软件已恢复。');
     }
   }
 
@@ -1822,11 +1840,16 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     SyncOutcome outcome;
     try {
       outcome = await service.syncNow();
-    } catch (error) {
+    } catch (error, stack) {
       // belt：服务层保证不抛，这里再兜一层（遮罩绝不能卡死）
+      //
+      // N-f 站点 2（2026-11-05 裁定甲）：走到这里说明服务层的兜底也没兜住，
+      // 原本只把 `$error` 拼进界面、栈直接丢 ⇒ 这种「理论上不该发生」的异常
+      // 反而最没现场。`_log` 是本 State 的字段，出口一直有，只是没调用。
+      _log.crash(error, stack, label: '同步兜底捕获');
       outcome = SyncOutcome(
         SyncOutcomeKind.error,
-        '同步时出错（$error）—— 请重试；一直这样请把这句话告诉技术支持',
+        unexpectedFailureAdvice(error, logged: true, lead: '同步时出错。'),
       );
     }
 
@@ -2417,6 +2440,12 @@ class _ShensuanziAppState extends State<ShensuanziApp>
           : null,
       // M15（2026-10-08）：开单保存失败 → 原始异常进日志，界面只给分类文案
       onStorageFailure: _onStorageFailure,
+      // N-f 站点 9：设置页写 config.json 失败的日志出口（界面据此才提「日志」）
+      onConfigSaveFailure: (Object error, StackTrace stack) => _log.crash(
+        error,
+        stack,
+        label: '配置写盘失败',
+      ),
       stockDelta: stockDelta,
       pendingMarks: pendingMarks,
       // #27 批 2：商品流水查询（镜像 / 主库按壳取，同上）

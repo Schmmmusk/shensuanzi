@@ -17,6 +17,17 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 
+/// 屏上**全部**文字。⚠️ 不能只取 `Text.data` —— `EmphasizedText` 用
+/// `Text.rich`，`.data` 是 null，那样会把整条 SnackBar 看成空字符串。
+String _allPlainText(WidgetTester tester) {
+  final StringBuffer buffer = StringBuffer();
+  for (final RichText r in tester.widgetList<RichText>(find.byType(RichText))) {
+    buffer.write(r.text.toPlainText());
+    buffer.write('\n');
+  }
+  return buffer.toString();
+}
+
 void main() {
   setUpAll(useLocalSqlite);
 
@@ -46,11 +57,13 @@ void main() {
     Future<BackupOutcome> Function()? onBackupNow,
     HostServiceController? hostService,
     VoidCallback? onChangeBackupLocation,
+    void Function(Object error, StackTrace stack)? onConfigSaveFailure,
   }) => MaterialApp(
     home: Scaffold(
       body: SettingsPage(
         config: current,
         configStore: store,
+        onConfigSaveFailure: onConfigSaveFailure,
         backupDirectory: backupDirectory,
         backupStatusLine: backupStatusLine,
         backupNeedsAttention: backupNeedsAttention,
@@ -99,6 +112,76 @@ void main() {
       UiScale.huge,
       reason: '虽然没存上，本次改动仍要生效（否则设置永远用不了）',
     );
+  });
+
+  // N-f 站点 9（2026-11-05 裁定甲）：同一条失败，**现场必须有去处**，
+  // 而界面**不许**出现异常原文（`PathAccessException` 带 config.json 绝对路径）。
+  testWidgets('保存失败 ⇒ 原始异常交给日志出口，界面不出现异常原文', (
+    WidgetTester tester,
+  ) async {
+    final Directory blocker = Directory(store.file.path);
+    blocker.createSync(recursive: true);
+    addTearDown(() {
+      try {
+        blocker.deleteSync(recursive: true);
+      } catch (_) {}
+    });
+
+    Object? loggedError;
+    await tester.pumpWidget(
+      page(
+        (AppConfig config) {},
+        onConfigSaveFailure: (Object error, StackTrace _) => loggedError = error,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('setting-scale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('特大').last);
+    await tester.pumpAndSettle();
+
+    // ① 证据没丢：原始异常确实交出去了
+    expect(loggedError, isNotNull, reason: '没出口 ⇒ 现场当场消失（裁定 ①）');
+    // ② 界面不拼原文
+    final String shown = _allPlainText(tester);
+    expect(shown, contains('没能存到磁盘'));
+    for (final String leak in <String>[
+      'PathAccessException',
+      'OSError',
+      'Exception',
+      box.path,
+      'config.json',
+    ]) {
+      expect(shown, isNot(contains(leak)), reason: '界面漏出「$leak」');
+    }
+    // ③ `AppConfigStore.save` 抛的是**自己造的 StateError**（带 forensic 现场，
+    // 见 `app_config.dart` 的 `_writeDiagnostic`）⇒ 走「认不出来」那档。
+    // 有出口 ⇒ 这时**才**可以提日志（裁定 ③）。
+    expect(shown, contains('日志'));
+  });
+
+  testWidgets('没接日志出口 ⇒ **不许**提「日志」（裁定 ③：不许指一条空路）', (
+    WidgetTester tester,
+  ) async {
+    final Directory blocker = Directory(store.file.path);
+    blocker.createSync(recursive: true);
+    addTearDown(() {
+      try {
+        blocker.deleteSync(recursive: true);
+      } catch (_) {}
+    });
+
+    await tester.pumpWidget(page((AppConfig config) {}));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('setting-scale')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('特大').last);
+    await tester.pumpAndSettle();
+
+    final String shown = _allPlainText(tester);
+    expect(shown, contains('没能存到磁盘'));
+    expect(shown, isNot(contains('日志')));
   });
 
   // 同一批：备份位置要能改（用户实测：备份目录不可写时没有出路 = 死局）

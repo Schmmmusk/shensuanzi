@@ -248,6 +248,8 @@ export 'src/sync/sync_failure.dart'
         syncFailureReason;
 // 队列失败条目的用户文案（#24 / N-e：UI 按 reason_code 分支）
 export 'src/sync/sync_failure_copy.dart' show syncQueueFailureText;
+// 兜底 catch 的用户文案（#43② / N-f：界面不拼 `$error`，日志留原文）
+export 'src/unexpected_failure_copy.dart' show unexpectedFailureAdvice;
 
 // 用户可见文本的规范（`RejectCode`：`RuleOutcome` 与 `SyncResponse` 共用的机读码）
 export 'src/reject_code.dart' show RejectCode;

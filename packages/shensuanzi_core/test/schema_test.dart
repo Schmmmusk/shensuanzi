@@ -995,6 +995,313 @@ void main() {
       );
     });
   });
+
+  // ==========================================================================
+  // N-h（2026-11-06，裁定甲）：**真实 v7 存量库 → v8** 的完整验证
+  //
+  // 裁定原文（`docs/reply.md` §三「第一，N-h 不应该只验证 v7→v8」）要求四件事：
+  //   ① 用**真实的 v7 数据库**（不是空壳）
+  //   ② 迁移前**自动备份**确实发生、且是升级前的样子
+  //   ③ 迁移后**数据完整性**
+  //   ④ **失败时能安全退出**
+  // 下面 ①–④ 各有一条（外加一条「夹具形状」前提校验，理由见那条的注释）。
+  //
+  // ⚠️ 为什么用「链式造出来的 v7」而不是往仓库塞一个 v7 二进制化石：
+  //   `tool/downgrade_to_v7.py` 早就把这条路走通了（v8 造数 → 降回 v7 形状），
+  //   而提案 §N-h 明确认可它当第 15 步的夹具。本组用**同一形态**（链式跑到 v7），
+  //   并额外用「形状 == 全新安装在 v7 的形状」那条前提校验钉住它不是臆造 ——
+  //   这与 `降级构造出来的形状 == 化石的 v1 形状` 是同一个套路。
+  // ==========================================================================
+  group('N-h：真实 v7 存量库 → v8（裁定甲的四项要求逐条钉）', () {
+    test('夹具前提：链式造的 v7 **形状 == 全新安装在 v7 的形状**（逐列含顺序 + 索引）', () {
+      // 这条**不是**迁移测试，是下面几条的**前提校验**：
+      // 如果「造出来的 v7」跟真 v7 不一样，那几条测的就是臆造形状 ——
+      // 它们照样绿，却什么也没证明（v3 那次真的造错过，见 downgradeToV1 上方注释）。
+      final Directory box = Directory.systemTemp.createTempSync('sz_v7shape_');
+      addTearDown(() => deleteQuietly(box));
+      final String chainPath = '${box.path}/chain.db';
+      buildV7Fixture(chainPath, seedRows: false);
+
+      // 「全新安装在 v7」= 当前 DDL 建库后，把 v8 那两列摘掉（v8 只加列，可逆）
+      final String freshPath = '${box.path}/fresh.db';
+      final Database fresh = sqlite3.open(freshPath);
+      for (final String sql in Schema.createStatements) {
+        fresh.execute(sql);
+      }
+      for (final String column in <String>['reason_code', 'discarded']) {
+        fresh.execute('ALTER TABLE ${Schema.syncQueue} DROP COLUMN $column');
+      }
+      fresh.execute('PRAGMA user_version = 7');
+      fresh.dispose();
+
+      final Database chain = sqlite3.open(chainPath);
+      final Database built = sqlite3.open(freshPath);
+      addTearDown(chain.dispose);
+      addTearDown(built.dispose);
+
+      expect(
+        chain.select('PRAGMA user_version').first['user_version'],
+        7,
+        reason: '夹具必须停在 v7，否则下面几条测的不是 v7→v8',
+      );
+      List<String> columnsOf(Database d, String table) => d
+          .select('PRAGMA table_info($table)')
+          .map((Row r) => r['name']! as String)
+          .toList();
+      List<String> indexesOf(Database d) => d
+          .select(
+            "SELECT name FROM sqlite_master WHERE type = 'index' "
+            "AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name",
+          )
+          .map((Row r) => r['name']! as String)
+          .toList();
+
+      // ⚠️ 这里比的是**集合**，不是**顺序** —— 而且这不是偷懒，是实测出来的事实：
+      // 迁移加的列一律**追加在表末尾**，而全新安装按 DDL 书写顺序摆放
+      // （`products` 的 `package_*` 在 DDL 里排在 `created_at` **之前**，
+      // 迁移出来的库排在**之后**）。SQLite 按列名取列，顺序差异无影响。
+      // ⇒ 「含顺序」那种严格比对只适用于**同源**的两个库
+      //   （`降级构造出来的形状 == 化石的 v1 形状` 那条就是同源的）。
+      for (final String table in Schema.allTables) {
+        expect(
+          columnsOf(chain, table).toSet(),
+          columnsOf(built, table).toSet(),
+          reason: '$table 的列必须与「全新安装在 v7」**完全同集合** —— '
+              '多一列少一列都说明夹具形状是臆造的',
+        );
+      }
+      expect(
+        indexesOf(chain),
+        indexesOf(built),
+        reason: '索引也必须一致（v6 重建表最容易漏建索引 —— F19 那个 P0 就是这么来的）',
+      );
+    });
+
+    test('① 真实 v7 存量库（有单据 / 流水 / 待同步队列）升到 v8：数据一行不少', () {
+      final Directory box = Directory.systemTemp.createTempSync('sz_v7up_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/shop.db';
+      buildV7Fixture(path, seedRows: true);
+
+      // 迁移**前**的基线（直接从夹具读，不是事后回忆）
+      final Database before = sqlite3.open(path);
+      final Map<String, int> beforeCounts = <String, int>{
+        for (final String t in Schema.allTables)
+          t: before.select('SELECT COUNT(*) AS c FROM $t').first['c']! as int,
+      };
+      final String payloadBefore = before
+          .select("SELECT payload FROM ${Schema.syncQueue} WHERE id = 'q-1'")
+          .first['payload']!
+          as String;
+      final int docTotalBefore = before
+          .select("SELECT total_amount FROM documents WHERE id = 'd-1'")
+          .first['total_amount']!
+          as int;
+      before.dispose();
+      // 夹具本身要有货 —— 「空库升级」证明不了数据不丢（裁定点名的就是这点）
+      expect(beforeCounts[Schema.documents], greaterThan(0));
+      expect(beforeCounts[Schema.stockLedger], greaterThan(0));
+      expect(beforeCounts[Schema.syncQueue], greaterThan(0));
+
+      final Db upgraded = Db.open(path);
+      addTearDown(upgraded.close);
+      expect(upgraded.schemaVersion, Schema.version);
+      expect(Schema.version, 8, reason: '本组就是为 v7 → v8 写的');
+
+      // ③ 数据完整性：每张表行数不变、金额不变、待同步的 payload 逐字不变
+      for (final MapEntry<String, int> e in beforeCounts.entries) {
+        final int after =
+            upgraded.raw
+                .select('SELECT COUNT(*) AS c FROM ${e.key}')
+                .first['c']!
+                as int;
+        expect(after, e.value, reason: '${e.key} 迁移前后行数必须一致');
+      }
+      expect(
+        upgraded.raw
+            .select("SELECT total_amount FROM documents WHERE id = 'd-1'")
+            .first['total_amount'],
+        docTotalBefore,
+      );
+      expect(
+        upgraded.raw
+            .select("SELECT payload FROM ${Schema.syncQueue} WHERE id = 'q-1'")
+            .first['payload'],
+        payloadBefore,
+        reason: '待同步队列的 payload 是**还没上传的单据**，丢了等于丢用户的单',
+      );
+
+      // SQLite 自己的完整性判定 + 外键复核（v6 重建表后也要照样过）
+      expect(
+        upgraded.raw
+            .select('PRAGMA integrity_check')
+            .first['integrity_check'],
+        'ok',
+        reason: '迁移后的库必须过 SQLite 自身的完整性检查',
+      );
+      expect(
+        upgraded.raw.select('PRAGMA foreign_key_check'),
+        isEmpty,
+        reason: '迁移不能造出引用不到行的孤儿',
+      );
+
+      // 新列是**活的**：能写、默认值对（不是只有结构没有语义）
+      upgraded.raw.execute(
+        "UPDATE ${Schema.syncQueue} SET reason_code = 'stock_insufficient' "
+        "WHERE id = 'q-1'",
+      );
+      final Map<String, Object?> row = upgraded.raw
+          .select("SELECT * FROM ${Schema.syncQueue} WHERE id = 'q-1'")
+          .first;
+      expect(row['reason_code'], 'stock_insufficient');
+      expect(
+        row['discarded'],
+        0,
+        reason: '旧行没这个概念 ⇒ 默认「没放弃」；默认值给反了会把老队列条目'
+            '全显示成已放弃',
+      );
+    });
+
+    test('② 迁移前自动备份：`<db>.before-v7` 是**升级前**的样子（v7、无新列、数据在）', () {
+      final Directory box = Directory.systemTemp.createTempSync('sz_v7bak_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/shop.db';
+      buildV7Fixture(path, seedRows: true);
+
+      final Db upgraded = Db.open(path);
+      addTearDown(upgraded.close);
+      expect(upgraded.schemaVersion, 8);
+
+      final File backup = File('$path.before-v7');
+      expect(
+        backup.existsSync(),
+        isTrue,
+        reason: '裁定点名：迁移前必须自动备份（这是唯一的退路，软件不会自动回滚）',
+      );
+
+      final Database raw = sqlite3.open(backup.path);
+      addTearDown(raw.dispose);
+      expect(
+        raw.select('PRAGMA user_version').first['user_version'],
+        7,
+        reason: '备份必须是**迁移前**的版本，不是迁移后的',
+      );
+      expect(
+        raw
+            .select('PRAGMA table_info(${Schema.syncQueue})')
+            .map((Row r) => r['name']),
+        isNot(contains('reason_code')),
+        reason: '同理，备份里不该已经有 v8 才有的列',
+      );
+      expect(
+        raw.select('SELECT COUNT(*) AS c FROM documents').first['c'],
+        greaterThan(0),
+        reason: '备份必须带着数据 —— 空备份比没有备份更危险（§AE 备份校验同源）',
+      );
+      expect(
+        raw.select('PRAGMA integrity_check').first['integrity_check'],
+        'ok',
+        reason: '退路本身也得是好的（WAL 没 checkpoint 就拷 → 这里会红）',
+      );
+    });
+
+    test('④ v7→v8 失败 ⇒ **停在 v7**、没有半升级状态、备份留给人工、原数据仍可读写', () {
+      // 构造「v8 那一环必然失败」的 v7 库：结构上**已经有 reason_code 列**
+      // 但 user_version 仍是 7 ⇒ `ALTER TABLE ... ADD COLUMN` 报 duplicate column。
+      // 这不是编造的场景 —— 手工改过库、或从备份恢复过一半的库就是这个形状。
+      final Directory box = Directory.systemTemp.createTempSync('sz_v7fail_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/shop.db';
+      buildV7Fixture(path, seedRows: true);
+      final Database tamper = sqlite3.open(path);
+      tamper.execute(
+        'ALTER TABLE ${Schema.syncQueue} ADD COLUMN reason_code TEXT NULL',
+      );
+      tamper.execute('PRAGMA user_version = 7');
+      tamper.dispose();
+
+      expect(() => Db.open(path), throwsA(isA<SqliteException>()));
+
+      // 停在 v7：既没升上去，也没被改坏
+      final Database check = sqlite3.open(path);
+      addTearDown(check.dispose);
+      expect(
+        check.select('PRAGMA user_version').first['user_version'],
+        7,
+        reason: '每版一个事务 ⇒ 这一环整条回滚，不许出现「一列有一列没有」',
+      );
+      expect(
+        check
+            .select('PRAGMA table_info(${Schema.syncQueue})')
+            .map((Row r) => r['name']),
+        isNot(contains('discarded')),
+        reason: '同环的另一列也不许留下（半升级状态 = 下次打开重蹈同一失败）',
+      );
+
+      // 退路还在，而且**能用**（这是「安全退出」的实质：人还能退回原样）
+      final File backup = File('$path.before-v7');
+      expect(
+        backup.existsSync(),
+        isTrue,
+        reason: '失败了也要把退路留着供诊断（软件不会拿它自动覆盖回去）',
+      );
+      final Database rescue = sqlite3.open(backup.path);
+      addTearDown(rescue.dispose);
+      expect(
+        rescue.select('PRAGMA integrity_check').first['integrity_check'],
+        'ok',
+      );
+      expect(
+        rescue.select('SELECT COUNT(*) AS c FROM documents').first['c'],
+        greaterThan(0),
+      );
+
+      // 原库**仍然可读**（失败不能把库变成打不开的砖）
+      final Database reopen = sqlite3.open(path);
+      addTearDown(reopen.dispose);
+      expect(
+        reopen.select('SELECT COUNT(*) AS c FROM documents').first['c'],
+        greaterThan(0),
+        reason: '失败后用户至少还能打开软件看数据，而不是全盘打不开',
+      );
+    });
+
+    test('④补 失败后修好了 ⇒ 从断点继续升到 v8（不是从头重跑）', () {
+      // 与上一条同一个夹具：把多出来的那列去掉（= 人工按手册修好了库），
+      // 再开一次应当**正常升到 v8**。这证明失败不是终局，也证明
+      // 「停在断点、修好再继续」这条设计真的成立（`Db.open` 的文档承诺）。
+      final Directory box = Directory.systemTemp.createTempSync('sz_v7retry_');
+      addTearDown(() => deleteQuietly(box));
+      final String path = '${box.path}/shop.db';
+      buildV7Fixture(path, seedRows: true);
+      final Database tamper = sqlite3.open(path);
+      tamper.execute(
+        'ALTER TABLE ${Schema.syncQueue} ADD COLUMN reason_code TEXT NULL',
+      );
+      tamper.execute('PRAGMA user_version = 7');
+      tamper.dispose();
+      expect(() => Db.open(path), throwsA(isA<SqliteException>()));
+
+      final Database fix = sqlite3.open(path);
+      fix.execute('ALTER TABLE ${Schema.syncQueue} DROP COLUMN reason_code');
+      fix.dispose();
+
+      final Db upgraded = Db.open(path);
+      addTearDown(upgraded.close);
+      expect(upgraded.schemaVersion, 8);
+      expect(
+        upgraded.raw
+            .select('PRAGMA integrity_check')
+            .first['integrity_check'],
+        'ok',
+        reason: '重试升上来的库同样要过完整性检查',
+      );
+      expect(
+        upgraded.raw.select('SELECT COUNT(*) AS c FROM documents').first['c'],
+        greaterThan(0),
+      );
+    });
+  });
 }
 
 /// 把「当前 DDL 建出来的库」降级成 **v1 的形状** —— 供「执行器单元测试」造历史形状。
@@ -1077,6 +1384,79 @@ void downgradeToV1(Database raw) {
   for (final String sql in restoreAtEnd) {
     raw.execute(sql);
   }
+}
+
+/// 造一个**带真实数据**的 v7 库（N-h 用）。
+///
+/// 做法：从 v1 化石出发，**逐环跑 `Schema.migrationStep(1..6)`**，写死
+/// `user_version = 7`，再塞单据 / 流水 / 待同步队列。
+///
+/// 为什么这样造是可信的：
+/// * 走的是**生产迁移代码**，不是手搓 DDL ⇒ 形状由迁移链自己保证；
+/// * 「形状 == 全新安装在 v7」那条前提校验钉住了它（同 `downgradeToV1` 的套路）；
+/// * `tool/downgrade_to_v7.py` 用的是**同一形态**（v8 造数 → 降回 v7），
+///   提案 §N-h 明确认可它当 15 步清单第 15 步的夹具。
+///
+/// ⚠️ 数据是**直接 INSERT** 的（不跑 RuleEngine）—— 这里要验的是「迁移会不会
+/// 弄坏已有行」，不是业务规则；跑规则反而会把「迁移」和「建单」两件事混在一起。
+/// ⚠️ `documents` 的插入**必须带 `business_day`**（v6 起 NOT NULL）。
+void buildV7Fixture(String path, {required bool seedRows}) {
+  File('test/fixtures/v1_empty.db').copySync(path);
+  final Database raw = sqlite3.open(path);
+  for (int v = 1; v < 7; v++) {
+    for (final String sql in Schema.migrationStep(v)) {
+      raw.execute(sql);
+    }
+  }
+  raw.execute('PRAGMA user_version = 7');
+  if (seedRows) {
+    final int t = DateTime(2026, 10, 20, 9, 30).millisecondsSinceEpoch;
+    raw.execute(
+      'INSERT INTO products (id, code, name, unit, sell_price, cost_price, '
+      'created_at, updated_at) '
+      "VALUES ('p-1', 'P00001', '可乐', '瓶', 350, 250, ?, ?)",
+      <Object?>[t, t],
+    );
+    raw.execute(
+      'INSERT INTO parties (id, name, created_at, updated_at) '
+      "VALUES ('y-1', '王姐', ?, ?)",
+      <Object?>[t, t],
+    );
+    raw.execute(
+      'INSERT INTO accounts (id, name, type, created_at, updated_at) '
+      "VALUES ('a-1', '现金', 'cash', ?, ?)",
+      <Object?>[t, t],
+    );
+    raw.execute(
+      'INSERT INTO documents (id, doc_no, doc_type, status, party_id, '
+      'total_amount, paid_amount, occurred_at, created_at, updated_at, '
+      'business_day) '
+      "VALUES ('d-1', 'XS20261020-001', 'sale', 'confirmed', 'y-1', 1050, "
+      '1050, ?, ?, ?, ?)',
+      <Object?>[t, t, t, businessDayOf(t)],
+    );
+    raw.execute(
+      'INSERT INTO document_lines (id, document_id, product_id, quantity, '
+      'unit_price, amount) '
+      "VALUES ('l-1', 'd-1', 'p-1', 3, 350, 1050)",
+    );
+    raw.execute(
+      'INSERT INTO stock_ledger (id, product_id, document_id, quantity, '
+      'unit_cost, total_cost, seq_no, occurred_at, created_at) '
+      "VALUES ('s-1', 'p-1', 'd-1', -3, 250, -750, 1, ?, ?)",
+      <Object?>[t, t],
+    );
+    // 待同步队列：v7 的形状**没有** reason_code / discarded，
+    // 而 payload 是「还没上传的单据」—— 迁移绝不能弄丢它。
+    raw.execute(
+      'INSERT INTO sync_queue (id, entity, entity_id, operation, payload, '
+      "status, retry_count, created_at, next_retry_at) "
+      "VALUES ('q-1', 'document', 'd-2', 'create', "
+      "'{\"doc_no\":\"XS20261020-002\"}', 'pending', 0, ?, 0)",
+      <Object?>[t],
+    );
+  }
+  raw.dispose();
 }
 
 /// 临时目录删不掉不影响结论（Windows 上文件可能还被占用）

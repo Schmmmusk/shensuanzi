@@ -56,6 +56,7 @@ class SettingsPage extends StatefulWidget {
     this.mobileSync,
     this.onScanPair,
     this.onSyncNow,
+    this.onConfigSaveFailure,
     required this.onChanged,
   });
 
@@ -115,6 +116,11 @@ class SettingsPage extends StatefulWidget {
 
   /// 「立即同步」（宿主：遮罩 + syncNow + 完成后重建页面 —— 裁定 ⑦）
   final Future<void> Function()? onSyncNow;
+
+  /// **配置写盘失败**时把原始异常交给宿主记日志（N-f 站点 9，2026-11-05 裁定甲）。
+  /// `null` = 不记（测试）⇒ 界面**不许**提「日志」（裁定 ③：不许指路到
+  /// 一个不存在的日志）。
+  final void Function(Object error, StackTrace stack)? onConfigSaveFailure;
 
   /// 任何修改都会回调（宿主据此热应用缩放 / 店名）
   final void Function(AppConfig config) onChanged;
@@ -251,17 +257,23 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       widget.configStore.save(newConfig);
       widget.onChanged(newConfig);
-    } catch (error) {
+    } catch (error, stack) {
       // 2026-10-23（用户复测：N=4、文件没写、**也没弹消息**）：
       // 原来的顺序是「先 onChanged 再弹 SnackBar」—— 而 onChanged 内部
       // 还有一次 `_configStore.save`，它再抛一次就把 SnackBar 吞了。
       // ⇒ 用户看到「选了什么都没发生」，而我们什么都看不到。
       // 现在：**先告诉用户，再通知宿主**，两步各自独立。
+      //
+      // N-f 站点 9（2026-11-05 裁定甲）：原来这里拼 `$error` —— 里面是
+      // `PathAccessException` 的英文 + **config.json 的绝对路径**。
+      // 现场改走日志（`onConfigSaveFailure`），界面留「改动会不会丢」这句
+      // 真正要紧的话 —— 用户关心的是「我刚才选的还在不在」，不是 errno。
+      widget.onConfigSaveFailure?.call(error, stack);
       showSnack(
         context,
         SnackBar(
           content: EmphasizedText(
-            '没能存到磁盘（$error）。\n'
+            '${unexpectedFailureAdvice(error, logged: widget.onConfigSaveFailure != null, lead: '没能存到磁盘。')}\n'
             '这次的改动**现在已生效**，但重启软件后会变回原来的设置。',
           ),
           duration: const Duration(seconds: 10),

@@ -473,6 +473,11 @@ class _ReturnPageState extends State<ReturnPage> {
                   child: TextField(
                     key: Key('return-qty-$pid'),
                     controller: _qty[pid],
+                    // 保存期间锁输入（#N-i 裁定甲：退货页必补）—— 与另外三个
+                    // 提交页同源。_save() 开头虽有 `if (_saving) return;`
+                    // 挡重复提交，但**不挡「保存中改数字」**：那会让界面显示的
+                    // 数量与已提交出去的单据不一致。
+                    enabled: !_saving,
                     keyboardType: const TextInputType.numberWithOptions(),
                     onChanged: (String text) => _onQtyChanged(pid, text),
                     decoration: InputDecoration(
@@ -487,6 +492,7 @@ class _ReturnPageState extends State<ReturnPage> {
                   child: TextField(
                     key: Key('return-amount-$pid'),
                     controller: _amount[pid],
+                    enabled: !_saving,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
@@ -631,8 +637,13 @@ class _ReturnPageState extends State<ReturnPage> {
                           ),
                         ),
                     ],
-                    onChanged: (Account? account) =>
-                        setState(() => _refundAccount = account),
+                    // 保存期间锁输入（#N-i 裁定甲）：DropdownButton 没有
+                    // `enabled` 参数，同 purchase_page:1615 的写法用
+                    // `onChanged: null` 禁用。
+                    onChanged: _saving
+                        ? null
+                        : (Account? account) =>
+                              setState(() => _refundAccount = account),
                   ),
                 ),
               ),
@@ -642,6 +653,7 @@ class _ReturnPageState extends State<ReturnPage> {
                 child: TextField(
                   key: const Key('return-refund-amount'),
                   controller: _refundAmount,
+                  enabled: !_saving,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
@@ -665,6 +677,7 @@ class _ReturnPageState extends State<ReturnPage> {
   Widget _remarkField() => TextField(
     key: const Key('return-remark'),
     controller: _remark,
+    enabled: !_saving,
     maxLines: 2,
     decoration: const InputDecoration(
       labelText: '备注（可选）',

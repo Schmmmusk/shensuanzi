@@ -49,6 +49,7 @@ class AppShell extends StatefulWidget {
     this.documentSink,
     this.onDocumentSubmitted,
     this.onStorageFailure,
+    this.onConfigSaveFailure,
     this.stockDelta,
     this.pendingMarks,
     this.stockFlow,
@@ -149,6 +150,14 @@ class AppShell extends StatefulWidget {
   /// 开单保存失败时把**原始异常**交给宿主记日志（M15，2026-10-08）。
   /// 界面只显示 `storageFailureNote` 的分类文案；`null` = 不记（测试）。
   final void Function(Object error, StackTrace stack)? onStorageFailure;
+
+  /// **配置写盘失败**的日志出口（N-f 站点 9，2026-11-05 裁定甲）。
+  ///
+  /// 为什么不复用 [onStorageFailure]：那条走 `storageFailureLogLine`，
+  /// 语义是「开单保存失败（库层）」；配置写失败是文件层，混在一起
+  /// 日志里就分不出是哪一类了。`null` = 不记（测试）—— 设置页据此
+  /// **决定要不要提「日志」**（裁定 ③：没出口就不许指路）。
+  final void Function(Object error, StackTrace stack)? onConfigSaveFailure;
 
   /// 库存叠加（C2·§CC 裁定七：权威 + 未同步 + 拆解）。
   /// 手机端注入（镜像队列）；桌面 `null` = 现状零变化。
@@ -496,6 +505,7 @@ Widget appShellPage(
     page = SettingsPage(
       config: shell.configStore.load(),
       configStore: shell.configStore,
+      onConfigSaveFailure: shell.onConfigSaveFailure,
       // #46：手机不给备份区（上面的 allowBackup 注释）；「导出本机数据文件」
       // 的条件**独立**于这几项 ⇒ 手机照常显示
       backupDirectory: allowBackup ? shell.backupDirectory : null,

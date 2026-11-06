@@ -569,6 +569,77 @@ void main() {
     });
   });
 
+  // N-f 站点 7 / 8（2026-11-05 裁定甲）：两条兜底 catch 原本只把 `$error`
+  // 拼进界面文案（英文 + 端口 / 路径），**日志里什么都没留**。
+  // `onInternalError` 本来就在作用域里（同一个方法别处调用过），只是没调。
+  group('兜底 catch：现场进日志、界面不拼原文（N-f）', () {
+    test('启动服务抛异常 ⇒ 原文交给 onInternalError，hint 里没有异常原文', () async {
+      // 注入一个「探测地址就炸」的接缝：它在 `_startRaw` 的 try 里被 await，
+      // 且**不是** StateError（StateError 会被端口那条专门分支接走）。
+      final List<String> labels = <String>[];
+      final List<Object> errors = <Object>[];
+      final HostServiceController c = build(
+        detectAddresses: () async => throw _Boom('探测网卡炸了'),
+        onInternalError: (String label, Object error, StackTrace stack) {
+          labels.add(label);
+          errors.add(error);
+        },
+      );
+      addTearDown(c.stop);
+
+      final HostServiceSnapshot snapshot = await c.start();
+
+      expect(snapshot.state, HostServiceState.failed);
+      expect(labels, hasLength(1), reason: '现场必须有去处（裁定 ①）');
+      expect(labels.single, contains('启动'));
+      expect(errors.single, isA<_Boom>());
+      // 界面那句：分类文案，**不含**异常类型名 / message
+      final String hint = snapshot.failureHint ?? '';
+      expect(hint, isNotEmpty);
+      for (final String leak in <String>['Boom', 'Exception', 'StateError']) {
+        expect(hint, isNot(contains(leak)), reason: '界面漏出「$leak」');
+      }
+      // 有出口 ⇒ 可以提日志（裁定 ③）
+      expect(hint, contains('日志'));
+    });
+
+    test('没接 onInternalError ⇒ 界面**不许**提「日志」（不许指空路）', () async {
+      final HostServiceController c = build(
+        detectAddresses: () async => throw _Boom('探测网卡炸了'),
+      );
+      addTearDown(c.stop);
+
+      final HostServiceSnapshot snapshot = await c.start();
+      expect(snapshot.state, HostServiceState.failed);
+      expect(snapshot.failureHint ?? '', isNot(contains('日志')));
+    });
+
+    test('resetToken 抛异常 ⇒ 原文交给 onInternalError，hint 不拼原文', () async {
+      // clock 在 `reset(now: _clock())` 里求值 ⇒ 抛它就能命中 resetToken 的 catch
+      final List<String> logged = <String>[];
+      final HostServiceController c = HostServiceController(
+        db: db,
+        identities: store,
+        ports: testPorts,
+        detectLocalIp: () async => fakeIp,
+        clock: () => throw _Boom('时钟坏了'),
+        onInternalError: (String label, Object error, StackTrace stack) =>
+            logged.add('$label|$error'),
+      );
+      addTearDown(c.stop);
+
+      final HostServiceSnapshot snapshot = await c.resetToken();
+
+      expect(snapshot.state, HostServiceState.failed);
+      expect(logged, hasLength(1));
+      expect(logged.single, contains('生成新的配对码失败'));
+      expect(logged.single, contains('时钟坏了'), reason: '原文要带出去');
+      final String hint = snapshot.failureHint ?? '';
+      expect(hint, isNot(contains('时钟坏了')));
+      expect(hint, isNot(contains('Exception')));
+    });
+  });
+
   group('文案', () {
     test('resetWarning 说清「掉线」（不只是「重新扫码」）', () {
       expect(HostServiceSnapshot.resetWarning, contains('掉线'));
@@ -625,4 +696,13 @@ void main() {
       );
     });
   });
+}
+
+/// 测试用的**具名**异常：既能确定「日志里那条就是它」，又能断言
+/// 界面文案里**没有**它的类型名与 message（N-f 的判据）。
+class _Boom implements Exception {
+  const _Boom(this.msg);
+  final String msg;
+  @override
+  String toString() => '_Boom: $msg';
 }

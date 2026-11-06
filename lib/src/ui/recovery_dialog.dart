@@ -19,15 +19,22 @@
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
+import 'package:shensuanzi_core/shensuanzi_core.dart'
+    show unexpectedFailureAdvice;
 
 import 'emphasized_text.dart';
 /// 打开「数据体检与恢复」。返回 `true` = 已经接回了一份（调用方应当重试打开库）。
+///
+/// [log]（N-f 站点 4，2026-11-05 裁定甲）：体检 / 接回失败时的**原始异常出口**。
+/// 之前这个对话框没有任何日志参数 ⇒ 界面只能把 `$error` 拼给用户看，
+/// 而现场（栈、errno）当场就没了。传了它，界面才可以说「日志里有详细原因」。
 Future<bool> showRecoveryDialog(
   BuildContext context, {
   required String dataDirectory,
   required String databasePath,
   required String backupDirectory,
   required int currentSchemaVersion,
+  AppLog? log,
 }) async {
   final bool? restored = await showDialog<bool>(
     context: context,
@@ -38,6 +45,7 @@ Future<bool> showRecoveryDialog(
       databasePath: databasePath,
       backupDirectory: backupDirectory,
       currentSchemaVersion: currentSchemaVersion,
+      log: log,
     ),
   );
   return restored ?? false;
@@ -49,12 +57,16 @@ class _RecoveryDialog extends StatefulWidget {
     required this.databasePath,
     required this.backupDirectory,
     required this.currentSchemaVersion,
+    this.log,
   });
 
   final String dataDirectory;
   final String databasePath;
   final String backupDirectory;
   final int currentSchemaVersion;
+
+  /// 原始异常的唯一去处；`null` = 没接（此时界面**不许**提日志）。
+  final AppLog? log;
 
   @override
   State<_RecoveryDialog> createState() => _RecoveryDialogState();
@@ -89,10 +101,20 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
         if (!mounted) return;
         setState(() => _candidates.add(candidate));
       }
-    } catch (error) {
-      // 体检本身失败（比如备份目录读不了）—— 说清是哪一步，别静默
+    } catch (error, stack) {
+      // 体检本身失败（比如备份目录读不了）—— 说清是哪一步，别静默。
+      //
+      // N-f 站点 4（2026-11-05 裁定甲）：原来这里拼 `$error`（英文 + 绝对路径）。
+      // 现在原文进日志、界面给人话；**没传 log 时不提日志**（裁定 ③）。
+      widget.log?.crash(error, stack, label: '数据体检失败');
       if (!mounted) return;
-      setState(() => _error = '检查备份时出错：$error');
+      setState(() {
+        _error = unexpectedFailureAdvice(
+          error,
+          logged: widget.log != null,
+          lead: '检查备份时出错。',
+        );
+      });
     } finally {
       if (mounted) setState(() => _scanning = false);
     }

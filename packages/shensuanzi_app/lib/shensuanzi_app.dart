@@ -41,7 +41,12 @@ export 'src/data_directory.dart'
     show DataDirectoryPolicy, DirectoryAdvice, DirectoryVerdict, formatBytes;
 export 'src/data_directory_service.dart' show DataDirectoryService;
 export 'src/data_migrator.dart'
-    show DataMigrationResult, DataMigrator, MigrationPlan, MigrationProgress;
+    show
+        DataMigrationResult,
+        DataMigrator,
+        MigrationPlan,
+        MigrationProgress,
+        MigrationTargetBlocked;
 export 'src/startup_trace.dart'
     show StartupTrace, kStartupTrace, startupLine, pageLine, settledLine;
 export 'src/instance_lock.dart'
