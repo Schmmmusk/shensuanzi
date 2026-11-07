@@ -9,9 +9,9 @@
 | [`seed_test_data.py`](seed_test_data.py) | 写**测试用主数据**（商品 / 往来方 / 账户），可生成 SQL 注入探针数据 | ✅ 只写指定的测试库 | ❌ 不会 | 测试机 |
 | [`destructive_acceptance.py`](destructive_acceptance.py) | 跑 `docs/desktop_acceptance.md` **第九节（异常与破坏性）** 的现场准备 + 自动验库 + 人工清单 | ✅ | 仅 9.1 隔离模式启动并强杀**它自己启动的**进程 | 测试机 |
 | [`perf_seed.py`](perf_seed.py) | 造一份体量真实、内部自洽的账本（每张流水表 ≥ 10 万行） | ✅ 只写指定的测试库 | ❌ 不会 | 测试机 |
-| [`perf_bench.py`](perf_bench.py) | 20 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN`（含概览首屏一次加载的全部 SQL） | ❌ 只读（`mode=ro`） | ❌ 不会 | 测试机 |
+| [`perf_bench.py`](perf_bench.py) | **25 条**热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN`（含概览首屏一次加载的全部 SQL；单据列表与生产**逐字同形 = 三段**，搜索按 4 种关键词形状各一条）。`--explain` 会**分步**打出每条 SQL 的计划 | ❌ 只读（`mode=ro`） | ❌ 不会 | 测试机 |
 | [`perf_monitor.py`](perf_monitor.py) | 实测期间按 0.2–0.5 秒记录进程/文件指标，并**自动发现进程、自动识别操作**（不用按键） | ❌ 只读 | ❌ 不会 | 测试机 |
-| [`machine_info.py`](machine_info.py) | 机器档案（CPU 型号 / **逻辑处理器数** / 内存 / 磁盘 / 电源计划）。⚠️ **bench 与 monitor 都 import 它**，分发时漏了那两个脚本直接起不来 | ❌ 只读 | ❌ 不会 | 测试机 |
+| [`machine_info.py`](machine_info.py) | 机器档案（CPU 型号 / **逻辑处理器数** / 内存 / 磁盘 / 电源计划 / `--host-media` 宿主物理介质）。⚠️ **bench 与 monitor 都 import 它**，分发时漏了那两个脚本直接起不来 | ❌ 只读 | ❌ 不会 | 测试机 |
 | [`downgrade_to_v7.py`](downgrade_to_v7.py) | 把 **v8** 库降级成 v7 形状，用来验「老库升级」的迁移路径（机房机器会被还原，发旧包还得再解决旧库造数） | ✅ 只改指定的测试库（有数据要 `--yes`） | ❌ 不会 | 测试机 |
 | [`downgrade_to_v5.py`](downgrade_to_v5.py) | 把 **v6** 库降级成 v5 形状，验**历史**迁移路径 v5→v6（v7→v8 用 `downgrade_to_v7.py`） | ✅ 只改指定的测试库（有数据要 `--yes`） | ❌ 不会 | 测试机 |
 | [`db_audit.py`](db_audit.py) | **只读审计**账务不变量 INV-1~8（单据金额 / 缓存 / 纪律 11 / 孤儿行 / `seq_no` 唯一 / 退货累计） | ❌ 只读（`mode=ro`） | ❌ 不会（软件开着也能跑） | 测试机 |
@@ -291,9 +291,9 @@ python tool/destructive_acceptance.py --phase all --data-dir /tmp/fixture --conf
 | 脚本 | 干什么 | 会写库吗 |
 |---|---|---|
 | [`perf_seed.py`](perf_seed.py) | 造一份**体量真实、内部自洽**的账本（每张流水表 ≥ 10 万行） | ✅ 只写指定的测试库 |
-| [`perf_bench.py`](perf_bench.py) | 20 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN` | ❌ 只读（`mode=ro`） |
+| [`perf_bench.py`](perf_bench.py) | **25 条**热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN`（列表与生产同形 = 三段；`--explain` 分步打印） | ❌ 只读（`mode=ro`） |
 | [`perf_monitor.py`](perf_monitor.py) | 实测期间按 0.2–0.5 秒记录进程/文件指标 + **自动发现进程、自动识别操作**（不用按键） | ❌ 只读 |
-| [`machine_info.py`](machine_info.py) | 机器档案（含**逻辑处理器数** —— CPU 是单核 100% 刻度，不记核数就没法跨机比） | ❌ 只读 |
+| [`machine_info.py`](machine_info.py) | 机器档案（含**逻辑处理器数** —— CPU 是单核 100% 刻度，不记核数就没法跨机比；含**电源计划** —— 「平衡」会降频，同一份库能差 2~3 倍）。`--json 文件` 写**纯 JSON** 档案；`--host-media` 记**宿主物理介质**（虚拟机里采不到，不填会在档案里标「未提供」） | ❌ 只读 |
 | [`downgrade_to_v7.py`](downgrade_to_v7.py) | 把 **v8** 库降级成 v7 形状，验**当前**迁移路径 v7→v8 | ✅ 只改指定的测试库 |
 | [`downgrade_to_v5.py`](downgrade_to_v5.py) | 把 **v6** 库降级成 v5 形状，验**历史**迁移路径 v5→v6 | ✅ 只改指定的测试库 |
 | [`gen_schema_snapshot.py`](gen_schema_snapshot.py) | 从 `schema.dart` 重新生成 `schema_snapshot.json`（**改 schema 后必跑**） | ❌ 写快照 |

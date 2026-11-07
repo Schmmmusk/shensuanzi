@@ -848,9 +848,20 @@ class _WindowsProcess:
 #
 # | 探针 | 它测的 | 页面**实际**跑的 | 差在哪 |
 # |---|---|---|---|
-# | `stock` | `stock_ledger` 全表 GROUP BY | 库存页 `stockAggregates()` | 页面那条还带「进过货」的 `MAX(CASE…)`，略贵 |
-# | `list` | 单段取 id，**表达式**排序、**无** roots 过滤 | 单据页 `listDocuments(rootsOnly)` **两段** + `business_day` 索引 | 三处都不同，**数字不可当首屏耗时引用** |
-# | `window` | `updated_at > ?` 一页 | `pull` 的最近更新窗口 | 基本同形 |
+# | `stock` | `stock_ledger` 全表 GROUP BY（只 `SUM(quantity)`） | 库存页 `stockAggregates()` | 页面那条**多两列聚合**：`SUM(total_cost)` + 「进过货」的 `MAX(CASE…)` ⇒ 页面比探针贵 |
+# | `list` | 单段取 id，**表达式**排序、**无** roots 过滤 | 单据页 `listDocuments(rootsOnly)` **三段** + `business_day` 索引 | 三处都不同，**数字不可当首屏耗时引用** |
+# | `window` | `updated_at > ?` 一页，**只取 id** | `pull` 的最近更新窗口（`SELECT *`） | WHERE/ORDER/LIMIT 同形，但探针**行更窄** ⇒ 趋势可比，绝对值偏快 |
+#
+# ## 与 `perf_bench` 的对应关系（2026-11-07 按用户审查 §二·4 补，逐条实测过）
+#
+# | 探针 | bench 键 | 关系 |
+# |---|---|---|
+# | `probe_stock_ms` | `stock_group` | **SQL 逐字相同**（只差列别名）⇒ 两者可直接互比；但**都不等于库存页** |
+# | `probe_list_ms` | **无** | 生产列表早已三段 + 索引排序，探针是旧形状 ⇒ **只能自己和自己比**（跨时间/跨会话看趋势） |
+# | `probe_window_ms` | `pull_window` | 同形但探针只取 id ⇒ **趋势直接比，绝对值以 bench 为准** |
+#
+# ⚠️ 所以手册里「与 `before.csv` 比 p95 涨 ≥ 2 倍」这条判据**只对 `probe_window_ms`
+# 严格成立**。别把它套到三条探针上 —— 那会把「探针慢了两倍」错报成「列表首屏慢了两倍」。
 #
 # 所以：**报告里 `probe_list_ms` 绝不能写成「单据页首屏耗时」**。要那个数字，
 # 用 `perf_bench.py --only list_roots`（与 DAO 逐字同形），或用 monitor 的
@@ -866,7 +877,8 @@ PROBES: Tuple[Tuple[str, str], ...] = (
         "SELECT product_id, COALESCE(SUM(quantity), 0) FROM stock_ledger GROUP BY product_id",
     ),
     (
-        # ⚠️ 见上方表格：这条**不是**单据页首屏（表达式排序 + 无 roots 过滤 + 单段）。
+        # ⚠️ 见上方表格：这条**不是**单据页首屏（表达式排序 + 无 roots 过滤 + 单段，
+        # 而生产已是**三段**：取 id → 整行聚合 → 核销笔数）。
         # 保持旧形状是有意的（省 I/O），别拿它的数字去和 bench 的 `list_roots` 比。
         "list",
         "SELECT d.id FROM documents d LEFT JOIN parties pa ON pa.id = d.party_id "
@@ -1502,7 +1514,9 @@ def build_report(session: Session) -> str:
     # 更糟的是受限机器上「人工手段也拿不到配置」—— 所以这里必须自己采。
     # ⚠️ 采一次就够：`cmd_run` 里已经采好挂在 session 上（报告与 session.json 用同一份），
     # 只有单独调 build_report 时才现场采。
-    machine = getattr(session, "machine", None) or machine_info.collect()
+    machine = getattr(session, "machine", None) or machine_info.collect(
+        host_media=(getattr(getattr(session, "args", None), "host_media", "") or None)
+    )
     add("| 本机 | %s |" % machine_info.summary(machine))
     add("| 采集来源 | %s |" % ("、".join(
         "%s=%s" % (k, v) for k, v in sorted(machine.get("sources", {}).items())
@@ -1646,10 +1660,19 @@ def build_report(session: Session) -> str:
                 continue
             add("| %s | %d | %.2f | %.2f | %.2f |" % (label, int(st["n"]), st["p50"], st["p95"], st["max"]))
         add("")
-        add("> ⚠️ **探针 ≠ 页面耗时**，只能看趋势。`单据列表` 那条是**简化形状**"
-            "（单段取 id、表达式排序、无 roots 过滤），而单据页首屏跑的是 "
-            "`listDocuments(rootsOnly)` 两段 + `business_day` 索引 —— 两者数字不可互换。"
-            "要「首屏多少毫秒」请用 `perf_bench.py --only list_roots`；"
+        add("> ⚠️ **探针 ≠ 页面耗时**，只能看趋势。三条探针与 `perf_bench` 的对应关系"
+            "**不一样**，判法也不同（2026-11-07 按用户审查 §二·4 细分）：")
+        add(">")
+        add("> - `同步窗口` ↔ bench `pull_window`：**同形**（探针只取 id，行更窄）"
+            "⇒ 趋势可直接与 `before.csv` 比，绝对值以 bench 为准。")
+        add("> - `库存合计` ↔ bench `stock_group`：**SQL 逐字相同** ⇒ 两者可直接互比；"
+            "但两者都**不等于库存页**（页面那条还多 `SUM(total_cost)` 与「进过货」两列聚合）。")
+        add("> - `单据列表` ↔ **无对应项**：它是**简化形状**（单段取 id、表达式排序、"
+            "无 roots 过滤），而单据页首屏跑的是 `listDocuments(rootsOnly)` **三段**"
+            "（取 id → 整行聚合 → 核销笔数）+ `business_day` 索引 ⇒ **只能自己和自己比**"
+            "（跨时间/跨会话看趋势），**不要**与 `list_roots` 的绝对值互比。")
+        add(">")
+        add("> 要「首屏多少毫秒」请用 `perf_bench.py --only list_roots`；"
             "要「用户那一下卡不卡」请用 `s` / `e` 人工标记。")
     else:
         add("（未开启。加 `--probe-interval 60` 可每 60 秒量一次只读查询耗时。）")
@@ -1908,6 +1931,14 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--out", default=None, help="结果目录（默认 ./perf-run-YYYYmmdd-HHMMSS）")
     out.add_argument("--label", default="", help="本轮标签，写进报告（如「第1轮/老机器」）")
     out.add_argument("--session-note", default="", help="本轮现场备注（磁盘类型、是否开杀软等）")
+    out.add_argument(
+        "--host-media",
+        dest="host_media",
+        default="",
+        metavar="文本",
+        help="宿主物理存储介质（如「NVMe SSD」）。**虚拟机里采不到**，只能人工确认；"
+        "不填则机器档案里标「未提供」—— I/O 数字没有它就不可跨机比较",
+    )
     out.add_argument("--app-version", default="", help="软件版本（UI 上能看到就填）")
     out.add_argument("--spool", default=None, help="第二个窗口用 mark 写的事件文件（JSONL）")
     out.add_argument("--html", action="store_true", help="额外生成 report.html")
@@ -2161,7 +2192,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         session.close()
 
     # 机器配置：**采一次**，报告与 session.json 共用（两处各采一次会不一致）
-    session.machine = machine_info.collect()
+    session.machine = machine_info.collect(
+        host_media=(getattr(args, "host_media", "") or None)
+    )
     report = build_report(session)
     report_path = os.path.join(session.out_dir, "report.md")
     with open(report_path, "w", encoding="utf-8") as fh:

@@ -29,17 +29,19 @@
 |---|---|
 | `stock_group` / `stock_cost` | 库存页的「账面」「成本（均价）」、开单页的库存快照 |
 | `in_transit` | 库存页的「在途」、在店可售 |
-| `list_documents` | 单据列表首屏（含对方名、已退额、按日分桶排序） |
-| `doc_search` / `doc_search_count` | 单据页搜索（四路 LIKE，两段 + 「共 N 条」） |
+| `list_documents` | 单据列表首屏（**三段**：取 id → 整行聚合 → 核销笔数） |
+| `doc_search` / `doc_search_count` | 单据页搜索（四路 LIKE，三段 + 「共 N 条」） |
+| `doc_search_load` | **一次搜索动作**的总耗时（计数 + 完整三段）—— 用户实际等的时间 |
+| `doc_search_docno` / `_party` / `_childno` / `_product` | 搜索**单独命中一路**的四种场景（词不同成本差 6 倍，见 `_SEARCH_SCENARIOS`） |
 | `lines_of_page` | 单据列表的明细（本页 id 批量取） |
-| `settled_counts` | 列表的「已收 N 笔」（批量 `IN + GROUP BY`） |
+| `settled_counts` | 「最新 200 张单」的核销笔数（形状相似但**不是页面那条**，页面那条已并入 `list_*` / `doc_search`） |
 | `party_balances` / `account_balances` | 往来方页、账户页、概览 |
 | `today_summary` | 概览「今日销售」 |
 | `recent_products` | 开单页商品选择器的「最近使用」 |
 | `pull_*` | 手机同步一次 pull 的分页 + 最近更新窗口 |
 | `doc_count` | 概览「有没有单据」（**裸 COUNT，不是页面跑的**） |
 | `count_roots` | 单据页「共 N 条」= `countDocuments(rootsOnly)` —— **每帧都跑**（门禁） |
-| `list_roots` | 单据页首屏 = `listDocuments(rootsOnly)` 两段 —— **每帧都跑**（门禁） |
+| `list_roots` | 单据页首屏 = `listDocuments(rootsOnly)` **三段** —— **每帧都跑**（门禁） |
 | `gross_margin` | 概览「毛利趋势」= `dailyGrossMargin(30 天)`，**6 条 SQL**（N-a 新增） |
 | `overview_load` | 概览页**一次 `_load()` 的全部 SQL**（最多 16 条：宽窗口营收 3 + 今日 1 + 应收/应付各一遍 `partyBalances` + 存货榜 1 + 毛利 6） |
 
@@ -51,6 +53,11 @@ DAO 换成 `business_day` + 两段式后 bench 没跟上，在**健康库**上�
 ⇒ 数字**两头都不对**，而且偏快（假绿）。判据同上一次：用 `--explain` 核对形状 ——
 `count_roots` 不该有 `MATERIALIZE`；列表第一段该是 `USING INDEX idx_docs_bday_created`
 且无 `TEMP B-TREE FOR ORDER BY`。
+2026-11-07 **第三次**（用户审查 §一·2）：生产的 `_summaries` 是**三段**，bench 只跑到
+第二段 —— 漏了 `settlementCountsMany()` ⇒ 列表与搜索**又被低估**一次（还是偏快）。
+⚠️ 教训不是「又漏了一条 SQL」，而是**「对齐 DAO」这件事没有终点**：DAO 加一段、
+换一次取数方式，bench 都会静默落后。所以判据要能**机械复查** ——
+`--explain` 现在会把**每一段**都打出来（`explain_steps`），数一下段数就知道漏没漏。
 
 ## 安全
 
@@ -180,20 +187,74 @@ _STAGE2_LIST = (
 )
 
 
+#: 第三段：`settlementCountsMany()` —— 列表行摘要「已收 N 笔」。
+#:
+#: ⚠️ 2026-11-07 补（用户审查 §一·2）：`DocumentDao._summaries` 其实是**三段**，
+#: 不是两段。第三段拿的是**前两段实际筛出来的那批 id**，而 bench 以前只跑到第二段
+#: ⇒ 列表与搜索的耗时被**系统性低估**。独立的 `settled_counts` 键测的是
+#: 「最新 200 张原始单据」，形状相似但**不是同一条查询**（生产用的是筛选后的一页）。
+#: 它用了 `idx_settle_target`、且只针对一页，误差大概不大 —— 但**没测过就不许假设**
+#: （纪律 20：不能照未验证的假设下结论）。
+#:
+#: 参数 = 第一段那批 id（与生产同：`WHERE target_doc_id IN (?, ?, …)`）。
+_SETTLEMENT_COUNTS = (
+    "SELECT target_doc_id AS t, COUNT(*) AS n FROM settlements "
+    "WHERE target_doc_id IN (%s) GROUP BY target_doc_id"
+)
+
+
+def _stage3_ids(conn: sqlite3.Connection, stage1: str, params: Sequence[Any], limit: int) -> List[Any]:
+    """跑第一段拿真实 id（第三段与 `--explain` 都要用）。"""
+    return [row[0] for row in conn.execute(stage1, params).fetchall()][:limit]
+
+
 def _two_stage(stage1: str, limit: int):
-    """把「先取 id、再按 id 取整行」包成 bench 的 callable（见 `run_one`）。"""
+    """把「取 id → 按 id 取整行 → 批量核销笔数」包成 bench 的 callable。
+
+    ⚠️ 名字叫 `_two_stage` 是**历史遗留**，实际是**三段**（第三段 2026-11-07 补）。
+    名字不改是为了让 `git blame` 与既有引用继续对得上；要看真实段数看这个 docstring。
+    """
 
     def measure(conn: sqlite3.Connection) -> int:
-        ids = [row[0] for row in conn.execute(stage1, (limit,)).fetchall()]
+        ids = _stage3_ids(conn, stage1, (limit,), limit)
         if not ids:
             return 0
         marks = ",".join("?" * len(ids))
         sql = _STAGE2_LIST % (marks, marks, marks)
-        return len(conn.execute(sql, (*ids, *ids, *ids)).fetchall())
+        rows = len(conn.execute(sql, (*ids, *ids, *ids)).fetchall())
+        # 第三段：与生产同一批 id、同一条 SQL（`settlementCountsMany`）
+        rows += len(
+            conn.execute(_SETTLEMENT_COUNTS % marks, tuple(ids)).fetchall()
+        )
+        return rows
 
-    # 给 --explain 用：callable 本身没法 EXPLAIN，但**第一段**才是索引
-    # 有没有用上的关键（第二段是按 id 点查，形状固定）。挂个属性比返回
-    # 一句「见下方 *_stage 键」诚实 —— 之前那句是空头承诺，下面并没有那些键。
+    def steps(conn: sqlite3.Connection):
+        """给 `--explain` 用：**三段都出计划**，参数用第一段的真实 id。
+
+        为什么第三段也要出计划：它走 `idx_settle_target`，一旦哪天索引没了
+        （或 id 数量级变了）计划里会直接出现 `SCAN settlements` —— 只看第一段
+        永远发现不了。
+        """
+        out = [("第一段 取 id", stage1, (limit,))]
+        ids = _stage3_ids(conn, stage1, (limit,), limit)
+        if ids:
+            marks = ",".join("?" * len(ids))
+            out.append(
+                ("第二段 整行 + 聚合（%d 个 id）" % len(ids),
+                 _STAGE2_LIST % (marks, marks, marks),
+                 (*ids, *ids, *ids))
+            )
+            out.append(
+                ("第三段 核销笔数（%d 个 id）" % len(ids),
+                 _SETTLEMENT_COUNTS % marks,
+                 tuple(ids))
+            )
+        else:
+            out.append(("第三段 核销笔数", "", ("第一段没取到 id，跳过",)))
+        return out
+
+    measure.explain_steps = steps  # type: ignore[attr-defined]
+    # 兜底：只认 `explain_sql` 的老调用方（第一段才是索引是否生效的关键）
     measure.explain_sql = stage1  # type: ignore[attr-defined]
     measure.explain_params = (limit,)  # type: ignore[attr-defined]
     return measure, ()
@@ -271,35 +332,161 @@ _COUNT_SEARCH = (
 )
 
 
-def _search_params() -> Tuple[Any, ...]:
-    """搜索词固定用 `1`：单号里几乎必含，能稳定命中四路里的 EXISTS 分支。"""
-    pat = f"%{_like_escape('1')}%"
+#: 默认搜索词：`1` 在造数库里**四路全命中**（夹具库 5,826 张根单命中 3,581 张），
+#: 所以它代表「最坏情况」，`doc_search` / `doc_search_count` / `doc_search_load` 都用它。
+_DEFAULT_SEARCH_TERM = "1"
+
+#: 搜索场景（2026-11-07 用户审查 §二·6）：以前只有**一个**固定词 `1`，
+#: 而 `1` 在造数库里同时命中**四路**（实测夹具库 5,826 张根单里命中 3,581 张）。
+#:
+#: ⚠️ **我原本以为 `1` 是「四路全开的最坏情况」，实测正好相反**（夹具库 12 轮）：
+#:
+#: | 词 | 命中路 | 命中根单 | p95 |
+#: |---|---|---|---|
+#: | `1` | 四路全中 | 3,581 | **1.36 ms** |
+#: | `XS` | ① 主单号 | 2,494 | 1.60 ms |
+#: | `SK` | ③ 子单号 | 1,801 | 2.26 ms |
+#: | `老板` | ② 往来方名 | 464 | 5.46 ms |
+#: | `牛奶` | ④ 商品名 | 376 | **8.70 ms** |
+#:
+#: 原因：`OR` 是**短路**的。词 `1` 在**第一路**（`doc_no LIKE`）就命中绝大多数行，
+#: 后面两条 EXISTS 根本不执行 ⇒ 它其实是**接近最好情况**。反过来，`牛奶` 这种
+#: 「单号/往来方/子单号都不命中、只有商品明细命中」的词，要把**四路全跑完**才判定，
+#: 而且命中行少 ⇒ **最慢**（比 `1` 慢 6.4 倍）。
+#:
+#: ⇒ 这正是用户 §二·6 说的「不同搜索词的执行路径很不一样」，而且**方向和我猜的相反**。
+#: 只测 `1` 会**系统性低估**搜索成本 —— 用户真按商品名搜的时候慢得多。
+#: 所以四个单独场景必须**分别报告**，不能只留一条。
+#:
+#: ⚠️ 词表来自 `perf_seed.py` 的 `PRODUCT_NAMES` / `PARTY_*` / `PREFIX`，
+#: **换造数词表要同步这里**，否则某一路命中 0 条 ⇒ 那条基线快得毫无意义
+#: （报告里的 `rows` 列会掉到 0，这是识别信号）。
+#:
+#: 都**不进 GATES**（N-d 未裁）；门禁只该管「用户每帧都跑的东西」。
+#:
+#: 每条 = `(键, 搜索词, 说明)`，由 `QUERIES` 末尾展开成基准。`doc_search`
+#: （词 `1`）由 `q_doc_search` 单独提供，不在这里重复注册。
+_SEARCH_SCENARIOS: Tuple[Tuple[str, str, str], ...] = (
+    ("doc_search_docno", "XS", "只命中①主单号"),
+    ("doc_search_party", "老板", "只命中②往来方名"),
+    ("doc_search_childno", "SK", "只命中③子单号"),
+    ("doc_search_product", "牛奶", "只命中④商品名"),
+)
+
+
+def _search_params(term: str = "1") -> Tuple[Any, ...]:
+    """四路 LIKE 的参数（同一个词填四格，与生产 `listDocuments` 一致）。
+
+    转义走 `_like_escape` ⇒ 与生产同构（用户 2026-10-24 意见）。
+    """
+    pat = f"%{_like_escape(term)}%"
     return (pat, pat, pat, pat)
 
 
-def q_doc_search(limit: int, window_ms: int):
-    """单据页搜索的**列表**（`listDocuments(query:, rootsOnly: true)`）—— **两段**。
+def _run_search_list(conn: sqlite3.Connection, params: Sequence[Any], limit: int) -> int:
+    """跑「搜索列表」的**第二、三段**（第一段由调用方先跑，参数已含搜索词）。
 
-    ⚠️ 与页面一致：搜索时页面跑的是 `countDocuments` + `listDocuments` **两条**
-    （见 `documents_page.dart` 的 `_loadInto`），所以另有一条 `doc_search_count`。
+    返回行数只用于报告里的 `rows` 列（**命中 0 条是个信号**：说明搜索词在
+    这份库里不命中那一路，该条基线的耗时没有意义）。
+    """
+    ids = _stage3_ids(conn, _STAGE1_SEARCH, (*params, limit), limit)
+    if not ids:
+        return 0
+    marks = ",".join("?" * len(ids))
+    rows = len(conn.execute(_STAGE2_LIST % (marks, marks, marks),
+                            (*ids, *ids, *ids)).fetchall())
+    rows += len(conn.execute(_SETTLEMENT_COUNTS % marks, tuple(ids)).fetchall())
+    return rows
+
+
+def _search_list_steps(
+    conn: sqlite3.Connection, params: Sequence[Any], limit: int, term: str
+) -> List[Tuple[str, str, Sequence[Any]]]:
+    """「搜索列表」三段的 `(标签, SQL, 参数)`，给 `--explain` 用。"""
+    out: List[Tuple[str, str, Sequence[Any]]] = [
+        ("第一段 取 id（四路 LIKE，词=%s）" % term, _STAGE1_SEARCH, (*params, limit))
+    ]
+    ids = _stage3_ids(conn, _STAGE1_SEARCH, (*params, limit), limit)
+    if ids:
+        marks = ",".join("?" * len(ids))
+        out.append((
+            "第二段 整行 + 聚合（%d 个 id）" % len(ids),
+            _STAGE2_LIST % (marks, marks, marks),
+            (*ids, *ids, *ids),
+        ))
+        out.append((
+            "第三段 核销笔数（%d 个 id）" % len(ids),
+            _SETTLEMENT_COUNTS % marks,
+            tuple(ids),
+        ))
+    else:
+        # 空 SQL = 「这一步本轮没跑」的约定（explain() 认这个），原因放参数位
+        out.append(("第二/三段", "", ("搜索没命中，跳过",)))
+    return out
+
+
+def _make_search_bench(term: str):
+    """造一条「搜索列表」基准工厂（签名同其它 `q_*`：`(limit, window_ms)`）。
+
+    用**工厂 + 共享实现**而不是给每个词复制一份函数：五份逐字同形的代码正是
+    纪律 18 点名的漏改高发区（改了一处忘四处 —— 2026-10-14 就栽在开单三页的
+    同构代码上）。
     """
 
-    def measure(conn: sqlite3.Connection) -> int:
-        ids = [
-            row[0]
-            for row in conn.execute(
-                _STAGE1_SEARCH, (*_search_params(), limit)
-            ).fetchall()
-        ]
-        if not ids:
-            return 0
-        marks = ",".join("?" * len(ids))
-        sql = _STAGE2_LIST % (marks, marks, marks)
-        return len(conn.execute(sql, (*ids, *ids, *ids)).fetchall())
+    def query(limit: int, window_ms: int):
+        params = _search_params(term)
 
-    measure.explain_sql = _STAGE1_SEARCH  # type: ignore[attr-defined]
-    measure.explain_params = (*_search_params(), limit)  # type: ignore[attr-defined]
-    return measure, _search_params()
+        def measure(conn: sqlite3.Connection) -> int:
+            return _run_search_list(conn, params, limit)
+
+        measure.explain_steps = (  # type: ignore[attr-defined]
+            lambda conn: _search_list_steps(conn, params, limit, term)
+        )
+        measure.explain_sql = _STAGE1_SEARCH  # type: ignore[attr-defined]
+        measure.explain_params = (*params, limit)  # type: ignore[attr-defined]
+        return measure, params
+
+    return query
+
+
+def q_doc_search(limit: int, window_ms: int):
+    """单据页搜索的**列表**（`listDocuments(query:, rootsOnly: true)`）—— **三段**。
+
+    ⚠️ 与页面一致：搜索时页面跑的是 `countDocuments` + `listDocuments` **两条**
+    （见 `documents_page.dart` 的 `_loadInto`），所以另有一条 `doc_search_count`；
+    而「用户点一次搜索到底等多久」由 `doc_search_load` 量（计数 + 完整三段列表）。
+
+    搜索词是 `1`（**四路全命中**的最坏情况）。单独一路的成本看
+    `doc_search_docno` / `_party` / `_childno` / `_product` 四条（见 `_SEARCH_SCENARIOS`）。
+    """
+    return _make_search_bench(_DEFAULT_SEARCH_TERM)(limit, window_ms)
+
+
+def q_doc_search_load(limit: int, window_ms: int):
+    """**一次搜索动作**的全部 SQL：`countDocuments(query)` + 完整三段 `listDocuments`。
+
+    为什么单独一条（2026-11-07 用户审查 §一·2）：`doc_search` 与 `doc_search_count`
+    各自只量一条 SQL，而用户点一次搜索是**两条连着跑**。只给 `doc_search` 加门禁
+    会「保护了单条 SQL，却没保护用户实际感受到的搜索延迟」。
+
+    ⚠️ 它与 `doc_search` + `doc_search_count` **不是简单相加** —— 计数那条会把
+    四路 LIKE 的表再扫一遍，缓存冷热也会互相影响。所以必须实测，不能拿两条相加。
+    """
+    params = _search_params(_DEFAULT_SEARCH_TERM)
+
+    def measure(conn: sqlite3.Connection) -> int:
+        rows = len(conn.execute(_COUNT_SEARCH, params).fetchall())
+        return rows + _run_search_list(conn, params, limit)
+
+    def steps(conn: sqlite3.Connection):
+        return [("计数「共 N 条」", _COUNT_SEARCH, params)] + _search_list_steps(
+            conn, params, limit, _DEFAULT_SEARCH_TERM
+        )
+
+    measure.explain_steps = steps  # type: ignore[attr-defined]
+    measure.explain_sql = _COUNT_SEARCH  # type: ignore[attr-defined]
+    measure.explain_params = params  # type: ignore[attr-defined]
+    return measure, ()
 
 
 def q_doc_search_count(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
@@ -531,6 +718,26 @@ def _run_legs(
     return rows
 
 
+def _legs_steps(from_day: int, to_day: int) -> List[Tuple[str, str, Sequence[Any]]]:
+    """收入 3 腿 + 成本 3 腿的 `(标签, SQL, 参数)`，给 `--explain` 用。
+
+    ⚠️ 六条**都要出计划**（2026-11-07 用户审查 §一·3）：以前只 EXPLAIN 第一条成本腿，
+    整条毛利查询很慢时判断不出是哪条腿没走索引。
+    """
+    labels = (
+        "收入① 销售",
+        "收入② 送货",
+        "收入③ 销售退货",
+        "成本① 销售+送货",
+        "成本② 盘亏",
+        "成本③ 退货成本回退",
+    )
+    return [
+        (label, sql, (*head, from_day, to_day))
+        for label, (sql, head) in zip(labels, _REVENUE_LEGS + _MARGIN_LEGS)
+    ]
+
+
 def _margin_window() -> Tuple[int, int]:
     to_day = _business_day_of(int(time.time() * 1000))
     return to_day - (_CHART_DAYS - 1), to_day
@@ -547,6 +754,14 @@ def q_gross_margin(limit: int, window_ms: int):
     def measure(conn: sqlite3.Connection) -> int:
         return _run_legs(conn, _REVENUE_LEGS + _MARGIN_LEGS, from_day, to_day)
 
+    def steps(conn: sqlite3.Connection):
+        """**六条腿都出计划**（2026-11-07 用户审查 §一·3）。
+
+        以前只 EXPLAIN 第一条成本腿 ⇒ 整条毛利查询很慢时**判断不出是哪条腿没走索引**。
+        """
+        return _legs_steps(from_day, to_day)
+
+    measure.explain_steps = steps  # type: ignore[attr-defined]
     measure.explain_sql = _MARGIN_LEGS[0][0]  # type: ignore[attr-defined]
     measure.explain_params = (*_MARGIN_LEGS[0][1], from_day, to_day)  # type: ignore[attr-defined]
     return measure, ()
@@ -626,6 +841,41 @@ def q_overview_load(limit: int, window_ms: int):
         rows += _run_legs(conn, _REVENUE_LEGS + _MARGIN_LEGS, from_day, to_day)
         return rows
 
+    def steps(conn: sqlite3.Connection):
+        """概览首屏里**每一种** SQL 各出一次计划（2026-11-07 用户审查 §一·3）。
+
+        以前只 EXPLAIN `stockTop` 一条 ⇒ 整次加载很慢时**根本定位不到是哪条**。
+
+        这里按「**不同的 SQL**」列，不按「跑几次」列：`dailyRevenue` 的三条腿会跑
+        **两遍**（宽窗口 + 毛利那 30 天）、`partyBalances` 也跑两遍（应收 / 应付），
+        重复列同一份计划没有信息量 —— 但**跑了几遍**写在标签里，别让人以为只跑一次。
+        """
+        out: List[Tuple[str, str, Sequence[Any]]] = [
+            ("① hasAnyDocument", "SELECT 1 FROM documents LIMIT 1", ()),
+        ]
+        out += [
+            ("② %s（宽窗口，且毛利那 30 天还会再跑一遍）" % label, sql, (*head, wide_from, to_day))
+            for label, (sql, head) in zip(
+                ("收入① 销售", "收入② 送货", "收入③ 销售退货"), _REVENUE_LEGS
+            )
+        ]
+        out.append(("③ todaySummary", _TODAY_SUMMARY_SQL, (day_start, day_end)))
+        out.append(
+            ("④ partyBalances（应收 / 应付**各跑一遍**）", _PARTY_BALANCES, ())
+        )
+        out.append(
+            ("④ 欠款 top 点查", "SELECT name, is_active FROM parties WHERE id = ?", ("—",))
+        )
+        out.append(("⑥ stockTop", _STOCK_TOP, ()))
+        out += [
+            ("⑦ %s" % label, sql, (*head, from_day, to_day))
+            for label, (sql, head) in zip(
+                ("成本① 销售+送货", "成本② 盘亏", "成本③ 退货成本回退"), _MARGIN_LEGS
+            )
+        ]
+        return out
+
+    measure.explain_steps = steps  # type: ignore[attr-defined]
     measure.explain_sql = _STOCK_TOP  # type: ignore[attr-defined]
     measure.explain_params = ()  # type: ignore[attr-defined]
     return measure, ()
@@ -695,8 +945,16 @@ def q_list_roots(limit: int, window_ms: int):
 #: **为什么是 p95 不是 p50**：门禁要拦的是「偶发的卡顿」——p50 是「平时多快」，
 #: 一次全表扫描混在 30 轮里几乎不动 p50，却会把 p95 抬起来。用户记住的正是那几次。
 #:
-#: ⏳ **N-d 未裁**：是否给 `doc_search` / `today_summary` 也加门禁（建议按同一
-#: 「实测 p95 × 3」的定法）。裁了就往本表加行，**别在别处另写一套判据**。
+#: ## ⏳ 候选清单**以 N-d 决策单为准**（2026-11-07 改，用户审查 §三）
+#:
+#: 以前这里自己列了一份候选（`doc_search` / `today_summary`），决策单又列了另一份
+#: （四条），于是「代码 / 提案 / 文档各维护一套名单」—— 正是最容易漂移的形态。
+#: **本表只放已裁定的阈值**；要不要加、加哪几条，看
+#: `docs/proposals/待裁事项-2026-11-04.md` 的 N-d。裁了就往本表加行 + 回写决策单。
+#:
+#: ⚠️ **`list_roots` 的 80 ms 是「两段」时代测的**（2026-11-04）。2026-11-07 补了
+#: 第三段核销计数 ⇒ 同一条查询现在多跑一条 SQL，**旧 p95 已不代表当前实现**。
+#: 定稿 N-d 前必须用当前脚本重跑（`docs/perf_test_guide.md` §4.3）。
 GATES: Dict[str, float] = {
     "count_roots": 200.0,
     "list_roots": 80.0,
@@ -707,8 +965,9 @@ QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]],
     ("stock_cost", "成本余值（每商品）", q_stock_cost),
     ("in_transit", "在途数量（送货未签收）", q_in_transit),
     ("list_documents", "单据列表首屏", q_list_documents),
-    ("doc_search", "单据页搜索（四路，两段）", q_doc_search),
+    ("doc_search", "单据页搜索（四路全命中，三段）", q_doc_search),
     ("doc_search_count", "单据页搜索「共 N 条」", q_doc_search_count),
+    ("doc_search_load", "单据页一次搜索动作（计数 + 完整三段）", q_doc_search_load),
     ("lines_of_page", "本页明细批量取", q_lines_of_page),
     ("settled_counts", "本页核销笔数（批量）", q_settled_counts),
     ("party_balances", "往来余额（每方）", q_party_balances),
@@ -720,9 +979,15 @@ QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]],
     ("pull_window", "同步 pull：最近更新窗口", q_pull_window),
     ("doc_count", "单据总数", q_doc_count),
     ("count_roots", "单据页「共 N 条」（rootsOnly，每帧都跑）", q_count_roots),
-    ("list_roots", "单据页首屏（rootsOnly 两段，每帧都跑）", q_list_roots),
+    ("list_roots", "单据页首屏（rootsOnly 三段，每帧都跑）", q_list_roots),
     ("gross_margin", "概览毛利趋势（近 30 天，6 条腿）", q_gross_margin),
     ("overview_load", "概览首屏一次 _load()（全部 SQL，最多 16 条）", q_overview_load),
+    # 搜索的四个「单独一路」场景（2026-11-07 用户审查 §二·6）：从 _SEARCH_SCENARIOS
+    # 展开，**不在这里手抄一遍** —— 手抄就是第二份名单，必然漂移。
+    *(
+        (key, "搜索：命中路 = %s（词「%s」）" % (note, term), _make_search_bench(term))
+        for key, term, note in _SEARCH_SCENARIOS
+    ),
 )
 
 
@@ -822,12 +1087,37 @@ def run_one(
 
 def explain(conn: sqlite3.Connection, sql: str, params: Sequence[Any]) -> List[str]:
     if callable(sql):
-        # 多步查询：EXPLAIN **第一段**（索引是否生效只看第一段；第二段是
-        # 按 id 点查，形状固定）。没有可 EXPLAIN 的第一段就明说，不编。
+        # 多步查询：callable 本身没法 EXPLAIN，所以由各查询自己交出「每一步的
+        # (标签, SQL, 参数)」。
         #
-        # ⚠️ 参数不能一律硬塞 `(200,)` —— 那是「第一段只有 LIMIT」的列表查询
-        # 才成立；搜索的第一段带 4 个 LIKE 参数，毛利腿带 5 个 ⇒ 直接报
-        # 「Incorrect number of bindings」。所以第一段要自带参数（`explain_params`）。
+        # ⚠️ 2026-11-07（用户审查 §一·3）：以前只 EXPLAIN **第一步**，于是
+        # `gross_margin`（6 条）与 `overview_load`（最多 16 条）只出 1 条计划 ——
+        # 整次加载很慢时**判断不出是哪条没走索引**，等于这条诊断路径是半死的。
+        # 现在优先用 `explain_steps`；没实现的兜底回 `explain_sql`（第一步）。
+        steps_fn = getattr(sql, "explain_steps", None)
+        if steps_fn is not None:
+            out: List[str] = []
+            try:
+                steps = steps_fn(conn)
+            except sqlite3.Error as exc:
+                return ["（取执行步骤失败：%s）" % exc]
+            for label, step_sql, step_params in steps:
+                out.append("· %s" % label)
+                if not step_sql:
+                    # 空 SQL = 该步本轮没跑（例如搜索没命中），params 里放的是原因
+                    out.append("    %s" % (step_params[0] if step_params else "（跳过）",))
+                    continue
+                try:
+                    rows = conn.execute(
+                        "EXPLAIN QUERY PLAN " + step_sql, tuple(step_params)
+                    ).fetchall()
+                except sqlite3.Error as exc:
+                    out.append("    （EXPLAIN 失败：%s）" % exc)
+                    continue
+                for row in rows:
+                    out.append("    %s" % row[-1])
+            return out
+
         first = getattr(sql, "explain_sql", None)
         if not first:
             return ["（多步查询，无法 EXPLAIN）"]
@@ -838,11 +1128,11 @@ def explain(conn: sqlite3.Connection, sql: str, params: Sequence[Any]) -> List[s
         rows = conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
     except sqlite3.Error as exc:
         return ["（EXPLAIN 失败：%s）" % exc]
-    out: List[str] = []
+    out2: List[str] = []
     for row in rows:
         # sqlite3 的列顺序：id, parent, notused, detail
-        out.append(str(row[-1]))
-    return out
+        out2.append(str(row[-1]))
+    return out2
 
 
 # --------------------------------------------------------------------------- 输出
@@ -885,17 +1175,29 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument(
         "--no-gate", action="store_true", help="不做性能门禁判定（只量不判，调参时用）"
     )
+    out.add_argument(
+        "--host-media",
+        dest="host_media",
+        default=None,
+        metavar="文本",
+        help="宿主物理存储介质（如「NVMe SSD」），写进结果的环境信息。"
+        "**虚拟机里采不到**（Guest 看到的盘是虚拟化层造的），只能人工确认；"
+        "不传则环境信息里标「未提供」—— I/O 相关数字没有它就不可跨机比较",
+    )
     return parser
 
 
-def machine_info() -> Dict[str, Any]:
+def machine_info(host_media: Optional[str] = None) -> Dict[str, Any]:
     """机器配置 —— **委托给 `tool/machine_info.py`**（单一来源）。
 
     2026-10-28：从前这里与 `perf_monitor.py` 各写一份，两份必然漂移，而且都太薄
     （这台机器是什么 CPU / 什么盘 / 什么缩放，事后没法对照）。现在统一走共享模块：
     注册表 → ctypes → 子进程多路兜底，受限机器上逐项降级并记录「哪项被挡了」。
+
+    `host_media` 透传给 `collect()`：虚拟机里宿主物理介质采不到，只能人工提供
+    （`--host-media`）。没有它，首启 / 备份 / 造数这些 I/O 数字无法跨机比较。
     """
-    info: Dict[str, Any] = dict(machine_info_module.collect())
+    info: Dict[str, Any] = dict(machine_info_module.collect(host_media=host_media))
     # 兼容既有 CSV 列名（`machine` / `cpu_count`）
     info["machine"] = info.get("arch")
     info["cpu_count"] = info.get("cores_logical")
@@ -953,7 +1255,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
         counts = table_counts(conn)
-        meta = machine_info()
+        meta = machine_info(host_media=args.host_media)
         meta.update(
             {
                 "db": db_path,

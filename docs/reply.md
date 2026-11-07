@@ -1,326 +1,357 @@
-🫡 这次 0.7.5 的更新我已经核对过了。我认为这台虚拟机很有测试价值，但必须把部署验收、数据库性能测试和图形渲染测试分开判读。否则很容易把虚拟机的限制误判成神算子的产品缺陷。
+这次更新确实把上一轮的核心意见落地了，而且有两项超出了原先要求：
 
-先汇报几个重要发现。
+- `doc_search` 已按生产代码修正，连搜索计数查询 `doc_search_count` 也单独补了基准。
+- 新增 `gross_margin` 和 `overview_load`，不再只测零散 SQL，而是开始关注毛利图和概览页的整体查询成本。
+- 修复了多步查询的 `--explain` 参数错误。
+- 性能手册已补充 VM 专项判读、六文件分发清单、门禁说明，以及迁移夹具库与压测库不能混用的红线。
 
-## 一、0.7.5 版本与当前测试任务
+*上一轮四项整改：主体已落地*
 
-仓库 master
+不过，逐行审查后我还发现了几处需要处理的问题，其中有一处是测试手册给出的命令与实际脚本不匹配，另一处会影响你们判断探针是否出现性能退化。下面按影响程度展开。
 
-源码已更新
+## 一、开测前建议修正的项目
 
-# v0.7.5+12
+### 1. `machine_info.py --json` 实际上不支持写文件
 
-Schema v8 · 最新提交 49a0b4e · 2026-11-06
+明确缺陷
 
-本轮主要完成毛利趋势、相关文档和版本信息更新，同时补充了发布包缺少 VC++ 运行库的问题。
+这是我最建议先处理的一项。
 
-当前发布包前置条件
+测试手册 §4.3b 要求：
 
-Win10 LTSC 干净环境需要先安装 Visual C++ 2015–2022 x64 运行库，否则可能无法启动程序。
+```batch
+python tool/machine_info.py --json machine.json
+```
 
-[微软官方运行库安装包](https://aka.ms/vs/17/release/vc_redist.x64.exe?utm_source=chatgpt.com)
+附录 A 也把接口写成：
 
-这里要区分两个测试任务：
+```batch
+python machine_info.py [--json F]
+```
 
-第 15 步迁移验收： 5,826 张单据的 v7 夹具库是合理的。它的任务是检查老库能否升级到 v8、原数据是否完整，不需要 26 万张单据。
+但我检查了 [machine_info.py](https://github.com/Schmmmusk/shensuanzi/blob/master/tool/machine_info.py) 的完整入口：它没有 argparse，也没有读取 `sys.argv`，只会：
 
-性能测试： 5,826 张单据确实不够。应该另建隔离数据目录，用 `perf_seed.py --min-rows 100000` 造大库。
+1. 调用 `collect()`；
+2. 把 JSON 打印到终端；
+3. 继续打印机器摘要；
+4. 打印受限或未采集项目。
 
-两份库绝不能混用，也不要在迁移夹具上追加性能数据。否则第 15 步的测试对象就被污染了。
+因此，当前命令不会生成 `machine.json`，而且不会提示参数不受支持——它会静默忽略 `--json machine.json`。
 
-## 二、现场 Agent 的两个判断，我分别怎么看
+建议直接给它补一个真正的 CLI：
 
-### 1. 数据规模偏小：完全认同
+```batch
+python tool/machine_info.py --json machine.json
+```
 
-`--min-rows 100000` 的含义并不是造 10 万张单据，而是要求五张业务流水表分别达到至少 10 万行：
+执行后将 JSON 写入文件，终端另外显示一行摘要。最好保证文件内容是纯 JSON，方便以后自动汇总多台测试机的数据。
 
-| 表                | 最低行数    |
-| ---------------- | ------- |
-| `document_lines` | 100,000 |
-| `stock_ledger`   | 100,000 |
-| `money_ledger`   | 100,000 |
-| `party_ledger`   | 100,000 |
-| `settlements`    | 100,000 |
+顺便还有一处小漂移：[tool/README.md](https://github.com/Schmmmusk/shensuanzi/blob/master/tool/README.md) 声称 `machine_info.py` 会采集电源计划，但当前实现没有采集该信息。建议要么补实现，要么从说明中删除，电源计划继续要求人工记录。
 
-由于造数还会生成关联的收付款单、补货单等，最终规模预计约为：
+### 2. 单据列表和搜索基准仍没有完全覆盖生产执行路径
 
-- 单据：26 万张左右；
-- 商品明细、库存流水：各约 37 万行；
-- 总行数：约 146 万；
-- 数据库文件：约 400–500 MB。
+建议正式定门禁前修正
 
-这些是造数脚本的预期量级，最终以脚本的实际汇总和自检报告为准。
+这次我继续往 DAO 里面追了一层，发现一个容易遗漏的查询。
 
-### 2. 关闭 3D 加速就等于软件渲染：这个结论需要修正
+生产代码 `DocumentDao._summaries()` 的执行过程是：
 
-我检查了项目的 `windows/runner/main.cpp`：目前没有显式指定 Impeller 开关，实际渲染后端取决于构建时使用的 Flutter SDK。
+```text
+第一段：查询符合条件的单据 ID
+    ↓
+第二段：查询这批 ID 对应的单据、退货汇总、收款汇总
+    ↓
+第三段：settlementCountsMany()
+    ↓
+返回完整的 DocumentSummary
+```
 
-Flutter 官方文档说明：从 Flutter 3.47 开始，Windows 默认使用 Impeller。关闭 Impeller 需要另外配置，而不是由 VMware 的 3D 开关自动决定。
+第三段的 SQL 是：
 
-另外，Flutter 引擎团队专门讨论过 Windows 在 OpenGL 初始化失败时的软件渲染回退：Impeller 并没有对应的传统软件渲染方案；团队也说明正常项目通常由 ANGLE 映射到 DirectX，不应把所有无硬件加速情形都简单等同于渲染失败。
+```sql
+SELECT target_doc_id AS t, COUNT(*) AS n
+FROM settlements
+WHERE target_doc_id IN (...)
+GROUP BY target_doc_id
+```
 
-所以我建议将现场结论改成：
+源码位置：[DocumentDao.\_summariesOfRows()](https://github.com/Schmmmusk/shensuanzi/blob/master/packages/shensuanzi_core/lib/src/dao/document_dao.dart)
 
-> VMware 关闭 3D 加速后，虚拟机的图形能力与正常硬件加速环境不同，渲染路径及性能可能发生变化。当前尚未确认 Flutter 实际使用的后端，帧耗时和切页数据暂不能代表正常目标机。
+但当前 `perf_bench.py` 的：
 
-这比直接宣布「Flutter 软件渲染」严谨得多。
+- `q_list_documents`
+- `q_list_roots`
+- `q_doc_search`
 
-## 三、我在性能测试工具中发现的四处问题
+均只执行了前两段，没有执行第三段。
 
-这部分是我认为正式开测前最值得处理的事情。当前 0.7.5 的业务代码已经变化，但性能工具和测试手册有部分内容没有同步。
+虽然脚本已经单独提供 `settled_counts`，但它目前的取数方式是：
 
-### 1. `perf_bench.py` 有两条查询已经偏离生产代码
+```sql
+WHERE target_doc_id IN (
+    SELECT id FROM documents
+    ORDER BY created_at DESC
+    LIMIT ?
+)
+```
 
-建议开测前修正
+这不是生产代码的真实取数方式。生产代码使用的是前两段实际筛选出来的 ID，而不是直接取最新 200 张原始单据。
 
-| 查询              | 测试脚本现状              | 生产代码现状                                   |
-| --------------- | ------------------- | ---------------------------------------- |
-| `doc_search`    | 旧排序表达式，直接查当前单据明细和条码 | 已使用 `business_day` 排序；还涉及子单号、原单关联商品等搜索条件 |
-| `today_summary` | UTC 零点起算，没有次日上界     | 按本地日计算，同时具有起止时间边界                        |
+所以这里存在两个问题：
 
-这意味着两项测试的耗时不再能可靠代表 0.7.5 的真实执行开销。
+第一，完整列表与搜索的耗时被低估了。
 
-相关实现：
+第二，独立的 `settled_counts` 测量的是相似查询，不是完全相同的实际页面查询。
 
-- [perf_bench.py](https://github.com/Schmmmusk/shensuanzi/blob/master/tool/perf_bench.py)
-- [DocumentDao](https://github.com/Schmmmusk/shensuanzi/blob/master/packages/shensuanzi_core/lib/src/dao/document_dao.dart)
-- [QueryDao](https://github.com/Schmmmusk/shensuanzi/blob/master/packages/shensuanzi_core/lib/src/dao/query_dao.dart)
+我不认为这必然造成很大的耗时误差——它使用了 `idx_settle_target`，而且只针对一页单据。但我们不能未经测量就假设它可以忽略。
 
-建议先让现场 Agent 对齐这两条 SQL，再把它们纳入正式性能比较。
+建议 Agent 修改为：两段查询取到实际 ID 后，继续执行一次 `settlementCountsMany()`，将第三段纳入整体计时。
 
-### 2. 新增的毛利趋势还没有性能基准
+另外，搜索页面的实际加载也不是只有 `doc_search`：
 
-本轮新增重点
+```text
+countDocuments(query)
+    ↓
+listDocuments(query)
+    ├── 第一段
+    ├── 第二段
+    └── settlementCountsMany
+```
 
-0.7.5 新增的 `dailyGrossMargin()` 值得特别关注。
+因此，建议在保留每条查询单独结果的同时，增加一个 `doc_search_load`，测量这次完整操作的总耗时。
 
-目前它复用营收查询，另外还要执行三组库存成本聚合：
+这项对 N-d 尤其重要：如果只给 `doc_search` 加门禁，却遗漏搜索计数与核销笔数，可能保护了单条 SQL，却没有保护用户实际感受到的搜索延迟。
 
-- 销售、送货的实际出库成本；
+### 3. `--explain` 对新增的复合基准覆盖不足
+
+建议修正
+
+这次修复了多步查询传参错误，我很赞成。但目前新的两个复合查询还有一个缺口。
+
+| 基准              | 实际执行        | 当前 `--explain` |
+| --------------- | ----------- | -------------- |
+| `gross_margin`  | 6 条 SQL     | 只解释 1 条        |
+| `overview_load` | 最多 16 条 SQL | 只解释 1 条        |
+
+例如 `q_gross_margin()` 会执行：
+
+- 营收的 3 条 SQL；
+- 销售、送货成本；
 - 盘点损失；
-- 销售退货的成本调整。
+- 退货成本调整。
 
-这些查询均涉及库存流水与单据的关联。
+但当前只设置了一个 `explain_sql`，对应第一条销售/送货成本 SQL。
 
-而 `OverviewPage._load()` 在打开概览时会直接调用毛利查询，并且同时加载今日经营、应收、应付、压货榜、营收趋势和月度对比。
+`q_overview_load()` 更明显：它只为 `stockTop` 设置了一个 `explain_sql`，其余营收、应收应付、毛利查询均没有单独输出计划。
 
-这里还有一个值得观察的点：应收与应付分别调用余额聚合逻辑，当前实现都可能对往来流水执行全量分组查询。
+这意味着运行：
 
-因此，这一轮不能只测试旧有的 `stock_group`、`list_documents` 等查询。
+```batch
+python tool/perf_bench.py --data-dir "D:\perf-data" --only overview_load --explain --no-gate
+```
 
-我建议增加一个 `dailyGrossMargin` 基准，同时单独记录一次概览页完整加载耗时。
+即使整次概览加载很慢，也不能根据这份 `EXPLAIN` 输出判断是哪条查询没有命中索引。
 
-这能帮助我们判断：新功能有没有给目标用户最常看的首页增加明显负担。
+我建议未来把 callable 的接口从单个：
 
-参考：[毛利趋势 DAO](https://github.com/Schmmmusk/shensuanzi/blob/master/packages/shensuanzi_core/lib/src/dao/query_dao.dart) · [概览页](https://github.com/Schmmmusk/shensuanzi/blob/master/lib/src/ui/overview_page.dart)
+```python
+explain_sql
+explain_params
+```
 
-### 3. `perf_monitor` 的列表探针不是实际列表查询
+扩展为多个带标签的 `explain_steps`。
 
-目前 `perf_monitor.py` 的 `PROBES` 中：
+例如：
 
-- 库存探针只测数量聚合；
-- 列表探针仍使用简化的单段查询和旧排序；
-- 同步窗口探针用于观察更新窗口查询。
+```text
+gross_margin:
+  revenue_sale
+  revenue_delivery
+  revenue_return
+  sale_delivery_cost
+  stocktake_loss
+  return_cost_adjust
 
-它们适合观察运行期间数据库耗时有没有明显变化，但不能将 `probe_list_ms` 当成当前单据页首屏的真实耗时。
+overview_load:
+  has_any_document
+  revenue_*
+  today_summary
+  receivables
+  payables
+  stock_top
+  gross_margin_*
+```
 
-另外，自动事件识别只知道「这段时间 CPU 或读写比较忙」，并不知道用户刚才切换到了哪个页面。
+不用为了漂亮输出而把所有重复参数展开得过于复杂，但至少应该让复合查询里的每一种 SQL 都能被核查。
 
-[perf_monitor.py](https://github.com/Schmmmusk/shensuanzi/blob/master/tool/perf_monitor.py)
+这项不一定阻止第一轮性能实测，不过会影响后续定位瓶颈的效率。
 
-我建议保留自动采样，但关键操作必须使用 `s/e` 人工标记名称和起止时间。这样才知道某个 2 秒的忙碌区间究竟对应库存页、搜索，还是开单保存。
+## 二、测试判读和数据口径还有几处需要收尾
 
-### 4. 测试工具清单和手册也需要同步
+### 4. `probe_*_ms` 仍不应该统一与 `before.csv` 比较
 
-还有两个小问题：
+你们已经在 `perf_monitor.py` 里明确写出了「探针 ≠ 页面耗时」，这是正确的。
 
-第一，`perf_bench.py` 已经导入 `machine_info.py`，但 `docs/perf_test_guide.md` 中给外部测试人员的工具清单没有列出它。虚拟机打包测试工具时必须额外带上：
+但 [性能手册 §4.2–4.3](https://github.com/Schmmmusk/shensuanzi/blob/master/docs/perf_test_guide.md) 还保留着一条较宽泛的判据：
 
-`machine_info.py`
+> 与 `before.csv` 比较 p95，涨 ≥ 2 倍。
 
-否则在没有完整仓库源码的测试目录里，可能直接遇到模块导入失败。
+问题是，三个探针与 `perf_bench` 基准的对应关系并不相同。
 
-第二，测试手册 §4.3 的性能门禁阈值仍写着：
+| 探针                | 对照基准          | 我的判读建议                                        |
+| ----------------- | ------------- | --------------------------------------------- |
+| `probe_stock_ms`  | `stock_group` | SQL 接近，但不是页面完整查询，只适合近似参考                      |
+| `probe_list_ms`   | 没有严格对应项       | 不要与 `list_documents` / `list_roots` 的绝对耗时直接比较 |
+| `probe_window_ms` | `pull_window` | 基本同形，可以直接比较趋势和耗时                              |
 
-- `count_roots`：120 ms
-- `list_roots`：200 ms
+尤其 `probe_list_ms`，现在仍使用单段查询、表达式排序，没有 roots 过滤；生产页面却已经采用两段式和 `business_day` 索引。
 
-而当前 `perf_bench.py` 的 `GATES` 已经是：
+因此我建议把手册里的判据细分：
 
-- `count_roots`：p95 200 ms
-- `list_roots`：p95 80 ms
+- `probe_window_ms`：可以和 `pull_window` 做 p95 对比。
+- `probe_stock_ms`：只与 `stock_group` 作近似参考，不能当成页面完整耗时。
+- `probe_list_ms`：只比较同一探针在不同时间或不同会话中的变化；真正的列表首屏用 `list_roots` 或人工 `s/e` 测量。
 
-两处必须统一。当前门禁是基于开发机参考数据建立的防退化护栏，并不是低配虚拟机的性能目标。
+这样就不会出现「探针变慢了两倍，于是认为真实列表也变慢了两倍」的错误归因。
 
-[当前性能测试手册](https://github.com/Schmmmusk/shensuanzi/blob/master/docs/perf_test_guide.md)
+### 5. VM 的「60 GB 虚拟 SSD」措辞不严谨
 
-我的建议是让 Agent 做一轮纯测试工具修整，不碰业务代码：修正两条旧 SQL、补充毛利基准、标明监控探针的适用范围、补全工具清单和门禁说明。
+这是文档中的事实问题。
 
-## 四、这台虚拟机究竟能代表什么？
+你此前提供的是：
 
-我会把它定义成：
+- 存储 60 GB；
+- 系统约占 11 GB；
+- VMware 基本显示程序。
 
-适合测试
+但没有确认宿主机物理存储介质是 SSD 还是 HDD。
 
-低资源环境可用性与压力测试
+而 [perf_test_guide.md §4.3b](https://github.com/Schmmmusk/shensuanzi/blob/master/docs/perf_test_guide.md) 写的是：
 
-# 2 vCPU / 4 GB RAM
+> 60 GB 虚拟 SSD
 
-Win10 LTSC · 60 GB 虚拟磁盘 · VMware 图形环境
+虚拟磁盘不等于宿主物理 SSD。即使 Guest 系统识别出固定磁盘，也不能据此推断宿主存储介质。
 
-重点回答：
+建议改为：
 
-- 大型账本能否打开？
-- 数据查询是否还能接受？
-- 打开概览、库存和单据页会不会长时间等待？
-- 内存是否发生明显压力？
-- 首次备份、导出、保存是否出现严重阻塞？
-- 无硬件 3D 加速时，应用能否正常运行？
+> 60 GB 虚拟磁盘（宿主物理介质类型未确认）
 
-但它不能直接代表普通 Windows 用户的日常体验。
+如果能确认宿主机实际使用 NVMe SSD 或机械盘，再单独记录。
 
-| 配置             | 影响与注意事项                                       |
-| -------------- | --------------------------------------------- |
-| 2 vCPU         | 同一 CPU 型号和频率不等于同等计算能力。核心数量、虚拟机调度和宿主机负载都会影响耗时  |
-| 4 GB 内存        | Win10、Flutter 应用、SQLite 缓存会竞争内存，冷启动与热启动可能差距很大 |
-| 60 GB 虚拟磁盘     | 需要记录实际剩余空间，而非只看总容量                            |
-| VMware 基本显示适配器 | 不代表真实显卡或正常硬件加速环境                              |
-| 关闭 3D 加速       | 只能作为单独的图形环境条件，不应与普通目标机的数据混在一起                 |
+### 6. 搜索基准只有一个固定搜索词，覆盖范围还不够
 
-还有一个细节：`perf_monitor` 的进程 CPU 指标是单核 100% 的刻度，因此这台 2 vCPU 虚拟机的进程 CPU 理论上可以接近 200%。不能把单核 100% 的含义理解成整台虚拟机已经百分之百饱和。
+`_search_params()` 当前固定使用：
 
-### 关于图形渲染，我的建议
+```python
+pat = "%1%"
+```
 
-我建议将当前虚拟机保留为 3D-off 测试环境，先测试应用的运行和交互是否可接受。
+这可以作为一条代表性搜索测试，但不能证明四路匹配条件都得到了充分测试。
 
-如果虚拟机支持，也可以克隆一个环境，只开启 VMware 3D 加速，其他条件保持一致，做一次 A/B 对照。
+当前生产的四路是：
 
-这样可以粗略隔离图形环境造成的影响。
+1. 单据编号；
+2. 往来方名称；
+3. 子单编号；
+4. 单据及其子单明细中的商品名称。
 
-但要牢记：`perf_monitor` 的空闲采样间隔是 0.5 秒、忙碌后的快速采样间隔是 0.2 秒。它不具备逐帧测量能力，更不能直接测量 16.7 ms 级别的 60 FPS 帧耗时。
+而性能造数生成的单号本身带有日期与序号，数字 `1` 很容易在单据编号中命中。这样一来，不同搜索词可能产生很不一样的执行路径。
 
-真正的 Flutter 帧时间需要另外使用性能时间线或图形诊断工具采集，而且 Profile 模式本身也要与 Release 测试分开标记。
+我建议至少增加几种搜索场景：
 
-因此，本轮可以得出「切页用了多少时间」，但不能仅凭监控器报告声称「平均帧时间是多少」。
+| 测试场景 | 示例搜索词       | 主要观察        |
+| ---- | ----------- | ----------- |
+| 主单号  | `1`         | 常规高命中搜索     |
+| 商品名  | `牛奶`        | 商品明细 EXISTS |
+| 往来方名 | `老板`        | 往来方匹配       |
+| 子单号  | `SK` 或 `FK` | 子单编号匹配      |
 
-## 五、我建议这样执行本轮测试
+不必马上把所有组合纳入门禁，但报告最好分别列出。这样才知道搜索性能的边界在哪里。
 
-按以下顺序执行，能减少互相干扰。
+## 三、文档与开发治理
 
-1. 第一阶段：干净环境部署与升级验收
+还有两项我建议顺手处理。
 
-   安装 VC++ x64 运行库，确认 0.7.5+12 的发布包 SHA-256 与现场交付文件一致。
+第一，N-d 的源码注释没有跟上决策单。
 
-   然后使用 5,826 张单据的 v7 夹具执行第 15 步，检查：
-   - v7→v8 迁移成功；
-   - 自动备份文件生成；
-   - 原有业务数据完整；
-   - 第二次启动不重复迁移。
-   这一阶段只验证部署与迁移，不要造性能数据。
-2. 第二阶段：建立独立的大数据测试账套
+`perf_bench.py` 的 `GATES` 附近仍写：
 
-   建议使用独立的 `D:\perf-data`，先由 0.7.5 初始化数据库，然后关闭软件。
+> 是否给 `doc_search` / `today_summary` 也加门禁。
 
-   先检查造数计划：
-   ```batch
-   python tool\perf_seed.py --data-dir "D:\perf-data" --min-rows 100000 --dry-run
-   ```
-   确认规模和目标路径无误后正式执行：
-   ```batch
-   python tool\perf_seed.py --data-dir "D:\perf-data" --min-rows 100000
-   ```
-   最后验证：
-   ```batch
-   python tool\perf_seed.py --data-dir "D:\perf-data" --min-rows 100000 --verify
-   ```
-   自检不过就不要继续拿这份库作性能基线。
+但最新版 `待裁事项-2026-11-04.md` 已经把候选扩充为四条：
 
-   造数耗时是测试准备成本，不属于应用性能数据。2 vCPU 下可能明显慢于开发机，依据进度日志记录即可，不要因为造数慢就判定软件慢。
-3. 第三阶段：数据库查询基线
+- `doc_search`
+- `today_summary`
+- `gross_margin`
+- `overview_load`
 
-   在正式测试前，关闭神算子，再执行：
-   ```batch
-   python tool\perf_bench.py --data-dir "D:\perf-data" --rounds 15 --warmup 3 --no-gate --explain --csv "D:\perf-run\before.csv" --json-out "D:\perf-run\before.json"
-   ```
-   这里使用 `--no-gate`，因为开发机的防退化阈值不应该直接拿来判断低配虚拟机是否合格。
+而现在我们又发现 `doc_search_count` 和完整列表查询路径也值得评估。
 
-   但在前面提到的 SQL 对齐和毛利查询补测完成之前，`doc_search`、`today_summary` 等结果只作为探索数据，不作为正式对比结论。
-4. 第四阶段：应用实际操作
+建议把注释改成「候选清单以 N-d 决策单为准」，避免再出现代码、提案和文档各自维护一份候选名单的情况。
 
-   打开发布版应用，让 `perf_monitor` 记录 CPU、工作集、私有内存、句柄、线程数、进程读写以及数据库文件体积。
+第二，10 月 27 日的 I 组执行方案仍然保留着旧版本测试命令。
 
-   建议重点操作：
-   | 场景    | 重点观察          |
-   | ----- | ------------- |
-   | 第一次启动 | 含自动备份的启动耗时    |
-   | 再次启动  | 热缓存启动耗时       |
-   | 概览页   | 毛利图及各项经营汇总的加载 |
-   | 库存页   | 全商品库存与成本聚合    |
-   | 单据页   | 首屏、搜索、详情      |
-   | 销售开单  | 商品选择、数量录入、保存  |
-   | 导出    | 等待时间、内存和磁盘变化  |
-   每个关键动作重复三次，分别记录冷、热状态，必要时用 `s/e` 标注具体操作。
+[docs/proposals/I-组性能测试-今晚执行方案.md](https://github.com/Schmmmusk/shensuanzi/blob/master/docs/proposals/I-%E7%BB%84%E6%80%A7%E8%83%BD%E6%B5%8B%E8%AF%95-%E4%BB%8A%E6%99%9A%E6%89%A7%E8%A1%8C%E6%96%B9%E6%A1%88.md) 目前仍包含：
 
-   结束后关闭软件，再跑一遍 `perf_bench.py`，检查前后数据库查询是否明显恶化。
-5. 第五阶段：复测与归因
+- 0.6.5；
+- schema v5；
+- 旧的 15 条查询；
+- `--app-version 0.6.5`；
+- 旧的 v5 覆盖索引预期。
 
-   对照开发机与 VM 的结果时，尽量使用：
-   - 同一份 v8 大数据库；
-   - 同一份 0.7.5+12 发布包；
-   - 同一版本的 `perf_bench.py`、`perf_monitor.py` 和 Python；
-   - 同一界面缩放、窗口大小和操作步骤。
-   最好先在一台机器造好数据库，关闭并妥善检查 WAL 后复制同一份数据库到另一台机器。这样比两台机器各自随机造数更容易保证可比性。
+虽然它开头已经声明测试手册是权威，但文件名仍然叫「今晚执行方案」，很容易被后来的 Agent 或测试者误当成现行执行清单。
 
-   同时记录 `python --version` 和 `sqlite3.sqlite_version`，因为 `perf_bench.py` 调用的是 Python 自带的 SQLite，而应用实际使用的是发布包中的 SQLite 运行库。
+建议在文件顶部加醒目的历史标记：
 
-## 六、开测时还有几项环境信息不要漏掉
+> 本文为 2026-10-27、0.6.5 / schema v5 的历史执行记录。当前 0.7.5 / schema v8 的性能测试以 `docs/perf_test_guide.md` 和最新测试计划为准，不得直接复制本文命令。
 
-除了你列出的配置，我建议补充以下信息：
+这样比删除历史记录好。
 
-| 项目      | 需要记录的内容                                         |
-| ------- | ----------------------------------------------- |
-| Windows | LTSC 版本、系统 Build、补丁状态                           |
-| Flutter | 构建 0.7.5+12 时的完整 `flutter --version`            |
-| 图形      | Device Manager 显卡名称、驱动、`dxdiag` 的显示设备信息、3D 开关状态 |
-| 内存      | 空闲物理内存、提交量、页面文件是否启用                             |
-| 存储      | 虚拟磁盘实际剩余空间、宿主机物理盘类型、VMware 磁盘配置和快照状态            |
-| 运行环境    | VC++ 运行库版本、Windows 电源模式、Defender 实时防护状态         |
-| 测试操作    | 系统缩放、应用内缩放、窗口尺寸                                 |
+## 四、我建议 Agent 下一轮怎么改
 
-特别是 `perf_monitor` 主要记录的是应用进程指标，并不完整反映宿主机 CPU 争用、虚拟磁盘底层 I/O 延迟或整个 Guest 的内存压力。4GB VM 建议额外留一份任务管理器截图，包含 CPU、内存、磁盘使用情况。
+我把问题按优先级归拢了一下：
 
-## 七、最后的审查结论
+| 优先级 | 工作                                     | 是否阻止当前开测  |
+| --- | -------------------------------------- | --------- |
+| P1  | 实现 `machine_info.py --json`，或修正文档命令    | 建议先修      |
+| P1  | 将 `settlementCountsMany` 纳入实际列表/搜索基准   | 建议先修      |
+| P1  | 修正 VM「虚拟 SSD」表述                        | 应修，成本极低   |
+| P2  | 复合查询支持多条 `EXPLAIN`                     | 可与开测准备并行  |
+| P2  | 修订探针与 `before.csv` 的比较口径               | 正式判读前修    |
+| P2  | 补充 `doc_search_count`、完整搜索操作以及不同搜索词测试  | N-d 定稿前处理 |
+| P3  | 更新 GATES 注释、旧 I 组方案历史标记、README 的电源计划说明 | 顺手收尾      |
 
-我对这轮测试的总体评价是：
+## 五、最终结论：可以开始测试了吗？
 
-第 15 步迁移验收
+可以开始准备大数据测试，但我不建议现在就用这些数据给 N-d 门禁定稿。
 
-可以执行
+我认为 0.7.5 当前的测试体系已经有了不错的骨架：
 
-5,826 张单据的夹具规模合适，不必扩大。
+- 大数据库造数与迁移夹具区分明确；
+- 生产查询同步意识明显提高；
+- 新毛利功能获得了独立基准；
+- 概览完整加载有了复合基准；
+- 监控探针的边界终于写清楚；
+- 虚拟机环境也有了专门的判读标准。
 
-大数据性能测试
+但正式开始前，至少应该把 `machine_info` 的命令修正，以及列表/搜索缺少第三段核销计数这两项补上。否则容易在第一轮留下无法解释的缺口。
 
-先修测试工具
+我最希望本次测试最后能拿到这样一张表：
 
-`perf_seed --min-rows 100000` 是正确方向，但 SQL 基准和毛利查询需要先对齐。
+| 实际用户动作  | 性能基准                                 |
+| ------- | ------------------------------------ |
+| 概览页完整加载 | `overview_load`                      |
+| 毛利图     | `gross_margin`                       |
+| 单据页首次加载 | 完整的 `list_roots`                     |
+| 单据页搜索   | `doc_search_count` + 完整 `doc_search` |
+| 库存查询    | 库存页实际查询                              |
+| 开单保存    | 真实 UI 操作计时                           |
+| 首次启动    | 含自动备份的冷启动实测                          |
 
-Win10 LTSC 低配可用性
+这样一来，我们不仅知道「哪条 SQL 快」，还知道「用户点了一个按钮之后究竟等多久」。
 
-适合测试
+本轮审查范围： 最新 master `00222b824190e90533c60d37be375881f619a016`，主要核对了 `perf_bench.py`、`perf_monitor.py`、`machine_info.py`、`DocumentDao`、`DocumentsPage` 和性能测试文档。没有在 VMware 中实际执行脚本或应用，也没有独立重跑提交记录里的测试。
 
-2 vCPU、4GB 的环境很有价值，能帮助发现资源不足时的严重卡顿。
+[查看本次更新提交](https://github.com/Schmmmusk/shensuanzi/commit/00222b824190e90533c60d37be375881f619a016)
 
-正常目标机图形性能：*不能外推*
-
-3D-off 的 VM 结果必须单独归档，不能直接作为常规用户的帧耗时基线。
-
-我尤其希望这次测试能回答两个问题：
-
-第一，神算子在 2 vCPU、4GB 内存的大数据环境下，是否仍然能够完成日常经营操作，而不是只做到「程序没有崩溃」。
-
-第二，0.7.5 新增毛利图之后，概览页的首次加载有没有出现明显回退。这是本次版本更新带来的新性能风险，不能只沿用旧版本的测试清单。
-
-本轮我只审查了仓库代码、脚本与文档，没有在 VMware 中实际运行程序或复现性能数字。最新提交：[49a0b4e](https://github.com/Schmmmusk/shensuanzi/commit/49a0b4e5a24cf06cd3a55edd466a61c48d0e7e96)。
-
-我的最终建议：先让现场 Agent 修好性能测试工具的口径，再开始正式大数据测试；第 15 步迁移验收则可以先独立进行。 这样既不会浪费这台虚拟机，也不会拿一张不准确的成绩单来评价神算子。🫡
+总体来说，我很认可这一轮的方向。现在的重点已经不再是「多写几条性能测试」，而是确保测试真的测到了用户实际执行的路径。这比单纯堆测试数量更有价值。🫡

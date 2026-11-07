@@ -55,9 +55,10 @@ schema_snapshot.json  离线 schema（测试机上没有源码时靠它）
 > - `perf_seed.py` **不内嵌建表语句**，它从 `schema.dart`（开发机）
 >   或 `schema_snapshot.json`（测试机）读，并且校验指纹 —— 这是为了防止「用旧结构建了新库」。
 >
-> 单独跑一份机器档案（每轮测试**开始前**跑一次，把输出贴进报告）：
+> 单独跑一份机器档案（每轮测试**开始前**跑一次，把输出贴进报告）。
+> **在虚拟机里必须带 `--host-media`** —— 宿主物理介质在 Guest 里采不到（见 §4.3b）：
 >
->     python tool/machine_info.py --json machine.json
+>     python tool/machine_info.py --json machine.json --host-media "NVMe SSD（宿主）"
 
 ---
 
@@ -109,7 +110,9 @@ python perf_seed.py --data-dir "D:\perf-data" --dry-run
 python perf_seed.py --data-dir "D:\perf-data"
 ```
 
-预期（默认参数，**开发机 NVMe 实测**；测试机按磁盘类型外推）：
+预期（默认参数，**开发机 NVMe 实测**；测试机按磁盘类型外推 ——
+本轮那台 VM 的宿主是 **NVMe SSD**，所以造数不会遇到下面「机械盘 5–15 分钟」那一档，
+但它是 **2 逻辑处理器**，耗时会比开发机长（CPU 瓶颈），量级仍按 NVMe 估）：
 
 | 项 | 量级 |
 |---|---|
@@ -142,8 +145,9 @@ python perf_seed.py --data-dir "D:\perf-data"
 python perf_bench.py --data-dir "D:\perf-data" --csv before.csv --explain --no-gate
 ```
 
-它会跑 20 条「界面背后真正执行的查询」，给出 p50/p95，并把 `EXPLAIN QUERY PLAN` 打出来。
+它会跑 **25 条**「界面背后真正执行的查询」，给出 p50/p95，并把 `EXPLAIN QUERY PLAN` 打出来。
 **这一步的数字是「软件没开时的库」**，用来和人工实测期间的探针对照。
+想知道有哪些键、各自对应哪个页面，跑 `python perf_bench.py --list`，或看 §4.3c 的「动作 → 查询键」对照表。
 
 > ⚠️ **非开发机一律加 `--no-gate`**（理由见 §4.3：门禁是开发机的防退化护栏，
 > 不是低配机的目标）。开发机上自己跑可以不加，判红就是真退化了。
@@ -279,7 +283,24 @@ D:\perf-run1\
 | `rss_mb` / `private_mb` | 工作集 / 私有内存 | 长时间单调上涨 = 疑似泄漏 |
 | `handles` / `threads` | 句柄数 / 线程数 | 只涨不落 = 资源没释放 |
 | `db_mb` / `wal_mb` | 库与 WAL 体积 | WAL 长期几百 MB 不回落 = checkpoint 有问题 |
-| `probe_*_ms` | 三条只读查询耗时 | 与 `before.csv` 对比，判断「库变慢了」还是「界面变慢了」。⚠️ **探针 ≠ 页面耗时**，只看趋势（`probe_list_ms` 不是单据页首屏 —— 形状是简化版，见 `perf_monitor.py` 的 `PROBES` 注释） |
+| `probe_*_ms` | 三条只读查询耗时 | 判断「库变慢了」还是「界面变慢了」。**三条探针与 bench 的对应关系不一样，判法也不同 —— 见下面「探针对照表」** |
+
+#### 探针对照表（2026-11-07 按用户审查 §二·4 细分）
+
+⚠️ **不要拿一条笼统的「p95 涨 2 倍」套三条探针**。三条与 `perf_bench` 的对应关系
+根本不同，套同一个判据会**错误归因**（典型：探针慢了两倍 ⇒ 断言「列表首屏慢了两倍」，
+而 `probe_list_ms` 压根不是列表首屏的形状）。
+
+| 探针 | 对照 bench 键 | 能不能比绝对值 | 正确判法 |
+|---|---|---|---|
+| `probe_window_ms` | `pull_window` | ✅ **趋势可直接比；绝对值探针偏低** | 两者 WHERE / ORDER BY / LIMIT 相同，但探针只 `SELECT id`、bench 是 `SELECT *`（整行更宽）⇒ **趋势可以直接对照 `before.csv` 的 `pull_window`**，绝对值要以 bench 为准（探针会偏快） |
+| `probe_stock_ms` | `stock_group` | ⚠️ **与 bench 同形，但不等于页面** | 实测两者 SQL **逐字相同**（只差一个列别名）⇒ 探针与 `stock_group` 可以直接比。**但 `stock_group` 本身只是库存页的一条查询**（页面还要商品名、安全库存、在途等）⇒ 别把这两个数当成「库存页的耗时」 |
+| `probe_list_ms` | **无严格对应项** | ❌ **不能** | 它仍是**单段 + 表达式排序、无 roots 过滤**，而生产列表已是**三段 + `business_day` 索引**。**只比较同一探针在不同时间/不同会话之间的变化**；列表首屏的真实耗时看 `list_roots` 或人工 `s`/`e` |
+
+> **为什么探针 SQL 不干脆改成与页面一致**：探针每 60 秒在**采样循环里**跑，
+> 换成三段 + 全量聚合会给被测进程**额外加 I/O**，反而污染正在测的那轮数据。
+> 探针的职责是「这段时间库里有没有异常」，不是「页面耗时是多少」。
+> **绝对值一律以 `perf_bench` 为准，主观卡顿以 `s`/`e` 人工标记为准。**
 
 ### 4.3 判读门槛（本轮建议值，可在命令里改）
 
@@ -289,12 +310,14 @@ D:\perf-run1\
 | 持续高 CPU | 连续 3 个点 ≥ 85% | `--cpu-busy 85`。⚠️ CPU 是**单核 100%** 刻度：2 逻辑处理器（VM / 低配本）满载 ≈ **200%**，85% 在 2 核机上≈「一个核打满」，在 12 核开发机上只用了 1/14。**跨机器比 CPU 前先看 `machine_info.py` 的处理器数** |
 | 内存 | 首末涨 ≥ 30% 且 > 100 MB | `--rss-growth 30` |
 | 采样缺口 | 间隔 > 2.5 倍 | 说明整机被压住 |
-| 库侧探针 | 与 `before.csv` 比 p95 涨 ≥ 2 倍 | 需要两份 CSV 对照 |
+| 库侧探针 | 与 `before.csv` 比 p95 涨 ≥ 2 倍 | 需要两份 CSV 对照。⚠️ **这条只对 `probe_window_ms` 严格成立**；`probe_stock_ms` 只能近似参考、`probe_list_ms` 只能自己和自己比 —— 逐条判法见上面「探针对照表」 |
 | **`perf_bench` 门禁** | `count_roots` p95 > **200 ms** 或 `list_roots` p95 > **80 ms** ⇒ **退出码 4** | 这两条是单据页每帧真正跑的 |
 
 > ⚠️ **门禁阈值是「开发机防退化护栏」，不是低配机的性能目标**（2026-11-06 更正 ——
 > 本表此前写的 120 / 200 是重构前的旧值，与脚本里的 `GATES` 已经不一致）。
-> 阈值 = 定阈值那台开发机实测 p95 的约 3 倍，用途是「谁把索引/两段式改坏了立刻红」。
+> 阈值 = 定阈值那台开发机实测 p95 的约 3 倍，用途是「谁把索引 / 三段式取数改坏了立刻红」。
+> ⚠️ **`list_roots` 的 80 ms 是「两段时代」定的、现已失效**（2026-11-07 补上第三段核销计数）
+> ⇒ N-d 定稿前必须在同一份大库上用新脚本重跑，见 `docs/proposals/待裁事项-2026-11-04.md` §N-d。
 > **在 VM / 低配机上跑 bench 请加 `--no-gate`**：那里的数字是用来**建立基线**的，
 > 不是用来判红绿的（判红只会把「这台机器本来就慢」误报成「软件退化了」）。
 > 单一来源永远是 `perf_bench.py` 里的 `GATES` 表，本表只是抄一份说明。
@@ -304,8 +327,8 @@ D:\perf-run1\
 
 ### 4.3b 低配虚拟机（VM）专测：这轮能答什么、不能答什么
 
-VM（2 逻辑处理器 / 4 GB / 60 GB 虚拟 SSD / **禁用 3D 加速**）是**低资源可用性代理**，
-**不是**「正常目标机」。它只能回答一个问题：
+VM（2 逻辑处理器 / 4 GB / 60 GB 虚拟磁盘，**宿主物理介质 = NVMe SSD**（2026-11-07 用户确认）
+/ **禁用 3D 加速**）是**低资源可用性代理**，**不是**「正常目标机」。它只能回答一个问题：
 
 > **在 2 vCPU / 4 GB 下，这软件日常开单、查账、翻单据还能不能用？**
 
@@ -317,19 +340,75 @@ VM（2 逻辑处理器 / 4 GB / 60 GB 虚拟 SSD / **禁用 3D 加速**）是**�
 2. **CPU 百分比的横向对比**（见上表：先比处理器数）。
 3. **帧级结论**。monitor 的采样是 0.5 s（空闲）/ 0.2 s（忙），比一帧粗两个数量级 ——
    「卡不卡」只能用 `s` / `e` 人工标记 + 观感 1–5 分记录。
+4. **I/O 数字代表目标机**（首次启动、备份、造数、冷启动读库）。理由见下面那段 ——
+   这台 VM 的存储**太快**了。
 
-**每轮开始前**先采一份环境档案（贴进报告，跨机对比全靠它）：
+> ⚠️ **「虚拟磁盘」不等于任何物理介质** —— Guest 里看到的固定磁盘是 VMware 造出来的，
+> 从它**推不出**宿主是 NVMe / SATA SSD 还是机械盘，所以这一项**必须单独确认并记录**
+> （用 `--host-media`，见下）。
+> 本轮已确认宿主是 **NVMe SSD** ⇒ 结论方向要注意：
+> **这台 VM 的存储是快的**，它的 I/O 相关数字会**明显偏好**于真实低配机 ——
+> 目标用户那类机器很可能还是**机械盘**。
+> ⇒ **别用这台 VM 的 I/O 数字去证明「首启够快」**：它证明的是「CPU 和内存被压到
+> 2 核 4 GB 时还撑得住」，撑不住才是问题；撑住了**不代表**机械盘上也快。
+> 换一台宿主介质不同的机器（或直接在机械盘真机上）测，I/O 那部分数字**不可横向比较**。
 
-    python tool/machine_info.py --json machine.json
+**每轮开始前**先采一份环境档案（贴进报告，跨机对比全靠它）。
+**虚拟机里必须带 `--host-media`** —— 宿主物理介质在 Guest 里采不到，只能人工确认后写进去：
 
-要记的东西：LTSC/Windows 具体 build、`flutter --version` 全文、`dxdiag` 的显示页、
+    python tool/machine_info.py --json machine.json --host-media "NVMe SSD（宿主）"
+
+`perf_bench.py` / `perf_monitor.py` 也有同名参数（`--host-media`），填了会一并写进
+结果的环境信息与 `session.json`，**不用回头去翻另一份文件**。
+不填的话档案里会明确写「`host_media`: 未提供」—— 这是故意的：
+**宁可留一个显眼的空缺，也不要让人误以为磁盘类型已经知道了**。
+
+⚠️ **`--json` 会真的写文件**（2026-11-07 补）：以前 `machine_info.py` 没有参数解析，
+这条命令会被**静默忽略** —— 不生成文件也不报错，等到汇总多台机器时才发现档案不存在。
+现在文件里是**纯 JSON**（UTF-8 无 BOM，可直接 `json.load`），摘要与「被挡项」只打到终端；
+未知参数会报错退出（码 2）。
+
+要记的东西：**脚本已自动采集**的有 CPU 型号 / **逻辑处理器数** / 内存 / 磁盘型号 /
+显示缩放 / **电源计划**（2026-11-07 补 —— 「平衡」计划会降频，同一份库能差 2~3 倍，
+不记这一项事后分不清「机器慢」还是「省电把频率压下去了」；跨机对比认
+`power_plan_guid`，名称是本地化的）。
+**人工提供、脚本传参**的：`--host-media`（宿主物理存储介质 —— 虚拟机里采不到，见 §4.3b）。
+**仍需人工记录**的：LTSC/Windows 具体 build、`flutter --version` 全文、`dxdiag` 的显示页、
 空闲物理内存与页面文件、磁盘剩余空间、**VC++ 运行库版本**（见
-`docs/windows_build.md` §8.4.1 —— 没装应用**根本起不来**）、电源计划、Defender 是否实时扫描、
-显示缩放比例。
+`docs/windows_build.md` §8.4.1 —— 没装应用**根本起不来**）、Defender 是否实时扫描。
 
 **两轮对比**（改前 / 改后）必须用**同一份库的副本**，并记下两台的
 `python --version` 与 `python -c "import sqlite3;print(sqlite3.sqlite_version)"` ——
 Python/SQLite 版本不同，同样的 SQL 能差好几倍。
+
+### 4.3c 用户动作 → 查询键对照（2026-11-07，按用户审查 §五）
+
+> 目的：不只知道「哪条 SQL 快」，还知道「**用户点了一个按钮之后究竟等多久**」。
+> 全部键的实时清单与说明用 `python perf_bench.py --list`（本表可能滞后于脚本）。
+
+| 实际用户动作 | 对应的 bench 键 | 怎么读 |
+|---|---|---|
+| **概览页完整加载** | `overview_load` | 一次 `_load()` 的**全部 SQL**（最多 16 条）之和 —— 就是「点开概览页到看完」的库侧时间 |
+| 概览「今日速览」 | `today_summary` | 概览页单独一条 |
+| 概览毛利趋势图 | `gross_margin` | 近 30 天，**6 条腿**；`--explain` 会逐腿打印 |
+| **单据页首次加载** | `list_roots`（+ `count_roots`） | ⭐ **每帧真正跑的两条**，也是仅有的两条门禁键。`count_roots` = 「共 N 条」，`list_roots` = 首屏（**三段**：取 id → 整行聚合 → 核销笔数） |
+| 单据页翻页 / 全量导出 | `list_documents` | 不分页形状（导出走这条） |
+| **单据页搜索** | `doc_search_load` | ⭐ **一次搜索动作 = 计数 + 完整三段**，所以它 ≈ `doc_search_count` + `doc_search` **但不等于两者简单相加**（同一动作的真实开销） |
+| 搜索「共 N 条」 | `doc_search_count` | 单独量计数那一条 |
+| 搜索命中列表 | `doc_search` | 默认词四路全命中 |
+| 搜索**换了个词**就差很多？ | `doc_search_docno` / `_party` / `_childno` / `_product` | 四个词各只命中**一条** LIKE 路。⚠️ 实测差异极大：只命中①主单号 **1.4 ms**，只命中④商品名 **8.7 ms（6.4×）** —— `OR` 短路，**越靠后的路命中越慢** |
+| 本页明细展开 | `lines_of_page` | 批量 `IN` 形状 |
+| 本页「已核销 N 笔」 | `settled_counts` | ⚠️ 单独量时用的是**本页 id**，与 `list_roots` 第三段同源但入参不同 —— 要看「首屏含不含它」请用 `list_roots` |
+| **库存查询** | `stock_group` / `stock_cost` / `in_transit` | 库存页**三条**查询（账面 / 成本 / 在途）。⚠️ 页面还会 join 商品名与安全库存 ⇒ bench 只是其中的聚合主体 |
+| 往来方页 | `party_balances` | 每方余额 |
+| 账户页 | `account_balances` | 每户余额 |
+| 开单页商品选择器 | `recent_products` | 最近使用 |
+| 同步 pull | `pull_stock` / `pull_documents` / `pull_window` | 三条分页/窗口 |
+| **开单保存** | ❌ **没有 bench 键** | 保存走 `RuleEngine`（写事务），bench 全部 `mode=ro` **测不到**。用**真实 UI 操作计时**：monitor 里 `s` 按下去、保存完 `e` |
+| **首次启动** | ❌ **没有 bench 键** | 含首启自动备份的冷启动，只能实测（§七 启动埋点包） |
+
+> **两个「没有 bench 键」是故意的**：写路径与冷启动都带副作用，放进只读 bench 会污染库。
+> 它们的数字来自 `perf_monitor.py` 的 `s`/`e` 人工标记与 §七 的启动埋点，**不要**用 SQL 数字代替。
 
 ### 4.4 什么算「可复现的退化」
 
@@ -354,7 +433,7 @@ Python/SQLite 版本不同，同样的 SQL 能差好几倍。
 | `party_balances`（往来余额） | **620 ms** | 往来方页、概览「应收合计」 |
 | `recent_products` | 417 ms | 开单页商品选择器（最近使用） |
 | `doc_search` | 356 ms | 单据页搜索（四路 LIKE）⚠️ **此数已失效**：2026-11-06 SQL 与生产对齐（去掉生产不跑的条码路、补上子单号 / 子单明细两路），需重测 |
-| `list_documents` | 303 ms | 单据列表首屏 |
+| `list_documents` | 303 ms | 单据列表首屏 ⚠️ **此数也已失效**：2026-11-07 补上生产一直在跑的**第三段**（`settlementCountsMany` 核销笔数），形状从两段变三段，需重测 |
 | `today_summary` | 269 ms | 概览「今日销售」⚠️ **此数已失效**：2026-11-06 补了「明日零点」上界（旧写法扫到今天之后所有单），需重测 |
 | `in_transit` | 87 ms | 库存页「在途」 |
 | `account_balances` | 64 ms | 账户页余额 |
@@ -405,8 +484,10 @@ Python/SQLite 版本不同，同样的 SQL 能差好几倍。
 2. `samples.csv`、`events.csv`、`session.json`
 3. `before.csv`、`after.csv`（`perf_bench.py` 两次，含 `--explain` 的终端输出；**非开发机请加 `--no-gate`**）
 4. `perf_seed.py` 造数结束时的**自检表截图/文本**
-5. `machine_info.py` 的输出（**每轮开始前**跑一次；跨机器对比全靠它，
-   尤其是**逻辑处理器数** —— CPU 是单核 100% 刻度，不记核数就没法比）
+5. `machine_info.py --json machine.json` 的档案（**每轮开始前**跑一次；跨机器对比全靠它，
+   尤其是**逻辑处理器数** —— CPU 是单核 100% 刻度，不记核数就没法比）。
+   ⚠️ **虚拟机必须带 `--host-media`**（宿主物理介质在 Guest 里采不到，见 §4.3b）——
+   没有它，首启 / 备份 / 造数这些 I/O 数字**无法跨机比较**
 6. 一句话总结：**这一轮最卡的一次是哪个动作、当时在做什么、机器什么反应**
 
 > 缺第 3 项也能看人工观感，但**没法判断是库慢还是界面慢** —— 尽量补齐。
@@ -555,16 +636,18 @@ python perf_seed.py --data-dir DIR [--min-rows 100000] [--days 730] [--products 
 :: 库侧基线
 python perf_bench.py --data-dir DIR [--rounds 20] [--warmup 3] [--limit 200]
                      [--only KEY,KEY] [--explain] [--strict] [--no-gate]
+                     [--host-media 文本]
                      [--csv F] [--csv-detail F] [--json-out F] [--list] [--quiet]
 
 :: 机器档案（每轮开始前跑一次，跨机对比全靠它）
-python machine_info.py [--json F]
+python machine_info.py [--json F] [--host-media 文本] [--quiet]
 
 :: 人工实测
 python perf_monitor.py run --data-dir DIR --out DIR2 [--interval 5] [--probe-interval 60]
                      [--rowcount-every 12] [--process shensuanzi.exe | --pid N]
                      [--spool DIR2\events.jsonl] [--duration 分钟] [--no-input]
                      [--label 文本] [--session-note 文本] [--app-version 文本]
+                     [--host-media 文本]
                      [--slow-action 2] [--cpu-busy 85] [--rss-growth 30] [--html]
 python perf_monitor.py mark --spool F --action 名称 [--start|--end --duration S] [--feel 1-5] [--note 文本]
 python perf_monitor.py checklist
