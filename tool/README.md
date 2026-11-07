@@ -1,15 +1,17 @@
 # `tool/` 测试脚本
 
-**十个**脚本：**八个 Python** 供**测试人员在干净机器上**使用（**Python 3.8+、只用标准库**，
-不需要 Dart / Flutter / pip 包 / 网络），**两个 Dart** 是**开发机专用**（要 Dart SDK，不随测试机分发）。
+**十二个**脚本：**十个 Python** 供**测试人员在干净机器上**使用（**Python 3.8+、只用标准库**，
+不需要 Dart / Flutter / pip 包 / 网络；其中 `gen_schema_snapshot.py` 是开发机用的），
+**两个 Dart** 是**开发机专用**（要 Dart SDK，不随测试机分发）。
 
 | 脚本 | 干什么 | 会写库吗 | 会不会动软件进程 | 跑在哪 |
 |---|---|---|---|---|
 | [`seed_test_data.py`](seed_test_data.py) | 写**测试用主数据**（商品 / 往来方 / 账户），可生成 SQL 注入探针数据 | ✅ 只写指定的测试库 | ❌ 不会 | 测试机 |
 | [`destructive_acceptance.py`](destructive_acceptance.py) | 跑 `docs/desktop_acceptance.md` **第九节（异常与破坏性）** 的现场准备 + 自动验库 + 人工清单 | ✅ | 仅 9.1 隔离模式启动并强杀**它自己启动的**进程 | 测试机 |
 | [`perf_seed.py`](perf_seed.py) | 造一份体量真实、内部自洽的账本（每张流水表 ≥ 10 万行） | ✅ 只写指定的测试库 | ❌ 不会 | 测试机 |
-| [`perf_bench.py`](perf_bench.py) | 15 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN` | ❌ 只读（`mode=ro`） | ❌ 不会 | 测试机 |
+| [`perf_bench.py`](perf_bench.py) | 20 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN`（含概览首屏一次加载的全部 SQL） | ❌ 只读（`mode=ro`） | ❌ 不会 | 测试机 |
 | [`perf_monitor.py`](perf_monitor.py) | 实测期间按 0.2–0.5 秒记录进程/文件指标，并**自动发现进程、自动识别操作**（不用按键） | ❌ 只读 | ❌ 不会 | 测试机 |
+| [`machine_info.py`](machine_info.py) | 机器档案（CPU 型号 / **逻辑处理器数** / 内存 / 磁盘 / 电源计划）。⚠️ **bench 与 monitor 都 import 它**，分发时漏了那两个脚本直接起不来 | ❌ 只读 | ❌ 不会 | 测试机 |
 | [`downgrade_to_v7.py`](downgrade_to_v7.py) | 把 **v8** 库降级成 v7 形状，用来验「老库升级」的迁移路径（机房机器会被还原，发旧包还得再解决旧库造数） | ✅ 只改指定的测试库（有数据要 `--yes`） | ❌ 不会 | 测试机 |
 | [`downgrade_to_v5.py`](downgrade_to_v5.py) | 把 **v6** 库降级成 v5 形状，验**历史**迁移路径 v5→v6（v7→v8 用 `downgrade_to_v7.py`） | ✅ 只改指定的测试库（有数据要 `--yes`） | ❌ 不会 | 测试机 |
 | [`db_audit.py`](db_audit.py) | **只读审计**账务不变量 INV-1~8（单据金额 / 缓存 / 纪律 11 / 孤儿行 / `seq_no` 唯一 / 退货累计） | ❌ 只读（`mode=ro`） | ❌ 不会（软件开着也能跑） | 测试机 |
@@ -17,7 +19,7 @@
 | [`import_guard.dart`](import_guard.dart) | 根层 `lib/` `test/` 的**导入守卫**（缺 import 的桶导出 / 同集公开类型） | ❌ | ❌ | **开发机**（要 Dart SDK） |
 | [`selfcheck_import_guard.dart`](selfcheck_import_guard.dart) | 上面那个守卫的**自检**（造迷你仓库，断言它报的正好是那几条） | ❌ | ❌ | **开发机**（要 Dart SDK） |
 
-**分发到测试机时，必须整目录带走**（至少：上面七个测试机脚本 + `schema_snapshot.json`）——
+**分发到测试机时，必须整目录带走**（至少：上面九个测试机脚本 + `schema_snapshot.json`）——
 详见 §一·4 与 §七。**两个 `.dart` 不要分发**：测试机没装 Dart SDK 也跑不了。
 
 > ⚠️ 常规验收不会启动或结束 `shensuanzi.exe`。9.1 的 `--phase watch-write`
@@ -282,14 +284,16 @@ python tool/destructive_acceptance.py --phase all --data-dir /tmp/fixture --conf
 
 ## 六、长时间性能实测（`perf_*.py`）
 
-三个脚本 + 一份手册，用于**外部测试机**上的「长时间使用」性能实测。
+三个脚本 + 一份手册，用于**外部测试机**上的「长时间使用」性能实测
+（外加它们**共同依赖**的 `machine_info.py` —— 少带一个就起不来，见 §一 的分发说明）。
 完整流程见 **[`docs/perf_test_guide.md`](../docs/perf_test_guide.md)**（测试人员只看那份）。
 
 | 脚本 | 干什么 | 会写库吗 |
 |---|---|---|
 | [`perf_seed.py`](perf_seed.py) | 造一份**体量真实、内部自洽**的账本（每张流水表 ≥ 10 万行） | ✅ 只写指定的测试库 |
-| [`perf_bench.py`](perf_bench.py) | 15 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN` | ❌ 只读（`mode=ro`） |
+| [`perf_bench.py`](perf_bench.py) | 20 条热路径查询的 p50/p95 + `EXPLAIN QUERY PLAN` | ❌ 只读（`mode=ro`） |
 | [`perf_monitor.py`](perf_monitor.py) | 实测期间按 0.2–0.5 秒记录进程/文件指标 + **自动发现进程、自动识别操作**（不用按键） | ❌ 只读 |
+| [`machine_info.py`](machine_info.py) | 机器档案（含**逻辑处理器数** —— CPU 是单核 100% 刻度，不记核数就没法跨机比） | ❌ 只读 |
 | [`downgrade_to_v7.py`](downgrade_to_v7.py) | 把 **v8** 库降级成 v7 形状，验**当前**迁移路径 v7→v8 | ✅ 只改指定的测试库 |
 | [`downgrade_to_v5.py`](downgrade_to_v5.py) | 把 **v6** 库降级成 v5 形状，验**历史**迁移路径 v5→v6 | ✅ 只改指定的测试库 |
 | [`gen_schema_snapshot.py`](gen_schema_snapshot.py) | 从 `schema.dart` 重新生成 `schema_snapshot.json`（**改 schema 后必跑**） | ❌ 写快照 |
@@ -304,6 +308,10 @@ python tool/destructive_acceptance.py --phase all --data-dir /tmp/fixture --conf
 | `doc_search` / `list_documents` | 300 ms / 150 ms 量级 | 同 |
 | `today_summary` | **约 270 ms**（26 万单时） | 未记录 —— 概览页那张卡，大库上是第二慢 |
 | `pull_*` / `lines_of_page` | **< 1 ms** | 同 |
+
+> ⚠️ **`doc_search` 与 `today_summary` 两行已失效**（2026-11-06）：那两条 SQL 后来
+> 与生产对齐过（搜索：去掉生产不跑的条码路、补上子单号 / 子单明细两路 EXISTS；
+> 今日速览：补「明日零点」上界）。旧数字测的不是现在跑的 SQL，引用前请重跑。
 
 > **v5（2026-10-24，§CV·九十八）把 `stock_ledger` / `party_ledger` 的聚合索引加宽成
 > covering**（`idx_stock_covering` / `idx_party_covering`），每行不再回表 ⇒
@@ -395,6 +403,11 @@ CPU 峰值、读写量、账本里刚落的单据，留一列「你刚才在做�
 同一份库的基准（`perf_bench --rounds 5`）：`stock_group` 41.5 ms · `stock_cost` 42.0 ms ·
 `party_balances` 28.2 ms · `doc_search` 364 ms · `list_documents` 153 ms ·
 `today_summary` 273 ms · `pull_*` < 1 ms —— 量级与 §六 基线对得上，**够用来测**。
+
+> ⚠️ 上面是 2026-10-27 的实测，**保留原样**作为「当时数据量够不够」的依据。
+> 但其中 `doc_search` / `today_summary` 两个数**已失效**：2026-11-06 把这两条 SQL
+> 与生产对齐了（搜索去掉生产不跑的条码路、补上子单号 / 子单明细两路；
+> 今日速览补「明日零点」上界）。要引用这两个数字请先用新脚本重跑。
 
 ⚠️ **这份数据跑 `db_audit` 应当全绿**（2026-10-27 起）。若看到 `INV-1b` / `INV-7` 报 ❌，
 那是造数脚本的缺陷回来了，不是软件的账错了 —— 先看 `perf_seed.py` 里

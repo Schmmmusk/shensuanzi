@@ -30,7 +30,7 @@
 | `stock_group` / `stock_cost` | 库存页的「账面」「成本（均价）」、开单页的库存快照 |
 | `in_transit` | 库存页的「在途」、在店可售 |
 | `list_documents` | 单据列表首屏（含对方名、已退额、按日分桶排序） |
-| `doc_search` | 单据页搜索（四路 LIKE） |
+| `doc_search` / `doc_search_count` | 单据页搜索（四路 LIKE，两段 + 「共 N 条」） |
 | `lines_of_page` | 单据列表的明细（本页 id 批量取） |
 | `settled_counts` | 列表的「已收 N 笔」（批量 `IN + GROUP BY`） |
 | `party_balances` / `account_balances` | 往来方页、账户页、概览 |
@@ -40,12 +40,17 @@
 | `doc_count` | 概览「有没有单据」（**裸 COUNT，不是页面跑的**） |
 | `count_roots` | 单据页「共 N 条」= `countDocuments(rootsOnly)` —— **每帧都跑**（门禁） |
 | `list_roots` | 单据页首屏 = `listDocuments(rootsOnly)` 两段 —— **每帧都跑**（门禁） |
+| `gross_margin` | 概览「毛利趋势」= `dailyGrossMargin(30 天)`，**6 条 SQL**（N-a 新增） |
+| `overview_load` | 概览页**一次 `_load()` 的全部 SQL**（最多 16 条：宽窗口营收 3 + 今日 1 + 应收/应付各一遍 `partyBalances` + 存货榜 1 + 毛利 6） |
 
 ⚠️ **改了 DAO 的 SQL 必须同步这里**，否则数字就不代表软件了。2026-11-04 踩过一次：
 DAO 换成 `business_day` + 两段式后 bench 没跟上，在**健康库**上门禁照样判红
 （bench 529 ms vs 真跑 18 ms）—— 假红会让人去优化一个不存在的瓶颈。
-改完用 `--explain` 核对形状：`count_roots` 不该有 `MATERIALIZE`；
-列表第一段该是 `USING INDEX idx_docs_bday_created` 且无 `TEMP B-TREE FOR ORDER BY`。
+2026-11-06 又踩了**反方向**一次（用户审查 §三·1）：`doc_search` 落后两次改动，
+多测了一条生产根本不跑的「条码」LIKE、少测了「子单号 / 子单明细」两条 EXISTS
+⇒ 数字**两头都不对**，而且偏快（假绿）。判据同上一次：用 `--explain` 核对形状 ——
+`count_roots` 不该有 `MATERIALIZE`；列表第一段该是 `USING INDEX idx_docs_bday_created`
+且无 `TEMP B-TREE FOR ORDER BY`。
 
 ## 安全
 
@@ -71,6 +76,7 @@ import sqlite3
 import statistics
 import sys
 import time
+from datetime import date, datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 DATA_FILE_NAME = "shensuanzi.db"
@@ -189,6 +195,7 @@ def _two_stage(stage1: str, limit: int):
     # 有没有用上的关键（第二段是按 id 点查，形状固定）。挂个属性比返回
     # 一句「见下方 *_stage 键」诚实 —— 之前那句是空头承诺，下面并没有那些键。
     measure.explain_sql = stage1  # type: ignore[attr-defined]
+    measure.explain_params = (limit,)  # type: ignore[attr-defined]
     return measure, ()
 
 
@@ -210,24 +217,94 @@ def _like_escape(term: str) -> str:
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def q_doc_search(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
-    # 四路：单号 / 对方名 / 商品名 / 条码（形状同 documents_page 的搜索）
-    # ⚠️ `ESCAPE '\\'` 必须显式写（SQLite 没有默认转义符）—— 与
-    # `document_dao.dart` 的搜索 SQL 逐字同形。
+#: 「按内容找单」的四路 WHERE —— 与 `DocumentDao._docFilter` 的 `query` 分支**逐字同形**。
+#:
+#: ⚠️ 2026-11-06 对齐（用户审查 §三·1）：这里曾经落后**两次**改动，方向与
+#: `list_documents` 那次相反（那次是 bench 比 DAO 慢、假红；这次是 bench 比 DAO 快、**假绿**）：
+#:
+#: | 项 | bench 旧写法 | 生产（`_docFilter`） |
+#: |---|---|---|
+#: | 第四路 | `p.barcode LIKE ?` | **没有条码这一路**，第四路是**子单号** `c.doc_no` |
+#: | 商品那一路 | 只看 `l.document_id = d.id` | `(cd.id = d.id OR cd.ref_doc_id = d.id)` —— **子单的明细也算** |
+#: | 排序 | `((occurred_at + 28800000) / 86400000)` 表达式 | 固化列 `business_day` + `INDEXED BY` |
+#: | 结构 | 单段、直接取整行 | 两段（第一段只取 id） |
+#:
+#: 条码那一路**多出来的成本是假的**（生产不跑），而**少掉的**子单号 EXISTS 与
+#: 「子单明细」那半边的成本是**真跑了却没测**—— 两个方向合起来，旧数字两头都不对。
+#:
+#: ⚠️ `ESCAPE '\'` 必须显式写（SQLite 没有默认转义符），与生产同理。
+#:
+#: 页面默认 `rootsOnly: true`（`documents_page.dart` 的 `_loadInto`），而
+#: `_docFilter` 把 roots 与 query 两个条件 **AND** 在一起 ⇒ 这里也必须两条都带。
+_DOC_QUERY_COND = (
+    "(d.doc_no LIKE ? ESCAPE '\\' "
+    "OR pa.name LIKE ? ESCAPE '\\' "
+    "OR EXISTS (SELECT 1 FROM documents c "
+    "  WHERE c.ref_doc_id = d.id AND c.doc_no LIKE ? ESCAPE '\\') "
+    "OR EXISTS (SELECT 1 FROM document_lines l "
+    "  JOIN products p ON p.id = l.product_id "
+    "  JOIN documents cd ON cd.id = l.document_id "
+    "  WHERE (cd.id = d.id OR cd.ref_doc_id = d.id) AND p.name LIKE ? ESCAPE '\\'))"
+)
+
+#: roots + query 的完整 WHERE（`_docFilter` 用 ` AND ` 连接 conditions，顺序同生产）。
+_DOC_SEARCH_WHERE = (
+    "WHERE " + _DOC_ROOTS[len('WHERE '):] + " AND " + _DOC_QUERY_COND + " "
+)
+
+#: 搜索时的 FROM：`_fromFor(filter, ordered: true)` 且 `needsParties = true`
+#: （四路里有一路是 `pa.name`）⇒ **带** parties，但**不带**两个派生表
+#: （`needsAggregates` 只在「未结清」筛选时为真）。
+_STAGE1_SEARCH = (
+    "SELECT d.id FROM documents d INDEXED BY idx_docs_bday_created "
+    "LEFT JOIN parties pa ON pa.id = d.party_id "
+    + _DOC_SEARCH_WHERE
+    + _DOC_ORDER
+    + "LIMIT ?"
+)
+
+#: 搜索时的计数 FROM：同 `_fromFor(filter)` 但**不带** `INDEXED BY`
+#: （`countDocuments` 传 `ordered: false`）。
+_COUNT_SEARCH = (
+    "SELECT COUNT(*) AS c FROM documents d "
+    "LEFT JOIN parties pa ON pa.id = d.party_id " + _DOC_SEARCH_WHERE
+)
+
+
+def _search_params() -> Tuple[Any, ...]:
+    """搜索词固定用 `1`：单号里几乎必含，能稳定命中四路里的 EXISTS 分支。"""
     pat = f"%{_like_escape('1')}%"
-    return (
-        "SELECT d.*, pa.name AS party_name "
-        "FROM documents d LEFT JOIN parties pa ON pa.id = d.party_id "
-        "WHERE d.doc_no LIKE ? ESCAPE '\\' "
-        "   OR IFNULL(pa.name, '') LIKE ? ESCAPE '\\' "
-        "   OR EXISTS (SELECT 1 FROM document_lines l JOIN products p ON p.id = l.product_id "
-        "              WHERE l.document_id = d.id "
-        "                AND (p.name LIKE ? ESCAPE '\\' "
-        "                     OR IFNULL(p.barcode,'') LIKE ? ESCAPE '\\')) "
-        "ORDER BY ((d.occurred_at + 28800000) / 86400000) DESC, d.created_at DESC "
-        "LIMIT ?",
-        (pat, pat, pat, pat, limit),
-    )
+    return (pat, pat, pat, pat)
+
+
+def q_doc_search(limit: int, window_ms: int):
+    """单据页搜索的**列表**（`listDocuments(query:, rootsOnly: true)`）—— **两段**。
+
+    ⚠️ 与页面一致：搜索时页面跑的是 `countDocuments` + `listDocuments` **两条**
+    （见 `documents_page.dart` 的 `_loadInto`），所以另有一条 `doc_search_count`。
+    """
+
+    def measure(conn: sqlite3.Connection) -> int:
+        ids = [
+            row[0]
+            for row in conn.execute(
+                _STAGE1_SEARCH, (*_search_params(), limit)
+            ).fetchall()
+        ]
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        sql = _STAGE2_LIST % (marks, marks, marks)
+        return len(conn.execute(sql, (*ids, *ids, *ids)).fetchall())
+
+    measure.explain_sql = _STAGE1_SEARCH  # type: ignore[attr-defined]
+    measure.explain_params = (*_search_params(), limit)  # type: ignore[attr-defined]
+    return measure, _search_params()
+
+
+def q_doc_search_count(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
+    """单据页搜索的「共 N 条」（`countDocuments(query:, rootsOnly: true)`）。"""
+    return (_COUNT_SEARCH, _search_params())
 
 
 def q_lines_of_page(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
@@ -266,12 +343,28 @@ def q_account_balances(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
 
 
 def q_today_summary(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
-    day_start = int((time.time() - (time.time() % 86400)) * 1000)
+    """概览页「今日经营」（`QueryDao.todaySummary(dayStart)`）。
+
+    ⚠️ 2026-11-06 对齐（用户审查 §三·1）：旧写法有**两处**与生产不同 ——
+
+    | 项 | bench 旧写法 | 生产 |
+    |---|---|---|
+    | 零点 | `time.time() % 86400` = **UTC** 零点 | **本地**零点（调用方 `DateTime(y,m,d)`） |
+    | 上界 | **没有** | `occurred_at < 明日零点`（3c-5，§3.7 P2 #5） |
+
+    少一个上界 ⇒ 扫的是「今天到数据库最后一张单」，在压测库上等于**全表**，
+    数字比生产**大**（保守方向的误差，但仍然是错的）；UTC 零点在东八区
+    会把窗口整体挪 8 小时，命中完全不同的行集。
+    """
+    now = datetime.now()
+    day_start = int(datetime(now.year, now.month, now.day).timestamp() * 1000)
+    day_end = int(datetime(now.year, now.month, now.day + 1).timestamp() * 1000)
     return (
         "SELECT doc_type AS t, COUNT(*) AS c, COALESCE(SUM(total_amount), 0) AS amt "
         "FROM documents WHERE status != 'cancelled' AND occurred_at >= ? "
+        "AND occurred_at < ? "
         "GROUP BY doc_type",
-        (day_start,),
+        (day_start, day_end),
     )
 
 
@@ -317,6 +410,226 @@ def q_pull_window(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
 
 def q_doc_count(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
     return ("SELECT COUNT(*) FROM documents", ())
+
+
+# ---------------------------------------------------------------------------
+# 毛利与概览首屏（2026-11-06 补，用户审查 §三·2）
+#
+# 为什么必须单独测：概览页 `_load()` **一次点下去跑十几条 SQL**（最多 16 条），
+# 而 bench 里原来只有零散的几条（`today_summary` / `party_balances` / `stock_cost`）。
+# 「毛利图上线后概览首屏有没有退化」这个问题，用零散数字**回答不了** ——
+# 尤其 `receivablesSummary()` 与 `payablesSummary()` 各自**独立**跑一次
+# `partyBalances()`（整个 `party_ledger` 的 GROUP BY），**同一次加载里跑了两遍**，
+# 单测 `party_balances` 只能看到一半成本。
+#
+# ⚠️ 这两条**不进 GATES**：门禁阈值要等低配机基线出来再定（N-d 未裁）。
+# ---------------------------------------------------------------------------
+
+#: 概览页图表天数（`_OverviewPageState._chartDays`）。
+_CHART_DAYS = 30
+
+
+def _business_day_of(ms: int) -> int:
+    """与 core 的 `businessDayOf()` 同式：`((ms + offset) / 86400000).floor()`。
+
+    偏移取**那个时刻**的本地偏移（含夏令时），与 Dart 的
+    `DateTime.fromMillisecondsSinceEpoch(ms).timeZoneOffset` 一致。
+    """
+    offset = datetime.fromtimestamp(ms / 1000.0).astimezone().utcoffset()
+    return (ms + int(offset.total_seconds() * 1000)) // 86400000
+
+
+#: 业务日 0（1970-01-01）对应的 `date.toordinal()`。
+_EPOCH_ORDINAL = date(1970, 1, 1).toordinal()
+
+
+def _day_to_date(day: int) -> date:
+    return date.fromordinal(_EPOCH_ORDINAL + day)
+
+
+def _month_start_day(day: int) -> int:
+    """该业务日所在月的 1 号（业务日序号）。走公历日历，不自己算闰年。"""
+    return _day_to_date(day).replace(day=1).toordinal() - _EPOCH_ORDINAL
+
+
+def _month_compare_window(today_day: int) -> Tuple[int, int]:
+    """复刻 `monthCompareWindow()`，只取「宽窗口的下界」。
+
+    返回 `(prior_from, prior_to)`。概览页用 `min(prior_from, fromDay)` 当
+    `dailyRevenue` 的起点 —— 今天几号决定要不要回到上月初，所以**压测窗口
+    会随日期变化**，这是**真实行为**，不是压测脚本的不稳定。
+    """
+    today = _day_to_date(today_day)
+    current_from = today_day - (today.day - 1)
+    prior_from = _month_start_day(current_from - 1)
+    prior_month_end = _month_start_day(prior_from + 32) - 1
+    prior_days = min(today.day, prior_month_end - prior_from + 1)
+    return prior_from, prior_from + prior_days - 1
+
+
+#: `dailyRevenue` 的三条腿（与 `QueryDao.dailyRevenue` 逐字同形）。
+_REVENUE_LEGS: Tuple[Tuple[str, Tuple[Any, ...]], ...] = (
+    (
+        "SELECT business_day AS d, COUNT(*) AS c, COALESCE(SUM(total_amount), 0) AS amt "
+        "FROM documents WHERE doc_type = ? AND status != ? AND business_day BETWEEN ? AND ? "
+        "GROUP BY business_day",
+        ("sale", "cancelled"),
+    ),
+    (
+        "SELECT business_day AS d, COUNT(*) AS c, COALESCE(SUM(total_amount), 0) AS amt, "
+        "SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS transit, "
+        "SUM(CASE WHEN status = ? THEN total_amount ELSE 0 END) AS transit_amt "
+        "FROM documents WHERE doc_type = ? AND status != ? AND business_day BETWEEN ? AND ? "
+        "GROUP BY business_day",
+        ("in_transit", "in_transit", "delivery", "cancelled"),
+    ),
+    (
+        "SELECT r.business_day AS d, COUNT(*) AS c, COALESCE(SUM(r.total_amount), 0) AS amt "
+        "FROM documents r LEFT JOIN documents o ON o.id = r.ref_doc_id "
+        "WHERE r.doc_type = ? AND r.status != ? AND (o.id IS NULL OR o.status != ?) "
+        "AND r.business_day BETWEEN ? AND ? GROUP BY r.business_day",
+        ("sale_return", "cancelled", "cancelled"),
+    ),
+)
+
+#: `dailyGrossMargin` **自己**的三条腿（收入腿复用上面那三条 ⇒ 合计 6 条）。
+_MARGIN_LEGS: Tuple[Tuple[str, Tuple[Any, ...]], ...] = (
+    (
+        "SELECT d.business_day AS day, COALESCE(SUM(s.total_cost), 0) AS cost "
+        "FROM stock_ledger s JOIN documents d ON d.id = s.document_id "
+        "WHERE d.doc_type IN (?, ?) AND d.status != ? "
+        "AND d.business_day BETWEEN ? AND ? GROUP BY d.business_day",
+        ("sale", "delivery", "cancelled"),
+    ),
+    (
+        "SELECT d.business_day AS day, COALESCE(SUM(s.total_cost), 0) AS cost "
+        "FROM stock_ledger s JOIN documents d ON d.id = s.document_id "
+        "WHERE d.doc_type = ? AND d.status != ? AND s.total_cost < 0 "
+        "AND d.business_day BETWEEN ? AND ? GROUP BY d.business_day",
+        ("stocktake", "cancelled"),
+    ),
+    (
+        "SELECT r.business_day AS day, COALESCE(SUM(s.total_cost), 0) AS cost "
+        "FROM stock_ledger s JOIN documents r ON r.id = s.document_id "
+        "LEFT JOIN documents o ON o.id = r.ref_doc_id "
+        "WHERE r.doc_type = ? AND r.status != ? AND (o.id IS NULL OR o.status != ?) "
+        "AND r.business_day BETWEEN ? AND ? GROUP BY r.business_day",
+        ("sale_return", "cancelled", "cancelled"),
+    ),
+)
+
+
+def _run_legs(
+    conn: sqlite3.Connection,
+    legs: Sequence[Tuple[str, Tuple[Any, ...]]],
+    from_day: int,
+    to_day: int,
+) -> int:
+    rows = 0
+    for sql, head in legs:
+        rows += len(conn.execute(sql, (*head, from_day, to_day)).fetchall())
+    return rows
+
+
+def _margin_window() -> Tuple[int, int]:
+    to_day = _business_day_of(int(time.time() * 1000))
+    return to_day - (_CHART_DAYS - 1), to_day
+
+
+def q_gross_margin(limit: int, window_ms: int):
+    """概览「毛利趋势」= `dailyGrossMargin(近 30 天)` —— **6 条 SQL**。
+
+    收入腿 3 条（复用 `dailyRevenue`，口径不分叉）+ 成本腿 3 条。
+    N-a（2026-11-06）新上的功能，之前**完全没有基线**。
+    """
+    from_day, to_day = _margin_window()
+
+    def measure(conn: sqlite3.Connection) -> int:
+        return _run_legs(conn, _REVENUE_LEGS + _MARGIN_LEGS, from_day, to_day)
+
+    measure.explain_sql = _MARGIN_LEGS[0][0]  # type: ignore[attr-defined]
+    measure.explain_params = (*_MARGIN_LEGS[0][1], from_day, to_day)  # type: ignore[attr-defined]
+    return measure, ()
+
+
+#: 概览首屏里 `stockTop()` 那条（`QueryDao.stockTop` 的聚合子查询）。
+_STOCK_TOP = (
+    "SELECT p.id AS id, p.name AS name, p.unit AS unit, s.qty AS qty, s.cost AS cost "
+    "FROM products p "
+    "JOIN (SELECT product_id, COALESCE(SUM(quantity), 0) AS qty, "
+    "             COALESCE(SUM(total_cost), 0) AS cost "
+    "      FROM stock_ledger GROUP BY product_id) s ON s.product_id = p.id "
+    "WHERE s.qty > 0 ORDER BY s.cost DESC, p.name ASC"
+)
+
+_PARTY_BALANCES = (
+    "SELECT party_id AS k, COALESCE(SUM(amount), 0) AS v FROM party_ledger GROUP BY party_id"
+)
+
+_TODAY_SUMMARY_SQL = (
+    "SELECT doc_type AS t, COUNT(*) AS c, COALESCE(SUM(total_amount), 0) AS amt "
+    "FROM documents WHERE status != 'cancelled' AND occurred_at >= ? AND occurred_at < ? "
+    "GROUP BY doc_type"
+)
+
+
+def q_overview_load(limit: int, window_ms: int):
+    """概览页**一次 `_load()` 的全部 SQL**（`overview_page.dart` 的 `_load()`）。
+
+    回答的是用户 §七 的问题 ②：「毛利图上线后，概览首屏有没有变慢」。
+    逐条对应关系（**顺序照 `_load()`**）：
+
+    | # | `_load()` 里的调用 | SQL |
+    |---|---|---|
+    | 1 | `hasAnyDocument()` | `SELECT 1 FROM documents LIMIT 1` |
+    | 2 | `dailyRevenue(宽窗口)` | 3 条腿，窗口 = `min(priorFrom, fromDay)..toDay` |
+    | 3 | `todaySummary(本地零点)` | 1 条（含上界） |
+    | 4 | `receivablesSummary()` | `partyBalances()` **全表 GROUP BY** + 1 条点查 |
+    | 5 | `payablesSummary()` | **又一遍** `partyBalances()` + 1 条点查 |
+    | 6 | `stockTop()` | 1 条（`stock_ledger` 全表 GROUP BY + 排序） |
+    | 7 | `dailyGrossMargin(30 天)` | 6 条腿 |
+
+    ⚠️ 第 4/5 步的**两遍** `partyBalances()` 是现状，不是压测脚本写错了 ——
+    要不要合并是**性能优化提案**，本轮（纯测试工具）不动生产代码。
+    """
+    to_day = _business_day_of(int(time.time() * 1000))
+    from_day = to_day - (_CHART_DAYS - 1)
+    prior_from, _prior_to = _month_compare_window(to_day)
+    wide_from = min(prior_from, from_day)
+    now = datetime.now()
+    day_start = int(datetime(now.year, now.month, now.day).timestamp() * 1000)
+    day_end = int(datetime(now.year, now.month, now.day + 1).timestamp() * 1000)
+
+    def measure(conn: sqlite3.Connection) -> int:
+        rows = 0
+        rows += len(conn.execute("SELECT 1 FROM documents LIMIT 1").fetchall())
+        rows += _run_legs(conn, _REVENUE_LEGS, wide_from, to_day)
+        rows += len(conn.execute(_TODAY_SUMMARY_SQL, (day_start, day_end)).fetchall())
+        # 应收 / 应付：**各自独立**跑一遍 partyBalances（生产现状 —— 同一次加载里
+        # 整个 party_ledger 被 GROUP BY 了两遍）。top 的取法也照 `_duesSummary`：
+        # 应收取「正得最多」，应付取「负得最多」。
+        for positive in (True, False):
+            balances = conn.execute(_PARTY_BALANCES).fetchall()
+            rows += len(balances)
+            if positive:
+                dues = [r for r in balances if (r[1] or 0) > 0]
+            else:
+                dues = [r for r in balances if (r[1] or 0) < 0]
+            if dues:
+                top = max(dues, key=lambda r: abs(r[1] or 0))
+                rows += len(
+                    conn.execute(
+                        "SELECT name, is_active FROM parties WHERE id = ?", (top[0],)
+                    ).fetchall()
+                )
+        rows += len(conn.execute(_STOCK_TOP).fetchall())
+        rows += _run_legs(conn, _REVENUE_LEGS + _MARGIN_LEGS, from_day, to_day)
+        return rows
+
+    measure.explain_sql = _STOCK_TOP  # type: ignore[attr-defined]
+    measure.explain_params = ()  # type: ignore[attr-defined]
+    return measure, ()
+
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +707,8 @@ QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]],
     ("stock_cost", "成本余值（每商品）", q_stock_cost),
     ("in_transit", "在途数量（送货未签收）", q_in_transit),
     ("list_documents", "单据列表首屏", q_list_documents),
-    ("doc_search", "单据页搜索（四路）", q_doc_search),
+    ("doc_search", "单据页搜索（四路，两段）", q_doc_search),
+    ("doc_search_count", "单据页搜索「共 N 条」", q_doc_search_count),
     ("lines_of_page", "本页明细批量取", q_lines_of_page),
     ("settled_counts", "本页核销笔数（批量）", q_settled_counts),
     ("party_balances", "往来余额（每方）", q_party_balances),
@@ -407,6 +721,8 @@ QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]],
     ("doc_count", "单据总数", q_doc_count),
     ("count_roots", "单据页「共 N 条」（rootsOnly，每帧都跑）", q_count_roots),
     ("list_roots", "单据页首屏（rootsOnly 两段，每帧都跑）", q_list_roots),
+    ("gross_margin", "概览毛利趋势（近 30 天，6 条腿）", q_gross_margin),
+    ("overview_load", "概览首屏一次 _load()（全部 SQL，最多 16 条）", q_overview_load),
 )
 
 
@@ -508,10 +824,14 @@ def explain(conn: sqlite3.Connection, sql: str, params: Sequence[Any]) -> List[s
     if callable(sql):
         # 多步查询：EXPLAIN **第一段**（索引是否生效只看第一段；第二段是
         # 按 id 点查，形状固定）。没有可 EXPLAIN 的第一段就明说，不编。
+        #
+        # ⚠️ 参数不能一律硬塞 `(200,)` —— 那是「第一段只有 LIMIT」的列表查询
+        # 才成立；搜索的第一段带 4 个 LIKE 参数，毛利腿带 5 个 ⇒ 直接报
+        # 「Incorrect number of bindings」。所以第一段要自带参数（`explain_params`）。
         first = getattr(sql, "explain_sql", None)
         if not first:
             return ["（多步查询，无法 EXPLAIN）"]
-        sql, params = first, (200,)
+        sql, params = first, getattr(sql, "explain_params", (200,))
         rows = conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
         return ["第一段：" + str(r[-1]) for r in rows]
     try:

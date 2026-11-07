@@ -19621,3 +19621,65 @@ N-c 主体在 §CV·一百一十七 已按裁定乙关闭，缺的就是这两�
 （复核：v7 / 5826 张单 / 8097 行 / `integrity_check` ok）。
 
 **⑥ 门禁**：root **524** · app **492** · host **229** · core **844** · `flutter analyze` **0 issues**。
+
+### §CV·一百二十 · 纯测试工具修整：压测 SQL 与生产**重新对齐** + 毛利/概览基线（2026-11-06）
+
+> 起因：用户审查 `docs/reply.md` §三 —— **「让 Agent 做一轮纯测试工具修整，不碰业务代码」**。
+> 本轮**零生产代码改动**（`git status` 只有 `tool/` 与 `docs/`）。
+
+**① 两条 bench SQL 落后生产，而且方向相反（用户 §三·1，实测比他说得更严重）**
+
+| 键 | bench 旧写法 | 生产 | 误差方向 |
+|---|---|---|---|
+| `doc_search` | 第四路是 `p.barcode LIKE` | **没有条码这一路**，第四路是**子单号** `c.doc_no` | 多测 ⇒ **假绿** |
+| `doc_search` | 商品只看 `l.document_id = d.id` | `(cd.id = d.id OR cd.ref_doc_id = d.id)`（**子单明细也算**） | 少测 ⇒ **假绿** |
+| `doc_search` | 表达式排序 + 单段取整行 | `business_day` 列 + `INDEXED BY` + **两段** | 两头都不对 |
+| `today_summary` | `time.time() % 86400` = **UTC** 零点、**无上界** | **本地**零点 + `occurred_at < 明日零点`（3c-5） | 扫到「今天之后所有单」 |
+
+⇒ 与 2026-11-04 那次是**同一个坑的反方向**：那次 bench 比 DAO 慢 ⇒ 健康库上假红；
+这次 bench 比 DAO **快** ⇒ 真退化也报绿。两处都在 `perf_bench.py` 注释里写明了对照表。
+
+**② 新增两条基线（用户 §三·2）**
+
+- `gross_margin` —— `dailyGrossMargin(30 天)` = **6 条腿**（收入 3 条**复用** `dailyRevenue`
+  的口径，不重推；成本 3 条）。N-a 新上的功能此前**完全没有基线**。
+- `overview_load` —— 概览页 `_load()` 的**全部 SQL**（实测本夹具库 **15 条**，
+  应收/应付都有数据时 **16 条**）。**关键实测**：`receivablesSummary()` 与
+  `payablesSummary()` **各自独立**跑一遍 `partyBalances()`（整个 `party_ledger` 的
+  GROUP BY）⇒ **同一次加载跑了两遍**，单测 `party_balances` 只看到一半成本。
+  宽窗口营收按 `monthCompareWindow()` 复刻（今天 11-06 ⇒ 上界回到 10-01，实测对得上）。
+  ⚠️ 这两条**不进 `GATES`** —— 阈值等低配机数字（N-d 未裁）。
+
+**③ `--explain` 的一个真 bug**：`explain()` 对多步查询**硬塞 `(200,)` 参数**，
+只有「第一段只有 LIMIT」的列表查询才成立；搜索第一段带 4 个 LIKE ⇒
+`Incorrect number of bindings`（实测炸了）。改成 `explain_params` 属性由各查询自带。
+⇒ 教训：**callable 形状的查询以前从没被 EXPLAIN 过**，那条路径是死的。
+
+**④ monitor 探针标注（用户 §三·3）**：`PROBES` 上方加**对照表**说明三条探针各自
+与页面的差异，报告 §四 固定打印「**探针 ≠ 页面耗时**」；文件头加「这台机器
+测得出什么、测不出什么」三节（帧耗时测不出 —— 采样 0.5/0.2 秒比一帧粗两个数量级；
+CPU 是**单核 100%** 刻度 ⇒ 2 vCPU 满载 ≈ 200%，跨机比之前先比核数；渲染后端未确认）。
+**探针 SQL 故意不改**：它们每 60 秒在采样循环里跑，换成两段+全量聚合会污染被测进程。
+
+**⑤ 手册（用户 §三·4）**：交付物 **4 个文件 ⇒ 6 个** —— `machine_info.py` 此前**根本没列**，
+而 bench 与 monitor **都 import 它** ⇒ 测试机上直接 `ModuleNotFoundError`（这是条真断链，
+不只是「清单少一行」）；§4.3 门禁行 **120/200 ⇒ 200/80** 并写明「**开发机防退化护栏，
+不是低配机目标**，非开发机一律 `--no-gate`」；新增 **§4.3b VM 专测**（低资源可用性代理
+≠ 正常目标机 + 环境清单 + `s`/`e` 人工标记）；红线加**第 5 条：迁移夹具库与压测库
+绝不能混用**（v7/5,826 单 vs v8/26 万单，往夹具库造数 ⇒ 第 15 步作废）；
+§4.5 与 `tool/README.md` 里 `doc_search` / `today_summary` 的旧数字**就地标注失效**
+（保留原数 + 说明为什么不能用，不删）。
+
+**⑥ 我上一轮的过度声明（纪律 17）**：说过「关 3D 加速 ⇒ 软件渲染」。
+**已按用户给的措辞改口**：「渲染路径及性能可能发生变化。当前尚未确认 Flutter 实际使用的
+后端，帧耗时和切页数据暂不能代表正常目标机。」—— 复核：那句话**只出现在对话里，
+没写进任何文件**（grep `软件渲染` / `SwiftShader` = 0 命中），所以无需回改文档。
+⚠️ 顺带查实：`main.cpp` **没有** Impeller 开关，且我们的 SDK 是 **3.41.1**
+（用户引的「Windows 默认 Impeller」是 3.47），所以后端**确实未确认** —— 用户的措辞比我的更准。
+
+**⑦ 门禁**：`python -m compileall tool` 全过 · `perf_monitor selftest` 6/6 ·
+monitor 短程实跑（报告含新免责声明）· bench 夹具库 20 条全绿（`count_roots` 0.44 /
+`list_roots` 1.06 ms，门禁未误红）· `flutter analyze` **0 issues**（本轮没动 Dart）。
+
+**⑧ 待办**：N-d 现在要**四条**阈值（`doc_search` / `today_summary` / `gross_margin` /
+`overview_load`），且**旧数字全部作废** ⇒ 提案 §三·补 已改写，要求用**新脚本 + 压测库**重跑。

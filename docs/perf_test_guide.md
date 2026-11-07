@@ -19,23 +19,45 @@
 3. **脚本不会启动、也不会结束软件进程。** 软件由你开、你关。
 4. **一轮测试期间，别同时做大数据量拷贝/杀毒全盘扫描/系统更新** —— 那些会把 I/O 抢走，
    测出来的数字不能归因给软件。真发生了就在备注里写清楚。
+5. ⚠️ **迁移夹具库与压测库是两份东西，绝不能混用**（2026-11-06 用户裁定 §一）。
+
+   | | 第 15 步「迁移」夹具 | 压测库 |
+   |---|---|---|
+   | 位置 | `build/dist/第15步夹具/shensuanzi.db` | `D:\perf-data\shensuanzi.db` |
+   | schema | **v7**（旧版本，用来验迁移链） | **v8**（当前版本，`perf_seed.py` 造的） |
+   | 数据量 | 5,826 张单 / 8,097 行 | ≥10 万行/表（约 26 万单 / 146 万行 / 400–500 MB） |
+   | 用途 | 第 15 步：旧库被新版本打开后**能不能正确迁移** | 全部性能测量 |
+
+   往夹具库里 `perf_seed` 一行 ⇒ **第 15 步作废**，那一步测的正是「旧库原样升上来」。
+   反过来拿夹具库跑 bench ⇒ 数字小两个数量级，等于没测。
+   **两个命令永远指向不同的 `--data-dir`，跑之前先看一眼路径。**
 
 ---
 
 ## 一、交付物与摆放
 
-把下面 4 个文件放在**同一个目录**（例如 `D:\perf-tools\`）：
+把下面 **6** 个文件放在**同一个目录**（例如 `D:\perf-tools\`）：
 
 ```
 perf_seed.py          造数（写 10 万+/表）
 perf_bench.py         库侧查询基线（只读）
 perf_monitor.py       人工实测实时记录（只读）
+machine_info.py       机器档案（CPU 型号/逻辑处理器数/内存/磁盘/电源计划）
 seed_test_data.py     被上面复用：加载 schema / 指纹校验（别删）
 schema_snapshot.json  离线 schema（测试机上没有源码时靠它）
 ```
 
-> 为什么必须带上后两个：`perf_seed.py` **不内嵌建表语句**，它从 `schema.dart`（开发机）
-> 或 `schema_snapshot.json`（测试机）读，并且校验指纹 —— 这是为了防止「用旧结构建了新库」。
+> 为什么必须带上后三个：
+> - `machine_info.py` —— `perf_bench.py` 与 `perf_monitor.py` **都 import 它**，
+>   少了它两个脚本**直接起不来**（`ModuleNotFoundError`，连报错都到不了测量那步）。
+>   它还会打印「逻辑处理器数」—— **跨机器比 CPU 之前必须先记这个数**
+>   （CPU 刻度是单核 100%，2 核机满载 = 200%）。
+> - `perf_seed.py` **不内嵌建表语句**，它从 `schema.dart`（开发机）
+>   或 `schema_snapshot.json`（测试机）读，并且校验指纹 —— 这是为了防止「用旧结构建了新库」。
+>
+> 单独跑一份机器档案（每轮测试**开始前**跑一次，把输出贴进报告）：
+>
+>     python tool/machine_info.py --json machine.json
 
 ---
 
@@ -117,14 +139,24 @@ python perf_seed.py --data-dir "D:\perf-data"
 ### 第 ③ 步：库侧基线（造完立刻跑，软件不要开）
 
 ```bat
-python perf_bench.py --data-dir "D:\perf-data" --csv before.csv --explain
+python perf_bench.py --data-dir "D:\perf-data" --csv before.csv --explain --no-gate
 ```
 
-它会跑 15 条「界面背后真正执行的查询」，给出 p50/p95，并把 `EXPLAIN QUERY PLAN` 打出来。
+它会跑 20 条「界面背后真正执行的查询」，给出 p50/p95，并把 `EXPLAIN QUERY PLAN` 打出来。
 **这一步的数字是「软件没开时的库」**，用来和人工实测期间的探针对照。
+
+> ⚠️ **非开发机一律加 `--no-gate`**（理由见 §4.3：门禁是开发机的防退化护栏，
+> 不是低配机的目标）。开发机上自己跑可以不加，判红就是真退化了。
 
 > `--explain` 的输出请一起交回 —— 它能直接回答「索引有没有用上」。
 > 例如 `pull_window` 应该走 `idx_documents_updated`；如果显示 `SCAN documents`，就是缺陷。
+
+> **改前 / 改后对比**（回答「这次改动有没有让某个页面变慢」）：
+> 用**同一份库的副本**，改前跑 `--csv before.csv`、改后跑 `--csv after.csv`，
+> 其余参数（`--rounds` / `--limit` / `--only`）逐字相同。
+> 本轮重点看两条新键：`gross_margin`（毛利趋势，6 条 SQL）与
+> `overview_load`（概览页**一次加载的全部 SQL**，最多 16 条）—— 后者用来回答
+> 「毛利图上线后概览首屏有没有退化」。
 
 ### 第 ④ 步：人工实测（核心）
 
@@ -247,21 +279,57 @@ D:\perf-run1\
 | `rss_mb` / `private_mb` | 工作集 / 私有内存 | 长时间单调上涨 = 疑似泄漏 |
 | `handles` / `threads` | 句柄数 / 线程数 | 只涨不落 = 资源没释放 |
 | `db_mb` / `wal_mb` | 库与 WAL 体积 | WAL 长期几百 MB 不回落 = checkpoint 有问题 |
-| `probe_*_ms` | 三条只读查询耗时 | 与 `before.csv` 对比，判断「库变慢了」还是「界面变慢了」 |
+| `probe_*_ms` | 三条只读查询耗时 | 与 `before.csv` 对比，判断「库变慢了」还是「界面变慢了」。⚠️ **探针 ≠ 页面耗时**，只看趋势（`probe_list_ms` 不是单据页首屏 —— 形状是简化版，见 `perf_monitor.py` 的 `PROBES` 注释） |
 
 ### 4.3 判读门槛（本轮建议值，可在命令里改）
 
 | 场景 | 门槛 | 说明 |
 |---|---|---|
 | 人工动作 | > 2 s 标 ⚠️ | `--slow-action 2` |
-| 持续高 CPU | 连续 3 个点 ≥ 85% | `--cpu-busy 85` |
+| 持续高 CPU | 连续 3 个点 ≥ 85% | `--cpu-busy 85`。⚠️ CPU 是**单核 100%** 刻度：2 逻辑处理器（VM / 低配本）满载 ≈ **200%**，85% 在 2 核机上≈「一个核打满」，在 12 核开发机上只用了 1/14。**跨机器比 CPU 前先看 `machine_info.py` 的处理器数** |
 | 内存 | 首末涨 ≥ 30% 且 > 100 MB | `--rss-growth 30` |
 | 采样缺口 | 间隔 > 2.5 倍 | 说明整机被压住 |
 | 库侧探针 | 与 `before.csv` 比 p95 涨 ≥ 2 倍 | 需要两份 CSV 对照 |
-| **`perf_bench` 门禁** | `count_roots` p95 > 120 ms 或 `list_roots` p95 > 200 ms ⇒ **退出码 4** | 这两条是单据页每帧真正跑的；调参时加 `--no-gate` |
+| **`perf_bench` 门禁** | `count_roots` p95 > **200 ms** 或 `list_roots` p95 > **80 ms** ⇒ **退出码 4** | 这两条是单据页每帧真正跑的 |
+
+> ⚠️ **门禁阈值是「开发机防退化护栏」，不是低配机的性能目标**（2026-11-06 更正 ——
+> 本表此前写的 120 / 200 是重构前的旧值，与脚本里的 `GATES` 已经不一致）。
+> 阈值 = 定阈值那台开发机实测 p95 的约 3 倍，用途是「谁把索引/两段式改坏了立刻红」。
+> **在 VM / 低配机上跑 bench 请加 `--no-gate`**：那里的数字是用来**建立基线**的，
+> 不是用来判红绿的（判红只会把「这台机器本来就慢」误报成「软件退化了」）。
+> 单一来源永远是 `perf_bench.py` 里的 `GATES` 表，本表只是抄一份说明。
 
 > 门槛可以按机器放宽（老机器 4 秒也许算正常），**但同一轮里必须统一**，
 > 并在 `--session-note` 里写清。
+
+### 4.3b 低配虚拟机（VM）专测：这轮能答什么、不能答什么
+
+VM（2 逻辑处理器 / 4 GB / 60 GB 虚拟 SSD / **禁用 3D 加速**）是**低资源可用性代理**，
+**不是**「正常目标机」。它只能回答一个问题：
+
+> **在 2 vCPU / 4 GB 下，这软件日常开单、查账、翻单据还能不能用？**
+
+**不能**用它下这些结论：
+
+1. **帧耗时 / 切页流畅度**。关掉 3D 加速后 Flutter 实际走哪条渲染路径**尚未确认**
+   （`main.cpp` 没有 Impeller 开关，当前 SDK 3.41.1 也还没到 Windows 默认 Impeller 的版本）。
+   渲染路径及性能可能发生变化，帧耗时和切页数据**暂不能代表正常目标机**。
+2. **CPU 百分比的横向对比**（见上表：先比处理器数）。
+3. **帧级结论**。monitor 的采样是 0.5 s（空闲）/ 0.2 s（忙），比一帧粗两个数量级 ——
+   「卡不卡」只能用 `s` / `e` 人工标记 + 观感 1–5 分记录。
+
+**每轮开始前**先采一份环境档案（贴进报告，跨机对比全靠它）：
+
+    python tool/machine_info.py --json machine.json
+
+要记的东西：LTSC/Windows 具体 build、`flutter --version` 全文、`dxdiag` 的显示页、
+空闲物理内存与页面文件、磁盘剩余空间、**VC++ 运行库版本**（见
+`docs/windows_build.md` §8.4.1 —— 没装应用**根本起不来**）、电源计划、Defender 是否实时扫描、
+显示缩放比例。
+
+**两轮对比**（改前 / 改后）必须用**同一份库的副本**，并记下两台的
+`python --version` 与 `python -c "import sqlite3;print(sqlite3.sqlite_version)"` ——
+Python/SQLite 版本不同，同样的 SQL 能差好几倍。
 
 ### 4.4 什么算「可复现的退化」
 
@@ -285,9 +353,9 @@ D:\perf-run1\
 | `stock_cost`（成本余值） | **1346 ms** | 库存页「成本（均价）」 |
 | `party_balances`（往来余额） | **620 ms** | 往来方页、概览「应收合计」 |
 | `recent_products` | 417 ms | 开单页商品选择器（最近使用） |
-| `doc_search` | 356 ms | 单据页搜索（四路 LIKE） |
+| `doc_search` | 356 ms | 单据页搜索（四路 LIKE）⚠️ **此数已失效**：2026-11-06 SQL 与生产对齐（去掉生产不跑的条码路、补上子单号 / 子单明细两路），需重测 |
 | `list_documents` | 303 ms | 单据列表首屏 |
-| `today_summary` | 269 ms | 概览「今日销售」 |
+| `today_summary` | 269 ms | 概览「今日销售」⚠️ **此数已失效**：2026-11-06 补了「明日零点」上界（旧写法扫到今天之后所有单），需重测 |
 | `in_transit` | 87 ms | 库存页「在途」 |
 | `account_balances` | 64 ms | 账户页余额 |
 | `pull_stock` / `pull_documents` / `pull_window` | **< 1 ms** | 同步分页与窗口（索引对得上） |
@@ -321,6 +389,8 @@ D:\perf-run1\
 | `perf_seed.py` 报「schema 快照已过期」 | 开发机上会出现（脚本改用 `schema.dart`，能继续）；**测试机上不会**，因为它没有源码、只用快照。分发前让开发跑 `python tool/gen_schema_snapshot.py` |
 | 同类型单号到 1000 就报错 | **已知缺陷**（`latestDocNo` 按字典序取最大值）。用 `--stress-docno` 可以稳定复现，单独跑一轮，别混进干净基线 |
 | Python 报中文乱码 | 用 `chcp 65001` 或在 PowerShell 里先 `$env:PYTHONIOENCODING='utf-8'` |
+| `ModuleNotFoundError: No module named 'machine_info'` | 交付目录少带了 `machine_info.py`（bench 与 monitor 都 import 它）。见 §一 的 6 个文件 |
+| 双击 `shensuanzi.exe` 没反应 / 提示缺 `VCRUNTIME140.dll` | **不是本软件的 bug**：那台机器没装 VC++ 运行库（LTSC / 干净系统都不带）。装 [`VC_redist.x64.exe`](https://aka.ms/vs/17/release/vc_redist.x64.exe) 再试；细节与判据见 `docs/windows_build.md` §8.4.1。装完还起不来才交日志回来 |
 | `没找到进程 shensuanzi.exe` | 软件没开或进程名不同（看任务管理器）。也可以 `--pid <数字>` 指定；找不到时进程指标显示 `—`，其余照常记 |
 | 记录器打不开进程（权限） | 用管理员权限运行命令行；或只测文件+探针（进程指标为 `—`） |
 | `--duration` 没停 | 单位是**分钟**；`0.5` = 30 秒。默认 0 = 一直跑到你按 `q` |
@@ -333,9 +403,11 @@ D:\perf-run1\
 
 1. `report.md`（每轮一份）
 2. `samples.csv`、`events.csv`、`session.json`
-3. `before.csv`、`after.csv`（`perf_bench.py` 两次，含 `--explain` 的终端输出）
+3. `before.csv`、`after.csv`（`perf_bench.py` 两次，含 `--explain` 的终端输出；**非开发机请加 `--no-gate`**）
 4. `perf_seed.py` 造数结束时的**自检表截图/文本**
-5. 一句话总结：**这一轮最卡的一次是哪个动作、当时在做什么、机器什么反应**
+5. `machine_info.py` 的输出（**每轮开始前**跑一次；跨机器对比全靠它，
+   尤其是**逻辑处理器数** —— CPU 是单核 100% 刻度，不记核数就没法比）
+6. 一句话总结：**这一轮最卡的一次是哪个动作、当时在做什么、机器什么反应**
 
 > 缺第 3 项也能看人工观感，但**没法判断是库慢还是界面慢** —— 尽量补齐。
 
@@ -482,8 +554,11 @@ python perf_seed.py --data-dir DIR [--min-rows 100000] [--days 730] [--products 
 
 :: 库侧基线
 python perf_bench.py --data-dir DIR [--rounds 20] [--warmup 3] [--limit 200]
-                     [--only KEY,KEY] [--explain] [--csv F] [--csv-detail F]
-                     [--json-out F] [--list]
+                     [--only KEY,KEY] [--explain] [--strict] [--no-gate]
+                     [--csv F] [--csv-detail F] [--json-out F] [--list] [--quiet]
+
+:: 机器档案（每轮开始前跑一次，跨机对比全靠它）
+python machine_info.py [--json F]
 
 :: 人工实测
 python perf_monitor.py run --data-dir DIR --out DIR2 [--interval 5] [--probe-interval 60]
@@ -496,7 +571,7 @@ python perf_monitor.py checklist
 ```
 
 退出码：`perf_seed` 0 成功 / 1 运行错误 / 2 用法或拒绝写入 / 3 schema 或版本不符 / 5 **已写入但自检违规**；
-`perf_bench` 0 正常 / 1 全部查询失败 / 2 用法或 `--strict` 下有查询报错 / 3 打不开库；
+`perf_bench` 0 正常 / 1 全部查询失败 / 2 用法或 `--strict` 下有查询报错 / 3 打不开库 / **4 门禁判红**（低配机请加 `--no-gate`）；
 `perf_monitor` 0 正常 / 2 用法或写不了输出目录。
 
 ## 附录 B：这批数据长什么样（以及它**不**是什么）
