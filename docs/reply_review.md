@@ -268,7 +268,6 @@ v0.4 冻结版已落地于仓库内（`README.md` / `Agents.md` / `docs/{data_mo
 - 但不变量 B4 定义「单据已收额 = `SUM(settlements.amount WHERE target_doc_id = X)`」  
   ⇒ 立即收款的销售单"已收额"算出来是 **0**，而实际已全额收款；`documents.paid_amount` 缓存同样为 0
 
-
 **处置（二选一）**：
 
 | 方案 | 内容 |
@@ -439,7 +438,6 @@ v0.4 冻结版已落地于仓库内（`README.md` / `Agents.md` / `docs/{data_mo
 | 测试 / 自检 | `sync_server_test` 动作矩阵 7 条（重写）；`client_server_test` 1 条（重写）；`selfcheck_sync` 8 项（重写）；`selfcheck_client_server` 1 项（重写） |
 | v1 实现范围 | `SyncServer._applyAction` 支持 `mark_delivered`；其他动作字符串 → `rejected` + `unknown_action`；**Android 端「签收」按钮随 AH-B 解锁**（现在还不存在 Android 端，记在这里防丢） |
 
-
 ## L. R-13 方案 A 落地核验 + 文档补齐（2026-09-26）
 
 **裁定**：R-13 选**方案 A** —— 主数据并入 `pull`，游标 `(updated_at, id)`。
@@ -522,7 +520,6 @@ CREATE TABLE sync_cursor (
 流水取 `MAX(seq_no)`、`documents` / 主数据取 `MAX(时间列, id)`。**零新表**。
 
 ⚠️ **但有一个静默丢数据的陷阱**（这是我不推荐它的原因）：
-
 
 1. `created_at` **按 §七是主机分配的**（「主机收到后……用主机时钟分配 `created_at` 与 `seq_no`」），
    而客户端本地新建的单据在推送前**只能填客户端时钟的估算值**（列是 NOT NULL）
@@ -758,7 +755,6 @@ delta 夹具改用真实 `productId`），并在 `docs/testing.md` 补了纪律�
 **顺带清掉一处重复**：`DataDirectoryPolicy.markerFileName` 与
 `DataMarker.fileName` 是**同一个字符串的两个出处**（必然漂移），已删前者 ——
 **谁拥有这个文件，谁定义它的名字**。
-
 
 ### 三、左侧常驻导航（裁定落地）
 
@@ -1063,7 +1059,6 @@ final String base = environment.appData ?? p.join(home, '.shensuanzi');
 |---|---|
 | **测试不确定** | 「没有配置过 → 弹对话框」这条在真机上**必然失败**：真实配置已指向 `D:\神算子数据`，`existing()` 返回非空，对话框不弹 |
 | **会写坏开发者配置** | 走「确认」路径时 `bootstrap.prepare()` 会 `configStore.save(...)`，把**真实配置改写成测试的临时目录** ⇒ 下次真机启动直接开到临时目录 |
-
 
 第二条尤其危险，且与**沙箱纪律**直接冲突（`docs/testing.md` §K：
 「绝不能碰真实的 `%APPDATA%`」）。
@@ -1386,7 +1381,6 @@ Ctrl+S 保存、Esc 取消）/ 数字键盘 / 合计显示（大字 + 右对齐 
 - core：`typecheck` 20 入口、`selfcheck_purchase` 19/19（上轮已完成）
 - 语法门禁：`dart format --output=none` 退出码 **0**（本轮起按 §W 八 的教训取对退出码）
 
-
 ### 四、页面测试覆盖（`test/purchase_page_test.dart`）
 
 | # | 场景 |
@@ -1648,7 +1642,6 @@ purchase 6 + account 4 + sale 7）；core `dart test` **270 用例**、
 点击某往来方 → **流水页**（`PartyLedgerDao.ofParty` 已有，每笔：单号 / 方向 /
 金额 / 日期）—— 对账的最基本形态，零新查询。
 
-
 ### 四、待裁定项
 
 | # | 问题 | 我的建议 |
@@ -1909,7 +1902,6 @@ core：`DocumentDao.listDocuments({DocType? type, int limit})`（JOIN parties �
 | 库存页接线 | 标题行加「录入现有货物」按钮（`stockPage` 需要拿到 engine——经 `AppShell`/`app.dart` 传入）；空态文案改为引导期初录入 |
 | 测试 | core：`stocktake_service_test` + selfcheck 镜像（两套并行纪律）；Flutter：`opening_stock_page_test`（录两件 → 库存页数字正确 / 账面数显示 / 确认弹窗 / 空行报错） |
 
-
 ### 三、待裁定项
 
 | # | 问题 | 我的建议 |
@@ -2137,7 +2129,6 @@ Flutter 层只能语法检查 + 人工核对 + 用户 `flutter analyze`。
 
 #### 一、纯 Dart 层（判断与文案，`dart test` 可覆盖）
 
-
 | 落点 | 内容 |
 |---|---|
 | `needsBackupAttention` **加 `lastFailure`** | **唯一**的判定入口。原为「空库 → 不提醒；从未 / 超 3 天 → 提醒」，本批补上 **§AE 遗漏 2 的失败分支**：最近一次尝试就失败 → **立刻提醒**（优先级在「几天没备份」之上）。空库仍然压倒一切（没数据可丢） |
@@ -2318,7 +2309,6 @@ flutter test
 > 不引入专有封装。用户的文件永远能在神算子之外被打开。
 
 ⚠️ **我未擅自改 `Agents.md`**（规范文件）—— 连同 §AE 的备份裁定行，请一并裁定是否落表。
-
 
 ### 十三、§AF 落地记录（2026-09-28）：CSV 导出（core + 纯 Dart + 五页接线）（↺ 沿用全局过程计数，见文件头索引说明）
 
@@ -2735,7 +2725,6 @@ dir build\windows\x64\runner\Release
 - 我**没有**擅自改 `pubspec.yaml` / `Runner.rc` / README —— 它们全在 AG-1 / AG-3 / AG-7 / AG-8 的裁定范围内。
 
 ---
-
 
 ### 七、落地记录（2026-09-29）
 
@@ -4686,7 +4675,6 @@ cd D:\shensuanzi\shensuanzi; flutter analyze; flutter test
 
 **待办（§五 的缺口）**：`test/delivery_page_test.dart` 仍未写 —— 等 `flutter analyze` 干净后再补。
 
-
 ---
 
 ## §BA 三条裁定：折扣抹零移出 + `DocumentDraft` 判据 + `import_guard` 扩查（2026-10-02）
@@ -4860,7 +4848,6 @@ cd D:\shensuanzi\shensuanzi; flutter analyze; flutter test   # 预期 0 issues /
 
 **✅ 已复跑通过**（2026-10-02，用户）：`flutter analyze` **0 issues** + 根 `flutter test` 全过。
 （新增的两个根层脚本本侧无法 lint，由这次复跑兜住。）
-
 
 ---
 
@@ -5437,10 +5424,7 @@ v1→v2 失败时什么都没提交，库"看起来就是被恢复了"。
 **未动任何代码** —— 这是行为语义，等裁定。
 
 
-
-
 ---
-
 
 ### 八、复核修正落地（段 1b 的 4 个实质问题 + 2 处跨文件，2026-10-03）
 
@@ -5483,7 +5467,6 @@ v1→v2 失败时什么都没提交，库"看起来就是被恢复了"。
 **⭐ 2b 实现要求（更新）**：`toBaseQuantity` 失败**三种原因**（`package_size` 未设置 / `<= 0` / 单位不合法）
 必须可区分（sealed result 或异常类型）⇒ UI 三句文案分开。
 
-
 ### 十、段 2a 落地：引擎口径（CostPolicy + RuleEngine 改用 `amount`）（2026-10-03）
 
 > 依据 §BD·五：**引擎层**。`rules.md` 零·乙 的三种失败文案摘要补齐（§BF 复核的"唯一残留"顺手改）。
@@ -5518,7 +5501,6 @@ v1→v2 失败时什么都没提交，库"看起来就是被恢复了"。
 `amount == qty × price`，等价性保证不破旧用例）。
 **下一步 = 段 2b**：三份草稿的 `amount` / `entry_*` / **`toBaseQuantity`（三种失败原因可区分）**。
 
-
 ### 十一、段 2b 落地：接口层（`toBaseQuantity` + 三份草稿 + `entry_*` / 让价）（2026-10-03）
 
 > 依据 §BD·五：**接口层**。口径已冻结（§BD·九/十），本段实现"三种失败可区分"等全部裁定要求。
@@ -5549,7 +5531,6 @@ v1→v2 失败时什么都没提交，库"看起来就是被恢复了"。
 **待复跑**：core `dart test`（预期 **+24 条**：7+6+3+2+6）。
 **下一步 = 段 2c**：`whitelist.dart` + `sync_protocol.md §8.4` + `export_tables.dart`（取 amount 不取 unit_price + 断言）。
 
-
 ### 十二、段 2b 复跑修正（5 个 lint + 4 处测试红 —— 全是我的，同一族根因）（2026-10-03）
 
 | # | 问题 | 根因 | 修复 |
@@ -5566,7 +5547,6 @@ v1→v2 失败时什么都没提交，库"看起来就是被恢复了"。
 正常让价 4950 / ProductDraft 成对 2 种 / **copyWith 参数语义生效**）· selfcheck 105 · import_guard 44 文件 0 处。
 **待复跑**：`flutter analyze`（预期 **0 issues**）+ core `dart test`（预期 4 处红全绿）。
 
-
 ### 十三、段 2c 落地：同步白名单 + 协议文档 + 导出口径守卫（2026-10-03）
 
 | # | 文件 | 改动 |
@@ -5582,7 +5562,6 @@ v1→v2 失败时什么都没提交，库"看起来就是被恢复了"。
 
 **待复跑**：core `dart test`（sync_client_test **+3**）· app `dart test` · `flutter analyze`。
 **下一步 = 段 3（Flutter）**：建档页加包装两列 + 开单页单位切换与让价 + 详情页显示 —— **本侧编译不到**，逐段交付。
-
 
 ### 十四、段 3 落地：Flutter 层（建档 / 开单 / 详情 —— 五文件）（2026-10-03）
 
@@ -5605,7 +5584,6 @@ v1→v2 失败时什么都没提交，库"看起来就是被恢复了"。
 
 **真机验收清单**：① 建档填包装两列 → 编辑回显 ② 开单选该商品 → 出现「个/箱」chips → 切「箱」数量 label 变 → 填 3 × ¥250 合计 750 ③ 让价填 2 → 合计 748、最后一行小计 748 ④ 保存 → 详情页明细行显示「让价 -¥2.00（折前 ¥750.00）」⑤ 无包装商品 → 不出现 chips、行为与旧版一致。
 **下一步 = 段 4（手册 + 收尾）**：手册补包装换算/让价 + 台账收尾 —— v3 闭环。
-
 
 ### 十五、段 3 复跑修正（2 处红 —— 同一连带：让价框把页面推高，测试没跟上）（2026-10-03）
 
@@ -6189,7 +6167,6 @@ B6 收款/付款核销（可选，v1.1 候选）；盘点 v1 不做（客户端�
 「移动开单终端（**开发中，随 AH-B 落地**）：…」—— B1–B6 尚未实现，按纪律 17「描述不存在的功能 =
 撒谎」加了开发中限定，与裁定自己给 README 的「开发中，目标能力」句式一致。若要直陈式，裁定后我改回。
 
-
 ### §BI·二·补 1 复跑修正：六处 lint/编译错（2026-10-04）
 
 | # | 位置 | 问题 → 处置 |
@@ -6202,7 +6179,6 @@ B6 收款/付款核销（可选，v1.1 候选）；盘点 v1 不做（客户端�
 
 **本侧门禁复核全绿**：core typecheck **37** · selfcheck **105** · app typecheck **20** · selfcheck_app **131/131** · selfcheck_manual **8/8**。
 
-
 ### §BI·二·补 2 真机验收修正：退货页账户下拉炸页（2026-10-04）
 
 | 项 | 内容 |
@@ -6214,7 +6190,6 @@ B6 收款/付款核销（可选，v1.1 候选）；盘点 v1 不做（客户端�
 | 本侧验证 | 结构自检（唯一调用在 initState、`_refundSection` 只读缓存）；⚠️ Flutter 层本侧编译不到，待用户复跑 |
 
 **请复跑**：`flutter pub get`（若上轮未跑）→ `flutter analyze` → `flutter test`（return_page_test **3 用例**）→ 真机/桌面重验退货四件事。
-
 
 ### §BI·二·补 3 真机反馈：退货页单位显示误导（2026-10-04）
 
@@ -6229,7 +6204,6 @@ B6 收款/付款核销（可选，v1.1 候选）；盘点 v1 不做（客户端�
 | 测试 | core `return_service_test` **+1**（新文案逐字 ×2 场景：箱录附换算 / 瓶录不附）；`return_page_test` **+3 断言**（配额行 / 提示行 / 实时换算） |
 | 门禁 | core typecheck **37** · selfcheck **105** · app typecheck **20** · selfcheck_app **131/131** · selfcheck_manual **8/8** |
 
-
 ### §BI·二·补 4 真机反馈：退款金额自动合计（2026-10-04）
 
 | 项 | 内容 |
@@ -6239,12 +6213,10 @@ B6 收款/付款核销（可选，v1.1 候选）；盘点 v1 不做（客户端�
 | 测试 | `return_page_test` **+1 断言**：填 1 箱后退款金额自动 = 250.00 |
 | 门禁 | app typecheck **20** · selfcheck_app **131/131** · selfcheck_manual **8/8**（core 零改动） |
 
-
 ### §BI·二·补 5 复跑修正：页面测试断言漏单位（2026-10-04）
 
 `return_page_test:143` 挂 1：断言写「已退 0 /」漏了单位——实现是三个数**统一缀最小单位**（「已退 0 瓶」，
 口径一致），断言改同口径。产品零改动（用户确认真机自动填金额已生效）。
-
 
 ### §BI·二·补 6 复跑修正：e2e 夹具 pop 掉唯一路由（测试病，产品无恙）（2026-10-04）
 
@@ -6255,13 +6227,11 @@ pop 完连承载 SnackBar 的底层 Scaffold 都没了 ⇒ `find.textContaining(
 **修夹具**：`routes {'/' 占位页, '/return'}` + `initialRoute: '/return'` —— 与真实
 「详情页 → 退货页」结构一致。教训：**推入页的 widget 测试必须垫底层页面**，别拿被测页当 home。
 
-
 ### §BI·二·补 7 复跑修正：e2e 往来余额断言算术错（2026-10-04）
 
 SnackBar 断言已过（补 6 生效）；挂最后一行 `return_page_test:200`：余额断言写 `75000 − 25000 = 50000`
 ——忘了夹具里销售**已全款收清**（+750 应收 − 750 收款 = 0），退货挂账冲减 −250 ⇒ 余额 **−25000**
 （负 = 我欠客户）。断言改 −25000 + 注释写明推导。产品零改动（RULE-007 符号与引擎自洽）。
-
 
 ### §BI·三 退货 R1 + R2 全绿收官 —— Windows 可落地生产（2026-10-04）
 
@@ -6322,7 +6292,6 @@ hard-to-reverse 决策，须裁定）。
 
 `flutter build windows --release` 产物完整性核对（exe + dll + data/ + third_party/sqlite3 预置按
 `docs/windows_build.md` §三）—— 发布前最后一项，做完即可打 tag / 发 release。**恭喜，第一个 Windows release！**
-
 
 ---
 
@@ -6477,7 +6446,6 @@ HTML 重生成版本戳 v0.2.0（第二个可部署版本））。
 dart test 挂 1 = 我的**断言时序**：同位用例的 `plan().fileCount` 在 `execute()` **之后**算 ——
 成功后旧目录已多出说明文件（4 → 5）⇒ 移到 execute 之前。产品零改动。
 
-
 ---
 
 ## §BL 提案：Android B2 细化 —— 扫码配对 + 首拉镜像（🟡 待裁定，未动代码）（2026-10-05）
@@ -6513,7 +6481,6 @@ dart test 挂 1 = 我的**断言时序**：同位用例的 `plan().fileCount` �
 
 **验收（真机）**：手机扫电脑二维码 → 首拉 → 概览 / 商品 / 往来方 / 库存显示主机数据；
 电脑改商品名 → 手机「立即同步」→ 更新。镜像重建路径：`mirror_schema_version` 人为调低 → 下次 pull 全量重建。
-
 
 ---
 
@@ -8665,7 +8632,6 @@ Remove-Item "D:\AndroidSDK\cmdline-tools\22.0" -Recurse -Force
    （值对象本身有 `master_data_policy_test` + `selfcheck_app` 覆盖。）建议补一条。
 2. `opening_stock_page` 的 sink 由宿主**预置**（StockPage 传 `ServiceMasterSink`）—— 该入口在手机端被
    `mobileShell` 引导接管，故当前正确；**若将来手机上开期初，必须改成注入**。
-
 
 ## §CV·九 门禁报错修复 + 缺口 1/2 落地（2026-10-09）
 
@@ -11353,7 +11319,6 @@ int unsettledForDisplayCentsOf(String documentId) {
 若这个包要**包含**这些修复，按惯例应 bump 到 `0.3.4+5`（四处：root pubspec · `version.dart` 三字段 ·
 `使用说明.txt` · 重新生成手册 HTML）；要不要 bump、要不要含新修复，**由用户定**。
 
-
 ## §CV·四十 版本 bump `0.3.5+5` + **#38 第二步口径裁定 ⇒ 全项闭环**（2026-10-14）
 
 ### 一、版本 bump（用户裁定「提升到 0.3.5」；构建号随惯例 +1 ⇒ **`0.3.5+5`**）
@@ -13494,7 +13459,6 @@ C://Users//yzx//AppData//Local//神算子 不可写（Creation failed, errno = 5
 ### 三、验证
 
 根侧 **255**（+2）· core **641** · host **152** · app **328** · analyze **0 issues**。
-
 
 
 ## §CV·八十八 **批 3 第 19 条：`dart format` 进门禁 + 批 3 收尾**（2026-10-23）
@@ -19269,7 +19233,6 @@ Agent 能代跑的三段都跑了（2026-11-06）：
 **状态**：🟡 **N-h 代码侧全部落地、包已出、夹具已验**；
 ⚠️ **闭环仍等人在干净机器跑 15 步**（要双击 exe、要人眼验收，Agent 代不了）。
 
-
 ---
 
 ## §CV·一百一十六 · N-i（裁定甲·部分）：退货页补锁输入 + **给「锁输入」加了机械保证**
@@ -19363,7 +19326,6 @@ core **833** · app **492** · host **229**（三个包未受影响）。
 
 **状态**：✅ **N-i 落地**（按裁定甲·部分：退货页补齐、商品对话框评估后不做并写明理由）。
 待裁文档 §N-i 已标落地。
-
 
 ---
 
@@ -19685,7 +19647,6 @@ monitor 短程实跑（报告含新免责声明）· bench 夹具库 20 条全�
 `overview_load`），且**旧数字全部作废** ⇒ 提案 §三·补 已改写，要求用**新脚本 + 压测库**重跑。
 
 
-
 ### §CV·一百二十一 · 纯测试工具第二轮：补齐**第三段核销计数**、搜索按**命中路**分场景、`machine_info` 的真 CLI（2026-11-07）
 
 **背景**：用户审查 `00222b8`（`docs/reply.md`），给了 8 条（P1×3 / P2×2 / P3×2 + 一张期望表）。
@@ -19800,7 +19761,6 @@ monitor 短程实跑（报告免责声明渲染正确）· `perf_bench --list` =
 **⑭ 待办（在人身上）**：N-d 阈值（现在还要**重跑 `list_roots`**）· N-g 实物 · N-l 甲/乙 · 提案 60。
 
 
-
 #### §CV·一百二十一·补 · 宿主介质确认为 NVMe，并把「人工确认」做成参数闭环（2026-11-07 同日）
 
 用户确认：**VM 宿主机物理介质 = NVMe SSD**。两件事：
@@ -19900,3 +19860,32 @@ monitor 报告摘要出现「宿主介质 NVMe SSD（宿主）」）。
 `test/startup_test.dart` 能注入 `configStore`（日志跟着进沙箱）与 `defaultDataDirectory`，
 理论上能补一条「标记 v7 + 库 v8 ⇒ 日志出现一次、再开不再出现」的 widget 测试。
 **没做**：它要真跑一次 v7→v8 迁移（夹具级库），属于「新增测试面」而非本轮范围，交人裁定。
+
+---
+
+## §CV·一百二十三　第 15 步二次真机：残留 -wal/-shm 把夹具库读成空 v8（2026-11-08）
+
+**现象**（用户第二次跑第 15 步，五条）：
+1. 能正常打开，但 v7 库内数据全看不到；
+2. 数据目录里没有 shensuanzi.db.before-v7；
+3. 日志有「版本号不一致：程序 schema v8 / 库 v8 / 标记 v7（库已迁移，刷新标记文件）」；
+4. 关掉再开，那条日志不再出现；
+5. 应用内仍没有任何 v7 数据。
+
+**根因（探针复现，非猜测）**：**残留的 shensuanzi.db-wal / -shm 把夹具库读成了「空 v8」**。
+第 2 步新版软件生成空 v8 库时留下 -wal/-shm；若第 2 步软件是**被杀掉**（非正常关闭），
+这两个文件残留。覆盖夹具 v7 库到 .db 时只覆盖了 .db，-wal/-shm 还在。
+再打开时 SQLite 把 -wal 当权威 → 读到「空 v8」。一条原因同时解释全部观察：
+- ③④ 标记 v7 落地了 ⇒ 日志写、再开不写（§CV·一百二十二 的修复**生效**）；
+- ② 库被读成 v8 ⇒ _migrate 提前返回 ⇒ 不备份（database.dart:174）；
+- ①⑤ -wal 里是第 2 步的空库 ⇒ 数据全空；
+- 用户实测 .db 散列值不变 ⇒ 迁移没跑，.db 没被写。
+
+**判据**：数据目录里有没有 shensuanzi.db-wal / -shm —— 有 = 残留 WAL 作祟，
+删掉这两个文件再打开即可；没有 = 问题在别处。
+
+- build/dist/第15步夹具/说明.txt：第 3 步后加「先彻底退出软件再覆盖 + 核对 .db 大小」，
+  并新增「诊断」一节（日志有「版本号不一致」但没有 before-v7 ⇒ 残留 -wal/-shm 作祟，删掉再打开）。
+- 探针 tmp_step15_probe2/3/4/5/6/7.dart 复现后已删。
+
+**留给人的口子**：夹具在 build/ 下被 .gitignore 挡着，不进仓库；要长期保留请自己拷一份。
