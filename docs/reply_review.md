@@ -19889,3 +19889,64 @@ monitor 报告摘要出现「宿主介质 NVMe SSD（宿主）」）。
 - 探针 tmp_step15_probe2/3/4/5/6/7.dart 复现后已删。
 
 **留给人的口子**：夹具在 build/ 下被 .gitignore 挡着，不进仓库；要长期保留请自己拷一份。
+
+### 八十一、2026-11-08 **无显卡虚拟机实测 → 抓到一个真 bug：导出在 26 万单上直接失败**
+
+用户在无 3D 加速的虚拟机里跑了一次 13.8 分钟的长时实测
+（`tool/testResult/虚拟机测试结果（无显卡）/`：Win10 LTSC / 2 核 / 4 GB /
+虚拟 SATA / 无杀软 / v0.7.5 / schema v8）。判读写在
+`docs/20261108-无显卡虚拟机实测-判读.md`，这里只记**改了代码的那一条**。
+
+#### ① 现场
+
+`神算子-日志.txt` 22:25:40 一条未捕获异常：
+
+```
+SqliteException(1): while preparing statement, too many SQL variables
+Causing statement: SELECT target_doc_id AS t, COUNT(*) AS n FROM settlements
+                   WHERE target_doc_id IN (?,?,…)
+```
+
+这条语句里有 **262,603 个 `?`** —— 把**全表 26 万张单的 id** 塞进了一个 `IN (…)`。
+
+#### ② 链路与根因
+
+导出单据 → `listDocumentsForExport()` → `_summaries(limit: null)`
+→ `_summariesOfRows()` → `settlementCountsMany(全表 id)`。
+
+`IN (…)` 的占位符数量受 `SQLITE_MAX_VARIABLE_NUMBER` 限制（老版本 999、
+新版本 32766）。超过就**整条语句准备失败** —— 用户看到的是「点了导出没反应」
+（异常冒到 zone 兜底，界面没有任何提示）。
+
+⚠️ 这条**不是慢，是失败**：它不会随「用户等久一点」变好。
+
+#### ③ 修法
+
+`settlementCountsMany` / `returnedAgainstMany` **分块**，每批 500 个占位符
+（与 `SyncQueueDao.clearConfirmed` 的 batch 同值 —— 两处受同一个上限约束），
+结果合并。26 万单 = 529 批，每批都是索引内聚合。
+
+实测（PC / NVMe，同一份库）：**导出 264,165 行 / 1.8 秒**（修前 1.4 秒抛异常）。
+
+#### ④ 测试（core +4，`documents_list_test.dart`）
+
+| 用例 | 盯什么 |
+|---|---|
+| **4 万个 id 也不炸** | **真正复现现场** —— 语句在 prepare 阶段就炸，不需要造数据 |
+| 导出 1200 张单，行数不丢 | 分块后总数不变 |
+| 1200 个 id 的核销计数 | 跨批合并正确（含最后一批） |
+| 1200 个 id 的退货聚合 | 次数与金额都要合起来 |
+
+**反向灵敏度已验**：把 `_inClauseBatch` 退回 `1 << 30`（= 不分块）⇒
+「4 万个 id」那条立刻红，报的正是现场那句 `too many SQL variables`。
+
+#### ⑤ 顺带记两条判读上的坑（写进报告，避免误读）
+
+1. **报告里 `库文件 0.0 MB` 不可信**：探针没读到，实际库是 26 万单
+   （262,603 个占位符就是证据）。别据此以为「空库也这么慢」。
+2. **报告的「内存 75 → 237 MB（+217%）」是误导**：首点是启动中的采样。
+   按 500 点分段中位数看是 177/183/172/190/211/173 MB ⇒ **振荡，不是泄漏**。
+
+#### ⑥ 门禁
+
+core **848** · app **492** · host **229** · root **524**（1 条按平台跳过）· analyze 0。

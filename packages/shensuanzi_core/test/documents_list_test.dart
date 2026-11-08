@@ -43,6 +43,90 @@ void main() {
   List<String> docNosOf(List<DocumentSummary> rows) =>
       rows.map((DocumentSummary e) => e.document.docNo).toList();
 
+  // 2026-11-08 无显卡虚拟机实测抓到：**导出在 26 万单的库上直接失败**。
+  // 现场日志：`SqliteException(1): too many SQL variables`，语句是
+  // `SELECT target_doc_id AS t, COUNT(*) AS n FROM settlements WHERE target_doc_id IN (?,?,…)`
+  // —— 26 万个占位符。根因：导出走 `limit == null` 的单段路径，把**全表** id
+  // 一次性喂进 `IN (…)`，超过 `SQLITE_MAX_VARIABLE_NUMBER`。
+  // 修法是分块（每批 500，与 `SyncQueueDao.clearConfirmed` 同口径）。
+  group('IN 占位符上限（2026-11-08 虚拟机实测）', () {
+    /// 造 n 张销售单（顺带各造一笔核销）
+    void seedSales(int n, {bool withSettlement = false}) {
+      for (int i = 0; i < n; i++) {
+        insertDocument(
+          db.raw,
+          'd-$i',
+          docNo: 'XS20261012-${i.toString().padLeft(4, '0')}',
+          docType: 'sale',
+          totalAmount: 100,
+          occurredAt: at(2026, 10, 12),
+          createdAt: at(2026, 10, 12, 10, 0) + i,
+        );
+        if (withSettlement) {
+          insertSettlement(
+            db.raw,
+            's-$i',
+            receiptDoc: 'd-$i',
+            targetDoc: 'd-$i',
+            amount: 50,
+          );
+        }
+      }
+    }
+
+    // ⚠️ 这条才是**真正复现现场**的：26.4 万单 ⇒ 26 万个占位符。
+    // 不需要造数据 —— 语句在 `prepare` 阶段就炸，跟表里有没有行无关。
+    // 本机 SQLite 的上限是 32766（老版本 999），所以取 4 万个 id。
+    test('4 万个 id 也不炸（SQLITE_MAX_VARIABLE_NUMBER）', () {
+      final List<String> ids = <String>[
+        for (int i = 0; i < 40000; i++) 'no-such-doc-$i',
+      ];
+      expect(documents.settlementCountsMany(ids), isEmpty);
+      expect(documents.returnedAgainstMany(ids), isEmpty);
+    });
+
+    test('导出 1200 张单：不抛 too many SQL variables，行数不丢', () {
+      seedSales(1200);
+      final List<DocumentSummary> rows = documents.listDocumentsForExport();
+      expect(rows.length, 1200);
+    });
+
+    test('settlementCountsMany 超过一批（500）也不丢结果', () {
+      seedSales(1200, withSettlement: true);
+      final List<String> ids = <String>[for (int i = 0; i < 1200; i++) 'd-$i'];
+      final Map<String, int> counts = documents.settlementCountsMany(ids);
+      expect(counts.length, 1200, reason: '每张单都有一笔核销');
+      expect(counts['d-0'], 1);
+      expect(counts['d-1199'], 1, reason: '最后一批也要查（别只查前 500）');
+    });
+
+    test('returnedAgainstMany 超过一批（500）：次数与金额都要合起来', () {
+      seedSales(1200);
+      // 每张单两次退货：一次 30、一次 20
+      for (int i = 0; i < 1200; i++) {
+        for (final int amount in <int>[30, 20]) {
+          insertDocument(
+            db.raw,
+            'r-$i-$amount',
+            docNo: 'XT20261012-$i-$amount',
+            docType: 'sale_return',
+            totalAmount: amount,
+            refDocId: 'd-$i',
+            occurredAt: at(2026, 10, 12),
+            createdAt: at(2026, 10, 12, 11, 0) + i,
+          );
+        }
+      }
+      final Map<String, ReturnAgg> aggs = documents.returnedAgainstMany(
+        <String>[for (int i = 0; i < 1200; i++) 'd-$i'],
+      );
+      expect(aggs.length, 1200);
+      expect(aggs['d-0']!.count, 2);
+      expect(aggs['d-0']!.sum, 50);
+      expect(aggs['d-1199']!.count, 2, reason: '最后一批也要查');
+    });
+  });
+
   group('单据列表排序（#26①）', () {
     test('同一天：主单按「录入时刻」参与排序，不再被派生单压在下面', () {
       // ⚠️ 这 5 张单就是用户实证的复刻（单号、时刻、类型全一致）。

@@ -64,23 +64,38 @@ class DocumentDao {
   Map<String, ReturnAgg> returnedAgainstMany(Iterable<String> refDocIds) {
     final List<String> ids = refDocIds.toList(growable: false);
     if (ids.isEmpty) return const <String, ReturnAgg>{};
-    final String placeholders = List<String>.filled(ids.length, '?').join(',');
-    final ResultSet rows = _raw.select(
-      '''
-      SELECT ref_doc_id AS ref, COUNT(*) AS n, COALESCE(SUM(total_amount), 0) AS sum
-      FROM ${Schema.documents}
-      WHERE doc_type IN (?, ?) AND ref_doc_id IN ($placeholders)
-      GROUP BY ref_doc_id
-      ''',
-      <Object?>[DocType.saleReturn.wire, DocType.purchaseReturn.wire, ...ids],
-    );
-    return <String, ReturnAgg>{
-      for (final Row row in rows)
-        row['ref']! as String: ReturnAgg(
-          count: row['n']! as int,
-          sum: row['sum']! as int,
-        ),
-    };
+    final Map<String, ReturnAgg> out = <String, ReturnAgg>{};
+    // ⚠️ 分块（2026-11-08 真机：导出 26 万单时 `too many SQL variables`）——
+    // `IN (…)` 的占位符数量受 `SQLITE_MAX_VARIABLE_NUMBER` 限制，一次性塞
+    // 全表 id 会让**整条语句**准备失败。见 [_inClauseBatch] 的说明。
+    for (final List<String> chunk in _chunks(ids)) {
+      final String placeholders = List<String>.filled(
+        chunk.length,
+        '?',
+      ).join(',');
+      final ResultSet rows = _raw.select(
+        '''
+        SELECT ref_doc_id AS ref, COUNT(*) AS n, COALESCE(SUM(total_amount), 0) AS sum
+        FROM ${Schema.documents}
+        WHERE doc_type IN (?, ?) AND ref_doc_id IN ($placeholders)
+        GROUP BY ref_doc_id
+        ''',
+        <Object?>[
+          DocType.saleReturn.wire,
+          DocType.purchaseReturn.wire,
+          ...chunk,
+        ],
+      );
+      for (final Row row in rows) {
+        final String ref = row['ref']! as String;
+        final ReturnAgg? prev = out[ref];
+        out[ref] = ReturnAgg(
+          count: (prev?.count ?? 0) + (row['n']! as int),
+          sum: (prev?.sum ?? 0) + (row['sum']! as int),
+        );
+      }
+    }
+    return out;
   }
 
   /// 批量：每张单被**核销了几笔**（列表行摘要「已收 N 笔」用）。
@@ -91,15 +106,44 @@ class DocumentDao {
   Map<String, int> settlementCountsMany(Iterable<String> targetDocIds) {
     final List<String> ids = targetDocIds.toList(growable: false);
     if (ids.isEmpty) return const <String, int>{};
-    final String placeholders = List<String>.filled(ids.length, '?').join(',');
-    final ResultSet rows = _raw.select(
-      'SELECT target_doc_id AS t, COUNT(*) AS n FROM ${Schema.settlements} '
-      'WHERE target_doc_id IN ($placeholders) GROUP BY target_doc_id',
-      ids,
-    );
-    return <String, int>{
-      for (final Row row in rows) row['t']! as String: row['n']! as int,
-    };
+    // ⚠️ **必须分块**（2026-11-08 无显卡虚拟机实测抓到）：
+    // 导出走 `limit == null` 的单段路径，把**全表** id 喂进来 —— 26.4 万单
+    // ⇒ 26 万个占位符 ⇒ `SqliteException(1): too many SQL variables`，
+    // 整条导出**直接失败**（用户看到的是「点了没反应」）。
+    final Map<String, int> counts = <String, int>{};
+    for (final List<String> chunk in _chunks(ids)) {
+      final String placeholders = List<String>.filled(
+        chunk.length,
+        '?',
+      ).join(',');
+      final ResultSet rows = _raw.select(
+        'SELECT target_doc_id AS t, COUNT(*) AS n FROM ${Schema.settlements} '
+        'WHERE target_doc_id IN ($placeholders) GROUP BY target_doc_id',
+        chunk,
+      );
+      for (final Row row in rows) {
+        final String id = row['t']! as String;
+        counts[id] = (counts[id] ?? 0) + (row['n']! as int);
+      }
+    }
+    return counts;
+  }
+
+  /// `IN (…)` 每批的占位符上限。
+  ///
+  /// 为什么是 500：`SQLITE_MAX_VARIABLE_NUMBER` 老版本是 **999**、新版本 32766；
+  /// 500 在两边都安全，且 26 万单只要 529 批（每批是索引内聚合，几毫秒）。
+  /// 与 `SyncQueueDao.clearConfirmed` 的 batch 同值 —— 两处都受同一个上限约束。
+  static const int _inClauseBatch = 500;
+
+  /// 把 id 列表切成 [_inClauseBatch] 一片
+  static Iterable<List<String>> _chunks(List<String> ids) sync* {
+    for (int start = 0; start < ids.length; start += _inClauseBatch) {
+      final int end = start + _inClauseBatch > ids.length
+          ? ids.length
+          : start + _inClauseBatch;
+      yield ids.sublist(start, end);
+    }
   }
 
   void insert(Document document, List<DocumentLine> lines) {
