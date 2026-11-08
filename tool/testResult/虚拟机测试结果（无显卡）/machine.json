@@ -1,0 +1,40 @@
+{
+  "host": "DESKTOP-IK03IVP",
+  "os": "Windows-10-10.0.19044-SP0",
+  "os_build": "10.0.19044",
+  "python": "3.12.9",
+  "arch": "AMD64",
+  "cpu": "AMD Ryzen 5 7500F 6-Core Processor",
+  "cores_logical": 2,
+  "cpu_mhz": "3693",
+  "ram_gb": 4.0,
+  "disks": [
+    {
+      "drive": "C:",
+      "type": "fixed",
+      "model": "VMware Virtual SATA Hard Drive"
+    },
+    {
+      "drive": "D:",
+      "type": "cdrom"
+    }
+  ],
+  "display_scale": 100,
+  "power_plan_guid": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+  "power_plan_name": "������",
+  "power_plan": "High performance",
+  "host_media": "NVMe SSD(host) ",
+  "blocked": [
+    "power_plan: 注册表(381b4222-f694-41f0-9685-ff5bb260df2e) 与 powercfg(8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c) 不一致，采用 powercfg",
+    "antivirus: 未采集（需 WMI，受限机器常被策略挡）"
+  ],
+  "sources": {
+    "cpu": "registry",
+    "ram": "ctypes",
+    "drives": "ctypes",
+    "disk_model": "powershell",
+    "display_scale": "GetDpiForSystem",
+    "power_plan": "powercfg",
+    "host_media": "人工提供（--host-media）"
+  }
+}

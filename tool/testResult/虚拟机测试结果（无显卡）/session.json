@@ -1,0 +1,57 @@
+{
+  "label": "Virtual Machine with SATA drive without 3D acceleration",
+  "started": "2026-11-08T22:20:14",
+  "duration_s": 829.5,
+  "samples": 3001,
+  "actions": [],
+  "interval_s": 0.5,
+  "process": "shensuanzi.exe",
+  "pid": 6296,
+  "pid_history": [
+    6296
+  ],
+  "app_version": "0.7.5",
+  "session_note": "Win10LTSC/4GB/No 3D acceleration/SATA HDD/No antivirus/OS 100%/App 125%",
+  "machine": {
+    "host": "DESKTOP-IK03IVP",
+    "os": "Windows-10-10.0.19044-SP0",
+    "os_build": "10.0.19044",
+    "python": "3.12.9",
+    "arch": "AMD64",
+    "cpu": "AMD Ryzen 5 7500F 6-Core Processor",
+    "cores_logical": 2,
+    "cpu_mhz": "3693",
+    "ram_gb": 4.0,
+    "disks": [
+      {
+        "drive": "C:",
+        "type": "fixed",
+        "model": "VMware Virtual SATA Hard Drive"
+      },
+      {
+        "drive": "D:",
+        "type": "cdrom"
+      }
+    ],
+    "display_scale": 100,
+    "power_plan_guid": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+    "power_plan_name": "������",
+    "power_plan": "High performance",
+    "blocked": [
+      "power_plan: 注册表(381b4222-f694-41f0-9685-ff5bb260df2e) 与 powercfg(8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c) 不一致，采用 powercfg",
+      "host_media: 未提供 —— 虚拟机里 Guest 推不出宿主物理介质，需人工确认后加 --host-media 记录（影响首启/备份/造数等 I/O 数字的可比性）",
+      "antivirus: 未采集（需 WMI，受限机器常被策略挡）"
+    ],
+    "sources": {
+      "cpu": "registry",
+      "ram": "ctypes",
+      "drives": "ctypes",
+      "disk_model": "powershell",
+      "display_scale": "GetDpiForSystem",
+      "power_plan": "powercfg"
+    }
+  },
+  "db": "C:\\Users\\yzx\\神算子数据\\shensuanzi.db\\shensuanzi.db",
+  "db_mb": 0.0,
+  "wal_mb": 0.0
+}

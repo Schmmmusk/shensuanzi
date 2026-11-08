@@ -1,0 +1,348 @@
+查询基线 —— 只读，不启动软件
+  库        C:\Users\yzx\神算子数据\shensuanzi.db
+  schema    v8；498.2 MB（WAL 0.2 MB）
+  数据量    products=300  parties=200  accounts=4  documents=262605  document_lines=363450  stock_ledger=363450  money_ledger=100001  party_ledger=262605  settlements=100001
+  每项      20 轮（预热 3）
+
+查询                  p50(ms)    p95(ms)    max(ms)       行数       说明
+-------------------------------------------------------------------
+stock_group           43.64      53.08      56.20      300       ok
+    · SCAN stock_ledger USING COVERING INDEX idx_stock_covering
+stock_cost            40.44      43.72      44.44      300       ok
+    · SCAN stock_ledger USING COVERING INDEX idx_stock_covering
+in_transit            75.53      82.05      82.63      300       ok
+    · SEARCH d USING INDEX idx_documents_type_status (doc_type=? AND status=?)
+    · SEARCH dl USING INDEX idx_lines_document (document_id=?)
+    · USE TEMP B-TREE FOR GROUP BY
+list_documents        15.17      18.15      21.42      263       ok
+    · · 第一段 取 id
+    ·     SCAN d USING COVERING INDEX idx_docs_bday_created
+    · · 第二段 整行 + 聚合（200 个 id）
+    ·     MATERIALIZE r
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    ·     MATERIALIZE s
+    ·     SEARCH settlements USING INDEX idx_settle_target (target_doc_id=?)
+    ·     SEARCH d USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     SEARCH r USING AUTOMATIC COVERING INDEX (ref=?) LEFT-JOIN
+    ·     SEARCH s USING AUTOMATIC COVERING INDEX (tgt=?) LEFT-JOIN
+    · · 第三段 核销笔数（200 个 id）
+    ·     SEARCH settlements USING COVERING INDEX idx_settle_target (target_doc_id=?)
+doc_search            15.10      16.85      17.00      296       ok
+    · · 第一段 取 id（四路 LIKE，词=1）
+    ·     SCAN d USING INDEX idx_docs_bday_created
+    ·     CORRELATED SCALAR SUBQUERY 1
+    ·     USE TEMP B-TREE FOR count(DISTINCT)
+    ·     SEARCH s USING INDEX idx_settle_receipt (receipt_doc_id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     CORRELATED SCALAR SUBQUERY 2
+    ·     SEARCH c USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     CORRELATED SCALAR SUBQUERY 3
+    ·     MULTI-INDEX OR
+    ·     INDEX 1
+    ·     SEARCH cd USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     INDEX 2
+    ·     SEARCH cd USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     SEARCH l USING INDEX idx_lines_document (document_id=?)
+    ·     SEARCH p USING INDEX sqlite_autoindex_products_1 (id=?)
+    · · 第二段 整行 + 聚合（200 个 id）
+    ·     MATERIALIZE r
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    ·     MATERIALIZE s
+    ·     SEARCH settlements USING INDEX idx_settle_target (target_doc_id=?)
+    ·     SEARCH d USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     SEARCH r USING AUTOMATIC COVERING INDEX (ref=?) LEFT-JOIN
+    ·     SEARCH s USING AUTOMATIC COVERING INDEX (tgt=?) LEFT-JOIN
+    · · 第三段 核销笔数（200 个 id）
+    ·     SEARCH settlements USING COVERING INDEX idx_settle_target (target_doc_id=?)
+doc_search_count     155.67     162.66     163.48        1       ok
+    · SEARCH d USING INDEX idx_documents_ref (ref_doc_id=?)
+    · CORRELATED SCALAR SUBQUERY 1
+    · USE TEMP B-TREE FOR count(DISTINCT)
+    · SEARCH s USING INDEX idx_settle_receipt (receipt_doc_id=?)
+    · SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    · CORRELATED SCALAR SUBQUERY 2
+    · SEARCH c USING INDEX idx_documents_ref (ref_doc_id=?)
+    · CORRELATED SCALAR SUBQUERY 3
+    · MULTI-INDEX OR
+    · INDEX 1
+    · SEARCH cd USING INDEX sqlite_autoindex_documents_1 (id=?)
+    · INDEX 2
+    · SEARCH cd USING INDEX idx_documents_ref (ref_doc_id=?)
+    · SEARCH l USING INDEX idx_lines_document (document_id=?)
+    · SEARCH p USING INDEX sqlite_autoindex_products_1 (id=?)
+doc_search_load      189.56     229.22     234.03      297       ok
+    · · 计数「共 N 条」
+    ·     SEARCH d USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     CORRELATED SCALAR SUBQUERY 1
+    ·     USE TEMP B-TREE FOR count(DISTINCT)
+    ·     SEARCH s USING INDEX idx_settle_receipt (receipt_doc_id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     CORRELATED SCALAR SUBQUERY 2
+    ·     SEARCH c USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     CORRELATED SCALAR SUBQUERY 3
+    ·     MULTI-INDEX OR
+    ·     INDEX 1
+    ·     SEARCH cd USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     INDEX 2
+    ·     SEARCH cd USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     SEARCH l USING INDEX idx_lines_document (document_id=?)
+    ·     SEARCH p USING INDEX sqlite_autoindex_products_1 (id=?)
+    · · 第一段 取 id（四路 LIKE，词=1）
+    ·     SCAN d USING INDEX idx_docs_bday_created
+    ·     CORRELATED SCALAR SUBQUERY 1
+    ·     USE TEMP B-TREE FOR count(DISTINCT)
+    ·     SEARCH s USING INDEX idx_settle_receipt (receipt_doc_id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     CORRELATED SCALAR SUBQUERY 2
+    ·     SEARCH c USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     CORRELATED SCALAR SUBQUERY 3
+    ·     MULTI-INDEX OR
+    ·     INDEX 1
+    ·     SEARCH cd USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     INDEX 2
+    ·     SEARCH cd USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     SEARCH l USING INDEX idx_lines_document (document_id=?)
+    ·     SEARCH p USING INDEX sqlite_autoindex_products_1 (id=?)
+    · · 第二段 整行 + 聚合（200 个 id）
+    ·     MATERIALIZE r
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    ·     MATERIALIZE s
+    ·     SEARCH settlements USING INDEX idx_settle_target (target_doc_id=?)
+    ·     SEARCH d USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     SEARCH r USING AUTOMATIC COVERING INDEX (ref=?) LEFT-JOIN
+    ·     SEARCH s USING AUTOMATIC COVERING INDEX (tgt=?) LEFT-JOIN
+    · · 第三段 核销笔数（200 个 id）
+    ·     SEARCH settlements USING COVERING INDEX idx_settle_target (target_doc_id=?)
+lines_of_page          0.58       1.54       7.81      280       ok
+    · SEARCH l USING INDEX idx_lines_document (document_id=?)
+    · LIST SUBQUERY 1
+    · SCAN documents USING COVERING INDEX idx_documents_created
+    · USE TEMP B-TREE FOR ORDER BY
+settled_counts         0.08       0.11       0.14       63       ok
+    · SEARCH settlements USING COVERING INDEX idx_settle_target (target_doc_id=?)
+    · LIST SUBQUERY 1
+    · SCAN documents USING COVERING INDEX idx_documents_created
+party_balances        31.31      35.07      35.95      200       ok
+    · SCAN party_ledger USING COVERING INDEX idx_party_covering
+account_balances      53.85      74.55     162.00        4       ok
+    · SCAN a USING INDEX sqlite_autoindex_accounts_1
+    · SEARCH m USING INDEX idx_money_account_seq (account_id=?) LEFT-JOIN
+today_summary          0.57       0.68       0.69        7       ok
+    · SEARCH documents USING INDEX idx_documents_occurred (occurred_at>? AND occurred_at<?)
+    · USE TEMP B-TREE FOR GROUP BY
+recent_products        6.91       8.61       8.96     4728       ok
+    · CO-ROUTINE d
+    · SCAN documents USING INDEX idx_documents_occurred
+    · SCAN d
+    · SEARCH dl USING INDEX idx_lines_document (document_id=?)
+    · SEARCH p USING INDEX sqlite_autoindex_products_1 (id=?)
+    · USE TEMP B-TREE FOR ORDER BY
+pull_stock             0.42       0.45       0.47      500       ok
+    · SEARCH stock_ledger USING INDEX idx_stock_seq (seq_no>?)
+pull_documents         0.68       0.87       0.91      500       ok
+    · SCAN documents USING INDEX idx_documents_created
+pull_window            0.69       1.00       1.28      500       ok
+    · SEARCH documents USING INDEX idx_documents_updated (updated_at>?)
+doc_count              3.02       3.72       4.46        1       ok
+    · SCAN documents USING COVERING INDEX idx_documents_occurred
+count_roots           58.16      64.05      66.40        1       ok
+    · SEARCH d USING INDEX idx_documents_ref (ref_doc_id=?)
+    · CORRELATED SCALAR SUBQUERY 1
+    · USE TEMP B-TREE FOR count(DISTINCT)
+    · SEARCH s USING INDEX idx_settle_receipt (receipt_doc_id=?)
+list_roots            14.85      19.63      21.06      296       ok
+    · · 第一段 取 id
+    ·     SCAN d USING INDEX idx_docs_bday_created
+    ·     CORRELATED SCALAR SUBQUERY 1
+    ·     USE TEMP B-TREE FOR count(DISTINCT)
+    ·     SEARCH s USING INDEX idx_settle_receipt (receipt_doc_id=?)
+    · · 第二段 整行 + 聚合（200 个 id）
+    ·     MATERIALIZE r
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    ·     MATERIALIZE s
+    ·     SEARCH settlements USING INDEX idx_settle_target (target_doc_id=?)
+    ·     SEARCH d USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     SEARCH r USING AUTOMATIC COVERING INDEX (ref=?) LEFT-JOIN
+    ·     SEARCH s USING AUTOMATIC COVERING INDEX (tgt=?) LEFT-JOIN
+    · · 第三段 核销笔数（200 个 id）
+    ·     SEARCH settlements USING COVERING INDEX idx_settle_target (target_doc_id=?)
+gross_margin          20.53      22.70      23.50      150       ok
+    · · 收入① 销售
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    · · 收入② 送货
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    · · 收入③ 销售退货
+    ·     SEARCH r USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    ·     SEARCH o USING INDEX sqlite_autoindex_documents_1 (id=?) LEFT-JOIN
+    · · 成本① 销售+送货
+    ·     SEARCH d USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    ·     SEARCH s USING INDEX idx_stock_document (document_id=?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    · · 成本② 盘亏
+    ·     SEARCH d USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    ·     SEARCH s USING INDEX idx_stock_document (document_id=?)
+    · · 成本③ 退货成本回退
+    ·     SEARCH r USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    ·     SEARCH s USING INDEX idx_stock_document (document_id=?)
+    ·     SEARCH o USING INDEX sqlite_autoindex_documents_1 (id=?) LEFT-JOIN
+overview_load        138.79     154.51     169.45      974       ok
+    · · ① hasAnyDocument
+    ·     SCAN documents USING COVERING INDEX idx_documents_occurred
+    · · ② 收入① 销售（宽窗口，且毛利那 30 天还会再跑一遍）
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    · · ② 收入② 送货（宽窗口，且毛利那 30 天还会再跑一遍）
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    · · ② 收入③ 销售退货（宽窗口，且毛利那 30 天还会再跑一遍）
+    ·     SEARCH r USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    ·     SEARCH o USING INDEX sqlite_autoindex_documents_1 (id=?) LEFT-JOIN
+    · · ③ todaySummary
+    ·     SEARCH documents USING INDEX idx_documents_occurred (occurred_at>? AND occurred_at<?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    · · ④ partyBalances（应收 / 应付**各跑一遍**）
+    ·     SCAN party_ledger USING COVERING INDEX idx_party_covering
+    · · ④ 欠款 top 点查
+    ·     SEARCH parties USING INDEX sqlite_autoindex_parties_1 (id=?)
+    · · ⑥ stockTop
+    ·     CO-ROUTINE s
+    ·     SCAN stock_ledger USING COVERING INDEX idx_stock_covering
+    ·     SCAN s
+    ·     SEARCH p USING INDEX sqlite_autoindex_products_1 (id=?)
+    ·     USE TEMP B-TREE FOR ORDER BY
+    · · ⑦ 成本① 销售+送货
+    ·     SEARCH d USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    ·     SEARCH s USING INDEX idx_stock_document (document_id=?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    · · ⑦ 成本② 盘亏
+    ·     SEARCH d USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    ·     SEARCH s USING INDEX idx_stock_document (document_id=?)
+    · · ⑦ 成本③ 退货成本回退
+    ·     SEARCH r USING INDEX idx_docs_type_bday (doc_type=? AND business_day>? AND business_day<?)
+    ·     SEARCH s USING INDEX idx_stock_document (document_id=?)
+    ·     SEARCH o USING INDEX sqlite_autoindex_documents_1 (id=?) LEFT-JOIN
+doc_search_docno      16.79      21.78      22.88      319       ok
+    · · 第一段 取 id（四路 LIKE，词=XS）
+    ·     SCAN d USING INDEX idx_docs_bday_created
+    ·     CORRELATED SCALAR SUBQUERY 1
+    ·     USE TEMP B-TREE FOR count(DISTINCT)
+    ·     SEARCH s USING INDEX idx_settle_receipt (receipt_doc_id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     CORRELATED SCALAR SUBQUERY 2
+    ·     SEARCH c USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     CORRELATED SCALAR SUBQUERY 3
+    ·     MULTI-INDEX OR
+    ·     INDEX 1
+    ·     SEARCH cd USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     INDEX 2
+    ·     SEARCH cd USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     SEARCH l USING INDEX idx_lines_document (document_id=?)
+    ·     SEARCH p USING INDEX sqlite_autoindex_products_1 (id=?)
+    · · 第二段 整行 + 聚合（200 个 id）
+    ·     MATERIALIZE r
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    ·     MATERIALIZE s
+    ·     SEARCH settlements USING INDEX idx_settle_target (target_doc_id=?)
+    ·     SEARCH d USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     SEARCH r USING AUTOMATIC COVERING INDEX (ref=?) LEFT-JOIN
+    ·     SEARCH s USING AUTOMATIC COVERING INDEX (tgt=?) LEFT-JOIN
+    · · 第三段 核销笔数（200 个 id）
+    ·     SEARCH settlements USING COVERING INDEX idx_settle_target (target_doc_id=?)
+doc_search_party      27.66      37.65      46.59      308       ok
+    · · 第一段 取 id（四路 LIKE，词=老板）
+    ·     SCAN d USING INDEX idx_docs_bday_created
+    ·     CORRELATED SCALAR SUBQUERY 1
+    ·     USE TEMP B-TREE FOR count(DISTINCT)
+    ·     SEARCH s USING INDEX idx_settle_receipt (receipt_doc_id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     CORRELATED SCALAR SUBQUERY 2
+    ·     SEARCH c USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     CORRELATED SCALAR SUBQUERY 3
+    ·     MULTI-INDEX OR
+    ·     INDEX 1
+    ·     SEARCH cd USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     INDEX 2
+    ·     SEARCH cd USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     SEARCH l USING INDEX idx_lines_document (document_id=?)
+    ·     SEARCH p USING INDEX sqlite_autoindex_products_1 (id=?)
+    · · 第二段 整行 + 聚合（200 个 id）
+    ·     MATERIALIZE r
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    ·     MATERIALIZE s
+    ·     SEARCH settlements USING INDEX idx_settle_target (target_doc_id=?)
+    ·     SEARCH d USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     SEARCH r USING AUTOMATIC COVERING INDEX (ref=?) LEFT-JOIN
+    ·     SEARCH s USING AUTOMATIC COVERING INDEX (tgt=?) LEFT-JOIN
+    · · 第三段 核销笔数（200 个 id）
+    ·     SEARCH settlements USING COVERING INDEX idx_settle_target (target_doc_id=?)
+doc_search_childno      16.66      22.77      27.40      400       ok
+    · · 第一段 取 id（四路 LIKE，词=SK）
+    ·     SCAN d USING INDEX idx_docs_bday_created
+    ·     CORRELATED SCALAR SUBQUERY 1
+    ·     USE TEMP B-TREE FOR count(DISTINCT)
+    ·     SEARCH s USING INDEX idx_settle_receipt (receipt_doc_id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     CORRELATED SCALAR SUBQUERY 2
+    ·     SEARCH c USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     CORRELATED SCALAR SUBQUERY 3
+    ·     MULTI-INDEX OR
+    ·     INDEX 1
+    ·     SEARCH cd USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     INDEX 2
+    ·     SEARCH cd USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     SEARCH l USING INDEX idx_lines_document (document_id=?)
+    ·     SEARCH p USING INDEX sqlite_autoindex_products_1 (id=?)
+    · · 第二段 整行 + 聚合（200 个 id）
+    ·     MATERIALIZE r
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    ·     MATERIALIZE s
+    ·     SEARCH settlements USING INDEX idx_settle_target (target_doc_id=?)
+    ·     SEARCH d USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     SEARCH r USING AUTOMATIC COVERING INDEX (ref=?) LEFT-JOIN
+    ·     SEARCH s USING AUTOMATIC COVERING INDEX (tgt=?) LEFT-JOIN
+    · · 第三段 核销笔数（200 个 id）
+    ·     SEARCH settlements USING COVERING INDEX idx_settle_target (target_doc_id=?)
+doc_search_product      29.77      40.94      43.49      331       ok
+    · · 第一段 取 id（四路 LIKE，词=牛奶）
+    ·     SCAN d USING INDEX idx_docs_bday_created
+    ·     CORRELATED SCALAR SUBQUERY 1
+    ·     USE TEMP B-TREE FOR count(DISTINCT)
+    ·     SEARCH s USING INDEX idx_settle_receipt (receipt_doc_id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     CORRELATED SCALAR SUBQUERY 2
+    ·     SEARCH c USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     CORRELATED SCALAR SUBQUERY 3
+    ·     MULTI-INDEX OR
+    ·     INDEX 1
+    ·     SEARCH cd USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     INDEX 2
+    ·     SEARCH cd USING INDEX idx_documents_ref (ref_doc_id=?)
+    ·     SEARCH l USING INDEX idx_lines_document (document_id=?)
+    ·     SEARCH p USING INDEX sqlite_autoindex_products_1 (id=?)
+    · · 第二段 整行 + 聚合（200 个 id）
+    ·     MATERIALIZE r
+    ·     SEARCH documents USING INDEX idx_docs_type_bday (doc_type=?)
+    ·     USE TEMP B-TREE FOR GROUP BY
+    ·     MATERIALIZE s
+    ·     SEARCH settlements USING INDEX idx_settle_target (target_doc_id=?)
+    ·     SEARCH d USING INDEX sqlite_autoindex_documents_1 (id=?)
+    ·     SEARCH pa USING INDEX sqlite_autoindex_parties_1 (id=?) LEFT-JOIN
+    ·     SEARCH r USING AUTOMATIC COVERING INDEX (ref=?) LEFT-JOIN
+    ·     SEARCH s USING AUTOMATIC COVERING INDEX (tgt=?) LEFT-JOIN
+    · · 第三段 核销笔数（200 个 id）
+    ·     SEARCH settlements USING COVERING INDEX idx_settle_target (target_doc_id=?)
+
+最慢三条（p95）：doc_search_load 229.2 ms，doc_search_count 162.7 ms，overview_load 154.5 ms
+已写出 baseline-after.csv
