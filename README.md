@@ -72,7 +72,7 @@ D:\神算子数据\                     ← 有非系统盘时优先（重装系
 
 ## 当前状态
 
-**版本 0.7.5（第十二个可部署版本，预览）** —— 数据格式版本 **`schema v8`**。
+**版本 0.7.6（第十三个可部署版本，预览）** —— 数据格式版本 **`schema v8`**。
 
 老库**自动逐版迁移**，无需手工干预（升级前自动备份）：
 
@@ -97,7 +97,7 @@ D:\神算子数据\                     ← 有非系统盘时优先（重装系
 | 店内销售 | 开单、议价、散客当场结清、赊账、负库存告警 |
 | 库存查询 | 账面 / 在途 / **在店可售** / 成本；三档告警（负 / 低 / 正常） |
 | 查价 | 概览页「查价」入口：输名字或扫码，**大字显示售价 + 库存**（只给查价用，不带成本与编码） |
-| 经营图表 | 概览页五张图：**近 30 天营收**（按周、每根柱标金额、可展开每天明细）· **毛利**（收入 − 卖货成本 − 盘亏 − 退货回吐的成本；进货花的钱不算，展开后每天列四个分量，不说「毛利率」而说「每收 ¥100 大约赚 ¥X」）· **这个月和上个月**（比同期，不比整月）· **欠款一览**（应收 / 应付横条）· **压货最多的 10 个商品**（按占用资金排，不按数量）。口径写在卡上（销售额 = 店内销售 + 送货 − 有效退货；未签收的送货也算并单独标金额） |
+| 经营图表 | 概览页五张图：**近 30 天营收**（按周、每根柱标金额、可展开每天明细）· **毛利**（收入 − 卖货成本 − 盘亏 − 退货回吐的成本；进货花的钱不算，展开后每天列四个分量，不说「毛利率」而说「每收 ¥100 大约赚 ¥X」）· **这个月和上个月**（比同期，不比整月）· **欠款一览**（应收 / 应付横条）· **压货最多的前 3 个商品**（按占用资金排，不按数量；**完整榜在库存页顶部**，概览只留前三 + 一个「去库存页」出口）。口径写在卡上（销售额 = 店内销售 + 送货 − 有效退货；未签收的送货也算并单独标金额） |
 | 往来方 | 应收应付、汇总、流水、完整建档 / 编辑 / 停用 |
 | 单据列表 | 时间范围 + 类型筛选、复制单号 |
 | 单据详情 | 明细 + 收付款记录；单据列表可点进去 |
@@ -174,12 +174,16 @@ flutter build windows --release
 |---|---|---|
 | [`Agents.md`](Agents.md) | AI Agent / 新加入的开发者 | **入口**：纪律、关键裁定、文档索引 |
 | [`docs/data_model.md`](docs/data_model.md) | 实施者 | 实体、字段、索引、不变量 |
-| [`docs/rules.md`](docs/rules.md) | 实施者 | 业务规则 RULE-001 ~ RULE-009 |
+| [`docs/rules.md`](docs/rules.md) | 实施者 | 业务规则 RULE-001 ~ RULE-010 |
 | [`docs/sync_protocol.md`](docs/sync_protocol.md) | 实施者 | 同步规范：幂等、冲突、重试 |
 | [`docs/data_directory.md`](docs/data_directory.md) | 所有人 | 数据放哪、怎么校验、怎么找回 |
 | [`docs/ui_principles.md`](docs/ui_principles.md) | UI 实现者 | 面向中老年用户的界面原则 |
 | [`docs/testing.md`](docs/testing.md) | 实施者 | 测试要求与运行前提 |
 | [`docs/windows_build.md`](docs/windows_build.md) | 实施者 | Windows 构建 / 运行 / **发布打包** |
+| [`docs/schema_migration.md`](docs/schema_migration.md) | 实施者 | schema 迁移链 + 客户端镜像「重建而非迁移」 |
+| [`docs/perf_test_guide.md`](docs/perf_test_guide.md) | 测试人员 | 长时间使用性能实测：造数 / 基线 / 现场记录怎么跑怎么读 |
+| [`docs/desktop_acceptance.md`](docs/desktop_acceptance.md) · [`docs/android_acceptance.md`](docs/android_acceptance.md) | 验收人 | 发版前的功能面验收（覆盖矩阵 + 最小回归集） |
+| [`docs/proposals/`](docs/proposals/README.md) | 提案人 / 裁定人 | **待裁定提案区**（一提案一文件 + 状态三分法 + 登记表） |
 | [`docs/threat_model.md`](docs/threat_model.md) | 所有人 | 信任边界与已知风险 |
 | [`docs/reply_review.md`](docs/reply_review.md) | 想让事情有据可查的人 | **裁定台账**（每条决定的来历） |
 | [`THIRD_PARTY.md`](THIRD_PARTY.md) | 审查者 / 分发者 | 第三方组件与许可声明 |
@@ -188,16 +192,18 @@ flutter build windows --release
 
 ```text
 repo/
-├── lib/                     # Flutter 壳（Windows 主机；Android 客户端将来共用摆放层）
+├── lib/                     # Flutter 壳（Windows 主机 + Android 客户端共用同一套摆放层）
 │   └── src/ui/              # 各页面（判断都在纯 Dart 包里，这里只摆放）
 ├── packages/
 │   ├── shensuanzi_core/     # 纯 Dart：模型 / DAO / 规则引擎 / 同步协议 + SyncClient
 │   ├── shensuanzi_host/     # 纯 Dart：shelf 服务 / SyncServer / 令牌 / 配对二维码数据
 │   └── shensuanzi_app/      # 纯 Dart：数据目录策略 / 配置 / 备份 / 导出 / 日志 / 字体栈
 ├── test/                    # 根 Flutter 应用的 widget 测试
-├── tool/                    # 仓库根的静态守卫（`import_guard` + 它的自检）
-├── windows/                 # Windows runner（仅这里放 C++）
-└── docs/                    # 规范与台账
+├── tool/                    # 仓库根脚本：导入守卫（+ 自检）、性能实测与造数、库审计
+├── windows/                 # Windows runner（C++ 只在各平台壳目录里）
+├── packaging/               # 发布打包（`make_release.py` → `build/dist/*.zip`）
+├── docs/                    # 规范 / 台账 / 验收 / 提案（待裁定提案在 `docs/proposals/`）
+└── third_party/             # SQLite 源码预置（**不入库**，换机器要先按 windows_build.md 预置）
 ```
 
 **包边界**（2026-09-25 / 09-26 裁定）：
@@ -218,7 +224,8 @@ Flutter 应用(Android)  Flutter   UI + 调用 core 的 SyncClient（**不依赖
 ```text
 信任边界：家庭 / 店铺局域网
 不防御：局域网内的恶意设备、ARP 欺骗、物理访问主机
-防御：外部网络访问、数据文件被拷走、备份包泄露
+不防御：控制了这台电脑的人、拿到备份文件的人 —— 主库与备份都是明文文件（v1 不做加密）
+防御：误删（自动备份 + 30 天保留）· 未授权设备连接（Token）· SQL 注入（白名单 + 参数化）
 ```
 
 完整内容见 [`docs/threat_model.md`](docs/threat_model.md)。

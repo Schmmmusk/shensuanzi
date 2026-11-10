@@ -67,6 +67,12 @@ dart run tool/selfcheck_delivery.dart  # RULE-003 送货（含 R-10 的 status �
 dart run tool/selfcheck_returns.dart   # RULE-007 / RULE-008（含 R-11 成本分摊、拒收）
 dart run tool/selfcheck_query.dart     # RULE-006 查询（库存 / 余额 / 在途 / 在店可售）
 dart run tool/selfcheck_products.dart  # 商品建档（金额解析 / 表单校验 / 编码生成 / 编辑停用）
+dart run tool/selfcheck_purchase.dart  # 采购开单
+dart run tool/selfcheck_sale.dart      # 店内销售开单
+dart run tool/selfcheck_account.dart   # 账户建档
+dart run tool/selfcheck_party.dart     # 往来方建档 / 角色 / 停用
+dart run tool/selfcheck_stocktake.dart # 期初录入 / 盘点（RULE-009）
+dart run tool/selfcheck_export_reads.dart # 导出取数（§AF-5：少一行谁都不知道）
 dart run tool/selfcheck_sync_client.dart # SyncClient（游标 / pull 事务性 / push 退避 / delta）
 dart run tool/typecheck.dart           # 编译校验：import 全部入口但不执行
 
@@ -75,15 +81,22 @@ cd packages/shensuanzi_host
 dart run tool/selfcheck_sync.dart      # SyncServer（五类操作 + 白名单 + 拉取游标）
 dart run tool/selfcheck_host.dart      # 令牌 / 主机身份 / 配对载荷 / 二维码数据 / shelf HTTP
 dart run tool/selfcheck_client_server.dart # 端到端：一台主机 + 两台客户端，真实 HTTP
+dart run tool/selfcheck_queue_sink.dart    # QueueSink → SyncServer：客户端入队的 payload 主机原样收下
+dart run tool/selfcheck_service.dart   # 主机服务控制器
 dart run tool/typecheck.dart
 
 # 应用运行时
 cd packages/shensuanzi_app
 dart run tool/selfcheck_app.dart       # 数据目录策略 / 校验三档 / 配置 / 标记 / 启动恢复
+dart run tool/selfcheck_backup.dart    # 备份执行（WAL checkpoint + 校验 + 保留策略）
+dart run tool/selfcheck_export.dart    # 导出（CSV 编码 / 转义 / 结果文案）
+dart run tool/selfcheck_log.dart       # 最小日志（AppLog / formatLogLine）
+dart run tool/selfcheck_manual.dart    # 用户手册内容（20 章）
 dart run tool/typecheck.dart
 
 # 仓库根（Flutter 层）
-dart run tool/import_guard.dart        # §AF 复跑返工新增：只查「用了桶导出名却没导入桶」
+dart run tool/import_guard.dart        # 跨文件导入守卫（缺桶 / 缺同胞文件导入）
+dart run tool/selfcheck_import_guard.dart # 验证守卫自身 —— **改守卫后必跑**
 ```
 
 > ⚠️ **根 `lib/` 与 `test/` 没有编译门禁**（这是本项目的结构性缺口，不是疏漏）：
@@ -115,10 +128,18 @@ dart run tool/import_guard.dart        # §AF 复跑返工新增：只查「用�
 | core | `selfcheck_party.dart` | `party_service_test.dart` |
 | core | `selfcheck_sale.dart` | `sale_draft_test.dart` |
 | **core** | `selfcheck_sync_client.dart` | `sync_client_test.dart` |
+| **core** | `selfcheck_stocktake.dart` | `stocktake_service_test.dart` |
+| **core** | `selfcheck_export_reads.dart` | `export_reads_test.dart` |
 | **host** | `selfcheck_sync.dart` | `sync_server_test.dart` |
 | **host** | `selfcheck_host.dart` | `auth_test` + `pairing_test` + `http_server_test` |
 | **host** | `selfcheck_client_server.dart` | `client_server_test.dart` |
+| **host** | `selfcheck_service.dart` | `service_controller_test.dart` |
+| **host** | `selfcheck_queue_sink.dart` | `document_sink_test.dart`（core）+ 端到端 `client_server_test.dart` |
 | **app** | `selfcheck_app.dart` | `data_directory_test` + `data_directory_service_test` + `app_config_test` + `bootstrap_test` + `dialog_model_test` + `navigation_test` + `typography_test` |
+| **app** | `selfcheck_backup.dart` | `backup_test.dart` |
+| **app** | `selfcheck_export.dart` | `csv_test` + `export_test` |
+| **app** | `selfcheck_log.dart` | `log_test.dart` |
+| **app** | `selfcheck_manual.dart` | `manual_test.dart` |
 
 > ⚠️ **`typecheck.dart` 必须 import 全部入口，包括 `tool/` 下每个自检脚本本身。**
 > `dart test` 只跑 `test/`，脚本自身的编译错误不会被任何门禁发现 ——
@@ -271,7 +292,11 @@ con.execute(sql, (28800000, 200, SINCE))   # ← 实参顺序反了
 ## C. 业务规则 RULE-001 ~ RULE-009
 
 每条规则至少 1 个 happy path + 1 个边界用例。
-每条规则至少 1 个 happy path + 1 个边界用例。
+
+> RULE-010（**往来方角色与停用**）是**主数据生命周期**规则，不在上面这九条业务规则里 ——
+> 它的用例在 `test/party_service_test.dart`（见 §O 末尾）；镜像自检 `selfcheck_party.dart`。
+> ⚠️ 所以「RULE-00x 全覆盖」这句判据要按 **rules.md 的实际条数**（当前 **RULE-001 ~ RULE-010**）核，
+> 别只看本节的标题。
 
 > 📌 **案例（漂移 1，2026-09-25）**：方案 C 落地时更新了 `selfcheck_rules.dart` 却漏了
 > `test/rule_engine_test.dart` ⇒ **9 个用例失败**（7 个是缺少默认往来方、2 个是过期断言）。
@@ -587,6 +612,89 @@ con.execute(sql, (28800000, 200, SINCE))   # ← 实参顺序反了
 外面看**没有地方能指到沙箱**；补上 `configStore` 之后纪律和代码才对齐
 （`docs/reply_review.md` §W 六）。
 
+## L. 根 Flutter 应用（`lib/`）
+
+**能自动化的部分很少，而这是刻意的**：根应用只放「摆放控件、调插件、pop 结果」，
+所有判断都在 `packages/shensuanzi_app`（由 `dart test` 覆盖）。
+出错面越小，不可验证的那部分就越安全。
+
+| 手段 | 能查出什么 |
+|---|---|
+| `flutter analyze`（**在仓库根跑**） | 类型错误、未使用导入、lint（**首选**） |
+| `flutter test` | widget 测试（`test/widget_test.dart` + `test/startup_test.dart`）。启动流程靠**三个注入点**变得可测：`pickDirectory`（会真弹系统框）+ `configStore`（**不注入就会读写开发者真实的 `%APPDATA%`**）+ `defaultDataDirectory`（**一个值**，只在首启场景判定里替换「机器给的默认位置」——见 §BR·补 2 方案 B：**参数化 ≠ 假机器**）。⚠️ 还要 `useLocalSqlite()` —— `sqlite3_flutter_libs` 只把 DLL 放进**应用目录**，`flutter test` 不打包它 |
+| `dart format --output=none lib test` | **语法**（解析文件但不解析导入）。⚠️ **它抓不住语义错**（构造函数少参数、方法不存在、await 非 Future、const 里掺表达式……
+  以及「State 字段初始化器读 widget」—— 2026-09-27 账户页连踩两轮）——
+  2026-09-27 采购页首轮 14 个 analyze issue 全部漏过它。**`flutter analyze` 在 AI 会话里能跑但间歇失败**（子进程管道耗尽，会话后期可能持续失败）—— 能跑时一律以它为准；跑不了时降级为`dart format`（仅语法）+ 语义自查 + 用户复跑。仍要跑 format 时：**别用管道接它再取 `$?`** —— 管道后取到的是 `tail` 的退出码，**语法错误会被静默放行**（2026-09-26 真实漏过一次）。要么直跑，要么取 `${PIPESTATUS[0]}` |
+
+> ⚠️ **`flutter analyze` 是本项目唯一的全仓 lint 门禁。**
+>
+> 在仓库根运行时它会**连带分析 path 依赖的全部包**
+> （`shensuanzi_core` / `shensuanzi_host` / `shensuanzi_app`）。
+> 而 `dart run tool/typecheck.dart` 只**编译**不 **lint** —— 两者不可互相替代。
+>
+> 2026-09-26 第一次跑它时报出 **37 项**（其中 36 项是历次累积的），
+> 说明**不跑就会有 lint 债静默堆积**。已清零，目标维持 **0 issues**。
+
+> ⚠️ **不要为了「格式化」而运行 `dart format`**：Dart 3.7+ 换了默认风格，
+> 全仓按新风格格式化会产生一个**纯风格的大 diff**（实测 `core` 32/53 文件、
+> `host` 11/15、`app` 14/16 都会变）。要统一风格就单独提一个提交。
+
+**已自动化的**：
+
+| 文件 | 覆盖 |
+|---|---|
+| `test/widget_test.dart` | 主界面把「数据在哪」说清楚、闭环入口常驻可见、数据库没就绪时给出「怎么办」 |
+| **`test/startup_test.dart`** | **启动流程八条**：① 没配置过 → 弹对话框 ② 配置过且可用 → 不弹、直接进主界面 ③ 选了目录 → 对话框消失、进主界面、配置落到**沙箱** ④ 选择器取消（`null`）→ 对话框仍在、不崩 ⑤ 目录能用但**库打不开** → 错误页 ⑥ **空库启动不自动备份**（§AE 遗漏 1，备份目录连建都不建） ⑦ **备份目录不可用 → 自动备份静默失败**（`tester.takeException()` 必须为 `null`）+ **概览页橙卡出现**（§AE-3 两层机制） ⑧ **正常链路启动即出一份备份**（schema 版本进文件名）且橙卡不出现 |
+| **`test/overview_page_test.dart`** | **概览页六条**（§AE）：无提醒不摆卡 / 有提醒摆卡 + `Key('overview-backup-now')` / 备份不可用只说不给空按钮 / 点击 → 回调一次 + SnackBar 带**完整路径** / 失败 SnackBar 说「怎么办」 / `Completer` 卡住 Future 验证**进行中再点不触发回调**。⚠️ 提醒文案里含「立即备份」四字，断言一律用**精确文本或 Key**，不要 `textContaining` |
+| **`test/purchase_page_test.dart`** | **采购开单五条**：① 空表单保存 → 报缺明细 ② 散采全款 → SnackBar 已保存 + 库存 ③ 散采欠款 → 「散采要当场结清」 ④ 供应商 + 部分付款 → SnackBar 带累计欠款 ⑤ 取消有内容 → 确认后清空 ⑥ 供应商搜索打字不崩（⚠️ DAO 返回**定长列表**，`removeWhere` 会逐字崩 —— 过滤一律 `where().toList()`）。⚠️ 商品选择器**空查询显示「最近采购」**（首次为空，先搜索再点选）；**搜索框必须用 `Key('picker-search')` 定位** —— `byType(TextField).first` 会命中弹层底下页面的输入框（树的先序遍历）；**底部按钮先 `scrollUntilVisible` 再点**（800×600 测试视口装不下整页）；`widgetWithText` 匹配不到 `InputDecoration.label` |
+| **`test/account_page_test.dart`** | **账户页四条**：① 空列表给「怎么办」 ② 新建 → 列表出现、余额含期初 ③ **编辑时期初余额只读**（Z-3 方案 A：保存后期初不变） ④ 空名保存 → 字段级报错。⚠️ 下拉选项要先点开下拉框才在树上（直接 `find.text('微信')` 会扑空） |
+| **`test/sale_page_test.dart`** | **销售页七条**：① 空表单行级报错 ② 散客全款（库存归零） ③ 散客欠款 →「散客要当场结清」 ④ **负库存：红色提示标明「打开本页时」且保存放行**（Z-2） ⑤ 选客户+议价+部分收款 → SnackBar 带累计欠款 ⑥ 客户选择器：空查询=最近往来、新建同名=追加 role（Z-4） ⑦ 取消确认。⚠️ 售价预填是**默认值**（议价可改，不回写商品档） |
+| **`test/products_page_test.dart`** | **商品页两条**（§AF）：① 导出全部商品 → 表 8 列、**含停用**、**不受搜索框影响** ② 没接导出服务 → 不显示按钮。⚠️ 导出走 `test/support/fake_export.dart` 的 `FakeExport`（**注桩，不写盘**）—— 有了它还能顺带断言「页面拼出来的表几行几列」，比只看 SnackBar 有价值 |
+| **导出（§AF，三层）** | ① `packages/shensuanzi_app/test/csv_test.dart`：转义 / **公式注入**（含 `[+-]?\d+(\.\d+)?` 纯数字放行）/ BOM / CRLF / 日期与措辞 / **千分位会被转义成文本**（所以导出金额不带千分位）；② `…/export_test.dart`：文件名（含非法字符清洗）/ 空结果不生成 / 目录不可写 / 同名并发单飞 / 五张表列与值 / **五表金额无千分位 + 检测器哨兵**；③ `packages/shensuanzi_core/test/export_reads_test.dart`：三个导出读取入口**不分页**（>200 行）、默认**含停用**。⚠️ widget 侧另有五页各一条（单据/商品/库存/往来方/流水），全部注入 `ExportSink` 桩。⚠️ **「金额不带千分位」的夹具里必须有一笔 ≥ 1000 元** —— 千分位要 ≥ 1000 元才出现，全是小额的夹具会让断言**空转**（本批真实踩过） |
+
+启动流程这五条以前**一条都没有**，根因是缺接缝：只有 `pickDirectory` 不够，
+还得有 `configStore` —— 否则测试既**不确定**（真机上配置已存在，对话框永远不弹），
+又**有破坏性**（`prepare()` 会把真实配置改写成测试的临时目录）。
+2026-09-26 真踩过一次同类问题：在 `MaterialApp` **之上**拿 context 弹对话框 ⇒
+`No MaterialLocalizations found.`，界面停在兜底页，看着像「按钮没反应」，
+而所有单元测试都是绿的。裁定与论证见 `docs/reply_review.md` §W。
+
+> ⚠️ **写 widget 断言前，先想想「同一段文字会不会在屏幕上出现两次」。**
+> 首轮 `startup_test` 三条红，全是同一个原因：断言对话框标题用了裸
+> `find.text('选择数据存放位置')`，而**兜底页的按钮文字也叫这个** ——
+> 对话框开着时底下那个按钮还在，恰好找到 2 个。
+> 「某 UI 元素在不在」要**限定作用域**（`find.descendant(of: find.byType(AlertDialog), …)`），
+> 不要靠「恰好只有一个」碰运气。
+
+**不能自动化的**（必须手动跑一次真机）：
+
+- 系统「选择文件夹」对话框本身（`file_selector` 插件）
+- 真实盘类型与剩余空间（纯 Dart 拿不到，需要 Win32 / 插件）
+
+### 根层交付清单（**本侧编译不了，只能眼过**）
+
+> ⚠️ **这不是工具能替代的**——这是**交付纪律**。凡 AI 会话**编译不到**的改动，
+> 提交前都要逐条走一遍。
+>
+> 背景：`tool/import_guard.dart` 只查**导入面**；根 `lib/` + `test/` **没有**
+> `typecheck.dart`（它只存在于三个 `packages/`）⇒ **纯 Dart 语言规则**在本侧是**盲区**。
+> 2026-10-03（`reply_review.md` §BC）判定：**不做**「局部声明顺序」静态检查工具 ——
+> 纯文本近似的**假阴性**比没有工具更危险（「检查过了」会变成**假信心**）。
+> 改用 **`Agents.md` 纪律 16 + 本清单**。
+
+| # | 必过项 | 怎么过 |
+|---|---|---|
+| 1 | **局部声明顺序** | 有没有局部函数 / 变量在**声明前**被引用？（`main()` 里的助手一律排在最早调用点之前；要跨序引用就**放顶层**）—— 纪律 16 |
+| 2 | **缺 import** | `import_guard` 报 0 处之后，**再眼过一遍本次新增的 import** |
+| 3 | **类型不匹配** | 尤其**跨包调用**：测试里传的值，Flutter 侧也这么传吗？（§BB·七：`hostIdentityFile` 的 `Directory` vs `String` —— 测试与自检**互相印证**、一路绿灯，只有真实调用点暴露了） |
+| 4 | **同名冲突** | 新符号有没有和已有符号重名（本文件内 / 导入面内） |
+| 5 | **未使用导入** | 本次改完有没有多余 import（门禁是 **0 issues，`info` 也算**） |
+| 6 | **`$` 插值里的标识符** | 有没有写错（§AO·四 第一轮） |
+| 7 | **覆写检查** | 引入**继承层**后（如将来的 `DocumentDraft` 基类），逐个核对子类**该覆写的方法有没有 `@override`** —— 漏写时父类默认实现会**静默接管**，`import_guard` 抓不到（§BE·二：`import_guard` 只覆盖导入面） |
+| 8 | **格式** | `dart format --set-exit-if-changed --output=none lib test packages tool` **exit 0**（直跑，别接管道）；若它报了要改 ⇒ 按纪律 19：**纯格式单独一个 commit** + 归一化判据 + 哈希写进 `.git-blame-ignore-revs`，不混进逻辑提交 |
+
+---
+
 ## M. 商品建档（`packages/shensuanzi_core/`）
 
 对应 `test/product_service_test.dart` 与 `tool/selfcheck_products.dart`。
@@ -689,89 +797,6 @@ con.execute(sql, (28800000, 200, SINCE))   # ← 实参顺序反了
 - ⚠️ **`now()` 这类递增时钟助手，先落变量再用** —— 在参数里调一次、
   在 `expect` 里又调一次，时钟被自己推走（2026-09-27 首跑翻车：
   期望 ...003 实际 ...002）。要么存变量，要么断言用关系（`greaterThan`）
-
-## L. 根 Flutter 应用（`lib/`）
-
-**能自动化的部分很少，而这是刻意的**：根应用只放「摆放控件、调插件、pop 结果」，
-所有判断都在 `packages/shensuanzi_app`（由 `dart test` 覆盖）。
-出错面越小，不可验证的那部分就越安全。
-
-| 手段 | 能查出什么 |
-|---|---|
-| `flutter analyze`（**在仓库根跑**） | 类型错误、未使用导入、lint（**首选**） |
-| `flutter test` | widget 测试（`test/widget_test.dart` + `test/startup_test.dart`）。启动流程靠**三个注入点**变得可测：`pickDirectory`（会真弹系统框）+ `configStore`（**不注入就会读写开发者真实的 `%APPDATA%`**）+ `defaultDataDirectory`（**一个值**，只在首启场景判定里替换「机器给的默认位置」——见 §BR·补 2 方案 B：**参数化 ≠ 假机器**）。⚠️ 还要 `useLocalSqlite()` —— `sqlite3_flutter_libs` 只把 DLL 放进**应用目录**，`flutter test` 不打包它 |
-| `dart format --output=none lib test` | **语法**（解析文件但不解析导入）。⚠️ **它抓不住语义错**（构造函数少参数、方法不存在、await 非 Future、const 里掺表达式……
-  以及「State 字段初始化器读 widget」—— 2026-09-27 账户页连踩两轮）——
-  2026-09-27 采购页首轮 14 个 analyze issue 全部漏过它。**`flutter analyze` 在 AI 会话里能跑但间歇失败**（子进程管道耗尽，会话后期可能持续失败）—— 能跑时一律以它为准；跑不了时降级为`dart format`（仅语法）+ 语义自查 + 用户复跑。仍要跑 format 时：**别用管道接它再取 `$?`** —— 管道后取到的是 `tail` 的退出码，**语法错误会被静默放行**（2026-09-26 真实漏过一次）。要么直跑，要么取 `${PIPESTATUS[0]}` |
-
-> ⚠️ **`flutter analyze` 是本项目唯一的全仓 lint 门禁。**
->
-> 在仓库根运行时它会**连带分析 path 依赖的全部包**
-> （`shensuanzi_core` / `shensuanzi_host` / `shensuanzi_app`）。
-> 而 `dart run tool/typecheck.dart` 只**编译**不 **lint** —— 两者不可互相替代。
->
-> 2026-09-26 第一次跑它时报出 **37 项**（其中 36 项是历次累积的），
-> 说明**不跑就会有 lint 债静默堆积**。已清零，目标维持 **0 issues**。
-
-> ⚠️ **不要为了「格式化」而运行 `dart format`**：Dart 3.7+ 换了默认风格，
-> 全仓按新风格格式化会产生一个**纯风格的大 diff**（实测 `core` 32/53 文件、
-> `host` 11/15、`app` 14/16 都会变）。要统一风格就单独提一个提交。
-
-**已自动化的**：
-
-| 文件 | 覆盖 |
-|---|---|
-| `test/widget_test.dart` | 主界面把「数据在哪」说清楚、闭环入口常驻可见、数据库没就绪时给出「怎么办」 |
-| **`test/startup_test.dart`** | **启动流程八条**：① 没配置过 → 弹对话框 ② 配置过且可用 → 不弹、直接进主界面 ③ 选了目录 → 对话框消失、进主界面、配置落到**沙箱** ④ 选择器取消（`null`）→ 对话框仍在、不崩 ⑤ 目录能用但**库打不开** → 错误页 ⑥ **空库启动不自动备份**（§AE 遗漏 1，备份目录连建都不建） ⑦ **备份目录不可用 → 自动备份静默失败**（`tester.takeException()` 必须为 `null`）+ **概览页橙卡出现**（§AE-3 两层机制） ⑧ **正常链路启动即出一份备份**（schema 版本进文件名）且橙卡不出现 |
-| **`test/overview_page_test.dart`** | **概览页六条**（§AE）：无提醒不摆卡 / 有提醒摆卡 + `Key('overview-backup-now')` / 备份不可用只说不给空按钮 / 点击 → 回调一次 + SnackBar 带**完整路径** / 失败 SnackBar 说「怎么办」 / `Completer` 卡住 Future 验证**进行中再点不触发回调**。⚠️ 提醒文案里含「立即备份」四字，断言一律用**精确文本或 Key**，不要 `textContaining` |
-| **`test/purchase_page_test.dart`** | **采购开单五条**：① 空表单保存 → 报缺明细 ② 散采全款 → SnackBar 已保存 + 库存 ③ 散采欠款 → 「散采要当场结清」 ④ 供应商 + 部分付款 → SnackBar 带累计欠款 ⑤ 取消有内容 → 确认后清空 ⑥ 供应商搜索打字不崩（⚠️ DAO 返回**定长列表**，`removeWhere` 会逐字崩 —— 过滤一律 `where().toList()`）。⚠️ 商品选择器**空查询显示「最近采购」**（首次为空，先搜索再点选）；**搜索框必须用 `Key('picker-search')` 定位** —— `byType(TextField).first` 会命中弹层底下页面的输入框（树的先序遍历）；**底部按钮先 `scrollUntilVisible` 再点**（800×600 测试视口装不下整页）；`widgetWithText` 匹配不到 `InputDecoration.label` |
-| **`test/account_page_test.dart`** | **账户页四条**：① 空列表给「怎么办」 ② 新建 → 列表出现、余额含期初 ③ **编辑时期初余额只读**（Z-3 方案 A：保存后期初不变） ④ 空名保存 → 字段级报错。⚠️ 下拉选项要先点开下拉框才在树上（直接 `find.text('微信')` 会扑空） |
-| **`test/sale_page_test.dart`** | **销售页七条**：① 空表单行级报错 ② 散客全款（库存归零） ③ 散客欠款 →「散客要当场结清」 ④ **负库存：红色提示标明「打开本页时」且保存放行**（Z-2） ⑤ 选客户+议价+部分收款 → SnackBar 带累计欠款 ⑥ 客户选择器：空查询=最近往来、新建同名=追加 role（Z-4） ⑦ 取消确认。⚠️ 售价预填是**默认值**（议价可改，不回写商品档） |
-| **`test/products_page_test.dart`** | **商品页两条**（§AF）：① 导出全部商品 → 表 8 列、**含停用**、**不受搜索框影响** ② 没接导出服务 → 不显示按钮。⚠️ 导出走 `test/support/fake_export.dart` 的 `FakeExport`（**注桩，不写盘**）—— 有了它还能顺带断言「页面拼出来的表几行几列」，比只看 SnackBar 有价值 |
-| **导出（§AF，三层）** | ① `packages/shensuanzi_app/test/csv_test.dart`：转义 / **公式注入**（含 `[+-]?\d+(\.\d+)?` 纯数字放行）/ BOM / CRLF / 日期与措辞 / **千分位会被转义成文本**（所以导出金额不带千分位）；② `…/export_test.dart`：文件名（含非法字符清洗）/ 空结果不生成 / 目录不可写 / 同名并发单飞 / 五张表列与值 / **五表金额无千分位 + 检测器哨兵**；③ `packages/shensuanzi_core/test/export_reads_test.dart`：三个导出读取入口**不分页**（>200 行）、默认**含停用**。⚠️ widget 侧另有五页各一条（单据/商品/库存/往来方/流水），全部注入 `ExportSink` 桩。⚠️ **「金额不带千分位」的夹具里必须有一笔 ≥ 1000 元** —— 千分位要 ≥ 1000 元才出现，全是小额的夹具会让断言**空转**（本批真实踩过） |
-
-启动流程这五条以前**一条都没有**，根因是缺接缝：只有 `pickDirectory` 不够，
-还得有 `configStore` —— 否则测试既**不确定**（真机上配置已存在，对话框永远不弹），
-又**有破坏性**（`prepare()` 会把真实配置改写成测试的临时目录）。
-2026-09-26 真踩过一次同类问题：在 `MaterialApp` **之上**拿 context 弹对话框 ⇒
-`No MaterialLocalizations found.`，界面停在兜底页，看着像「按钮没反应」，
-而所有单元测试都是绿的。裁定与论证见 `docs/reply_review.md` §W。
-
-> ⚠️ **写 widget 断言前，先想想「同一段文字会不会在屏幕上出现两次」。**
-> 首轮 `startup_test` 三条红，全是同一个原因：断言对话框标题用了裸
-> `find.text('选择数据存放位置')`，而**兜底页的按钮文字也叫这个** ——
-> 对话框开着时底下那个按钮还在，恰好找到 2 个。
-> 「某 UI 元素在不在」要**限定作用域**（`find.descendant(of: find.byType(AlertDialog), …)`），
-> 不要靠「恰好只有一个」碰运气。
-
-**不能自动化的**（必须手动跑一次真机）：
-
-- 系统「选择文件夹」对话框本身（`file_selector` 插件）
-- 真实盘类型与剩余空间（纯 Dart 拿不到，需要 Win32 / 插件）
-
-### 根层交付清单（**本侧编译不了，只能眼过**）
-
-> ⚠️ **这不是工具能替代的**——这是**交付纪律**。凡 AI 会话**编译不到**的改动，
-> 提交前都要逐条走一遍。
->
-> 背景：`tool/import_guard.dart` 只查**导入面**；根 `lib/` + `test/` **没有**
-> `typecheck.dart`（它只存在于三个 `packages/`）⇒ **纯 Dart 语言规则**在本侧是**盲区**。
-> 2026-10-03（`reply_review.md` §BC）判定：**不做**「局部声明顺序」静态检查工具 ——
-> 纯文本近似的**假阴性**比没有工具更危险（「检查过了」会变成**假信心**）。
-> 改用 **`Agents.md` 纪律 16 + 本清单**。
-
-| # | 必过项 | 怎么过 |
-|---|---|---|
-| 1 | **局部声明顺序** | 有没有局部函数 / 变量在**声明前**被引用？（`main()` 里的助手一律排在最早调用点之前；要跨序引用就**放顶层**）—— 纪律 16 |
-| 2 | **缺 import** | `import_guard` 报 0 处之后，**再眼过一遍本次新增的 import** |
-| 3 | **类型不匹配** | 尤其**跨包调用**：测试里传的值，Flutter 侧也这么传吗？（§BB·七：`hostIdentityFile` 的 `Directory` vs `String` —— 测试与自检**互相印证**、一路绿灯，只有真实调用点暴露了） |
-| 4 | **同名冲突** | 新符号有没有和已有符号重名（本文件内 / 导入面内） |
-| 5 | **未使用导入** | 本次改完有没有多余 import（门禁是 **0 issues，`info` 也算**） |
-| 6 | **`$` 插值里的标识符** | 有没有写错（§AO·四 第一轮） |
-| 7 | **覆写检查** | 引入**继承层**后（如将来的 `DocumentDraft` 基类），逐个核对子类**该覆写的方法有没有 `@override`** —— 漏写时父类默认实现会**静默接管**，`import_guard` 抓不到（§BE·二：`import_guard` 只覆盖导入面） |
-| 8 | **格式** | `dart format --set-exit-if-changed --output=none lib test packages tool` **exit 0**（直跑，别接管道）；若它报了要改 ⇒ 按纪律 19：**纯格式单独一个 commit** + 归一化判据 + 哈希写进 `.git-blame-ignore-revs`，不混进逻辑提交 |
-
----
 
 ## P. Schema 迁移（`packages/shensuanzi_core/`）
 
