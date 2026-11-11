@@ -17,6 +17,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
+import 'paint_first.dart';
+
 /// 打开文件管理器并**选中**刚导出的文件。
 ///
 /// ⚠️ **`/select,` 后面那个逗号是微软的语法**（AF-4）——
@@ -59,6 +61,11 @@ class _ExportButtonState extends State<ExportButton> {
     messenger.showSnackBar(
       const SnackBar(content: Text('正在导出…'), duration: Duration(seconds: 2)),
     );
+
+    // ⚠️ 先把「导出中…」这一帧画出来，再开始干重活（2026-11-09）：
+    // 导出闭包里查库 + 拼表是**同步**的（26 万单实测 4.4 s），
+    // 不先让出一帧的话这行提示永远看不到 —— 用户只看到假死。
+    await letBusyStatePaint();
 
     final ExportOutcome outcome = await widget.export();
     if (!mounted) return;

@@ -30,6 +30,8 @@
 library;
 
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+// 取数作业在 isolate 里跑：测试环境需要显式覆盖 SQLite 的加载路径（生产 no-op）
+import 'package:shensuanzi_core/sqlite_local.dart';
 
 import 'export.dart';
 import 'format.dart';
@@ -125,9 +127,20 @@ List<String> _partyRow(Party party, int balance) => <String>[
 ];
 
 /// 单据导出（跟随页面的时间 / 类型筛选，但**没有 200 上限**，AF-5）
+/// 单据导出的**列名**（`ExportTable.lazy` 与 [documentExportTable] 共用一份）
+const List<String> documentExportHeader = <String>[
+  '单号',
+  '单据类型',
+  '对方',
+  '金额',
+  '已收付',
+  '状态',
+  '日期',
+];
+
 ExportTable documentExportTable(List<DocumentSummary> summaries) => ExportTable(
   label: '单据',
-  header: const <String>['单号', '单据类型', '对方', '金额', '已收付', '状态', '日期'],
+  header: documentExportHeader,
   rows: <List<String>>[
     for (final DocumentSummary summary in summaries)
       <String>[
@@ -212,3 +225,77 @@ ExportTable accountFlowExportTable({required List<MoneyFlowEntry> flow}) =>
           ],
       ],
     );
+
+/// **单据导出的取数作业**（2026-11-09）：在 isolate 里跑，主线程只等。
+///
+/// ## 为什么要有它
+///
+/// 26.4 万单实测：查库 **1.7 s** + 拼表 **2.0 s** + 拼 CSV **0.6 s** = **4.4 s**，
+/// 原来这三段全在主 isolate 上（写盘那段早就在 isolate 里了，但它是小头）。
+/// 结果是「点了导出 → 界面冻住 → 忽然好了」，连「导出中…」都画不出来。
+///
+/// ## 边界（isolate 的三条硬规矩）
+///
+/// 1. **只带可发送的字段**：库路径 + 筛选条件（字符串 / 整数）。`Db` 不行。
+/// 2. **连接在 isolate 里新开**：同一个库文件可以再开一条（WAL 支持多读者）。
+/// 3. **异常不外抛**：转成 `problem`（给用户看的分类文案），细节由调用方记日志。
+class DocumentExportJob implements ExportJob {
+  const DocumentExportJob({
+    required this.dbPath,
+    this.types = const <String>[],
+    this.statusViews = const <String>[],
+    this.sinceMillis,
+    this.untilMillis,
+    this.query,
+  });
+
+  /// 库文件路径（**主 isolate 与 isolate 里各开一条连接**，不共享对象）
+  final String dbPath;
+
+  /// `DocType.wire`（枚举本身能不能跨 isolate 依赖 Dart 版本，统一用字符串）
+  final List<String> types;
+
+  /// `DocumentStatusView.name`
+  final List<String> statusViews;
+
+  final int? sinceMillis;
+  final int? untilMillis;
+  final String? query;
+
+  @override
+  ({List<List<String>> rows, int skipped, String? problem}) load() {
+    // 测试环境（`flutter test`）里 `sqlite3.dll` 不在应用目录；生产是幂等 no-op
+    useLocalSqlite();
+    Db? db;
+    try {
+      db = Db.open(dbPath, foreignKeys: false);
+      final int before = db.readFailures.count;
+      final List<DocumentSummary> summaries = DocumentDao(db)
+          .listDocumentsForExport(
+            types: <DocType>{
+              for (final String wire in types) DocType.fromWire(wire),
+            },
+            statusViews: <DocumentStatusView>{
+              for (final String name in statusViews)
+                DocumentStatusView.values.byName(name),
+            },
+            sinceMillis: sinceMillis,
+            untilMillis: untilMillis,
+            query: query,
+          );
+      return (
+        rows: documentExportTable(summaries).rows,
+        skipped: db.readFailures.count - before,
+        problem: null,
+      );
+    } catch (error) {
+      return (
+        rows: const <List<String>>[],
+        skipped: 0,
+        problem: localFileFailureAdvice(error),
+      );
+    } finally {
+      db?.close();
+    }
+  }
+}

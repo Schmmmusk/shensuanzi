@@ -69,3 +69,8 @@ packages/shensuanzi_app/build/test_cache/build/fa875cea96ff9eb23bebfb51f104f901.
 
 # 暂时不推送的内容
 docs/Post Script/*
+tool/testResult/第四次真机测试（0.7.6版）
+tool/testResult/虚拟机测试结果（新版本）
+tool/testResult/虚拟机测试结果（有3d加速）
+tool/testResult/第五次真机测试/
+tool/testResult/*.zip

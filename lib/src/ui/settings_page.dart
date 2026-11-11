@@ -210,15 +210,18 @@ class _SettingsPageState extends State<SettingsPage> {
     if (run == null || _backupBusy) return;
     setState(() => _backupBusy = true);
     final BackupOutcome outcome = await run();
-    if (!mounted) return;
-    setState(() => _backupBusy = false);
+    // ⚠️ **不能**在这里 `if (!mounted) return;`（2026-11-10 第四次真机 P1）：
+    // 备份要十几秒，用户切走是常态 —— 那句 return 会让「备份成功」**永远不出现**
+    // （现场 19:44:45 已复现）。所以状态只在还在页面上时更新，通知一定发出去：
+    // 走应用级 messenger，页面 dispose 了也能播。
+    if (mounted) setState(() => _backupBusy = false);
     // 遗漏 5：SnackBar 带完整路径（用户可立刻复制到文件管理器）
-    showSnack(
-      context,
+    showAppSnack(
       SnackBar(
         content: Text(backupOutcomeMessage(outcome)),
         duration: const Duration(seconds: 4),
       ),
+      fallback: mounted ? context : null,
     );
   }
 
@@ -560,6 +563,21 @@ class _SettingsPageState extends State<SettingsPage> {
                     // 以及「数据永远属于他」（§AE-1 的技术承诺写进界面）
                     '每天首次打开软件会自动备份一次。\n'
                     '备份文件是普通的数据库文件，可以用任何 SQLite 工具打开。',
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  // **TM-2（2026-11-10 裁定）**：备份是**明文**文件，必须当面说清，
+                  // 并给「怎么办」——只说「有风险」而不说往哪放，等于没说。
+                  //
+                  // 为什么放在这里而不是弹窗：这是**常驻事实**，不是一次性的确认；
+                  // 用户过两周换了个共享盘，不会再有弹窗提醒他。
+                  Text(
+                    key: const Key('setting-backup-plaintext-hint'),
+                    '⚠️ 备份是明文文件（没有加密）：别放在共享文件夹或网盘同步目录里，'
+                    '放在只有你能进的文件夹，或拷到自己的 U 盘收好。',
                     style: TextStyle(
                       height: 1.6,
                       color: theme.textTheme.bodySmall?.color,

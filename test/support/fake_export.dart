@@ -32,9 +32,25 @@ class FakeExport implements ExportSink {
     String? extra,
     DateTime? from,
   }) async {
-    tables.add(table);
+    // 大表（`ExportTable.lazy`）的行数据在生产里由 isolate 现取；
+    // 测试里**就地取一次**，这样既有断言（行数 / 列 / 内容）不用改一行 ——
+    // 假实现的意义是「让页面可测」，不是复刻线程模型。
+    tables.add(_materialize(table));
     extras.add(extra);
     froms.add(from);
     return result;
+  }
+
+  ExportTable _materialize(ExportTable table) {
+    final ExportJob? job = table.job;
+    if (job == null) return table;
+    final ({List<List<String>> rows, int skipped, String? problem}) loaded = job
+        .load();
+    return ExportTable(
+      label: table.label,
+      header: table.header,
+      rows: loaded.rows,
+      skippedBadRows: loaded.skipped,
+    );
   }
 }

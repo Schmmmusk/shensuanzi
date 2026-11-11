@@ -18,10 +18,18 @@ import 'schema.dart';
 /// 因此**内层"成功"并不代表数据已落盘**，只有最外层 `COMMIT` 才算数 ——
 /// 这也正是"任一失败整单回滚"（`docs/rules.md`）所需要的语义。
 class Db {
-  Db._(this.raw, {required bool foreignKeys}) : _foreignKeys = foreignKeys;
+  Db._(this.raw, {required bool foreignKeys, this.path})
+    : _foreignKeys = foreignKeys;
 
   /// 底层连接。仅 DAO 与自检脚本使用。
   final Database raw;
+
+  /// 库文件路径（内存库为 `null`）。
+  ///
+  /// 2026-11-09：**导出要把它交给 isolate** —— 连接不能跨 isolate，
+  /// 但「同一个文件在那边再开一条」可以。没有这个字段，页面拿不到路径，
+  /// 大表导出就只能留在主线程上冻界面。
+  final String? path;
 
   final bool _foreignKeys;
 
@@ -109,14 +117,33 @@ class Db {
     }
   }
 
-  static Db open(String path, {bool foreignKeys = true}) {
+  /// ## [onPhase]：开库四步分时（2026-11-10，第四次真机 P2）
+  ///
+  /// 真机上「冷启动开库」实测 **10–13 秒**（重启后、498 MB 库、NVMe），
+  /// 而这里只做四件事。不拆开就分不清到底是
+  /// **杀软首次扫描文件**（`sqlite_open` 慢）/ **WAL 恢复**（`wal` 慢）/
+  /// **pragma** / **迁移**（不该慢，v8 会早退）。
+  ///
+  /// 回调给的是**累计毫秒**（与 `StartupTrace` 的语义一致），
+  /// 默认 `null` ⇒ 零开销、行为完全不变。
+  static Db open(
+    String path, {
+    bool foreignKeys = true,
+    void Function(String phase, int ms)? onPhase,
+  }) {
+    final Stopwatch clock = Stopwatch()..start();
     final Database db = sqlite3.open(path);
+    onPhase?.call('sqlite_open', clock.elapsedMilliseconds);
     try {
       // WAL 必须在事务外设置；它提升并发读性能，且是断电安全性的基础。
+      // ⚠️ 库上次**非正常退出**时，这一步会重放 `-wal` —— 大 WAL 就是秒级。
       db.execute('PRAGMA journal_mode = WAL');
+      onPhase?.call('wal', clock.elapsedMilliseconds);
       _configure(db, foreignKeys: foreignKeys);
+      onPhase?.call('configure', clock.elapsedMilliseconds);
       _migrate(db, path, foreignKeys: foreignKeys);
-      return Db._(db, foreignKeys: foreignKeys);
+      onPhase?.call('migrate', clock.elapsedMilliseconds);
+      return Db._(db, foreignKeys: foreignKeys, path: path);
     } catch (_) {
       // 先关连接：Windows 上文件被占用就写不回去（也决定临时目录删不删得掉）
       db.dispose();

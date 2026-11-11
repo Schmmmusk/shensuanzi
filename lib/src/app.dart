@@ -47,6 +47,7 @@ import 'ui/rescue_dialog.dart';
 import 'ui/emphasized_text.dart';
 import 'integrity.dart';
 import 'write_blocked.dart';
+import 'frame_trace.dart';
 import 'sync_frame_trace.dart';
 import 'ui/notice.dart';
 
@@ -606,7 +607,9 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 状态 2（2026-10-31 裁定）：开得起来不代表数据是对的 ——
       // `quick_check` 走一遍所有页（478 MB 主库实测 850 ms，镜像是子集，
       // 通常几十毫秒）。报了坏页就走「隔离恢复」，与状态 3 同一条路。
-      final String? problem = mirror == null ? null : mirrorHealthProblemOf(mirror);
+      final String? problem = mirror == null
+          ? null
+          : mirrorHealthProblemOf(mirror);
       if (problem != null) {
         _log.write('镜像自检没通过：$problem');
         setState(() => _mirrorUnhealthy = problem);
@@ -1144,7 +1147,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       builder: (BuildContext context) => AlertDialog(
         title: Text(result.ok ? '修好了' : '没能修好'),
         content: SingleChildScrollView(
-          child: EmphasizedText(text.toString(), style: const TextStyle(height: 1.6)),
+          child: EmphasizedText(
+            text.toString(),
+            style: const TextStyle(height: 1.6),
+          ),
         ),
         actions: <Widget>[
           FilledButton(
@@ -1270,7 +1276,14 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       return;
     }
     try {
-      final Db db = _service.open(location);
+      final Db db = _service.open(
+        location,
+        // **开库四步分时**（2026-11-10 P2）：真机冷启动 10–13 秒，不拆开分不清
+        // 是杀软首次扫描（`T2p_sqlite_open`）/ WAL 恢复（`T2p_wal`）/ pragma / 迁移。
+        // 用 `StartupTrace.mark` 自己的时钟（T0 起算）⇒ 相邻两点的差值就是这一步的耗时；
+        // 回调给的 `ms` 是「从 Db.open 起算」的累计值，两种口径都留在数据里。
+        onPhase: (String phase, int ms) => StartupTrace.mark('T2p_$phase'),
+      );
       // T2：开库 + 迁移都已完成（`Db.open` 内部跑完迁移链才返回）
       StartupTrace.mark('T2_db_open');
       // 记下「这次测的是哪个库」—— 不然两轮数据分不清（小库 vs 478 MB 库）
@@ -1280,6 +1293,13 @@ class _ShensuanziAppState extends State<ShensuanziApp>
             ? File(location.databasePath).lengthSync() / (1024 * 1024)
             : null,
       );
+      // **库探针**（2026-11-11）：单独一行记「到底打开了哪个文件、它多大」。
+      // 起因：`dbMb` 报 0.0 而库实际是 498 MiB，且那几行 `startup` 的行首被截断、
+      // `"db"` 字段丢失，事后无法反查。详见 `StartupTrace.flushDbProbe` 的注释。
+      StartupTrace.flushDbProbe(location.databasePath);
+      // **帧耗时埋点**（2026-11-10 真机 P3）：默认关；`--dart-define=SSZ_FRAME_TRACE=true`
+      // 打开后每 5 秒往 `<数据目录>/日志/frame-cost.jsonl` 落一行（build / raster 分列）。
+      FrameTrace.attach(location.databasePath);
       // 打开即迁移完毕 —— 之后的自动备份内容是这个版本的格式，
       // 文件名（AE-4）必须标它，不能标标记文件里可能过时的版本
       final int schemaVersion = db.schemaVersion;
@@ -2144,6 +2164,10 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     return MaterialApp(
       title: '神算子',
       debugShowCheckedModeBanner: false,
+      // **应用级 SnackBar 出口**（2026-11-10 真机 P1）：备份/导出这类
+      // 「跑十几秒、用户一定会切走」的动作，结果通知不能绑在某个页面的 context 上
+      // —— 页面一 dispose，「成功了」就永远不出现。见 `ui/notice.dart` 的 `showAppSnack`。
+      scaffoldMessengerKey: appMessengerKey,
       // 界面本地化（§BK·一）：Material 组件（日期选择器等）的文字用中文。
       // 没有这三行时 showDatePicker 全是英文 —— 用户反馈 2026-10-05 发布后。
       localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
@@ -2228,7 +2252,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     if (_recoveringMirror) {
       // 修复期间整页一句话：这一步在拷文件 + 建库，中途不能让人乱点
       return const _StartupPage(
-        message: '正在修复本机数据副本……\n\n'
+        message:
+            '正在修复本机数据副本……\n\n'
             '先把还没传上去的单抢救出来，再把原来那份文件留档、'
             '重新建一份空的 —— 期间请不要关掉软件。',
       );
@@ -2441,11 +2466,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // M15（2026-10-08）：开单保存失败 → 原始异常进日志，界面只给分类文案
       onStorageFailure: _onStorageFailure,
       // N-f 站点 9：设置页写 config.json 失败的日志出口（界面据此才提「日志」）
-      onConfigSaveFailure: (Object error, StackTrace stack) => _log.crash(
-        error,
-        stack,
-        label: '配置写盘失败',
-      ),
+      onConfigSaveFailure: (Object error, StackTrace stack) =>
+          _log.crash(error, stack, label: '配置写盘失败'),
       stockDelta: stockDelta,
       pendingMarks: pendingMarks,
       // #27 批 2：商品流水查询（镜像 / 主库按壳取，同上）

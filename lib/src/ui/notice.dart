@@ -27,6 +27,40 @@ void showSnack(BuildContext context, SnackBar bar) {
   messenger.showSnackBar(_twoTier(bar));
 }
 
+/// **应用级** messenger —— 挂在 `MaterialApp.scaffoldMessengerKey` 上。
+///
+/// ## 为什么需要它（2026-11-10，第四次真机实测 P1）
+///
+/// 现场：**备份进行中切到别的页，备份完成后「成功」通知永远不弹**。
+/// 根因是调用点的 `if (!mounted) return;` —— 页面被 `dispose` 后 context 失效，
+/// 而 `showSnack` 只能从 context 找最近的 messenger，于是消息没地方播、
+/// 也没有任何兜底出口（全仓 grep 无 `scaffoldMessengerKey`）。
+///
+/// ⚠️ 面向的是**低速设备**用户：一次备份可能十秒，人必然会切走看看别的 ——
+/// 「做完了没」这个回答不能因为切页就消失。
+///
+/// ## 规矩不变
+///
+/// 仍走 [_twoTier]（先清队 + 时长两档），与 [showSnack] 同一套观感。
+/// [fallback] 只用于**没有挂 key 的场合**（页面级 widget 测试、独立预览）。
+final GlobalKey<ScaffoldMessengerState> appMessengerKey =
+    GlobalKey<ScaffoldMessengerState>();
+
+/// 与 [showSnack] 同规矩，但**不依赖当前页面的 context**。
+///
+/// 优先走 [appMessengerKey]（页面已 dispose 也能播）；没挂 key 时退回 [fallback]。
+/// 两者都没有 ⇒ 静默丢弃（诊断场景，不许因为「没地方弹」而抛异常）。
+void showAppSnack(SnackBar bar, {BuildContext? fallback}) {
+  final ScaffoldMessengerState? messenger = appMessengerKey.currentState;
+  if (messenger != null) {
+    messenger.removeCurrentSnackBar();
+    messenger.showSnackBar(_twoTier(bar));
+    return;
+  }
+  final BuildContext? ctx = fallback;
+  if (ctx != null && ctx.mounted) showSnack(ctx, bar);
+}
+
 /// 只有一句文案时的简写（时长按 [long] 走两档）。
 void showNotice(BuildContext context, String text, {bool long = false}) =>
     showSnack(

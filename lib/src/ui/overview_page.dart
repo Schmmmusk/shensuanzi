@@ -25,6 +25,7 @@ import 'month_compare.dart';
 import 'notice.dart';
 import 'revenue_chart.dart';
 import 'stock_top.dart';
+import 'paint_first.dart';
 
 /// 概览页一次算好的全部数字（`_OverviewPageState._load` 产出、缓存复用）。
 class _OverviewData {
@@ -223,15 +224,19 @@ class _OverviewPageState extends State<OverviewPage> {
     final Future<BackupOutcome> Function()? run = widget.onBackupNow;
     if (run == null || _busy) return;
     setState(() => _busy = true);
+    // 同上：`wal_checkpoint` 与 `quick_check` 都在主线程上同步跑，
+    // 不先画一帧的话「备份中…」永远看不到（2026-11-09）。
+    await letBusyStatePaint();
     final BackupOutcome outcome = await run();
-    if (!mounted) return;
-    setState(() => _busy = false);
-    showSnack(
-      context,
+    // ⚠️ 同 `settings_page._backupNow`（2026-11-10 真机 P1）：这里**不许**用
+    // `if (!mounted) return;` 掐掉通知 —— 切页后「备份成功」就永远看不到了。
+    if (mounted) setState(() => _busy = false);
+    showAppSnack(
       SnackBar(
         content: Text(backupOutcomeMessage(outcome)),
         duration: const Duration(seconds: 4),
       ),
+      fallback: mounted ? context : null,
     );
   }
 

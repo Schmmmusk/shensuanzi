@@ -175,4 +175,74 @@ void main() {
     ).path;
     expect(path, p.join('data', '神算子', '日志', 'startup-trace.jsonl'));
   });
+
+  // ==========================================================================
+  // 库探针（2026-11-11）：`dbMb` 报 0.0 而库实际是 498 MiB ⇒ 必须能分辨
+  // 「文件真小」与「这个 API 读错了」。
+  // ==========================================================================
+  group('dbProbeLine（库探针）', () {
+    /// 真正的 SQLite 文件头：`SQLite format 3\0`
+    const List<int> sqliteHeader = <int>[
+      0x53, 0x51, 0x4C, 0x69, 0x74, 0x65, 0x20, 0x66, // "SQLite f"
+      0x6F, 0x72, 0x6D, 0x61, 0x74, 0x20, 0x33, 0x00, // "ormat 3\0"
+    ];
+
+    test('真库：两条途径读数必须一致，文件头是 SQLite，同目录 -wal 也在', () {
+      final Directory dir = Directory.systemTemp.createTempSync('ssz-probe-');
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      final File db = File(p.join(dir.path, 'shensuanzi.db'));
+      db.writeAsBytesSync(<int>[...sqliteHeader, ...List<int>.filled(4096, 0)]);
+      File(p.join(dir.path, 'shensuanzi.db-wal')).writeAsBytesSync(<int>[0, 0]);
+
+      final Map<String, dynamic> json =
+          jsonDecode(dbProbeLine(db.path, DateTime(2026, 11, 11)))
+              as Map<String, dynamic>;
+
+      expect(json['kind'], 'dbprobe');
+      // ⚠️ 核心断言：两条独立途径读同一个大小。不一致 ⇒ 是「读法 / 过滤驱动」的问题，
+      // 一致且为 0 才是「文件真小」。
+      expect(
+        json['lengthSync'],
+        json['statBytes'],
+        reason: '`lengthSync` 与 `statSync().size` 不一致 —— 现场会出现「库明明很大却报 0」',
+      );
+      expect(json['lengthSync'], 16 + 4096);
+      expect(json['statType'], 'file');
+      expect(json['head'], sqliteHeader, reason: '文件头不是 SQLite 魔数 ⇒ 打开的不是库');
+      expect(json['siblings'], contains('shensuanzi.db-wal:2'));
+      expect(json['siblings'], contains('shensuanzi.db:4112'));
+    });
+
+    test('不存在的路径：大小是 null 而不是 0（0 会被误读成「空库」）', () {
+      final String missing = p.join(
+        Directory.systemTemp.path,
+        '__no_such_ssz_dir__',
+        'shensuanzi.db',
+      );
+      final Map<String, dynamic> json =
+          jsonDecode(dbProbeLine(missing, DateTime(2026, 11, 11)))
+              as Map<String, dynamic>;
+
+      expect(json['lengthSync'], isNull);
+      expect(json['statBytes'], isNull);
+      expect(json['head'], isNull);
+      expect(json['siblings'], isEmpty);
+    });
+
+    test('0 字节文件：两个大小都是 0，但 head 为空 —— 与「空库」可分辨', () {
+      final Directory dir = Directory.systemTemp.createTempSync('ssz-probe0-');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final File db = File(p.join(dir.path, 'shensuanzi.db'))..createSync();
+
+      final Map<String, dynamic> json =
+          jsonDecode(dbProbeLine(db.path, DateTime(2026, 11, 11)))
+              as Map<String, dynamic>;
+
+      expect(json['lengthSync'], 0);
+      expect(json['statBytes'], 0);
+      // 0 字节 ⇒ 读不到头。这与「真库但 lengthSync 读错」是两种不同现象。
+      expect(json['head'], isEmpty);
+    });
+  });
 }

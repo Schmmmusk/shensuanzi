@@ -26,6 +26,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'document_detail_page.dart';
 import 'export_button.dart';
 import 'list_scaffold.dart';
+import 'card_rows_sliver.dart';
 
 /// 时间范围档位
 enum _TimeRange {
@@ -338,249 +339,264 @@ class _DocumentsPageState extends State<DocumentsPage> {
     final int total = _total;
     final List<DocumentSummary> rows = _rows;
 
+    // ⚠️ **列表懒加载**（2026-11-09，用户实测「切页卡 4 秒」）：
+    // 从前是 `SingleChildScrollView + Column(for … 200 行)` —— 一次性 build
+    // 全部卡片。现在头是 sliver、行是 `SliverList`：只有可见的几行会被 build。
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              // §BH·六 B1c·补：超大字号下标题被按钮挤成竖排 ⇒ Wrap 自适应换行
-              Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: <Widget>[
-                  Text('单据', style: theme.textTheme.titleLarge),
-                  if (widget.exports != null)
-                    ExportButton(
-                      key: const Key('export-documents'),
-                      // AF-2：说清导的是**当前筛选**，不是「这一屏 200 条」。
-                      // ⚠️ 2026-10-18（#26 批 3）：屏幕上是**合并**的（一笔生意一行），
-                      // 导出**不合并**（退货单单独一行）—— 不写这句，会计核对时会
-                      // 以为软件导错了（`docs/reply.md` 裁定 6 甲）。
-                      label: '导出当前筛选的单据（不做合并：退货单独一行）',
-                      export: () {
-                        // 3d（2026-10-24，业务审查 §3.7 P2 #2）：导出前后采样
-                        // 坏行计数 —— `decodeRows` 跳过坏行时不报错，缺行文件
-                        // 必须自曝（用户拿它去对账，与屏幕不符就是撒谎）。
-                        final int before = widget.dao.db.readFailures.count;
-                        final ExportTable table = documentExportTable(
-                          // AF-5：导出走**独立查询**（无 200 上限），
-                          // 筛选条件与列表同一份（`since` 是同一个局部变量）
-                          widget.dao.listDocumentsForExport(
-                            types: _types,
-                            statusViews: _statusViews,
-                            sinceMillis: since,
-                            untilMillis: until,
-                            // F10（D2 甲）：**不传** `includeDerived` —— 导出恒全量，
-                            // 列表那个开关只管"屏幕上显示什么"，不该决定"带走什么"。
-                            // AF-5：导出必须带**同一个搜索词**，否则
-                            // 「导出当前筛选」在用户打字的那一刻就变成谎话
-                            query: hasQuery ? query : null,
+        child: CustomScrollView(
+          slivers: <Widget>[
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+              sliver: SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    // §BH·六 B1c·补：超大字号下标题被按钮挤成竖排 ⇒ Wrap 自适应换行
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: <Widget>[
+                        Text('单据', style: theme.textTheme.titleLarge),
+                        if (widget.exports != null)
+                          ExportButton(
+                            key: const Key('export-documents'),
+                            // AF-2：说清导的是**当前筛选**，不是「这一屏 200 条」。
+                            // ⚠️ 2026-10-18（#26 批 3）：屏幕上是**合并**的（一笔生意一行），
+                            // 导出**不合并**（退货单单独一行）—— 不写这句，会计核对时会
+                            // 以为软件导错了（`docs/reply.md` 裁定 6 甲）。
+                            label: '导出当前筛选的单据（不做合并：退货单独一行）',
+                            // ⚠️ **取数也交给 isolate**（2026-11-09，用户实测「导出时假死」）：
+                            // 26.4 万单实测 查库 1.7 s + 拼表 2.0 s + 拼 CSV 0.6 s
+                            // 全在主线程上 —— 界面冻住，连「导出中…」都画不出来。
+                            // 现在主线程只传一个**作业描述**（路径 + 筛选条件，全是可发送的值），
+                            // 查询 / 拼表 / 拼字节 / 写盘都在那边做完。
+                            export: () => widget.exports!.write(
+                              ExportTable.lazy(
+                                label: '单据',
+                                header: documentExportHeader,
+                                job: DocumentExportJob(
+                                  // AF-5：导出走**独立查询**（无 200 上限），
+                                  // 筛选条件与列表同一份（`since` 是同一个局部变量）
+                                  dbPath: widget.dao.db.path!,
+                                  types: <String>[
+                                    for (final DocType t in _types) t.wire,
+                                  ],
+                                  statusViews: <String>[
+                                    for (final DocumentStatusView v
+                                        in _statusViews)
+                                      v.name,
+                                  ],
+                                  sinceMillis: since,
+                                  untilMillis: until,
+                                  // F10（D2 甲）：**不传** `includeDerived` —— 导出恒全量，
+                                  // 列表那个开关只管"屏幕上显示什么"，不该决定"带走什么"。
+                                  // AF-5：导出必须带**同一个搜索词**，否则
+                                  // 「导出当前筛选」在用户打字的那一刻就变成谎话
+                                  query: hasQuery ? query : null,
+                                ),
+                              ),
+                              from: since == null
+                                  ? null
+                                  : DateTime.fromMillisecondsSinceEpoch(since),
+                            ),
                           ),
-                        );
-                        return widget.exports!.write(
-                          table.copyWith(
-                            skippedBadRows:
-                                widget.dao.db.readFailures.count - before,
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // 搜索（#26 批 2）：一个框，四路匹配（单号 / 对方 / 子单号 / 商品名）。
+                    // ⚠️ 不做防抖：本地 SQLite + 200 行上限，防抖只会制造
+                    // 「我打了字但列表没动」的错觉（中老年用户会重复输入）。
+                    // 批 3 第 16 条：换成共用列表头 —— 补三样东西：
+                    // ① **防抖 300ms**（四路 LIKE 逐键查库，低配机器会卡）
+                    // ② **真实总数**（原来 `limit: 200` 静默截断，用户以为总共 200 单）
+                    // ③ **清空全部筛选**（三排筛选能叠出一片空白，用户不知道是自己筛没了）
+                    ListHeader(
+                      searchKey: const Key('doc-search'),
+                      controller: _searchController,
+                      hintText: '找单号、对方、商品名',
+                      onQueryChanged: _onQueryChanged,
+                      countText: _countText(total, rows.length),
+                      onClearAll: _clearAllFilters,
+                    ),
+                    // 自动切范围的**说明**：不写这句就是静默跨范围（UI 撒谎）
+                    if (hasQuery && _autoSwitchedFrom != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          '已切到「全部」来找（原来只显示${_autoSwitchedFrom!.label}）。',
+                          style: TextStyle(
+                            height: 1.6,
+                            color: theme.textTheme.bodySmall?.color,
                           ),
-                          from: since == null
-                              ? null
-                              : DateTime.fromMillisecondsSinceEpoch(since),
-                        );
-                      },
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    Text(
+                      // §审查 OBS-10：排序规则原来只写在代码里 —— 用户看到
+                      // 「SK-005 排在 SH-002 前面」会以为软件乱排。说清楚就好。
+                      // ⚠️ 2026-10-18（#26①）：这段话**本来就是对的**，是 SQL 没做到
+                      // （按 occurred_at 排，主单是 00:00 ⇒ 同一天的派生单全压在上面）。
+                      // 现在实现已对齐文案；末尾补一句解释「为什么有的行只写日期」。
+                      '点一行看单据详情；收款、付款、复制单号都在详情页里。\n'
+                      '最新的排在最上面：先按「单据日期」，同一天里按「录入时间」倒序'
+                      '（退货、收款按记账时刻，所以带时分）。\n'
+                      '退货和收款不单独占一行：折在对应的那笔生意里，行内会写「已退 N 次」。',
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
                     ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              // 搜索（#26 批 2）：一个框，四路匹配（单号 / 对方 / 子单号 / 商品名）。
-              // ⚠️ 不做防抖：本地 SQLite + 200 行上限，防抖只会制造
-              // 「我打了字但列表没动」的错觉（中老年用户会重复输入）。
-              // 批 3 第 16 条：换成共用列表头 —— 补三样东西：
-              // ① **防抖 300ms**（四路 LIKE 逐键查库，低配机器会卡）
-              // ② **真实总数**（原来 `limit: 200` 静默截断，用户以为总共 200 单）
-              // ③ **清空全部筛选**（三排筛选能叠出一片空白，用户不知道是自己筛没了）
-              ListHeader(
-                searchKey: const Key('doc-search'),
-                controller: _searchController,
-                hintText: '找单号、对方、商品名',
-                onQueryChanged: _onQueryChanged,
-                countText: _countText(total, rows.length),
-                onClearAll: _clearAllFilters,
-              ),
-              // 自动切范围的**说明**：不写这句就是静默跨范围（UI 撒谎）
-              if (hasQuery && _autoSwitchedFrom != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    '已切到「全部」来找（原来只显示${_autoSwitchedFrom!.label}）。',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 4),
-              Text(
-                // §审查 OBS-10：排序规则原来只写在代码里 —— 用户看到
-                // 「SK-005 排在 SH-002 前面」会以为软件乱排。说清楚就好。
-                // ⚠️ 2026-10-18（#26①）：这段话**本来就是对的**，是 SQL 没做到
-                // （按 occurred_at 排，主单是 00:00 ⇒ 同一天的派生单全压在上面）。
-                // 现在实现已对齐文案；末尾补一句解释「为什么有的行只写日期」。
-                '点一行看单据详情；收款、付款、复制单号都在详情页里。\n'
-                '最新的排在最上面：先按「单据日期」，同一天里按「录入时间」倒序'
-                '（退货、收款按记账时刻，所以带时分）。\n'
-                '退货和收款不单独占一行：折在对应的那笔生意里，行内会写「已退 N 次」。',
-                style: TextStyle(
-                  height: 1.6,
-                  color: theme.textTheme.bodySmall?.color,
-                ),
-              ),
-              const SizedBox(height: 12),
+                    const SizedBox(height: 12),
 
-              // 时间范围 chips（SC-3 + §审查 2026-10-05 的「自定义」）
-              Wrap(
-                spacing: 8,
-                children: <Widget>[
-                  for (final _TimeRange range in _TimeRange.values)
-                    ChoiceChip(
-                      key: Key('doc-range-${range.name}'),
-                      // 自定义选过之后，chip 上直接印出这段范围
-                      label: Text(
-                        range == _TimeRange.custom && _customRange != null
-                            ? '${formatDate(_customRange!.start.millisecondsSinceEpoch)}'
-                                  '~'
-                                  '${formatDate(_customRange!.end.millisecondsSinceEpoch)}'
-                            : range.label,
+                    // 时间范围 chips（SC-3 + §审查 2026-10-05 的「自定义」）
+                    Wrap(
+                      spacing: 8,
+                      children: <Widget>[
+                        for (final _TimeRange range in _TimeRange.values)
+                          ChoiceChip(
+                            key: Key('doc-range-${range.name}'),
+                            // 自定义选过之后，chip 上直接印出这段范围
+                            label: Text(
+                              range == _TimeRange.custom && _customRange != null
+                                  ? '${formatDate(_customRange!.start.millisecondsSinceEpoch)}'
+                                        '~'
+                                        '${formatDate(_customRange!.end.millisecondsSinceEpoch)}'
+                                  : range.label,
+                            ),
+                            selected: _range == range,
+                            onSelected: (bool selected) {
+                              // #33（2026-10-14）：「自定义」是**唯一有副作用**的档（点击要弹
+                              // 选择器），而 `ChoiceChip` 点「已选中」项时回调收到的是 `false`
+                              //（SDK `chip.dart:1128` = `onSelected(!widget.selected)`）——
+                              // 所以它**不能**吃 `!selected` 守卫：否则选过一段范围
+                              //（`_range == custom`）之后就再也打不开，必须先点别的档绕回来。
+                              if (range == _TimeRange.custom) {
+                                // 日期范围选择器要 await —— 不能在 setState 里做
+                                unawaited(_pickCustomRange());
+                              } else if (selected) {
+                                _applyFilters(() {
+                                  _range = range;
+                                  // 用户**自己**选了范围 ⇒ 不再替他解释（说明行收起）
+                                  _autoSwitchedFrom = null;
+                                });
+                              }
+                            },
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    // 类型 chips —— **多选**（§审查 2026-10-05：4 类不够用，
+                    // 补上送货与两种退货；可同时选多个）
+                    Wrap(
+                      spacing: 8,
+                      children: <Widget>[
+                        for (final DocType type in _typeChoices)
+                          FilterChip(
+                            key: Key('doc-type-${type.wire}'),
+                            label: Text(type.label),
+                            selected: _types.contains(type),
+                            onSelected: (bool selected) => _applyFilters(() {
+                              if (selected) {
+                                _types.add(type);
+                              } else {
+                                _types.remove(type);
+                              }
+                            }),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    // 状态 chips —— **多选**（空 = 不限）。「未结清」= 金额 − 已核销 −
+                    // 退货冲减 > 0，与详情页的「未收」同一个口径。
+                    Wrap(
+                      spacing: 8,
+                      children: <Widget>[
+                        for (final DocumentStatusView view
+                            in DocumentStatusView.values)
+                          FilterChip(
+                            key: Key('doc-status-${view.name}'),
+                            label: Text(view.label),
+                            selected: _statusViews.contains(view),
+                            onSelected: (bool selected) => _applyFilters(() {
+                              if (selected) {
+                                _statusViews.add(view);
+                              } else {
+                                _statusViews.remove(view);
+                              }
+                            }),
+                          ),
+                      ],
+                    ),
+                    if (_range == _TimeRange.all)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '「全部」只显示最近 200 条；想看更早的请用时间范围筛选。',
+                            style: TextStyle(
+                              height: 1.6,
+                              color: theme.textTheme.bodySmall?.color,
+                            ),
+                          ),
+                        ),
                       ),
-                      selected: _range == range,
-                      onSelected: (bool selected) {
-                        // #33（2026-10-14）：「自定义」是**唯一有副作用**的档（点击要弹
-                        // 选择器），而 `ChoiceChip` 点「已选中」项时回调收到的是 `false`
-                        //（SDK `chip.dart:1128` = `onSelected(!widget.selected)`）——
-                        // 所以它**不能**吃 `!selected` 守卫：否则选过一段范围
-                        //（`_range == custom`）之后就再也打不开，必须先点别的档绕回来。
-                        if (range == _TimeRange.custom) {
-                          // 日期范围选择器要 await —— 不能在 setState 里做
-                          unawaited(_pickCustomRange());
-                        } else if (selected) {
-                          _applyFilters(() {
-                            _range = range;
-                            // 用户**自己**选了范围 ⇒ 不再替他解释（说明行收起）
-                            _autoSwitchedFrom = null;
-                          });
-                        }
-                      },
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // 类型 chips —— **多选**（§审查 2026-10-05：4 类不够用，
-              // 补上送货与两种退货；可同时选多个）
-              Wrap(
-                spacing: 8,
-                children: <Widget>[
-                  for (final DocType type in _typeChoices)
-                    FilterChip(
-                      key: Key('doc-type-${type.wire}'),
-                      label: Text(type.label),
-                      selected: _types.contains(type),
-                      onSelected: (bool selected) => _applyFilters(() {
-                        if (selected) {
-                          _types.add(type);
-                        } else {
-                          _types.remove(type);
-                        }
-                      }),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // 状态 chips —— **多选**（空 = 不限）。「未结清」= 金额 − 已核销 −
-              // 退货冲减 > 0，与详情页的「未收」同一个口径。
-              Wrap(
-                spacing: 8,
-                children: <Widget>[
-                  for (final DocumentStatusView view
-                      in DocumentStatusView.values)
-                    FilterChip(
-                      key: Key('doc-status-${view.name}'),
-                      label: Text(view.label),
-                      selected: _statusViews.contains(view),
-                      onSelected: (bool selected) => _applyFilters(() {
-                        if (selected) {
-                          _statusViews.add(view);
-                        } else {
-                          _statusViews.remove(view);
-                        }
-                      }),
-                    ),
-                ],
-              ),
-              if (_range == _TimeRange.all)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      '「全部」只显示最近 200 条；想看更早的请用时间范围筛选。',
-                      style: TextStyle(
-                        height: 1.6,
-                        color: theme.textTheme.bodySmall?.color,
+                    // 平铺 / 聚合两种模式并存 ⇒ 必须告诉用户现在是哪种（#26 批 3）
+                    if (_includeDerived)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '当前按单张单据平铺显示（你筛了收付款 / 退货）；'
+                            '清掉这些筛选就看「一笔生意一行」。',
+                            style: TextStyle(
+                              height: 1.6,
+                              color: theme.textTheme.bodySmall?.color,
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                    const SizedBox(height: 8),
+                  ],
                 ),
-              // 平铺 / 聚合两种模式并存 ⇒ 必须告诉用户现在是哪种（#26 批 3）
-              if (_includeDerived)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      '当前按单张单据平铺显示（你筛了收付款 / 退货）；'
-                      '清掉这些筛选就看「一笔生意一行」。',
-                      style: TextStyle(
-                        height: 1.6,
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
-                    ),
-                  ),
+              ),
+            ),
+            // ---- 行（懒加载）----
+            if (rows.isEmpty)
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 40,
                 ),
-              const SizedBox(height: 8),
-              if (rows.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 40),
+                sliver: SliverToBoxAdapter(
                   child: Text(
                     // 搜索无结果 ≠ 这个范围没单（口径不同，别让用户以为单丢了）
                     hasQuery ? '没有找到和「$query」有关的单据。' : '这个范围里没有单据。',
                     textAlign: TextAlign.center,
                     style: TextStyle(height: 1.8, color: theme.hintColor),
                   ),
-                )
-              else
-                Card(
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: <Widget>[
-                      for (int i = 0; i < rows.length; i++) ...<Widget>[
-                        if (i > 0) const Divider(height: 1),
-                        _DocumentRow(
-                          key: Key('doc-row-${rows[i].document.id}'),
-                          entry: rows[i],
-                          returnedCents: rows[i].returnedCents,
-                          onTap: widget.settlements == null
-                              ? null
-                              : () => _openDetail(rows[i].document.id),
-                        ),
-                      ],
-                    ],
-                  ),
                 ),
-            ],
-          ),
+              )
+            else
+              cardRowsSliver(
+                key: const Key('doc-rows'),
+                itemCount: rows.length,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemBuilder: (BuildContext context, int i) => _DocumentRow(
+                  key: Key('doc-row-${rows[i].document.id}'),
+                  entry: rows[i],
+                  returnedCents: rows[i].returnedCents,
+                  onTap: widget.settlements == null
+                      ? null
+                      : () => _openDetail(rows[i].document.id),
+                ),
+              ),
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          ],
         ),
       ),
     );

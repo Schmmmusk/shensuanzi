@@ -35,6 +35,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -147,12 +148,20 @@ class StartupTrace {
     if (!kStartupTrace || _marks.isEmpty) return;
     final File target = file ?? _file ?? defaultFile();
     _file = target;
+    // ⚠️ **半条记录要自曝**（2026-11-10 第二次真机冷启动）：10 秒兜底定时器会在
+    // 「库还没打开」时先把已有的点写出去 —— 那条记录缺 `T2_db_open`，
+    // 而且因为 `noteDatabase` 还没跑，它会落到 `%APPDATA%` 那份文件里
+    // （数据目录那份没有它）。缺了 T2 却被当成"开库很快"，就是误读。
+    final bool partial = !_marks.any(
+      (Map<String, Object?> m) => m['name'] == 'T2_db_open',
+    );
     final String line = startupLine(
       _marks,
       DateTime.now(),
       db: _dbPath,
       dbMb: _dbMb,
       host: Platform.localHostname,
+      partial: partial,
     );
     try {
       await target.parent.create(recursive: true);
@@ -165,6 +174,45 @@ class StartupTrace {
       );
     } catch (_) {
       // 埋点失败绝不影响软件运行（目录只读 / 磁盘满都会走到这里）
+    }
+  }
+
+  /// 记一行「**这次到底打开了哪个文件、它多大**」—— 独立于 `startup` 行。
+  ///
+  /// ## 为什么需要它（2026-11-11 真机）
+  ///
+  /// `startup` 行的 `db` / `dbMb` 出现了**自相矛盾**的证据：库确实是 **498 MiB**
+  /// （造数与启动是独立事件，用户确认），而 `dbMb` 报 **0.0**。更糟的是那几行的
+  /// **行首被截断**，`"db"` 字段整个丢了 ⇒ 事后**无法反查是哪条路径**。
+  ///
+  /// 所以这里刻意做三件事：
+  ///
+  /// 1. **单独一行**（`kind` = `dbprobe`）：不依附 `startup` 行，被截断也不影响判读；
+  /// 2. **两条独立途径读同一个大小**（`lengthSync` 与 `statSync().size`）：
+  ///    两者不一致 ⇒ API / 过滤驱动读错；一致且为 0 ⇒ 文件真小；
+  /// 3. 记**前 16 字节**（正常库是 `SQLite format 3\0`）：
+  ///    能区分「空文件」与「根本不是库」。
+  ///
+  /// 另外记同目录下所有 `shensuanzi.db*` 的大小 —— 能看出是否另有一个 0 字节的同名库。
+  ///
+  /// 开销：一次 `stat` + 一次 16 字节读，微秒级；**只在开关打开时执行**。
+  static void flushDbProbe(String dbPath) {
+    if (!kStartupTrace) return;
+    final File target = _file ?? defaultFile();
+    unawaited(_appendLine(target, dbProbeLine(dbPath, DateTime.now())));
+  }
+
+  /// 往 JSONL 追加一行（**失败吞掉**）。埋点绝不许拖累软件。
+  static Future<void> _appendLine(File target, String line) async {
+    try {
+      await target.parent.create(recursive: true);
+      await target.writeAsString(
+        '$line\n',
+        mode: FileMode.append,
+        flush: false,
+      );
+    } catch (_) {
+      // 目录只读 / 磁盘满 / 库被挪走都会走到这里
     }
   }
 
@@ -232,11 +280,15 @@ String startupLine(
   String? db,
   double? dbMb,
   String? host,
+  bool partial = false,
 }) {
   final StringBuffer buffer = StringBuffer()
     ..write('{"kind":"startup","ts":"')
     ..write(now.toIso8601String())
     ..write('"');
+  // `partial: true` = 这条记录**缺 T2_db_open**（10 秒兜底先落盘，库还没开完）。
+  // 没有这个标记，缺 T2 的记录会被读成「开库快到没打点」——正好反了。
+  if (partial) buffer.write(',"partial":true');
   // 库信息放在 marks 之前：现场第一眼要看的就是「这次测的是哪个库」
   // ⚠️ 注意引号：`ts` 已经收尾了，这里每段都要**自带前导逗号**；
   // 第一版写成 `","db":"`（多了个引号）⇒ 生成 `478.1","marks"` 非法 JSON。
@@ -266,6 +318,99 @@ String startupLine(
       ..write('}');
   }
   buffer.write(']}');
+  return buffer.toString();
+}
+
+/// 拼一行「**库探针**」的 JSON（纯函数：读盘的部分也放在里面，但每个字段各自 `try`）。
+///
+/// 为什么「两条途径读同一个大小」：2026-11-11 真机上 `lengthSync()` 报 0，
+/// 而库实际是 498 MiB —— 必须能分辨是「文件真小」还是「这个 API 读错了」。
+/// 两条途径一致 ⇒ 可信；不一致 ⇒ 是读法/驱动的问题。
+String dbProbeLine(String dbPath, DateTime now) {
+  final File f = File(dbPath);
+
+  int? lengthBytes;
+  try {
+    lengthBytes = f.existsSync() ? f.lengthSync() : null;
+  } catch (_) {
+    lengthBytes = null;
+  }
+
+  int? statBytes;
+  String statType = '?';
+  String statModified = '?';
+  try {
+    final FileStat st = f.statSync();
+    // ⚠️ `statSync()` 对**不存在的文件不抛异常** —— 它返回 `type = notFound, size = 0`。
+    // 不把 size 置 null，"文件根本不在"就会被读成"空库"，
+    // 而「分辨这两件事」正是这个探针存在的理由（2026-11-11 的 `dbMb: 0.0`）。
+    if (st.type == FileSystemEntityType.notFound) {
+      statBytes = null;
+      statType = 'notFound';
+    } else {
+      statBytes = st.size;
+      statType = st.type.toString().split('.').last;
+      statModified = st.modified.toIso8601String();
+    }
+  } catch (_) {
+    statBytes = null;
+  }
+
+  // 前 16 字节：正常 SQLite 库是 "SQLite format 3\0"
+  List<int>? head;
+  try {
+    if (f.existsSync()) {
+      final RandomAccessFile raf = f.openSync();
+      try {
+        head = raf.readSync(16);
+      } finally {
+        raf.closeSync();
+      }
+    }
+  } catch (_) {
+    head = null;
+  }
+
+  // 同目录下所有 `shensuanzi.db*`（库 / -wal / -shm / 另一个同名库）
+  final List<String> siblings = <String>[];
+  try {
+    final Directory dir = f.parent;
+    if (dir.existsSync()) {
+      for (final FileSystemEntity e in dir.listSync(followLinks: false)) {
+        final String name = p.basename(e.path);
+        if (!name.startsWith('shensuanzi.db')) continue;
+        int size = -1;
+        try {
+          size = e.statSync().size;
+        } catch (_) {
+          size = -1;
+        }
+        siblings.add('$name:$size');
+      }
+      siblings.sort();
+    }
+  } catch (_) {
+    // 目录不可读：留空数组也比抛异常好
+  }
+
+  final StringBuffer buffer = StringBuffer()
+    ..write('{"kind":"dbprobe","ts":"')
+    ..write(now.toIso8601String())
+    ..write('","db":"')
+    ..write(dbPath.replaceAll('\\', '/'))
+    ..write('","lengthSync":')
+    ..write(lengthBytes ?? 'null')
+    ..write(',"statBytes":')
+    ..write(statBytes ?? 'null')
+    ..write(',"statType":"')
+    ..write(statType)
+    ..write('","statModified":"')
+    ..write(statModified)
+    ..write('","head":')
+    ..write(head == null ? 'null' : jsonEncode(head))
+    ..write(',"siblings":')
+    ..write(jsonEncode(siblings))
+    ..write('}');
   return buffer.toString();
 }
 

@@ -48,7 +48,15 @@ export 'src/data_migrator.dart'
         MigrationProgress,
         MigrationTargetBlocked;
 export 'src/startup_trace.dart'
-    show StartupTrace, kStartupTrace, startupLine, pageLine, settledLine;
+    show
+        StartupTrace,
+        kStartupTrace,
+        startupLine,
+        pageLine,
+        settledLine,
+        dbProbeLine;
+export 'src/page_cost_trace.dart'
+    show PageCostTrace, kPageCostTrace, pageCostLine;
 export 'src/instance_lock.dart'
     show InstanceLock, InstanceLockResult, instanceLockFileName;
 export 'src/http_transport.dart' show HttpTransport;
@@ -151,6 +159,7 @@ export 'src/export.dart'
         ExportOutcome,
         ExportService,
         ExportSink,
+        ExportJob,
         ExportSuccess,
         ExportTable,
         exportOutcomeMessage;
@@ -158,7 +167,9 @@ export 'src/export_tables.dart'
     show
         accountFlowExportTable,
         stockFlowExportTable,
+        documentExportHeader,
         documentExportTable,
+        DocumentExportJob,
         partyExportTable,
         partyFlowExportTable,
         productExportTable,

@@ -157,18 +157,18 @@ void main() {
     bool withSettlement = false,
     int remoteVersion = 0,
   }) => MaterialApp(
-        home: Scaffold(
-          body: DocumentsPage(
-            dao: dao,
-            remoteVersion: remoteVersion,
-            exports: exports,
-            // 默认**不接**核销服务：现有用例都是「只读列表」场景（行不可点）；
-            // 需要测「点行进详情」时显式传 true（与其他可选服务同款判定）
-            settlements: withSettlement ? settlements : null,
-            products: withSettlement ? ProductService(db) : null,
-          ),
-        ),
-      );
+    home: Scaffold(
+      body: DocumentsPage(
+        dao: dao,
+        remoteVersion: remoteVersion,
+        exports: exports,
+        // 默认**不接**核销服务：现有用例都是「只读列表」场景（行不可点）；
+        // 需要测「点行进详情」时显式传 true（与其他可选服务同款判定）
+        settlements: withSettlement ? settlements : null,
+        products: withSettlement ? ProductService(db) : null,
+      ),
+    ),
+  );
 
   // ---------------------------------------------------------------- 相对日期
   //
@@ -562,6 +562,38 @@ void main() {
 
   // ------------------------------------------------------- #26 批 2：搜索（2026-10-18）
 
+  // 2026-11-09（用户实测「切页卡 4 秒」）：列表原来是
+  // `SingleChildScrollView + Column(for … rows)` —— 200 行一次性 build。
+  // 现在行是 `SliverList`：只有**可见的那几行**会被 build。
+  // 这条用例数「被 build 的行 widget 个数」，与机器快慢无关。
+  testWidgets('列表懒加载：200 单只 build 可见的那几行（2026-11-09）', (
+    WidgetTester tester,
+  ) async {
+    for (int i = 0; i < 200; i++) {
+      sell(date: dayStr(1 + i % 5), qty: 1);
+    }
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    final int built = tester
+        .widgetList(
+          find.byWidgetPredicate(
+            (Widget w) =>
+                w.key is ValueKey<String> &&
+                (w.key! as ValueKey<String>).value.startsWith('doc-row-'),
+          ),
+        )
+        .length;
+    expect(
+      built,
+      lessThan(30),
+      reason:
+          '200 行里只该 build 可见的那几行（实际 build 了 $built 行）—— '
+          '一次全建就是切页卡顿的根',
+    );
+    expect(built, greaterThan(0), reason: '该建的还得建（别把列表也优化没了）');
+  });
+
   testWidgets('#26 搜索：按对方名筛掉别的行（不是「空态」）', (WidgetTester tester) async {
     sellOnCredit(date: dayStr(1), qty: 2, partyId: 'pt2'); // 李姐
     buy(date: dayStr(2), qty: 10, partyId: 'pt1'); // 王老板
@@ -574,9 +606,14 @@ void main() {
     await tester.pumpAndSettle();
 
     // ⚠️ 搜索框里也是「李姐」（EditableText 会被 find.text 命中）⇒
-    // 只数**列表卡片里**的那一个
+    // 只数**列表行里**的那一个。
+    // 2026-11-09 规格变更：行不再包在一张 `Card` 里（改成 `SliverList` 懒加载，
+    // 见 `card_rows_sliver.dart`）—— 改用行 key 定位，判据的**意图**没变。
     expect(
-      find.descendant(of: find.byType(Card), matching: find.text('李姐')),
+      find.descendant(
+        of: find.byKey(const Key('doc-rows')),
+        matching: find.text('李姐'),
+      ),
       findsOneWidget,
     );
     expect(find.text('王老板'), findsNothing, reason: '不匹配的行要消失');
@@ -982,9 +1019,7 @@ void main() {
   // （性能裁定：26 万单上每次 build 重查 ≈227 ms），父级 `setState` 不重查。
   // 修法：壳把「落库版本号」传下来，变了就重查 —— 但**不动筛选、不动滚动**。
   group('主机落库后自动重查（2026-11-01 真机）', () {
-    testWidgets('版本号变了 ⇒ 不用切页也能看到新单；版本没变 ⇒ 仍复用缓存', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('版本号变了 ⇒ 不用切页也能看到新单；版本没变 ⇒ 仍复用缓存', (WidgetTester tester) async {
       // ⚠️ 用**今天**的日期：列表默认只看最近 30 天，写死 2026-10-01
       // 在 11-01 这天正好落在窗口边缘（实测过，会假红）
       final DateTime now = DateTime.now();
@@ -1036,9 +1071,7 @@ void main() {
       expect(find.textContaining(docNo), findsOneWidget);
     });
 
-    testWidgets('重查**不动筛选**：搜索词还在，只是结果按新数据重算', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('重查**不动筛选**：搜索词还在，只是结果按新数据重算', (WidgetTester tester) async {
       buy(date: '2026-10-01', qty: 10);
       await tester.pumpWidget(page());
       await tester.pumpAndSettle();
@@ -1052,14 +1085,9 @@ void main() {
       await tester.pumpAndSettle();
 
       // 搜索框里的词还在（没有被重置）
-      expect(
-        find.text('采购'),
-        findsWidgets,
-        reason: '重查不许把用户正在用的筛选清掉',
-      );
+      expect(find.text('采购'), findsWidgets, reason: '重查不许把用户正在用的筛选清掉');
     });
   });
-
 }
 
 /// 只数「查了几次库」的 DAO —— 钉住「查询不在 build 里」这条结构。

@@ -322,7 +322,12 @@ class AppBootstrap {
   /// 打开数据目录里的数据库（主机端：外键**开启**，主机是权威）。
   ///
   /// ⚠️ 客户端镜像相反 —— 必须 `foreignKeys: false`（见 `SyncClient` 构造函数）。
-  Db open(DataLocation location) => Db.open(location.databasePath);
+  ///
+  /// [onPhase] 原样透传给 `Db.open`（开库四步分时，默认 `null` = 零开销）。
+  Db open(
+    DataLocation location, {
+    void Function(String phase, int ms)? onPhase,
+  }) => Db.open(location.databasePath, onPhase: onPhase);
 
   /// 迁移成功后，把标记文件的版本刷新到**库的真实版本**。
   ///

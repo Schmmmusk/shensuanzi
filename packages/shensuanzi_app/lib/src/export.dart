@@ -43,6 +43,51 @@ void _writeCsvInIsolate(
   File(job.path).writeAsBytesSync(csvBytes(job.header, job.rows), flush: true);
 }
 
+/// **顶层函数**：大表的完整导出 —— 查库 + 拼表 + 拼 CSV + 写盘**全在 isolate 里**。
+///
+/// ## 为什么不能只把「写盘」搬进 isolate（2026-11-09，用户实测「导出时假死」）
+///
+/// 主线程上原来要干三段：查库 **1.7 s** + 拼表 **2.0 s** + 拼 CSV **0.6 s**
+/// （26.4 万单实测，PC/NVMe；低配机更久）。写盘那一段早就在 isolate 里了，
+/// 但**前三段占了大头**，而且全在主 isolate ⇒ 界面冻住、连「导出中…」都画不出来。
+///
+/// 所以这里把 `job.load()` 也搬进来：isolate 里**按路径新开一条只读连接**
+/// 查库（连接不能跨 isolate，但「同一个文件再开一条」可以）。
+///
+/// 返回 `(rows, skipped, problem)`：`problem` 非空 = 失败原因（给用户看）。
+({int rows, int skipped, String? problem}) _loadAndWriteCsvInIsolate(
+  ({ExportJob job, String path, List<String> header}) args,
+) {
+  try {
+    final ({List<List<String>> rows, int skipped, String? problem}) loaded =
+        args.job.load();
+    if (loaded.problem != null) {
+      return (rows: 0, skipped: 0, problem: loaded.problem);
+    }
+    // 遗漏 4：0 行**不生成文件**（只有表头的 CSV 会让用户以为「导出坏了」）
+    if (loaded.rows.isEmpty) {
+      return (rows: 0, skipped: loaded.skipped, problem: null);
+    }
+    File(
+      args.path,
+    ).writeAsBytesSync(csvBytes(args.header, loaded.rows), flush: true);
+    return (rows: loaded.rows.length, skipped: loaded.skipped, problem: null);
+  } catch (error) {
+    // 分类文案在 `fs.dart`（errno 映射），细节不进用户可见面
+    return (rows: 0, skipped: 0, problem: localFileFailureAdvice(error));
+  }
+}
+
+/// **大表的取数作业**（在 isolate 里执行）。
+///
+/// 实现类只能带**可发送的字段**（路径 / 字符串 / 整数 / 枚举的 wire 值）——
+/// `Db`、`Database`、`Completer` 都不能跨 isolate（真机炸过
+/// 「object is unsendable」）。要查库就**在 [load] 里按路径新开一条**。
+abstract interface class ExportJob {
+  /// 取数 + 拼成「列 → 行」；返回 `problem` 表示失败原因（给用户看）。
+  ({List<List<String>> rows, int skipped, String? problem}) load();
+}
+
 /// 一张待导出的表：**列名 + 行**（映射规则在 `export_tables.dart`，纯 Dart 可测）。
 class ExportTable {
   /// ⚠️ **v3 口径（§BD·四 #3）**：导出列里**不许出现「单价」**。
@@ -58,7 +103,18 @@ class ExportTable {
     required this.header,
     required this.rows,
     this.skippedBadRows = 0,
-  });
+  }) : job = null;
+
+  /// **大表**：行数据在 isolate 里现取（[job]），主线程只等结果。
+  ///
+  /// 2026-11-09：26.4 万单的单据导出，查库 + 拼表 + 拼 CSV 共 **4.4 s**，
+  /// 原来全在主 isolate 上跑 ⇒ 「导出中…」画不出来、界面假死。
+  const ExportTable.lazy({
+    required this.label,
+    required this.header,
+    required ExportJob this.job,
+  }) : rows = const <List<String>>[],
+       skippedBadRows = 0;
 
   /// 表名（`商品` / `库存` / `往来方` / `单据` / `往来流水`）—— 进文件名
   final String label;
@@ -78,15 +134,27 @@ class ExportTable {
   /// 流水类导出吃的是已算好的 flow，导出阶段不可能再跳过行 ⇒ 保持 0。
   final int skippedBadRows;
 
-  bool get isEmpty => rows.isEmpty;
+  /// 非空 = 行数据**不在这里**，由 `ExportService` 丢进 isolate 现取
+  final ExportJob? job;
+
+  /// ⚠️ 大表（[job] 非空）的行还没取出来，**不能**据此判「空」——
+  /// 否则 `_execute` 会在真正取数之前就返回 `ExportEmpty`。
+  bool get isEmpty => job == null && rows.isEmpty;
 
   /// 只改「跳过坏行数」（3d）：导出前后采样 `readFailures.count` 的差值时用。
-  ExportTable copyWith({int? skippedBadRows}) => ExportTable(
-    label: label,
-    header: header,
-    rows: rows,
-    skippedBadRows: skippedBadRows ?? this.skippedBadRows,
-  );
+  ExportTable copyWith({int? skippedBadRows}) {
+    final ExportJob? lazy = job;
+    if (lazy != null) {
+      // 大表：行还没取，`skippedBadRows` 由 isolate 在取数时自己算
+      return ExportTable.lazy(label: label, header: header, job: lazy);
+    }
+    return ExportTable(
+      label: label,
+      header: header,
+      rows: rows,
+      skippedBadRows: skippedBadRows ?? this.skippedBadRows,
+    );
+  }
 }
 
 /// 导出文件名（§AF-7：中文 + 日期 + **无空格**）。
@@ -306,6 +374,28 @@ class ExportService implements ExportSink {
 
     final String path = p.join(exportDirectory, fileName);
     try {
+      final ExportJob? job = table.job;
+      if (job != null) {
+        // **大表**：查库 + 拼表 + 拼 CSV + 写盘全在 isolate 里
+        //（主线程只 await —— 「导出中…」能正常画出来）
+        final ({int rows, int skipped, String? problem}) result =
+            await Isolate.run(
+              () => _loadAndWriteCsvInIsolate((
+                job: job,
+                path: path,
+                header: table.header,
+              )),
+            );
+        if (result.problem != null) {
+          return ExportFailed(result.problem!);
+        }
+        if (result.rows == 0) return const ExportEmpty();
+        return ExportSuccess(
+          path: path,
+          rowCount: result.rows,
+          skippedBadRows: result.skipped,
+        );
+      }
       // 5a：写盘（含拼字节）进 isolate —— 低配 + 杀软扫描下 50–300 ms，
       // 同步写会让「导出中…」画不出来。见文件头的规则说明。
       await Isolate.run(

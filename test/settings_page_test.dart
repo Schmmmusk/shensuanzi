@@ -11,6 +11,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:shensuanzi/src/ui/notice.dart';
 import 'package:shensuanzi/src/ui/settings_page.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -116,9 +117,7 @@ void main() {
 
   // N-f 站点 9（2026-11-05 裁定甲）：同一条失败，**现场必须有去处**，
   // 而界面**不许**出现异常原文（`PathAccessException` 带 config.json 绝对路径）。
-  testWidgets('保存失败 ⇒ 原始异常交给日志出口，界面不出现异常原文', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('保存失败 ⇒ 原始异常交给日志出口，界面不出现异常原文', (WidgetTester tester) async {
     final Directory blocker = Directory(store.file.path);
     blocker.createSync(recursive: true);
     addTearDown(() {
@@ -131,7 +130,8 @@ void main() {
     await tester.pumpWidget(
       page(
         (AppConfig config) {},
-        onConfigSaveFailure: (Object error, StackTrace _) => loggedError = error,
+        onConfigSaveFailure: (Object error, StackTrace _) =>
+            loggedError = error,
       ),
     );
     await tester.pumpAndSettle();
@@ -320,6 +320,14 @@ void main() {
     // 遗漏 6：两行说明（含 §AE-1 的技术承诺）
     expect(find.textContaining('每天首次打开软件会自动备份一次'), findsOneWidget);
     expect(find.textContaining('任何 SQLite 工具打开'), findsOneWidget);
+    // TM-2（2026-11-10 裁定）：明文是**常驻事实**，必须当面写清 +
+    // 给「别往哪放」——只写「有风险」不写往哪放，等于没说
+    expect(
+      find.byKey(const Key('setting-backup-plaintext-hint')),
+      findsOneWidget,
+      reason: '备份是明文文件：这行提示不许被「文案精简」顺手删掉',
+    );
+    expect(find.textContaining('明文'), findsOneWidget);
 
     // 诊断行让页面变高 ⇒ 按钮可能落到视口外，先滚到它再点
     await tester.ensureVisible(find.byKey(const Key('setting-backup-now')));
@@ -329,6 +337,61 @@ void main() {
 
     // 遗漏 5：SnackBar 带完整路径
     expect(find.textContaining(path), findsOneWidget);
+  });
+
+  // 2026-11-10（第四次真机 P1）：**备份期间切页 ⇒ 通知必须仍然送达**。
+  // 现场：备份十秒，用户切去别的页看，回来时「备份成功」从来没出现过 ——
+  // 根因是调用点的 `if (!mounted) return;` 挡在 showSnack 之前。
+  // 反向灵敏度：把 `showAppSnack` 换回 `showSnack(context, …)` + `if (!mounted) return;`
+  // ⇒ 本用例立刻红（SnackBar 找不到）。
+  testWidgets('P1：备份期间切走页面，完成通知仍然弹出（应用级 messenger）', (
+    WidgetTester tester,
+  ) async {
+    store.save(const AppConfig(dataDirectory: r'D:\shensuanzi_data'));
+    current = store.load();
+    const String path = r'D:\神算子备份\shensuanzi-m-schema8-20261110-1944.db';
+    final Completer<BackupOutcome> finished = Completer<BackupOutcome>();
+
+    Widget shell(Widget child) => MaterialApp(
+      // 关键：messenger 挂在**应用级**，不在某个页面里
+      scaffoldMessengerKey: appMessengerKey,
+      home: child,
+    );
+
+    Widget settingsPage() => Scaffold(
+      body: SettingsPage(
+        config: current,
+        configStore: store,
+        backupDirectory: r'D:\神算子备份',
+        backupStatusLine: '上次备份：从未',
+        onBackupNow: () => finished.future,
+        onChanged: (AppConfig config) => current = config,
+      ),
+    );
+
+    await tester.pumpWidget(shell(settingsPage()));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('setting-backup-now')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('setting-backup-now')));
+    await tester.pump(); // 备份开始（按钮转「备份中…」），Future 还没完成
+
+    // 用户切页：整棵设置页被换掉 ⇒ 它的 State 被 dispose
+    await tester.pumpWidget(
+      shell(const Scaffold(body: Center(child: Text('别的页')))),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsPage), findsNothing, reason: '页面确实已经不在树上');
+
+    // 这一刻备份才完成
+    finished.complete(const BackupOutcome.ok(path));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining(path),
+      findsOneWidget,
+      reason: '页面已 dispose，通知依然要送达 —— 这正是真机 P1 的症状',
+    );
   });
 
   testWidgets('超 3 天没备份 → 状态行红字（AE-5）', (WidgetTester tester) async {

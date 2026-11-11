@@ -34,6 +34,8 @@ import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+// 校验在 isolate 里跑：测试环境需要显式覆盖 SQLite 的加载路径（生产是 no-op）
+import 'package:shensuanzi_core/sqlite_local.dart';
 
 import 'fs.dart';
 
@@ -281,15 +283,50 @@ String backupOutcomeMessage(BackupOutcome outcome) {
 
 /// 备份执行服务。判断都在这里；UI 只调 [backupNow] / [autoBackup] /
 /// [lastBackupTime] / [status]。
-/// **顶层函数**：在 isolate 里做纯文件拷贝。
+/// **顶层函数**：在 isolate 里拷贝 + 校验备份副本。
 ///
 /// ⚠️ `Isolate.run` 的闭包**不能捕获不可发送的对象**（`Db` / `Database` /
 /// `Completer` 都不行 —— 2026-10 真机炸过「object is unsendable: _AsyncCompleter」，
-/// 见 `app.dart` 的 `_runMigrationInIsolate`）。所以这里**只接两个字符串**，
-/// 数据库相关的工作（`wal_checkpoint`）留在主线程做。
-bool _copyFileInIsolate(({String source, String target}) paths) {
-  File(paths.source).copySync(paths.target);
-  return true;
+/// 见 `app.dart` 的 `_runMigrationInIsolate`）。所以这里**只接两个字符串**；
+/// 校验需要数据库时，**在 isolate 里按路径新开一条连接**（连接不能跨 isolate，
+/// 但「同一个文件再开一条」可以）。
+///
+/// ## 为什么校验也搬进来（2026-11-09，用户实测「备份时界面假死」）
+///
+/// `PRAGMA quick_check` 要走遍所有页：478 MB 实测 **850 ms**，26 万单（546 MB）
+/// 在低配机上要好几秒。它原来跑在**主 isolate** 上（因为「`Db.open` 不能跨
+/// isolate」—— 那句话对**搬连接**成立，对「按路径新开」不成立），
+/// 正好对上真机那次「备份假死」。
+///
+/// 返回 `null` = 拷贝且校验通过；否则是**给用户看的原因**。
+String? _copyAndVerifyInIsolate(({String source, String target}) job) {
+  File(job.source).copySync(job.target);
+  // 测试环境（`flutter test`）里 `sqlite3.dll` 不在应用目录 ⇒ 需要显式覆盖加载；
+  // 生产环境 `sqlite3_flutter_libs` 已经把库放在 exe 旁边，这一步是幂等 no-op。
+  useLocalSqlite();
+  Db? check;
+  try {
+    check = Db.open(job.target);
+    final List<Map<String, Object?>> rows = check.raw.select(
+      'PRAGMA quick_check',
+    );
+    final Object? verdict = rows.isEmpty ? null : rows.first.values.first;
+    if ('$verdict' != 'ok') return '备份校验失败，已删除不完整的备份';
+    return null;
+  } catch (_) {
+    return '备份校验失败，已删除不完整的备份';
+  } finally {
+    check?.close();
+    // 副本的 -wal/-shm 只是校验过程产生的，别留在备份目录里
+    for (final String suffix in <String>['-wal', '-shm']) {
+      try {
+        final File f = File('${job.target}$suffix');
+        if (f.existsSync()) f.deleteSync();
+      } catch (_) {
+        // 删不掉不影响结论
+      }
+    }
+  }
 }
 
 class BackupService {
@@ -416,39 +453,12 @@ class BackupService {
       // ⚠️ `wal_checkpoint(TRUNCATE)` **必须留在主线程**（上一行）：它要数据库
       // 连接，而连接不能跨 isolate。语义仍是「同步拷贝」—— 拷出来的仍是一个
       // 一致的库文件（`Agents.md` §4.5 的承诺没变），只是不再占 UI 线程。
-      await Isolate.run(
-        () => _copyFileInIsolate((source: source.path, target: tmp)),
+      // 拷贝 **+ 完整性校验** 一起进 isolate（2026-11-09）：
+      // 校验要开库，所以只能在 isolate 里按路径新开一条连接。
+      final String? verifyProblem = await Isolate.run(
+        () => _copyAndVerifyInIsolate((source: source.path, target: tmp)),
       );
-
-      // AE-1 加固：打开**副本**做完整性校验 —— 「看起来成功的备份」变成
-      // 「确实能用的备份」；失败删残件，不留假备份
-      //
-      // ⚠️ 2026-10-28：**`integrity_check` → `quick_check`**。
-      // 真机实测（478 MB 库）：`integrity_check` **3105 ms**、`quick_check` **850 ms**。
-      // 而这一段跑在**主 isolate** 上（`Db.open` 不能跨 isolate），
-      // 3105 ms 正好对上真机那次「备份时界面假死」。
-      //
-      // 为什么 `quick_check` 够用：校验对象是**刚拷出来的副本**，最可能的故障是
-      // 「拷贝不完整 / 文件被截断」—— `quick_check` 会走遍所有页、验证 B 树结构，
-      // 能抓住这类问题。它少做的是「索引与表内容逐条比对」（那是慢的 2.2 秒），
-      // 而索引一致性对一份**逐字节拷贝**来说不是风险点（源库自己跑着没问题）。
-      Db? check;
-      try {
-        check = Db.open(tmp);
-        final List<Map<String, Object?>> rows = check.raw.select(
-          'PRAGMA quick_check',
-        );
-        final Object? verdict = rows.isEmpty ? null : rows.first.values.first;
-        if ('$verdict' != 'ok') {
-          return BackupOutcome.failure('备份校验失败，已删除不完整的备份');
-        }
-      } catch (_) {
-        return BackupOutcome.failure('备份校验失败，已删除不完整的备份');
-      } finally {
-        check?.close();
-        _deleteQuietly(File('$tmp-wal'));
-        _deleteQuietly(File('$tmp-shm'));
-      }
+      if (verifyProblem != null) return BackupOutcome.failure(verifyProblem);
 
       // 遗漏 4：rename 是文件系统的原子保证 —— 不会出现「半份备份」
       File(tmp).renameSync(target);
@@ -491,14 +501,6 @@ class BackupService {
       if (entity is File && p.basename(entity.path).endsWith('.tmp')) {
         entity.deleteSync();
       }
-    }
-  }
-
-  static void _deleteQuietly(File file) {
-    try {
-      if (file.existsSync()) file.deleteSync();
-    } catch (_) {
-      // 删不掉不影响结论
     }
   }
 }
