@@ -1098,6 +1098,82 @@ void main() {
     expect(find.textContaining('共 1 个商品'), findsOneWidget);
   });
 
+  // ------------------------------------------- 搜索过滤项（2026-11-11 裁定）
+  //
+  // 起因：真机搜「6」命中**全部 300 个商品** —— 造数库条码全是 `69…` 开头，
+  // 三路匹配里条码那一路把所有人捞进来。用户分不清是自己搜错还是软件坏了。
+  // ⇒ 给「在哪儿找」一个显式开关。
+  //
+  // 这两条用例的关键是**同一关键词在不同字段下命中不同数量**，
+  // 否则「切了字段但结果没变」这种 bug 测不出来。
+  testWidgets('搜索过滤项：默认「全部」三路命中，切字段后只在该字段里找', (WidgetTester tester) async {
+    // 造第二个商品：名称含 `P00`、编码不含；它与现有「红富士苹果」(code P0001)
+    // 恰好构成「同一关键词在名称/编码里各命中一个」的对照。
+    final int t = 1700000000000;
+    ProductDao(db).insert(
+      Product(
+        id: newId(),
+        code: 'B0002',
+        name: 'P00 测试品',
+        barcode: '6900001000001',
+        createdAt: t,
+        updatedAt: t,
+      ),
+    );
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    // ① 没搜索词时**不显示**这一行（日常不占地方）
+    expect(find.byKey(const Key('stock-search-field-all')), findsNothing);
+
+    // ② 输入 `P00`：全部 = 2（红富士苹果的 code P0001 + P00 测试品的名称）
+    await tester.enterText(find.byKey(const Key('stock-search')), 'P00');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stock-search-field-all')), findsOneWidget);
+    expect(find.textContaining('找到 2 个 / 共 2 个'), findsOneWidget);
+
+    // ③ 切「商品名」⇒ 只剩名称含 P00 的那个
+    await tester.tap(find.byKey(const Key('stock-search-field-name')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('找到 1 个 / 共 2 个'), findsOneWidget);
+
+    // ④ 切「编码」⇒ 换成另一个（code 含 P00 的）
+    await tester.tap(find.byKey(const Key('stock-search-field-code')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('找到 1 个 / 共 2 个'), findsOneWidget);
+
+    // ⑤ 切「条码」⇒ `P00` 不在任何条码里
+    await tester.tap(find.byKey(const Key('stock-search-field-barcode')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('找到 0 个 / 共 2 个'), findsOneWidget);
+  });
+
+  testWidgets('搜索过滤项：切了字段搜不到时，必须说清「只在哪儿找」', (WidgetTester tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('stock-search')), 'P0001');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('找到 1 个 / 共 1 个'), findsOneWidget);
+
+    // 名称里没有 `P0001` ⇒ 0 个。空态**不能只说「没有匹配的商品」** ——
+    // 那会让人以为「店里没这个货」，实际是「你只在名称里找」。
+    await tester.tap(find.byKey(const Key('stock-search-field-name')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('找到 0 个 / 共 1 个'), findsOneWidget);
+    expect(find.textContaining('只在「商品名」里找'), findsOneWidget);
+    expect(find.textContaining('点上面的「全部」'), findsOneWidget);
+
+    // ⑤ 清空搜索词 ⇒ 这一行消失，字段回到「全部」
+    //    （否则下次搜索还停在「商品名」上，用户会以为搜不到货）
+    await tester.tap(find.byKey(const Key('list-search-clear')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('stock-search-field-all')), findsNothing);
+  });
+
   // ------------------------------------------------------- P3 · F6 成本标签错位
   //
   // 成本行是 `Wrap(alignment: spaceBetween)`，而它有**四个**子项：

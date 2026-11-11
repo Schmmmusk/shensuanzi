@@ -47,6 +47,7 @@ import 'list_scaffold.dart';
 import 'opening_stock_page.dart';
 import 'stock_top.dart';
 import 'product_form_dialog.dart';
+import 'search_field_chips.dart';
 import 'stock_flow_page.dart';
 import 'card_rows_sliver.dart';
 
@@ -173,6 +174,16 @@ class _StockPageState extends State<StockPage> {
   final TextEditingController _query = TextEditingController();
   bool _showAll = false;
   String _searchText = '';
+
+  /// 搜索时**在哪个字段里找**（2026-11-11 用户裁定：做成可选过滤项）。
+  ///
+  /// [StockSearchField.all] 是三路一起找 —— 与加这个开关之前的行为**完全一致**，
+  /// 老用户不会因为升级而「搜不到了」（默认收紧最容易造成「软件坏了」的错觉）。
+  ///
+  /// 起因：真机测试里搜「6」命中了**全部 300 个商品**。不是匹配逻辑错，
+  /// 是造数库的条码全是 `6900001000000…` 开头，三路匹配里条码那一路把所有人捞进来。
+  /// 用户看到「搜一个数字出来一屏」，分不清是自己搜错还是软件坏了。
+  String _searchField = StockSearchField.all;
   bool _showOpening = false;
 
   /// 压货榜（2026-11-01，用户裁定 A1：从概览页搬过来）。
@@ -297,6 +308,49 @@ class _StockPageState extends State<StockPage> {
   void didUpdateWidget(StockPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     _loadAggregates();
+  }
+
+  /// 一个商品是否匹配当前搜索词 —— **按 `_searchField` 决定在哪儿找**。
+  ///
+  /// 抽成方法而不是内联进 `build`：字段一多，内联的那串 `||` 就没法读了，
+  /// 而且 `_searchField` 的分支散在表达式里很难看清「全部」到底包含哪几路。
+  bool _matchesSearch(Product p) {
+    final String q = _searchText;
+    return switch (_searchField) {
+      StockSearchField.name => p.name.contains(q),
+      StockSearchField.code => p.code.contains(q),
+      StockSearchField.barcode => (p.barcode ?? '').contains(q),
+      // 「全部」= 与加这个开关之前**逐字一致**的三路
+      _ =>
+        p.name.contains(q) ||
+            p.code.contains(q) ||
+            (p.barcode ?? '').contains(q),
+    };
+  }
+
+  /// 当前「在哪儿找」的中文名（给空态文案用）。
+  String _searchFieldLabel() => switch (_searchField) {
+    StockSearchField.name => '商品名',
+    StockSearchField.code => '编码',
+    StockSearchField.barcode => '条码',
+    _ => '全部',
+  };
+
+  /// 搜索框下面那一排「在哪儿找」。**搜索词为空时不显示** ——
+  /// 日常不搜索时它不该占地方（中老年用户的屏幕本来就不宽裕）。
+  Widget? _searchFieldChips() {
+    if (_searchText.isEmpty) return null;
+    return SearchFieldChips(
+      keyPrefix: 'stock-search-field',
+      options: const <SearchFieldOption>[
+        SearchFieldOption(StockSearchField.all, '全部'),
+        SearchFieldOption(StockSearchField.name, '商品名'),
+        SearchFieldOption(StockSearchField.code, '编码'),
+        SearchFieldOption(StockSearchField.barcode, '条码'),
+      ],
+      selectedId: _searchField,
+      onChanged: (String id) => setState(() => _searchField = id),
+    );
   }
 
   @override
@@ -493,17 +547,10 @@ class _StockPageState extends State<StockPage> {
     final Map<String, int> openingPending =
         widget.pendingMarks?.openingQuantityByProduct() ??
         const <String, int>{};
-    // 搜索：名称 / 编码 / 条码
+    // 搜索：按 `_searchField` 决定在哪儿找（默认三路全找）
     final List<Product> matched = _searchText.isEmpty
         ? all
-        : all
-              .where(
-                (Product product) =>
-                    product.name.contains(_searchText) ||
-                    product.code.contains(_searchText) ||
-                    (product.barcode ?? '').contains(_searchText),
-              )
-              .toList();
+        : all.where((Product p) => _matchesSearch(p)).toList();
 
     /// 有流水 = 账面 / 在途 / **本地未同步影响** 任一不为 0（遗漏 5 的「有意义的数字」）。
     ///
@@ -655,8 +702,16 @@ class _StockPageState extends State<StockPage> {
                       searchKey: const Key('stock-search'),
                       controller: _query,
                       hintText: '商品名 / 编码 / 条码（可扫码）',
-                      onQueryChanged: (String q) =>
-                          setState(() => _searchText = q.trim()),
+                      onQueryChanged: (String q) => setState(() {
+                        _searchText = q.trim();
+                        // 搜索词清空 ⇒ 「在哪儿找」也回到「全部」。
+                        // 否则下次搜索还停在「条码」上，用户会以为搜不到货。
+                        if (_searchText.isEmpty) {
+                          _searchField = StockSearchField.all;
+                        }
+                      }),
+                      // 2026-11-11：搜索时可选「在哪儿找」（全部 / 商品名 / 编码 / 条码）
+                      leading: _searchFieldChips(),
                       countText: _searchText.isEmpty
                           ? '共 ${all.length} 个商品'
                           : '找到 ${matched.length} 个 / 共 ${all.length} 个',
@@ -696,8 +751,16 @@ class _StockPageState extends State<StockPage> {
                                   ? mirrorEmptyMessage('库存数字')
                                   : _searchText.isEmpty
                                   ? '还没有库存记录'
-                                  : '没有匹配的商品。',
+                                  // 选了具体字段又没结果 ⇒ 必须说「你只在哪儿找了」，
+                                  // 否则用户会以为「店里没这个货」。
+                                  // 2026-11-11 真机上就出现过：搜「6」命中全部，
+                                  // 反倒是「搜不到」时要解释清楚才安全。
+                                  : _searchField == StockSearchField.all
+                                  ? '没有匹配的商品。'
+                                  : '只在「${_searchFieldLabel()}」里找，没有匹配。'
+                                        '\n可以点上面的「全部」再试一次。',
                               textAlign: TextAlign.center,
+                              key: const Key('stock-search-empty'),
                               style: TextStyle(
                                 height: 1.8,
                                 color: theme.hintColor,
@@ -1217,4 +1280,19 @@ class _StockDeltaLineState extends State<_StockDeltaLine> {
       ),
     );
   }
+}
+
+/// 库存页搜索的「在哪儿找」取值（2026-11-11 用户裁定：做成可选过滤项）。
+///
+/// 用 `const String` 而不是 `enum`：值与 [SearchFieldOption.id] 直接对应，
+/// 省一层 `enum.name` 转换；而且这四个串会出现在测试的 Key 里
+/// （`stock-search-field-name` 这种），用 enum 反而要多写转换。
+class StockSearchField {
+  const StockSearchField._();
+
+  /// 三路一起找 —— **与加这个开关之前逐字一致**（默认值）。
+  static const String all = 'all';
+  static const String name = 'name';
+  static const String code = 'code';
+  static const String barcode = 'barcode';
 }

@@ -233,7 +233,8 @@ R-3.1 ~ R-3.5 五问**已全部裁定**（2026-09-29），结论在 `docs/reply_
 - `docs/testing.md` —— 测试要求（DAO / 不变量 / 规则 / 同步 / 端到端）
 - `docs/windows_build.md` —— Windows 构建与运行（**应用「一直起不来」先看这里**：SQLite 源码的离线预置步骤）
 - `docs/schema_migration.md` —— schema 迁移链 + 客户端镜像「**重建而非迁移**」（**纪律 14 的单一来源**）
-- `docs/perf_test_guide.md` —— 性能实测怎么跑、怎么读（`tool/perf_monitor.py` / `perf_bench.py` / `perf_seed.py`）
+- `docs/perf_test_guide.md` —— 性能实测怎么跑、怎么读（`tool/perf_monitor.py` / `perf_bench.py` / `perf_seed.py`
+  / **`perf_collect.py`（把散落数据收成一个目录）** / **`perf_report.py`（自动出表）**）
 
 **验收清单**（发版前照着走，判据在各自文件里）：
 

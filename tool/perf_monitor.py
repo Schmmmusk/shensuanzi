@@ -1942,6 +1942,12 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--app-version", default="", help="软件版本（UI 上能看到就填）")
     out.add_argument("--spool", default=None, help="第二个窗口用 mark 写的事件文件（JSONL）")
     out.add_argument("--html", action="store_true", help="额外生成 report.html")
+    out.add_argument(
+        "--no-collect",
+        action="store_true",
+        help="收尾时**不**自动归集 trace（默认会：把数据目录与 %%APPDATA%% 的 "
+             "startup-trace / page-cost / frame-cost / 日志 收进 <out>\\\\logs）",
+    )
     out.add_argument("--quiet", action="store_true", help="不打印每个采样点")
 
     mark = sub.add_parser("mark", help="往 spool 里写一条人工事件（第二个窗口用）")
@@ -2214,7 +2220,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "interval_s": args.interval,
         "process": args.process,
         "pid": session.pid,
-    "pid_history": list(session.pid_history),
+        "pid_history": list(session.pid_history),
         "app_version": args.app_version,
         "session_note": args.session_note,
         # 完整机器配置（含 blocked / sources）：事后对比两台机器只靠它
@@ -2225,6 +2231,30 @@ def cmd_run(args: argparse.Namespace) -> int:
     }
     with open(os.path.join(session.out_dir, "session.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=2)
+
+    # ---- 顺手归集（2026-11-11）
+    # 实测最大的摩擦不是采不到数，是**回家后到处找数据**：trace 在数据目录的「日志」里、
+    # 文本日志还在 %APPDATA%、采样在 --out 里。这一步把前两者收进 <out>\logs\，
+    # 于是只剩一个目录要带走。
+    # 归集**失败绝不影响整轮**：包在 try 里，只提示不抛（诊断工具的铁律）。
+    if not getattr(args, "no_collect", False):
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import perf_collect  # 延迟导入：只在收尾用一次
+
+            print("")
+            print("归集 trace（数据目录 + %APPDATA%）→ %s" % os.path.join(session.out_dir, "logs"))
+            perf_collect.main(
+                [
+                    "--run",
+                    session.out_dir,
+                    "--data-dir",
+                    os.path.dirname(os.path.abspath(db_path)),
+                ]
+            )
+        except Exception as exc:  # noqa: BLE001  —— 便利功能，绝不能让整轮白跑
+            print("  （归集跳过：%s）" % exc)
+            print("  手动补收：python tool/perf_collect.py --run \"%s\"" % session.out_dir)
 
     print("")
     print("已写出：")

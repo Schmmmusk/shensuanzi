@@ -6,6 +6,10 @@
 >
 > 配套脚本（`tool/` 下，Python 3.8+，**只用标准库**）：
 > `perf_seed.py`（造数）· `perf_bench.py`（库侧基线）· `perf_monitor.py`（人工实测记录）
+> · **`perf_collect.py`（把散落的数据收成一个目录）** · **`perf_report.py`（自动出表）**
+>
+> 2026-11-11 起：`perf_monitor.py` 跑完会**自动调 `perf_collect.py`**，
+> 于是「回家找数据」这件事没了 —— 只有一个 `<out>\logs\` 目录要带走。
 
 ---
 
@@ -260,7 +264,20 @@ D:\perf-run1\
    ```bat
    python perf_bench.py --data-dir "D:\perf-data" --csv after.csv --explain
    ```
-2. 把下面五样交回（见「六、交回清单」）。
+2. **补一次归集**（`perf_monitor` 收尾时已自动跑过一次，但那时软件可能还在写，
+   日志是快照。关掉软件后再收一次，才是完整的）：
+   ```bat
+   python tool\perf_collect.py --run D:\perf-run1
+   ```
+   它会打印一份**体检**：几行残行、几条 `partial`、有没有 `dbprobe`、日志里有没有异常。
+   **体检不通过（退出码 3）不代表不能用**，只是判读时要标出来。
+3. **自动出表**（可选，但强烈建议 —— 它会替你把这轮的数排成表）：
+   ```bat
+   python tool\perf_report.py --dir D:\perf-run1
+   ```
+   产出 `D:\perf-run1\analysis.md`：启动几次、每次卡在哪一步、哪些页面首帧慢、
+   帧耗时的尖刺在 build 还是 raster、库存页重建了几次。
+4. 交回（见「六、交回清单」）。
 
 ---
 
@@ -481,19 +498,52 @@ Python/SQLite 版本不同，同样的 SQL 能差好几倍。
 
 ## 六、交回清单
 
-请把这几样打包交回（文件名带机器名与轮次）：
+> **2026-11-11 改版**：以前要交五六个散在各处的文件，找起来最容易漏。
+> 现在 `perf_collect.py` 会把它们收进 `<out>\logs\`，**整个 `perf-run-*` 目录拷回来就齐了**。
 
-1. `report.md`（每轮一份）
-2. `samples.csv`、`events.csv`、`session.json`
-3. `before.csv`、`after.csv`（`perf_bench.py` 两次，含 `--explain` 的终端输出；**非开发机请加 `--no-gate`**）
-4. `perf_seed.py` 造数结束时的**自检表截图/文本**
-5. `machine_info.py --json machine.json` 的档案（**每轮开始前**跑一次；跨机器对比全靠它，
-   尤其是**逻辑处理器数** —— CPU 是单核 100% 刻度，不记核数就没法比）。
-   ⚠️ **虚拟机必须带 `--host-media`**（宿主物理介质在 Guest 里采不到，见 §4.3b）——
-   没有它，首启 / 备份 / 造数这些 I/O 数字**无法跨机比较**
-6. 一句话总结：**这一轮最卡的一次是哪个动作、当时在做什么、机器什么反应**
+### 6.1 主体：整个 `perf-run-*` 目录
 
-> 缺第 3 项也能看人工观感，但**没法判断是库慢还是界面慢** —— 尽量补齐。
+里面应当有：
+
+```
+perf-run-20261111-204448\
+  report.md          ← perf_monitor 生成（采样层面）
+  analysis.md        ← perf_report 生成（trace 层面，自动出表）
+  samples.csv  events.csv  session.json
+  logs\
+    startup-trace.data.jsonl      ← 启动 / 切页 / 稳定 / 库探针（数据目录那份）
+    startup-trace.appdata.jsonl   ← 10 秒兜底的 partial 记录（%APPDATA% 那份）
+    page-cost.jsonl               ← 库存页重建次数与聚合耗时
+    frame-cost.jsonl              ← 帧耗时（build / raster / total）
+    神算子-日志.data.txt           ← 软件自己的文本日志
+    神算子-日志.appdata.txt
+    collect.json                  ← 每份的来源路径 / 大小 / 时间 / 体检结果
+```
+
+**文件名带 `.data` / `.appdata` 是故意的**：两处都有 `startup-trace.jsonl`，同名会互相覆盖；
+而「哪一份缺 `T2`」本身就是判断依据。
+
+### 6.2 另外单独给的（不在 logs 里）
+
+1. `before.csv`、`after.csv`（`perf_bench.py` 两次，含 `--explain` 的终端输出；**非开发机请加 `--no-gate`**）
+2. `machine_info.py --json machine.json` 的档案（**每轮开始前**跑一次）
+   ⚠️ **虚拟机必须带 `--host-media`** —— 没有它，首启 / 备份 / 造数这些 I/O 数字**无法跨机比较**
+3. `perf_seed.py` 造数结束时的**自检表截图/文本**
+4. 一句话总结：**这一轮最卡的一次是哪个动作、当时在做什么、机器什么反应**
+
+> 缺第 1 项也能看人工观感，但**没法判断是库慢还是界面慢** —— 尽量补齐。
+
+### 6.3 交回后分析方怎么读
+
+```bat
+python tool\perf_report.py --dir <拷回来的 perf-run 目录>
+```
+
+一节一节看：① 启动（`T2p_sqlite_open` 占大头 ⇒ 慢在 `sqlite3.open()`）、
+② 库探针（两条途径读数是否一致、文件头是否 SQLite）、③ 页面首帧、
+④ 帧耗时（build p99 vs raster p99 ⇒ 是我们的重建还是绘制）、⑤ 库存页成本。
+
+**它只排数、按阈值标 `⚠️`，不代替判读。**
 
 ---
 
@@ -652,13 +702,25 @@ python perf_monitor.py run --data-dir DIR --out DIR2 [--interval 5] [--probe-int
                      [--label 文本] [--session-note 文本] [--app-version 文本]
                      [--host-media 文本]
                      [--slow-action 2] [--cpu-busy 85] [--rss-growth 30] [--html]
+                     [--no-collect]        :: 默认收尾时会自动归集 trace，加这个就不收
 python perf_monitor.py mark --spool F --action 名称 [--start|--end --duration S] [--feel 1-5] [--note 文本]
 python perf_monitor.py checklist
+
+:: 归集（把数据目录 + %APPDATA% 的 trace 收进一个目录）
+python perf_collect.py --run DIR2 [--data-dir DIR] [--appdata DIR] [--out DIR3]
+                       [--dry-run] [--quiet]
+:: 不给 --run 时可以直接指定 --data-dir + --out（只测冷启动、没挂监控的情况）
+
+:: 自动出表（启动 / 库探针 / 页面 / 帧 / 库存页成本）
+python perf_report.py --dir DIR [--out F] [--stdout]
+                      [--slow-open 1000] [--slow-page 500] [--slow-build 100]
 ```
 
 退出码：`perf_seed` 0 成功 / 1 运行错误 / 2 用法或拒绝写入 / 3 schema 或版本不符 / 5 **已写入但自检违规**；
 `perf_bench` 0 正常 / 1 全部查询失败 / 2 用法或 `--strict` 下有查询报错 / 3 打不开库 / **4 门禁判红**（低配机请加 `--no-gate`）；
-`perf_monitor` 0 正常 / 2 用法或写不了输出目录。
+`perf_monitor` 0 正常 / 2 用法或写不了输出目录；
+`perf_collect` 0 体检通过 / **1 一份都没收到**（路径或埋点问题）/ 2 用法错 / **3 体检不通过**（有残行或错误日志 —— 数据可用，判读时要标出来）；
+`perf_report` 0 正常 / 2 用法错。
 
 ## 附录 B：这批数据长什么样（以及它**不**是什么）
 
