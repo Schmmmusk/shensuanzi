@@ -105,7 +105,7 @@ BEGIN
             // NOTE: keep this file ASCII-only. rc.exe decodes sources with the
             //       system code page (see docs/windows_build.md section 7); the
             //       C/C++ `/utf-8` fix does not apply to the resource compiler.
-            VALUE "ProductVersion", "0.7.8" "\0"
+            VALUE "ProductVersion", "0.7.9" "\0"
         END
     END
     BLOCK "VarFileInfo"

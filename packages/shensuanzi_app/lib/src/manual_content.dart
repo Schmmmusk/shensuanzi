@@ -336,7 +336,7 @@ List<ManualSection> buildManualSections({required String versionLine}) =>
           const ManualNote(
             '「包装说明」那一格只是写给自己看的备注（比如「原箱 24 瓶」），'
             '不参与换算 —— 换算靠的是上面说的两格。这两格要么都填、要么都不填：'
-            '只填一格保存时软件会提示你补齐（§审查 OBS-06）。',
+            '只填一格保存时软件会提示你补齐。',
           ),
           const ManualParagraph(
             '开单时（销售、采购、送货都一样），选中商品后数量旁边会出现「瓶」和「箱」两个小按钮：'

@@ -94,6 +94,7 @@ class StockPage extends StatefulWidget {
     this.onStorageFailure,
     this.stockFlow,
     this.settlements,
+    this.deliveries,
     this.masterDataSink,
     this.documentSink,
     this.canWrite = true,
@@ -126,6 +127,17 @@ class StockPage extends StatefulWidget {
 
   /// **#27 批 2**：流水行跳单据详情所需（`null` ⇒ 行不可点）。
   final SettlementService? settlements;
+
+  /// **签收服务**（2026-11-11 第六次真机补）：从流水点进**送货单**详情时，
+  /// 「签收」按钮要它。
+  ///
+  /// ⚠️ 原来这里没有这个参数 —— `stock_page.dart` 构造 `DocumentDetailPage` 时
+  /// 只传了 `documentId` / `settlements` / `products`，漏了 `deliveries`，
+  /// 于是详情页走进「`deliveries == null`」的降级分支，显示
+  /// 「签收入口暂时用不了（数据还没就绪）」。**同款构造点共 4 处，只有这一处漏**
+  /// （`account_page` / `documents_page` / `document_detail_page` 都传了）。
+  /// 真机截图见 `tool/testResult/第六次真机测试/送货页面问题.png`。
+  final DeliveryService? deliveries;
 
   /// **#27 批 2**：「新建商品」提交出口（手机壳 = 队列出口）。`null` = 无按钮。
   final MasterDataSink? masterDataSink;
@@ -386,6 +398,9 @@ class _StockPageState extends State<StockPage> {
                         documentId: documentId,
                         settlements: widget.settlements!,
                         products: widget.products,
+                        // ⚠️ 2026-11-11 补：漏了这条，送货单在详情页里
+                        // 就只有一个「签收入口暂时用不了」的灰字（真机截图为证）。
+                        deliveries: widget.deliveries,
                       ),
                     ),
                   );

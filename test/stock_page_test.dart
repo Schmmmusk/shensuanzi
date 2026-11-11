@@ -150,6 +150,7 @@ void main() {
     PendingMarks? pendingMarks,
     StockLedgerDao? stockFlow,
     SettlementService? settlements,
+    DeliveryService? deliveries,
     MasterDataSink? masterDataSink,
     DocumentSink? documentSink,
     bool canCreateProducts = false,
@@ -168,6 +169,8 @@ void main() {
         // 测试里主库/镜像同库模拟「同源接线」）
         stockFlow: stockFlow,
         settlements: settlements,
+        // 2026-11-11（第六次真机）：流水 → 送货单详情 → 签收要用它
+        deliveries: deliveries,
         masterDataSink: masterDataSink,
         documentSink: documentSink,
         canCreateProducts: canCreateProducts,
@@ -719,6 +722,10 @@ void main() {
       page(
         stockFlow: StockLedgerDao(db), // 桌面 = 主库实例化
         settlements: SettlementService(db: db, engine: RuleEngine(db)),
+        // ⚠️ 2026-11-11（第六次真机）：**必须传** —— 漏了这条，
+        // 从流水点进送货单详情时「签收」按钮会变成一句
+        // 「签收入口暂时用不了（数据还没就绪）」的灰字。
+        deliveries: DeliveryService(engine: RuleEngine(db), queries: queries),
         exports: FakeExport(),
       ),
     );
@@ -749,6 +756,17 @@ void main() {
     await tester.tap(find.byKey(Key('stock-flow-row-$docId')));
     await tester.pumpAndSettle();
     expect(find.byType(DocumentDetailPage), findsOneWidget);
+
+    // ⚠️ 回归护栏（2026-11-11 第六次真机，截图见
+    // `tool/testResult/第六次真机测试/送货页面问题.png`）：
+    // `stock_page.dart` 构造 `DocumentDetailPage` 时**漏传过 `deliveries`**，
+    // 于是送货单详情里只剩一句「签收入口暂时用不了（数据还没就绪）」。
+    // 同款构造点共 4 处，只有这一处漏 —— 反向灵敏度：把 `deliveries:` 删掉即红。
+    final DocumentDetailPage detail = tester.widget<DocumentDetailPage>(
+      find.byType(DocumentDetailPage),
+    );
+    expect(detail.deliveries, isNotNull, reason: '从库存流水进详情也必须带上签收服务，否则送货单没法签收');
+    expect(find.textContaining('签收入口暂时用不了'), findsNothing);
   });
 
   testWidgets('#27：手机壳流水页 —— 镜像可读（非空）、无成本列、行不可点', (WidgetTester tester) async {

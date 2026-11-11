@@ -144,8 +144,8 @@ class StartupTrace {
   ///
   /// 只在首帧之后调一次。文件**整份重写**（每次启动一行新的 summary），
   /// 这样同一个文件里可以横向比较多次启动。
-  static Future<void> flushStartup({File? file}) async {
-    if (!kStartupTrace || _marks.isEmpty) return;
+  static Future<void> flushStartup({File? file}) {
+    if (!kStartupTrace || _marks.isEmpty) return Future<void>.value();
     final File target = file ?? _file ?? defaultFile();
     _file = target;
     // ⚠️ **半条记录要自曝**（2026-11-10 第二次真机冷启动）：10 秒兜底定时器会在
@@ -163,18 +163,8 @@ class StartupTrace {
       host: Platform.localHostname,
       partial: partial,
     );
-    try {
-      await target.parent.create(recursive: true);
-      // ⚠️ **必须补换行**：JSONL 靠换行分条。2026-10-28 第三次实跑发现
-      // 三条记录粘成一行（`{...}{...}`），任何按行解析的脚本都会炸。
-      await target.writeAsString(
-        '$line\n',
-        mode: FileMode.append,
-        flush: false,
-      );
-    } catch (_) {
-      // 埋点失败绝不影响软件运行（目录只读 / 磁盘满都会走到这里）
-    }
+    // ⚠️ 必须走 [_appendLine]（串行队列）：它和 `flushDbProbe` 会撞在同一毫秒。
+    return _appendLine(target, line);
   }
 
   /// 记一行「**这次到底打开了哪个文件、它多大**」—— 独立于 `startup` 行。
@@ -203,34 +193,44 @@ class StartupTrace {
   }
 
   /// 往 JSONL 追加一行（**失败吞掉**）。埋点绝不许拖累软件。
-  static Future<void> _appendLine(File target, String line) async {
-    try {
-      await target.parent.create(recursive: true);
-      await target.writeAsString(
-        '$line\n',
-        mode: FileMode.append,
-        flush: false,
-      );
-    } catch (_) {
-      // 目录只读 / 磁盘满 / 库被挪走都会走到这里
-    }
+  ///
+  /// ## ⚠️ 必须串行（2026-11-11 实证）
+  ///
+  /// 启动阶段有**两个写入口几乎同时**发生：
+  /// `noteDatabase` 之后立刻 `flushDbProbe()`，几毫秒后 `mark('T3b')` 触发
+  /// `flushStartup()` —— **同一个文件、两次异步 append**。
+  ///
+  /// 第一版让它们各自 `await writeAsString(append)`，结果是
+  /// **`dbprobe` 那行整个消失**（0.7.8 在虚拟机跑了三次，三份 trace 里一条都没有），
+  /// 而 `startup` 行正常。文件本身没坏，只是两次写撞在一起、互相盖掉。
+  ///
+  /// 所以所有写入口都**串到同一条 Future 链**上：后一次一定等前一次落完再开始。
+  /// 链只在本进程内有效（跨进程并发不在考虑范围 —— 同一目录只会跑一个实例）。
+  static Future<void> _writeChain = Future<void>.value();
+
+  static Future<void> _appendLine(File target, String line) {
+    final Future<void> next = _writeChain.then((_) async {
+      try {
+        await target.parent.create(recursive: true);
+        await target.writeAsString(
+          '$line\n',
+          mode: FileMode.append,
+          flush: false,
+        );
+      } catch (_) {
+        // 目录只读 / 磁盘满 / 库被挪走都会走到这里
+      }
+    });
+    _writeChain = next;
+    return next;
   }
 
   /// 记一次切页（进入 → 该页首帧的毫秒数）。异步追加，不阻塞。
-  static Future<void> appendSwitch(String page, int ms, {File? file}) async {
-    if (!kStartupTrace) return;
+  static Future<void> appendSwitch(String page, int ms, {File? file}) {
+    if (!kStartupTrace) return Future<void>.value();
     final File target = file ?? _file ?? defaultFile();
     _file = target;
-    try {
-      await target.parent.create(recursive: true);
-      await target.writeAsString(
-        '${pageLine(page, ms, DateTime.now())}\n',
-        mode: FileMode.append,
-        flush: false,
-      );
-    } catch (_) {
-      // 同上：诊断工具，失败不抛
-    }
+    return _appendLine(target, pageLine(page, ms, DateTime.now()));
   }
 
   /// 记一次「**页面稳定**」（2026-10-28 第五轮）。
@@ -244,26 +244,28 @@ class StartupTrace {
     required int frames,
     required bool timedOut,
     File? file,
-  }) async {
-    if (!kStartupTrace) return;
+  }) {
+    if (!kStartupTrace) return Future<void>.value();
     final File target = file ?? _file ?? defaultFile();
     _file = target;
-    try {
-      await target.parent.create(recursive: true);
-      await target.writeAsString(
-        '${settledLine(page: page, firstMs: firstMs, settledMs: settledMs, frames: frames, timedOut: timedOut)}\n',
-        mode: FileMode.append,
-        flush: false,
-      );
-    } catch (_) {
-      // 诊断工具，失败不抛
-    }
+    return _appendLine(
+      target,
+      settledLine(
+        page: page,
+        firstMs: firstMs,
+        settledMs: settledMs,
+        frames: frames,
+        timedOut: timedOut,
+      ),
+    );
   }
 
   /// 清空内存里的记录（**只给测试用**；生产进程里不需要重置）。
   static void resetForTest() {
     _marks.clear();
     _file = null;
+    // 串行队列也归零：否则上一个用例没落完的写入会链到这个用例里。
+    _writeChain = Future<void>.value();
     _clock
       ..reset()
       ..start();

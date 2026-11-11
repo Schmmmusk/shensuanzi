@@ -463,6 +463,9 @@ Widget appShellPage(
             // #27 批 2：商品流水 + 新建商品补充入口
             stockFlow: shell.stockFlow,
             settlements: shell.settlements,
+            // 2026-11-11（第六次真机）：流水 → 单据详情 → 签收要用它。
+            // 漏传的后果是「签收入口暂时用不了」的灰字（截图见 testResult）。
+            deliveries: shell.deliveries,
             masterDataSink: shell.masterDataSink,
             // 2026-10-20（§CV·七十八）：手机「重新清点」走单据队列
             documentSink: shell.documentSink,
@@ -882,7 +885,9 @@ class _UnavailablePage extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              why == null ? '${destination.label}：正在开发' : '${destination.label}：暂时不能开',
+              why == null
+                  ? '${destination.label}：正在开发'
+                  : '${destination.label}：暂时不能开',
               style: const TextStyle(height: 1.6),
             ),
             const SizedBox(height: 8),
