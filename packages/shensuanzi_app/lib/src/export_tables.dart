@@ -269,23 +269,33 @@ class DocumentExportJob implements ExportJob {
     Db? db;
     try {
       db = Db.open(dbPath, foreignKeys: false);
-      final int before = db.readFailures.count;
-      final List<DocumentSummary> summaries = DocumentDao(db)
-          .listDocumentsForExport(
-            types: <DocType>{
-              for (final String wire in types) DocType.fromWire(wire),
-            },
-            statusViews: <DocumentStatusView>{
-              for (final String name in statusViews)
-                DocumentStatusView.values.byName(name),
-            },
-            sinceMillis: sinceMillis,
-            untilMillis: untilMillis,
-            query: query,
-          );
+      final Db conn = db;
+      final int before = conn.readFailures.count;
+      // ⚠️ **读事务**（2026-11-11，用户审查 P2）：
+      // `listDocumentsForExport()` 内部是**多段查询**（先取单据，再取核销笔数
+      // / 已退金额）。导出搬进 isolate 之后，主 isolate 可以同时处理用户操作，
+      // 两次查询之间主库可能提交新数据 ⇒ 出现「金额按旧状态、核销笔数按新状态」
+      // 的行。包一层读事务，整个导出看到同一个快照。
+      //
+      // 用 `readTransaction` 而不是 `transaction`：后者是 `BEGIN IMMEDIATE`
+      // （拿写锁），导出十几秒里用户就开不了单。见 `Db.readTransaction` 的 docstring。
+      final List<DocumentSummary> summaries = conn.readTransaction(
+        () => DocumentDao(conn).listDocumentsForExport(
+          types: <DocType>{
+            for (final String wire in types) DocType.fromWire(wire),
+          },
+          statusViews: <DocumentStatusView>{
+            for (final String name in statusViews)
+              DocumentStatusView.values.byName(name),
+          },
+          sinceMillis: sinceMillis,
+          untilMillis: untilMillis,
+          query: query,
+        ),
+      );
       return (
         rows: documentExportTable(summaries).rows,
-        skipped: db.readFailures.count - before,
+        skipped: conn.readFailures.count - before,
         problem: null,
       );
     } catch (error) {

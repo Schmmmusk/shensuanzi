@@ -308,6 +308,53 @@ class Db {
     }
   }
 
+  /// **只读事务**：多次 SELECT 看到**同一个快照**，且**不阻塞任何写者**。
+  ///
+  /// ## 为什么必须与 [transaction] 分开（2026-11-11，用户审查 P2）
+  ///
+  /// [transaction] 用的是 `BEGIN IMMEDIATE` —— **拿写锁**，期间别的连接写不进来。
+  /// 那是「我要落库」的正确选择，但对「只读但要一致」的场景是灾难：
+  /// 导出 26 万单要十几秒，用它就等于让用户十几秒开不了单。
+  ///
+  /// 这里用 `BEGIN`（deferred）：第一次读时才取得读快照，WAL 模式下**写者照常提交**，
+  /// 而我们全程看到的是同一个 read-mark。
+  ///
+  /// ## 它解决的具体问题
+  ///
+  /// 26 万单导出搬进 isolate 之后，主 isolate 可以同时处理用户操作。
+  /// 而 `DocumentExportJob.load()` 内部是**多段查询**（先取单据，再取核销笔数）——
+  /// 两段各是一个独立的读事务，中间主库可以提交新数据，于是可能导出
+  /// 「金额按旧状态、核销笔数按新状态」的行。包一层这个事务即可消除。
+  ///
+  /// ## 与 [transaction] 的关系
+  ///
+  /// 共用同一个 `_depth`：在外层写事务里调用它不会产生嵌套 `BEGIN`
+  /// （复用外层事务的快照）。⚠️ 反过来说，**在它里面调 [transaction] 也不会
+  /// 升级成写事务** —— 只读场景不要往里写。
+  T readTransaction<T>(T Function() body) {
+    if (_depth > 0) {
+      _depth++;
+      try {
+        return body();
+      } finally {
+        _depth--;
+      }
+    }
+
+    raw.execute('BEGIN');
+    _depth = 1;
+    try {
+      final T result = body();
+      raw.execute('COMMIT');
+      return result;
+    } catch (_) {
+      _rollbackQuietly(raw);
+      rethrow;
+    } finally {
+      _depth = 0;
+    }
+  }
+
   /// **可重入**事务。
   ///
   /// 最外层 `BEGIN IMMEDIATE`（立即取写锁，避免升级锁失败）；
