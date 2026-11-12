@@ -4,6 +4,7 @@ import 'package:sqlite3/sqlite3.dart';
 
 import 'read_failures.dart';
 import 'schema.dart';
+import 'snapshot.dart';
 
 /// SQLite 连接的薄封装：打开、迁移、**可重入事务**。
 ///
@@ -282,13 +283,24 @@ class Db {
 
   /// 迁移前把库拷一份：`<db>.before-v{N}`（`N` = **迁移前**的版本）。
   ///
-  /// - **必须先 `wal_checkpoint(TRUNCATE)` 再拷**：WAL 模式下直接拷 `.db`
-  ///   会丢掉未 checkpoint 的事务（与 `Agents.md` §四「备份模式」同一条纪律）
+  /// - **字节拷贝**（不是 `VACUUM INTO`）：这一份的用途是「迁移前的**原样**」，
+  ///   而且源库**可能已经损坏** —— `VACUUM` 要求库读得出来，用它等于把安全网
+  ///   绑在它要保护的对象上（2026-11-12 用户裁定，见 `proposals/63`）
+  /// - 三件加固都在 [copyDatabaseAsIs] 里：**checkpoint 三列一起看** / 先写 `.tmp`
+  ///   再原子改名 / 拷完比字节数。从前只 `execute('PRAGMA wal_checkpoint(TRUNCATE)')`
+  ///   然后直接 `copySync` —— 那个 checkpoint 的返回值没人看，忙时只归并一半就照拷
   /// - 放**数据目录内**（不是用户的备份目录）：它是迁移过程的产物，
   ///   成功了也**留一份** —— `before-v{N}` 是「升级完立刻后悔」的唯一退路
-  /// - 不同版本各自留档（`before-v1` / `before-v2` …），互不覆盖
+  /// - 不同版本各自留档（`before-v1` / `before-v2` …），互不覆盖；**同名已存在就跳过**
+  ///   （最早那份最接近「迁移前」，比再抓一次更可靠）
   /// - **备份失败就抛** ⇒ 上层的 `catch` 会让这次打开失败：
   ///   宁可先打不开，也不在**没有退路**的情况下改用户的数据
+  ///
+  /// ⚠️ **前提：此刻没有第二个写者。** 这个前提由**调用顺序**保证 ——
+  /// `Db.open` 里先 `sqlite3.open`、再配置、最后才迁移；此时宿主服务未启动、
+  /// 界面未建（换数据目录那条路径更严格：`host.stop()` → 关库 → 搬迁）。
+  /// `core` 的 `copy_as_is_test.dart` 用「另开一条连接做写事务」来**钉住**这条前提，
+  /// 而不是只写在注释里。
   ///
   /// **不返回任何东西**：这份文件是给**人**用的（见 [open]），程序不消费它。
   static void _backupBeforeMigration(
@@ -297,16 +309,26 @@ class Db {
     int fromVersion,
   ) {
     final String backupPath = '$path.before-v$fromVersion';
-    try {
-      db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
-      File(path).copySync(backupPath);
-    } catch (error) {
-      throw StateError(
-        '升级前没能自动备份（$error）。'
-        '请检查磁盘空间和文件夹权限，然后再打开一次。',
-      );
-    }
+    final CopyProblem? problem = copyDatabaseAsIs(
+      db: db,
+      source: path,
+      target: backupPath,
+    );
+    if (problem == null) return;
+    throw StateError(
+      '升级前没能自动备份（${_copyProblemText(problem)}）。'
+      '请检查磁盘空间和文件夹权限，然后再打开一次。',
+    );
   }
+
+  /// 把 [CopyProblem] 翻成**用户能据此行动**的一句话。
+  static String _copyProblemText(CopyProblem problem) => switch (problem) {
+    // WAL 没归并完 ⇒ 拷出来可能缺最新事务。磁盘不一定是问题，也可能是
+    // 另一个进程/连接正在用这个库。
+    CopyProblem.checkpointIncomplete => '数据库还有没写完的内容（可能正被另一个程序打开）',
+    CopyProblem.copyFailed => '写不进备份文件',
+    CopyProblem.sizeMismatch => '备份文件和原文件大小不一致',
+  };
 
   /// **只读事务**：多次 SELECT 看到**同一个快照**，且**不阻塞任何写者**。
   ///

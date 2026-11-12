@@ -171,7 +171,9 @@ class MobileSyncService {
   ///
   /// 顺序 = 归档 → 挂起未推送队列 → 重建镜像（游标清零）⇒ 下次同步从头全量拉。
   /// 返回被挂起的队列条数（UI 用它多说一句）。
-  int rebuildLocalCopy() {
+  ///
+  /// `Future`：归档那一步在独立 isolate 里做（见 [resetForNewHost]）。
+  Future<int> rebuildLocalCopy() async {
     final MirrorMeta meta = _meta();
     return resetForNewHost(previousHostId: meta.hostId);
   }
@@ -317,18 +319,22 @@ class MobileSyncService {
   ///
   /// [previousHostId] 只用于**给用户看的说明**（「原本要发给 XX 号主机」）。
   /// 返回被挂起的条目数。
-  int resetForNewHost({String? previousHostId}) {
+  ///
+  /// ## 为什么是 `Future`（2026-11-12，提案 63-②）
+  ///
+  /// 归档那一步是 `VACUUM INTO`（读整个镜像再写一份），纯同步重活。它原先是在
+  /// **调用方的 isolate** 上跑的 —— 换主机时界面长时间不动，用户以为手机死机。
+  /// 现在整段丢进独立 isolate（`MirrorArchive.snapshot` 内部 `Isolate.run`），
+  /// 所以这里必须 `await`：**顺序不能变**，归档必须在重建之前完成，
+  /// 否则拿到的就是一份已经被 `DROP TABLE` 清空的镜像。
+  Future<int> resetForNewHost({String? previousHostId}) async {
     final Db mirror = openMirror();
     // F14（2026-10-25 用户裁定）：换主机前先把旧主机这份镜像**整份归档**到
     // `archive/<旧 hostId>-<时间>/`（含当时未推送的队列）。
     // ⚠️ 归档是**快照**、不搬走队列：队列里是用户自己开的单，留在活库里他才能
     // 在新主机上点「重试」补发（既有行为，见 `mobile_sync_service_test` 换主机用例）。
     // 归档失败不阻断（`snapshot` 内部吞异常）—— 磁盘满也要让用户能换主机。
-    archive.snapshot(
-      db: mirror,
-      hostId: previousHostId ?? 'unknown',
-      now: _clock(),
-    );
+    await archive.snapshot(hostId: previousHostId ?? 'unknown', now: _clock());
     // 先把队列挂起，再重建镜像 —— 顺序反了也一样（rebuildMirror 不碰队列），
     // 但「先挂起」保证任何中途失败都不会留下"仍会自动推给新主机"的条目
     final SyncQueueDao queue = SyncQueueDao(mirror);
@@ -448,11 +454,9 @@ class MobileSyncService {
         ? meta.hasAnyData()
         : mirrorHostId != pairing.hostId;
     if (identityMismatch) {
-      archive.snapshot(
-        db: mirror,
-        hostId: mirrorHostId ?? 'unknown',
-        now: _clock(),
-      );
+      // ⚠️ 必须 `await`：归档在独立 isolate 里做（提案 63-②），
+      // 且归档要的是**重建之前**那份镜像 —— 提前返回就会归档到一个空库。
+      await archive.snapshot(hostId: mirrorHostId ?? 'unknown', now: _clock());
       client.rebuildMirror();
       meta.writeHostId(pairing.hostId);
       rebuilt = true;
@@ -637,7 +641,11 @@ class MobileSyncService {
   ///
   /// 判定用 `host_id`（配对载荷里有，主机自己生成的）：
   /// **同一台主机重新生成配对码（`hostId` 不变）不该清镜像** —— 那只是换个令牌。
-  PairingInfo pairFromCode(String raw) {
+  ///
+  /// `Future`：换主机那条分支要归档旧镜像，归档在独立 isolate 里做（提案 63-②）。
+  /// 解析非法码仍然**同步抛** `FormatException`（`await` 一个抛异常前的
+  /// 异步函数，异常照样会冒出来，调用方的 `on FormatException` 不用改）。
+  Future<PairingInfo> pairFromCode(String raw) async {
     final PairingPayload payload = PairingPayload.parse(raw.trim());
     final PairingInfo info = PairingInfo(
       hostId: payload.hostId,
@@ -660,7 +668,9 @@ class MobileSyncService {
     final bool switched = effectiveOld != null && effectiveOld != info.hostId;
 
     if (switched || unknownButDirty) {
-      lastHostSwitchHeldEntries = resetForNewHost(previousHostId: effectiveOld);
+      lastHostSwitchHeldEntries = await resetForNewHost(
+        previousHostId: effectiveOld,
+      );
     } else {
       // 情形 A：同一台主机（hostId 相同、只是换了 IP / 端口 / 令牌）
       // ⇒ **不归档、不重建**，本地积压的队列照旧推给新地址。

@@ -708,6 +708,14 @@ class _MobileSyncPanel extends StatefulWidget {
 }
 
 class _MobileSyncPanelState extends State<_MobileSyncPanel> {
+  /// 归档 + 重建进行中。
+  ///
+  /// 提案 63-② 之后，换主机那条路要先把旧镜像 `VACUUM INTO` 到归档目录
+  /// （独立 isolate，镜像越大越慢）。没有这个状态的话，用户点完「重建」
+  /// 到出现「已重建」之间的几秒里，按钮还是可点的 —— 连点两次就是
+  /// 两次归档 + 两次重建。
+  bool _rebuilding = false;
+
   /// 已配对时**只换地址**（D 批）：复用扫码页那个对话框，身份与令牌沿用。
   Future<void> _manualAddress() async {
     final bool? paired = await showDialog<bool>(
@@ -833,9 +841,15 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
             key: const Key('mobile-sync-rebuild'),
-            onPressed: _rebuild,
-            icon: const Icon(Icons.restore_page_outlined, size: 18),
-            label: const Text('重建本机数据副本'),
+            onPressed: _rebuilding ? null : _rebuild,
+            icon: _rebuilding
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.restore_page_outlined, size: 18),
+            label: Text(_rebuilding ? '正在归档旧数据…' : '重建本机数据副本'),
           ),
         ),
       ],
@@ -971,9 +985,15 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
       ),
     );
     if (sure != true || !mounted) return;
-    final int held = widget.service.rebuildLocalCopy();
+    // 归档是 `VACUUM INTO`（提案 63-②），要等；期间把按钮锁住
+    setState(() => _rebuilding = true);
+    int held;
+    try {
+      held = await widget.service.rebuildLocalCopy();
+    } finally {
+      if (mounted) setState(() => _rebuilding = false);
+    }
     if (!mounted) return;
-    setState(() {});
     showSnack(
       context,
       SnackBar(

@@ -122,6 +122,9 @@ export 'src/backup.dart'
         BackupFileName,
         BackupOutcome,
         BackupService,
+        // 只给测试直接调（生产只有 `BackupService.backupNow` 一处）——
+        // 造不出「检查完之后源文件才消失」的时序，只能把路径直接喂进去。
+        backupAndVerifyInIsolate,
         backupOutcomeMessage,
         backupReminderText,
         backupStatusLine,

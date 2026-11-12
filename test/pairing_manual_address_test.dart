@@ -137,7 +137,7 @@ void main() {
 
   testWidgets('配对过 + 地址合法 ⇒ 对话框关闭，只把地址换掉', (WidgetTester tester) async {
     // 先「扫」一次码（现场就是这一步拿到了令牌，只是 IP 是穿透网卡的）
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=10.6.22.1&port=17890&token=tok&v=1',
     );
     final bool? Function() result = await openDialog(tester);

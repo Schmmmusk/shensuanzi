@@ -1998,10 +1998,24 @@ class _ShensuanziAppState extends State<ShensuanziApp>
   /// 2. `shensuanzi.db` —— 主库（手机上通常是空壳，仍带上以便排查）
   /// 3. `未同步单据.txt` —— 队列里的人话清单 + 【重要】那句提示
   ///
-  /// ⚠️ 两个库都**先 `wal_checkpoint(TRUNCATE)` 再拷**（与 `BackupService`
-  /// 同一条纪律：WAL 模式下直接拷 `.db` 会丢未 checkpoint 的事务）。
+  /// ⚠️ 两个库都走**一致性快照**（`snapshotDatabaseTo`，`VACUUM INTO`）——
+  /// 原来是「`wal_checkpoint(TRUNCATE)` 之后直接拷文件」，见下面的失败语义。
   /// 打出来的文件放**应用私有目录下的 `export/`**（`file_selector` 在 Android
   /// 不支持「选保存位置」，所以只能先生成再交给系统分享面板）。
+  ///
+  /// ## 失败**阻断分享**（提案 63-③，2026-11-12 用户裁定）
+  ///
+  /// 旧实现是 checkpoint 吞异常 + `readAsBytes` 直拷，失败只写一行日志，
+  /// 然后**照常**唤起分享面板。而这个功能存在的唯一理由就是
+  /// 「把还没推给电脑的单带走」—— 缺的恰好是它存在的理由，
+  /// 用户以为带走了，换机后单就没了。现在出不来就**不给文件**。
+  ///
+  /// ## 清单与库副本必须**同一个时间边界**
+  ///
+  /// 手机端的同步队列是活的：查完 3 条之后其中 1 条推送成功、或又新开 1 单，
+  /// 等快照做好时库里的已经不是那 3 条了。于是包里会出现「清单写 3 条、
+  /// 库里有 2 条」，而这份清单的用途正是「照着它核对哪些单没传上去」。
+  /// ⇒ 顺序固定为：**先出快照 → 从快照里读队列 → 再写清单**。
   Future<String> _exportBackupMobile() async {
     final DataLocation? location = _location;
     if (location == null) {
@@ -2018,23 +2032,31 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       return localFileFailureAdvice(error);
     }
 
+    final File mirrorCopy = File(p.join(outDir.path, 'shensuanzi_mirror.db'));
+    final File mainCopy = File(p.join(outDir.path, 'shensuanzi.db'));
     final List<XFile> files = <XFile>[];
     String queueText = '这次没有未同步的单据 —— 刚开的单都已经推给电脑了。\n';
     try {
+      // ① 镜像：一致性快照（独立 isolate 里做，几十上百 MB 不堵界面）
       if (sync != null) {
-        final Db mirror = sync.openMirror();
-        final List<SyncQueueEntry> unsent = SyncQueueDao(mirror).unsent();
-        queueText = _unsentQueueText(unsent);
-        _checkpoint(mirror);
-        await _copyForExport(
-          File(sync.mirrorPath),
-          File(p.join(outDir.path, 'shensuanzi_mirror.db')),
+        final SnapshotProblem? problem = await _snapshotForExport(
+          source: sync.mirrorPath,
+          target: mirrorCopy.path,
         );
+        if (problem != null) return _exportNotPrepared(problem);
       }
-      // 主库：真机历史上它可能是空壳，但排查时它是第一现场
+      // ② 主库：真机历史上它可能是空壳，但排查时它是第一现场；同样走快照
       final File main = File(location.databasePath);
       if (main.existsSync()) {
-        await _copyForExport(main, File(p.join(outDir.path, 'shensuanzi.db')));
+        final SnapshotProblem? problem = await _snapshotForExport(
+          source: main.path,
+          target: mainCopy.path,
+        );
+        if (problem != null) return _exportNotPrepared(problem);
+      }
+      // ③ 清单从**镜像快照**里读（不是活库）—— 与分享出去的 .db 同一时刻
+      if (mirrorCopy.existsSync()) {
+        queueText = _unsentQueueText(SyncQueueDao.unsentIn(mirrorCopy.path));
       }
       final File note = File(p.join(outDir.path, '未同步单据.txt'));
       await note.writeAsString(queueText, flush: true);
@@ -2068,20 +2090,32 @@ class _ShensuanziAppState extends State<ShensuanziApp>
     };
   }
 
-  /// 导出前的落盘：WAL 中的事务必须先 checkpoint 回主库文件，
-  /// 否则拷出来的 `.db` 会缺最新数据（`Agents.md` §四「备份模式」同一条纪律）。
-  void _checkpoint(Db db) {
-    try {
-      db.raw.execute('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch (error) {
-      _log.write('导出前 checkpoint 失败（$error）—— 继续导出，可能缺最新几笔');
-    }
-  }
+  /// 在独立 isolate 里出快照（提案 63-③）。
+  ///
+  /// ⚠️ 闭包里**只捕获两个字符串**：`Db` / `Directory` 都不可跨 isolate 发送，
+  /// 这也是 core 那个原语按**路径**而不是按连接设计的原因（见 `proposals/63` §六）。
+  Future<SnapshotProblem?> _snapshotForExport({
+    required String source,
+    required String target,
+  }) => Isolate.run(
+    () => snapshotDatabaseTo(source: source, target: target),
+  );
 
-  /// 异步拷贝（**在 UI 线程之外做文件 IO**：镜像库可能几十上百 MB，
-  /// 同步拷会卡住界面；`BackupService` 那边是桌面后台，不必这么做）。
-  Future<void> _copyForExport(File from, File to) async {
-    await to.writeAsBytes(await from.readAsBytes(), flush: true);
+  /// 快照出不来 ⇒ **不分享**，并把「原来的数据没被动过」说清楚。
+  ///
+  /// 用户当下最想知道的是「我的单还在不在」，所以这句话必须出现
+  /// （提案 63-③ 的施工要求：失败文案明确「原有数据不会被删除」）。
+  String _exportNotPrepared(SnapshotProblem problem) {
+    final String why = switch (problem) {
+      SnapshotProblem.sourceMissing => '找不到这台手机上的数据文件',
+      SnapshotProblem.unreadable => '这台手机上的数据文件读不出来',
+      SnapshotProblem.writeFailed => '手机上没有地方写这份文件了',
+      SnapshotProblem.verifyFailed => '写出来的文件没通过检查',
+    };
+    return '没能把数据整理出来（$why）—— 这次先不导出，'
+        '免得你拿到一份可能少了单据的文件。\n'
+        '你原来的数据不会被删除，重启软件后再试一次；'
+        '还是不行请联系技术支持。';
   }
 
   /// 未同步单据的人话清单（也进分享的文件，用户拿它就能对账）。

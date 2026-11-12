@@ -78,7 +78,9 @@ class _PairingScanPageState extends State<PairingScanPage> {
       _error = null;
     });
     try {
-      widget.service.pairFromCode(raw);
+      // 换主机时要归档旧镜像（独立 isolate 里 `VACUUM INTO`，提案 63-②）
+      // ⇒ 这行现在真的要等一会儿，`_busy` 的转圈就是给它看的
+      await widget.service.pairFromCode(raw);
     } on FormatException catch (error) {
       if (mounted) {
         setState(() {
@@ -389,8 +391,14 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
     final String rawCode = _code.text;
     try {
       if (PairingAddress.isPairingCode(rawAddress)) {
-        // 整段配对码（从电脑上复制来的）—— 与扫码等价，纯本地
-        widget.service.pairFromCode(rawAddress);
+        // 整段配对码（从电脑上复制来的）—— 与扫码等价，纯本地。
+        // 换主机分支要归档旧镜像（提案 63-②），因此这里要 `await`；
+        // 先置 `_waiting` 让对话框给出「正在处理」的反馈。
+        setState(() {
+          _waiting = true;
+          _error = null;
+        });
+        await widget.service.pairFromCode(rawAddress);
       } else if (PairingAddress.normalizeShortCode(rawCode).isNotEmpty) {
         // 6 位短码：要联网，等电脑前的人点「允许」
         setState(() {

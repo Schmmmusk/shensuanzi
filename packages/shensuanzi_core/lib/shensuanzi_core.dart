@@ -38,6 +38,11 @@ export 'src/db/storage_error.dart'
 // 但认的是**文件系统 errno**（`OSError.errorCode`），不是 SQLite 结果码。
 export 'src/db/local_file_error.dart'
     show LocalFileFailureKind, classifyLocalFileFailure, localFileFailureAdvice;
+// 2026-11-12（`proposals/63`）：**一份数据库副本**的两种做法，语义不同、名字不同。
+// `snapshotDatabaseTo` = 逻辑一致的快照（归档/导出/备份）；`copyDatabaseAsIs` =
+// 字节保真（**只有**迁移前备份）。按路径设计，能在 isolate 里跑。
+export 'src/db/snapshot.dart'
+    show SnapshotProblem, CopyProblem, snapshotDatabaseTo, copyDatabaseAsIs;
 // #42 甲（2026-10-14）：**读路径的坏数据兜底**（分层兜底 + 不静默）。
 // L2 枚举降级 + L1 逐行保护 + L4 的计数与文案都在这里；L3（`ErrorWidget.builder`）
 // 与提示条属 Flutter 层（次批）。

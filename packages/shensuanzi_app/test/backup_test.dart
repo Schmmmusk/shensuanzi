@@ -768,4 +768,114 @@ void main() {
       expect(r.message, isNot(contains(r'$error')), reason: '旧拼接形态必须消失');
     });
   });
+
+  // ============================================ 副本生成的两条防线（2026-11-12 审查 P1）
+  //
+  // 两条**确定会错**的行为，但**只有第一条能被测出来**（第二遍反向灵敏度实测过）：
+  //   ① 源库不在时，`sqlite3.open` 默认 `readWriteCreate` 会**凭空建一个空库** ⇒
+  //      VACUUM 成功、quick_check 是 ok、软件报「备份成功」，备份里却没有任何数据。
+  //      ✅ **改前必红**（撤掉 `OpenMode.readOnly` ⇒ `Expected: not null, Actual: null`）。
+  //   ② 失败（含「校验不过」那条 return 路径）时 `.tmp` 没被删掉，而提示写着「已删除」。
+  //      ❌ **测不出**：垃圾源库在创建目标之前就失败了，没有半成品。真正会残留的是
+  //      「VACUUM 写到一半被打断」（磁盘满 / 进程被杀），单元测试造不出来。
+  //      ⇒ 用例只锁**不变量**，不冒充判别器（这条与上一组「一致性」测试同一个教训）。
+  group('backupAndVerifyInIsolate 的防线', () {
+    late Directory box;
+    late Db sourceDb;
+    late String sourcePath;
+    late String targetPath;
+
+    setUp(() {
+      box = Directory.systemTemp.createTempSync('shensuanzi_snapshot_');
+      final String dataDir = p.join(box.path, 'data');
+      Directory(dataDir).createSync(recursive: true);
+      sourcePath = p.join(dataDir, 'shensuanzi.db');
+      sourceDb = Db.open(sourcePath);
+      sourceDb.raw.execute(
+        "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
+        'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+        'business_day) '
+        "VALUES ('d1', 'CG20260928-001', 'purchase', 'confirmed', 0, 0, "
+        '1700000000000, 0, 1700000000000, 1700000000000, ${businessDayOf(1700000000000)})',
+      );
+      targetPath = p.join(box.path, 'copy.db.tmp');
+    });
+
+    tearDown(() {
+      sourceDb.close();
+      try {
+        box.deleteSync(recursive: true);
+      } catch (_) {
+        // 删不掉不影响结论
+      }
+    });
+
+    test('源库不存在 ⇒ 失败，且**不会凭空建出一个空库**', () async {
+      sourceDb.close();
+      File(sourcePath).deleteSync();
+      // 这一步就是把「主流程查过存在、isolate 打开时却没了」的窗口直接摊开
+      expect(File(sourcePath).existsSync(), isFalse);
+
+      final String? problem = await backupAndVerifyInIsolate((
+        source: sourcePath,
+        target: targetPath,
+      ));
+
+      expect(problem, isNotNull, reason: '源库不在必须失败，不能报成功');
+      expect(
+        File(sourcePath).existsSync(),
+        isFalse,
+        reason:
+            '旧实现用默认 readWriteCreate ⇒ SQLite 会在这里建一个空库，'
+            '于是「备份成功」而备份是空的',
+      );
+      expect(File(targetPath).existsSync(), isFalse, reason: '失败不留半成品');
+    });
+
+    test('源库存在但不是数据库 ⇒ 失败，且 .tmp 不残留', () async {
+      sourceDb.close();
+      File(sourcePath).writeAsBytesSync(<int>[1, 2, 3, 4, 5, 6, 7, 8]);
+
+      final String? problem = await backupAndVerifyInIsolate((
+        source: sourcePath,
+        target: targetPath,
+      ));
+
+      expect(problem, isNotNull);
+      expect(
+        File(targetPath).existsSync(),
+        isFalse,
+        // ⚠️ **这条锁的是不变量，不是旧实现的判别器**：实测撤掉修复后本用例
+        // 仍然通过 —— 垃圾源库时 `VACUUM INTO` 在**创建目标之前**就失败了，
+        // 没有半成品可删。真正会留下 `.tmp` 的是「VACUUM 写到一半被打断」
+        // （磁盘满 / 进程被杀），单元测试造不出来。保留它是为了将来有人
+        // 改这块逻辑时，「失败不留半成品」这条不许破。
+        reason: '失败不留半成品（不变量）',
+      );
+    });
+
+    test('正常库 ⇒ 成功、副本可读、无 -wal/-shm 残留', () async {
+      final String? problem = await backupAndVerifyInIsolate((
+        source: sourcePath,
+        target: targetPath,
+      ));
+
+      expect(problem, isNull);
+      expect(File(targetPath).existsSync(), isTrue);
+      // 校验走只读连接 ⇒ 不该像 `Db.open` 那样把副本切成 WAL 并留下 -wal
+      expect(File('$targetPath-wal').existsSync(), isFalse);
+      expect(File('$targetPath-shm').existsSync(), isFalse);
+      // 只读校验不该改动被校验的文件：user_version 原样
+      final Db copy = Db.open(targetPath, foreignKeys: false);
+      try {
+        expect(copy.schemaVersion, sourceDb.schemaVersion);
+        expect(
+          copy.raw.select('SELECT COUNT(*) AS c FROM documents').first['c'],
+          1,
+        );
+      } finally {
+        copy.close();
+      }
+    });
+  });
 }

@@ -20052,3 +20052,57 @@ core **848** · app **492** · host **229** · root **526**（1 条按平台跳�
 
 纯文档改动 ⇒ 无代码门禁。已核：8 个文件改为 CRLF（与全仓一致）、
 `testing.md` 行数 840 不变（§L 是纯移动）、各文档标题层级完整。
+
+### 八十四、2026-11-12 **提案 63 落地：同款备份路径收口到两个原语**
+
+用户指令：「先做 63 吧，然后再做 61。63 完工了再提交。」⇒ 按提案 §九 的四个推荐
+（63-① 甲 / 63-② 乙 / 63-③ 要 / 63-④ 要）落地。
+
+#### ① 落地清单
+
+| 文件 | 改动 |
+|---|---|
+| `core/lib/src/db/snapshot.dart`（新） | `snapshotDatabaseTo` / `copyDatabaseAsIs` 两个原语 + `SnapshotProblem` / `CopyProblem`；**按路径**设计（能在 isolate 里跑） |
+| `core/lib/src/dao/sync_dao.dart` | 新增 `SyncQueueDao.unsentIn(path)`：**只读**打开快照读队列（63-③ 的时间边界靠它） |
+| `core/lib/src/db/database.dart` | `_backupBeforeMigration` 改调 `copyDatabaseAsIs` |
+| `app/lib/src/backup.dart` | 正文下沉 core，本人只把原因码翻成人话 |
+| `app/lib/src/mirror_archive.dart` | `snapshot()` → `Future<Directory?>`（`Isolate.run`）+ 失败删整个目录 + `list()` 三条校验 + `debugFailManifestWrite` 注入 |
+| `app/lib/src/mobile_sync_service.dart` | `resetForNewHost` / `rebuildLocalCopy` / `pairFromCode` 改 `Future`（归档必须 `await` 在重建之前） |
+| `lib/src/app.dart` | `_exportBackupMobile`：两库都走快照 → **从镜像快照读队列** → 再写清单；失败**阻断分享**；删 `_checkpoint` / `_copyForExport` |
+| `lib/src/ui/pairing_scan_page.dart` · `settings_page.dart` | 补 `await`；「重建本机数据副本」加 `_rebuilding` 忙碌态（防连点两次归档） |
+| `Agents.md` §4.5 | 「副本生成的铁律」补：同款路径 **3 处**、前提各不相同、不许「读活库再拷文件」 |
+
+#### ② 施工中冒出来的两个真问题（方案里没有，值得单独记）
+
+1. **归档静默全失败**：`Isolate.run` 的闭包捕获了 `this`（`mirrorPath` 是实例字段），
+   而 `MirrorArchive` 带着 `_clock` 函数字段 ⇒ 不可发送 ⇒ 抛异常 ⇒ 被
+   `catch (_) { return null }` 吞成「尽力而为的失败」。**5 条换主机用例一起红才暴露**。
+   教训：「失败静默」的设计没有自证能力，必须有「归档真的出现了」的用例。
+2. **整轮 `flutter test` 卡死 8 分钟**：`testWidgets` 跑在假时钟里，`await` 真实 isolate
+   永远等不到 ⇒ 改 `tester.runAsync`（UI 触发那条用「轮询到归档出现」，不用固定 sleep）。
+   教训：同步方法改异步不只是加 `await`，**测试的时间模型**也会跟着变。
+
+#### ③ 与方案的偏差（都在方案预留的口子里）
+
+- 原语命名：§六 写 `Db.copyAsIs`，落地成顶层 `copyDatabaseAsIs({required Database db, ...})`
+  —— 迁移前备份发生在 `_migrate` 里，那时还不是 `Db`（§六 已注明）。
+- `BackupService` 未改调 core 原语：§六 明确「不强求」（已在独立 isolate，别为统一而退化）。
+
+#### ④ 门禁（自验，全部亲跑）
+
+core **863** · app **515** · host **229** · root **533**（1 条按平台跳过）· `flutter analyze` **0**。
+
+新增测试：`core/test/copy_as_is_test.dart`（11 条，含 `unsentIn` 的同一时间边界）、
+`app/test/mirror_archive_test.dart`（7 条）。**反向灵敏度已验证两次**：
+撤掉「失败删整个目录」⇒ 红线；还原旧 `list()`（缺 manifest 也 add）⇒ 红线。
+
+#### ⑤ 没做的（写清理由，别当成遗漏）
+
+- 测试计划第 7 条（「旧实现会丢事务」）仍测不出，理由同提案 §七。
+- 第 9 条（manifest 写入失败）靠测试注入，不是真实磁盘故障。
+- 手机导出**整条链路**没有 widget 级用例（依赖 `SharePlus` 与 `_location`，注入成本高于收益）；
+  改在 core 层钉住它依赖的性质（`unsentIn` 从快照读），并在代码里把顺序写死。
+
+#### ⑥ 下一步
+
+提案 **61（缺货榜）** —— 7 个决策点仍待确认，未开工。

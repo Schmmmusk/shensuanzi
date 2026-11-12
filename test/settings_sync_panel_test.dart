@@ -86,13 +86,19 @@ void main() {
 
   testWidgets('换过主机 ⇒ 显示「历史主机数据（1 份）」并能点开看', (WidgetTester tester) async {
     // 先配 h-1 并留一个商品 + 一份归档，再换到 h-2
-    service.pairFromCode(
-      'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=17890&token=t1&v=1',
-    );
-    seedMirrorProduct();
-    service.pairFromCode(
-      'shensuanzi://pair?host_id=h-2&ip=127.0.0.1&port=17890&token=t2&v=1',
-    );
+    //
+    // ⚠️ 归档是 `VACUUM INTO`，跑在**独立 isolate** 里（提案 63-②）。
+    // `testWidgets` 的假时钟不会推进真实异步 ⇒ 不放进 `runAsync` 就是死等
+    // （2026-11-12 实测：整轮 `flutter test` 卡在这一条不动）。
+    await tester.runAsync(() async {
+      await service.pairFromCode(
+        'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=17890&token=t1&v=1',
+      );
+      seedMirrorProduct();
+      await service.pairFromCode(
+        'shensuanzi://pair?host_id=h-2&ip=127.0.0.1&port=17890&token=t2&v=1',
+      );
+    });
     expect(service.archives(), hasLength(1), reason: '换主机必须归档');
 
     await tester.pumpWidget(page());
@@ -106,7 +112,7 @@ void main() {
   });
 
   testWidgets('点「重建本机数据副本」⇒ 先确认，确认后镜像被重建', (WidgetTester tester) async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=17890&token=t1&v=1',
     );
     seedMirrorProduct();
@@ -125,6 +131,14 @@ void main() {
 
     await tapKey(tester, 'mobile-sync-rebuild');
     await tester.tap(find.text('重建'));
+    await tester.pump(); // 关掉对话框 ⇒ 进入「正在归档旧数据…」
+    // 归档在独立 isolate 里跑（提案 63-②）：假时钟推不动它，给它真实时间。
+    // 用「等到归档真的出现」而不是固定 sleep —— 固定等待在慢机器上是 flaky 源。
+    await tester.runAsync(() async {
+      for (int i = 0; i < 300 && service.archives().isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    });
     await tester.pumpAndSettle();
 
     expect(productRows(), 0, reason: '重建 = 清镜像，等下次同步全量重拉');
@@ -138,7 +152,7 @@ void main() {
   // 那时手机是**已配对**状态，设置页只有「立即同步 / 忘记主机」，
   // **根本进不去扫码页**。所以已配对态也必须给一个入口。
   testWidgets('D 批：已配对时有「手动换地址」，且只换地址不动身份', (WidgetTester tester) async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=10.6.22.1&port=17890&token=tok&v=1',
     );
     await tester.pumpWidget(page());

@@ -36,10 +36,6 @@ import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
-// `VACUUM INTO` 由 isolate 里的新连接执行（2026-11-11 起不再拷文件）
-import 'package:sqlite3/sqlite3.dart';
-// 校验在 isolate 里跑：测试环境需要显式覆盖 SQLite 的加载路径（生产是 no-op）
-import 'package:shensuanzi_core/sqlite_local.dart';
 
 import 'fs.dart';
 
@@ -330,55 +326,46 @@ String backupOutcomeMessage(BackupOutcome outcome) {
 /// 而 `VACUUM INTO` 读的是逻辑内容，与 WAL 是否已合并无关 —— 少一步 = 少一个失败点。
 ///
 /// 返回 `null` = 已生成且校验通过；否则是**给用户看的原因**。
-Future<String?> _backupAndVerifyInIsolate(
+///
+/// ## 三处「不许悄悄降级」的防线（2026-11-12 用户审查 P1）
+///
+/// **① 源库不在就失败，绝不凭空建库。**
+/// `sqlite3.open` 默认 `readWriteCreate`。主流程虽然先查过 `existsSync()`，
+/// 但那之后还要跨进 isolate —— 文件可能在这段窗口里被挪走 / 被杀软隔离 /
+/// 被另一个进程删掉。此时默认模式会**默默建一个空库** ⇒ `VACUUM INTO` 成功、
+/// `quick_check` 返回 `ok`、软件报「备份成功」，而备份里一条业务数据都没有。
+/// 这是最坏的一种「成功」：用户以为有退路。
+///
+/// **② 校验也走只读连接，不用 `Db.open`。**
+/// `Db.open` 会跑迁移链、并把库切成 WAL —— 拿它去「检查」一份备份，
+/// 等于校验动作本身改动了被校验的文件。这条纪律 `pubspec.yaml` 里
+/// `sqlite3` 那条依赖注释已经写过（数据抢救体检同款），这里是同一个道理。
+///
+/// **③ 失败必须真的删掉 `.tmp`。**
+/// 原来的 `finally` 只删 `-wal` / `-shm`；而「校验不过」是 **return**，
+/// 不走外层 `catch`，`_cleanupTmp()` 不会执行 ⇒ 用户被告知「已删除不完整的备份」，
+/// 而 `.tmp` 还在盘上。提示与实际不符，比不提示更糟。
+///
+/// ⚠️ **公开只为让测试直接调**：`flutter test` 里造不出「检查完之后源文件才消失」
+/// 这种时序，只能把路径直接喂进来。生产调用点只有 [BackupService.backupNow] 一处。
+Future<String?> backupAndVerifyInIsolate(
   ({String source, String target}) job,
 ) async {
-  // 测试环境（`flutter test`）里 `sqlite3.dll` 不在应用目录 ⇒ 需要显式覆盖加载；
-  // 生产环境 `sqlite3_flutter_libs` 已经把库放在 exe 旁边，这一步是幂等 no-op。
-  useLocalSqlite();
-  Database? source;
-  Db? check;
-  try {
-    // `VACUUM INTO` 要求目标**不存在**（否则报「output file already exists」）
-    final File targetFile = File(job.target);
-    if (targetFile.existsSync()) targetFile.deleteSync();
-
-    source = sqlite3.open(job.source);
-    // 路径里的单引号要双写（SQL 字符串字面量规则）；反斜杠在 SQL 里不是转义字符。
-    // 统一成正斜杠：Windows 路径也可以用，且免掉一类「路径里带反斜杠」的疑虑。
-    final String sqlPath = job.target
-        .replaceAll(r'\', '/')
-        .replaceAll("'", "''");
-    source.execute("VACUUM INTO '$sqlPath'");
-    source.dispose();
-    source = null;
-
-    // 校验：与从前一致，`quick_check` 走遍所有页。
-    // ⚠️ 它**不是**一致性证明（那条由 VACUUM 的读事务保证），而是
-    // 「文件确实写完整了」的证明（磁盘满 / 断电 / 杀软拦截都会在这里暴露）。
-    check = Db.open(job.target);
-    final List<Map<String, Object?>> rows = check.raw.select(
-      'PRAGMA quick_check',
-    );
-    final Object? verdict = rows.isEmpty ? null : rows.first.values.first;
-    if ('$verdict' != 'ok') return '备份校验失败，已删除不完整的备份';
-    return null;
-  } catch (_) {
-    return '备份校验失败，已删除不完整的备份';
-  } finally {
-    source?.dispose();
-    check?.close();
-    // 副本的 -wal/-shm 只是校验过程产生的（`Db.open` 会把库切成 WAL），
-    // 别留在备份目录里
-    for (final String suffix in <String>['-wal', '-shm']) {
-      try {
-        final File f = File('${job.target}$suffix');
-        if (f.existsSync()) f.deleteSync();
-      } catch (_) {
-        // 删不掉不影响结论
-      }
-    }
-  }
+  final SnapshotProblem? problem = snapshotDatabaseTo(
+    source: job.source,
+    target: job.target,
+  );
+  if (problem == null) return null;
+  return switch (problem) {
+    // 源文件在「主流程检查」与「isolate 打开」之间消失了。单独说一句 ——
+    // 「备份校验失败」会让用户以为是文件坏了，实际是它根本不在了。
+    SnapshotProblem.sourceMissing => '找不到数据文件，备份没有生成',
+    // 其余三种（打不开 / 写不进 / 校验不过）对用户是同一句话：
+    // 备份没成、临时文件已清掉，重试即可。
+    SnapshotProblem.unreadable ||
+    SnapshotProblem.writeFailed ||
+    SnapshotProblem.verifyFailed => '备份校验失败，已删除不完整的备份',
+  };
 }
 
 class BackupService {
@@ -505,7 +492,7 @@ class BackupService {
       // 了这两件事 —— 一致性由 SQLite 保证，不再依赖「先 checkpoint」。
       // 详见 `_backupAndVerifyInIsolate` 的 docstring。
       final String? verifyProblem = await Isolate.run(
-        () => _backupAndVerifyInIsolate((source: source.path, target: tmp)),
+        () => backupAndVerifyInIsolate((source: source.path, target: tmp)),
       );
       if (verifyProblem != null) return BackupOutcome.failure(verifyProblem);
 

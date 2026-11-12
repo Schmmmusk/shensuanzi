@@ -79,7 +79,7 @@ AppEnvironment machine({
       },
 );
 
-void main() {
+void main() async {
   useLocalSqlite();
 
   final Directory box = Directory.systemTemp.createTempSync('sz_app_check_');
@@ -1202,7 +1202,9 @@ void main() {
     );
     check('有数据后 hasAnyData 为真（老镜像判据）', meta.hasAnyData());
     final MirrorArchive archive = MirrorArchive(mirrorPath: mirrorPath);
-    final Directory? snapshot = archive.snapshot(db: mirror, hostId: 'h-1');
+    // 提案 63-②：归档改成在独立 isolate 里跑（`VACUUM INTO` 是重活），
+    // 因此这里必须 `await`；也不再需要把 `Db` 传进去。
+    final Directory? snapshot = await archive.snapshot(hostId: 'h-1');
     check('归档落盘', snapshot != null && snapshot.existsSync());
     check(
       '归档里有旧镜像本体',

@@ -23,6 +23,7 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -41,11 +42,21 @@ class MirrorArchiveEntry {
 }
 
 class MirrorArchive {
-  MirrorArchive({required this.mirrorPath, int Function()? clock})
-    : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch);
+  MirrorArchive({
+    required this.mirrorPath,
+    int Function()? clock,
+    this.debugFailManifestWrite = false,
+  }) : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch);
 
   /// 活镜像库的路径（`<私有目录>/mirror/shensuanzi_mirror.db`）
   final String mirrorPath;
+
+  /// 测试注入：写 `manifest.json` 时**故意失败**。
+  ///
+  /// 真实机器上造不出「manifest 写到一半失败」（磁盘满 / 断电），而这一条的
+  /// 后果是「留下一个没有 manifest 的空壳目录」，必须有用例钉住
+  /// （与 `DataMigrator.debugFailCopyFor` 同款思路）。
+  final bool debugFailManifestWrite;
 
   final int Function() _clock;
 
@@ -53,22 +64,52 @@ class MirrorArchive {
   String get archiveRoot => p.join(p.dirname(mirrorPath), 'archive');
 
   /// 归档当前镜像。返回落点目录；失败 ⇒ `null`（**不抛**，见文件头）。
-  Directory? snapshot({required Db db, required String hostId, int? now}) {
+  ///
+  /// ## 为什么要进 isolate（2026-11-12 用户审查）
+  ///
+  /// `VACUUM INTO` 要**读整个库再写一份**，是纯同步重活。它原来是在调用方的
+  /// （UI）isolate 上跑的 —— 换主机时界面会长时间不动，用户以为手机死机。
+  /// 现在把活整段丢进独立 isolate，本方法只等结果。
+  ///
+  /// ⇒ 因此**不再需要传 `Db` 进来**：`snapshotDatabaseTo` 按**路径**自己开只读连接。
+  /// 这样也顺带避免了「连接不能跨 isolate」那类问题。
+  ///
+  /// ## 失败要清整个目录
+  ///
+  /// 目录是在 `VACUUM` **之前**建好的。如果 VACUUM 失败、或 manifest 写到一半
+  /// 崩了，就会留下一个**没有 manifest** 的空壳目录。`list()` 现在会跳过它
+  /// （见下），但留着也没意义 —— 所以这里直接删掉。
+  Future<Directory?> snapshot({required String hostId, int? now}) async {
+    Directory? target;
     try {
       final Directory root = Directory(archiveRoot);
       if (!root.existsSync()) root.createSync(recursive: true);
       final int at = now ?? _clock();
-      final Directory target = Directory(
+      target = Directory(
         p.join(root.path, '${_safeName(hostId)}-${_stamp(at)}'),
       );
       // 同一分钟里重复触发（连扫两次）⇒ 覆盖同一份，不留一堆重复目录
       if (target.existsSync()) target.deleteSync(recursive: true);
       target.createSync(recursive: true);
 
-      // ⚠️ AE-1 同款：WAL 模式下直接拷会缺最新事务 —— 先 checkpoint 落盘
-      db.raw.execute('PRAGMA wal_checkpoint(TRUNCATE)');
-      File(mirrorPath).copySync(p.join(target.path, 'shensuanzi_mirror.db'));
+      final String dbTarget = p.join(target.path, 'shensuanzi_mirror.db');
+      // ⚠️ 只传两个**字符串**进 isolate：`Db` / `Directory` 不可发送，
+      // **`this` 也不可**（`MirrorArchive` 带着 `_clock` 这个函数字段 ——
+      // 函数只有顶层/静态的能跨 isolate）。所以先把值抄进局部变量再进闭包，
+      // 否则 `Isolate.run` 抛「object is unsendable」，被下面的 `catch` 吞成
+      // 「归档失败」—— 2026-11-12 五条归档用例一起红才发现（见 `proposals/63`）。
+      final String sourcePath = mirrorPath;
+      final SnapshotProblem? problem = await Isolate.run(
+        () => snapshotDatabaseTo(source: sourcePath, target: dbTarget),
+      );
+      if (problem != null) {
+        _deleteQuietly(target);
+        return null;
+      }
 
+      if (debugFailManifestWrite) {
+        throw const FileSystemException('注入：写 manifest 失败');
+      }
       File(p.join(target.path, 'manifest.json')).writeAsStringSync(
         jsonEncode(<String, Object?>{
           'app': '神算子',
@@ -81,11 +122,22 @@ class MirrorArchive {
       );
       return target;
     } catch (_) {
+      if (target != null) _deleteQuietly(target);
       return null;
     }
   }
 
-  /// 列出已有归档（新 → 旧）。读不懂的目录跳过，**不抛**。
+  /// 列出已有归档（新 → 旧）。**读不懂的目录一律跳过，不抛**。
+  ///
+  /// ## 「跳过」原来只跳了一半（2026-11-12 用户审查）
+  ///
+  /// 旧实现是 `manifest.existsSync() ? jsonDecode(...) : null` 然后
+  /// `decoded is Map ? ... : 空 Map` —— **只有 `jsonDecode` 抛异常**才被 `catch` 跳过。
+  /// 「文件不存在」根本不抛，于是拿到空 Map 后仍然 `add` 一条
+  /// **「未知主机 · 1970-01-01」** 的假归档，用户点进去什么都没有。
+  ///
+  /// 而本次改造（VACUUM 失败 / manifest 写到一半崩）**更容易**造出这种半成品目录。
+  /// 所以现在要求：**manifest 必须在、必须能解析、关键字段必须合法**，缺一条就跳过。
   List<MirrorArchiveEntry> list() {
     final Directory root = Directory(archiveRoot);
     if (!root.existsSync()) return const <MirrorArchiveEntry>[];
@@ -93,19 +145,22 @@ class MirrorArchive {
     for (final FileSystemEntity entity in root.listSync()) {
       if (entity is! Directory) continue;
       final File manifest = File(p.join(entity.path, 'manifest.json'));
+      // ① 没有 manifest = 没写完的归档，不是一条记录
+      if (!manifest.existsSync()) continue;
       try {
-        final Object? decoded = manifest.existsSync()
-            ? jsonDecode(manifest.readAsStringSync())
-            : null;
-        final Map<String, Object?> json = decoded is Map
-            ? Map<String, Object?>.from(decoded)
-            : const <String, Object?>{};
+        final Object? decoded = jsonDecode(manifest.readAsStringSync());
+        if (decoded is! Map) continue;
+        final Map<String, Object?> json = Map<String, Object?>.from(decoded);
+        final Object? hostId = json['host_id'];
         final Object? at = json['archived_at'];
+        // ② 关键字段不合法 = 半截 manifest，同样不认
+        if (hostId is! String || hostId.isEmpty) continue;
+        if (at is! int || at <= 0) continue;
         out.add(
           MirrorArchiveEntry(
             directory: entity.path,
-            hostId: (json['host_id'] as String?) ?? '未知主机',
-            archivedAt: DateTime.fromMillisecondsSinceEpoch(at is int ? at : 0),
+            hostId: hostId,
+            archivedAt: DateTime.fromMillisecondsSinceEpoch(at),
           ),
         );
       } catch (_) {
@@ -128,6 +183,15 @@ class MirrorArchive {
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  /// 删掉一个**没做完**的归档目录（尽力而为，失败不抛）。
+  static void _deleteQuietly(Directory dir) {
+    try {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    } catch (_) {
+      // 删不掉也不阻断（下次 `list()` 会因为缺 manifest 跳过它）
     }
   }
 

@@ -160,7 +160,7 @@ void main() {
     };
 
     // 扫码（解析 + 落 pairing.json）
-    final PairingInfo info = service.pairFromCode(
+    final PairingInfo info = await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     expect(info.ip, '127.0.0.1');
@@ -188,7 +188,7 @@ void main() {
   });
 
   test('连不上（端口没人听）⇒ unreachable，文案含「怎么办」', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=1&token=tok&v=1',
     );
     final SyncOutcome outcome = await service.syncNow();
@@ -197,7 +197,7 @@ void main() {
   });
 
   test('health 401 ⇒ authExpired（配对失效，裁定 ②）', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     host.healthStatus = 401;
@@ -215,7 +215,7 @@ void main() {
   });
 
   test('pull 401 ⇒ authExpired（任何请求都算）', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     host.pullStatus = 403;
@@ -225,7 +225,7 @@ void main() {
   });
 
   test('主机 schema 版本更高 ⇒ 重建镜像（游标清零从头拉，裁定 §六）', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     // 第一次同步：镜像到 v3、游标有值
@@ -286,7 +286,7 @@ void main() {
   // （开单 / 建档成功后的后台推）不清 ⇒ 面板还显示「已连接」，后台每次
   // 推送都 401，用户看不到任何变化。清配对收进服务一处，三条路径共用。
   test('P2 #8：autoPush 遇 401 也清配对（不再只有「立即同步」清）', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     enqueueOne('q-auth');
@@ -310,7 +310,7 @@ void main() {
   });
 
   test('autoPush 队列为空 ⇒ ok 且**不发** push 请求', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     final SyncOutcome outcome = await service.autoPush();
@@ -319,7 +319,7 @@ void main() {
   });
 
   test('autoPush 有待同步条目 ⇒ push 请求发出 ⇒ ok（失败也不抛）', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     enqueueOne('q-1');
@@ -338,7 +338,7 @@ void main() {
   // already_exists（= 主机其实有）」来复现那个状态，然后断言 **syncNow 自己
   // 会补问一次**（不需要用户切页面 / 再点一次）。
   test('F16 乙：syncNow 推完还剩 pending ⇒ 自动对账（忽略退避再问一次）', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     enqueueOne('q-f16b');
@@ -364,7 +364,7 @@ void main() {
   });
 
   test('F16 乙护栏：队列本来就空 ⇒ 只推一次，不做多余的对账请求', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     final SyncOutcome outcome = await service.syncNow();
@@ -377,7 +377,7 @@ void main() {
   });
 
   test('autoPush 并发：第二次 busy；第一轮结束后**尾随补推**（裁定 ③）', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     enqueueOne('q-1');
@@ -403,7 +403,7 @@ void main() {
   // ============================================ 分页拉到底（2026-10-07 裁定）
 
   test('has_more 一直为真 ⇒ 不许说「同步完成」（如实报「只同步了一部分」）', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     // 主机永远说「还有下一页」—— 客户端有页数上限，必须**终止并如实上报**，
@@ -417,7 +417,7 @@ void main() {
   });
 
   test('has_more 缺省（旧主机）⇒ 当作到底，仍报成功', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     host.pullBody.remove('has_more'); // 旧主机不带这个字段
@@ -432,7 +432,7 @@ void main() {
 
   test('扫到**另一台主机** ⇒ 重建镜像 + 挂起未同步队列', () async {
     // 先配 h-1 并同步一次（镜像里留下 h-1 的数据）
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     host.pullBody['products'] = <Object?>[
@@ -460,7 +460,7 @@ void main() {
     enqueueOne('q-offline');
 
     // 换主机：host_id 变了
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-2&ip=127.0.0.1&port=${host.baseUri.port}&token=tok2&v=1',
     );
 
@@ -538,11 +538,11 @@ void main() {
   }
 
   test('防呆① 同 IP、异 host_id ⇒ 必须归档 + 重建镜像', () async {
-    service.pairFromCode(pairCode('h-1'));
+    await service.pairFromCode(pairCode('h-1'));
     await syncOneProduct();
 
     // 同一个 IP / 端口，只有 host_id 变了（老王家和老李家都是 192.168.1.100）
-    service.pairFromCode(pairCode('h-2'));
+    await service.pairFromCode(pairCode('h-2'));
 
     expect(productRows(), 0, reason: '镜像必须重建，否则新主机推同编码会撞 UNIQUE');
     final List<MirrorArchiveEntry> archives = service.archive.list();
@@ -558,12 +558,12 @@ void main() {
   });
 
   test('防呆② 同 host_id、异 IP ⇒ 不归档、镜像与积压队列都保留', () async {
-    service.pairFromCode(pairCode('h-1'));
+    await service.pairFromCode(pairCode('h-1'));
     await syncOneProduct();
     enqueueOne('q-keep');
 
     // 同一台主机，换了地址（换路由器 / DHCP 续租）
-    service.pairFromCode(pairCode('h-1', ip: '127.0.0.2'));
+    await service.pairFromCode(pairCode('h-1', ip: '127.0.0.2'));
 
     expect(service.archive.list(), isEmpty, reason: '同一台主机不该归档');
     expect(productRows(), 1, reason: '镜像不许重建');
@@ -576,13 +576,13 @@ void main() {
   });
 
   test('忘记主机后重新扫另一台 ⇒ 必须归档重建（F14 现场）', () async {
-    service.pairFromCode(pairCode('h-1'));
+    await service.pairFromCode(pairCode('h-1'));
     await syncOneProduct();
     enqueueOne('q-1');
     service.forgetHost(); // ← 这一步会删掉 pairing.json（旧实现据此跳过重建）
     expect(service.pairingStore.load(), isNull);
 
-    service.pairFromCode(pairCode('h-2'));
+    await service.pairFromCode(pairCode('h-2'));
 
     expect(productRows(), 0, reason: 'F14：旧镜像的商品还在 ⇒ 新主机一推同编码就 UNIQUE 撞死');
     expect(
@@ -593,7 +593,7 @@ void main() {
   });
 
   test('全新手机首次配对 ⇒ 不归档（情形 C）', () async {
-    service.pairFromCode(pairCode('h-new'));
+    await service.pairFromCode(pairCode('h-new'));
 
     expect(service.archive.list(), isEmpty);
     expect(
@@ -605,13 +605,13 @@ void main() {
   });
 
   test('老镜像（有数据但无 host_id 标记）⇒ 按换主机处理', () async {
-    service.pairFromCode(pairCode('h-1'));
+    await service.pairFromCode(pairCode('h-1'));
     await syncOneProduct();
     // 模拟 0.6.5 升上来：镜像里没有 mirror_meta
     MirrorMeta(service.openMirror()).clearHostId();
     service.forgetHost();
 
-    service.pairFromCode(pairCode('h-1')); // 甚至还是同一台主机
+    await service.pairFromCode(pairCode('h-1')); // 甚至还是同一台主机
 
     expect(productRows(), 0, reason: '无法证明这份镜像属于谁 ⇒ 安全侧：归档重建，不让旧店的货混进新店');
     expect(service.archive.list().single.hostId, 'unknown');
@@ -629,7 +629,7 @@ void main() {
       onError: (Object error, StackTrace stack, String label) =>
           labels.add(label),
     );
-    logged.pairFromCode(pairCode('h-1'));
+    await logged.pairFromCode(pairCode('h-1'));
     // 镜像里先有一条 P0001（模拟另一台主机留下的货），主机再推一条同编码、不同 id 的
     // ⇒ 落库时 UNIQUE constraint failed: products.code（F14 的现场）
     logged.openMirror().raw.execute(
@@ -665,7 +665,7 @@ void main() {
   });
 
   test('C-2：换主机时 `sent` 条目也要降级为挂起（不能留成永远清不掉的 sent）', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     await service.syncNow();
@@ -681,7 +681,7 @@ void main() {
     );
 
     // 换主机
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-2&ip=127.0.0.1&port=${host.baseUri.port}&token=tok2&v=1',
     );
 
@@ -699,7 +699,7 @@ void main() {
   });
 
   test('同一台主机重新扫码（host_id 不变）⇒ **不清镜像**（只换令牌）', () async {
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok&v=1',
     );
     host.pullBody['products'] = <Object?>[
@@ -720,7 +720,7 @@ void main() {
     final Db mirror = service.openMirror();
 
     // 主机重新生成配对码（host_id 不变）⇒ 只是换个令牌，数据是同一份
-    service.pairFromCode(
+    await service.pairFromCode(
       'shensuanzi://pair?host_id=h-1&ip=127.0.0.1&port=${host.baseUri.port}&token=tok-new&v=1',
     );
 
@@ -752,7 +752,7 @@ void main() {
     }
 
     test('① 镜像没有身份时同步一次，必须把 host_id 写回去', () async {
-      service.pairFromCode(pairCode('h-1'));
+      await service.pairFromCode(pairCode('h-1'));
       host.pullBody['products'] = <Object?>[productRow('p1')];
       clearMirrorIdentity();
 
@@ -768,7 +768,7 @@ void main() {
     });
 
     test('② 遗留的「有数据但没身份」镜像：重建一次之后**不再重复重建**', () async {
-      service.pairFromCode(pairCode('h-1'));
+      await service.pairFromCode(pairCode('h-1'));
       host.pullBody['products'] = <Object?>[productRow('p1')];
       await service.syncNow();
       // 模拟「旧版本拉完数据但没写身份」的现场（升级用户、或真机第一次同步后）
@@ -803,13 +803,13 @@ void main() {
     });
 
     test('③ 真的换了主机：旧数据归档 + 新镜像写新 host_id', () async {
-      service.pairFromCode(pairCode('h-1'));
+      await service.pairFromCode(pairCode('h-1'));
       host.pullBody['products'] = <Object?>[productRow('p1')];
       await service.syncNow();
       final int archivesBefore = service.archives().length;
 
       // 换一台电脑（host_id 变了）
-      service.pairFromCode(pairCode('h-2'));
+      await service.pairFromCode(pairCode('h-2'));
       final SyncOutcome outcome = await service.syncNow();
 
       expect(outcome.kind, SyncOutcomeKind.ok, reason: outcome.message);
@@ -822,7 +822,7 @@ void main() {
     });
 
     test('④ 同步中途断网 ⇒ 下次能续（每页一个事务、游标已推进）', () async {
-      service.pairFromCode(pairCode('h-1'));
+      await service.pairFromCode(pairCode('h-1'));
       host.pullBody['products'] = <Object?>[productRow('p1')];
       await service.syncNow();
       final Db before = service.openMirror();

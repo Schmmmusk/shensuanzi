@@ -164,9 +164,9 @@ void main() {
       );
     });
 
-    test('配对过 ⇒ 只换地址，身份 / 令牌 / 上次同步时间都不动', () {
+    test('配对过 ⇒ 只换地址，身份 / 令牌 / 上次同步时间都不动', () async {
       // 先扫一次码（现场就是这一步拿到了令牌，只是 IP 是错的）
-      service.pairFromCode(
+      await service.pairFromCode(
         'shensuanzi://pair?host_id=h-1&ip=10.6.22.1&port=17890&token=tok&v=1',
       );
       final PairingInfo before = store.load()!;
@@ -183,16 +183,16 @@ void main() {
       expect(service.lastHostSwitchHeldEntries, 0);
     });
 
-    test('不写端口 ⇒ 沿用上次配对里的端口', () {
-      service.pairFromCode(
+    test('不写端口 ⇒ 沿用上次配对里的端口', () async {
+      await service.pairFromCode(
         'shensuanzi://pair?host_id=h-1&ip=10.6.22.1&port=17901&token=tok&v=1',
       );
       final PairingInfo after = service.pairFromAddress('10.102.43.94');
       expect(after.port, 17901, reason: '用户只改了 IP，端口不该被悄悄改成默认值');
     });
 
-    test('地址非法 ⇒ 抛，且**不改**已有的配对', () {
-      service.pairFromCode(
+    test('地址非法 ⇒ 抛，且**不改**已有的配对', () async {
+      await service.pairFromCode(
         'shensuanzi://pair?host_id=h-1&ip=10.6.22.1&port=17890&token=tok&v=1',
       );
       expect(() => service.pairFromAddress('乱写的'), throwsFormatException);

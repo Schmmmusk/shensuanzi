@@ -9,6 +9,7 @@ library;
 
 import 'package:sqlite3/sqlite3.dart';
 
+import '../../sqlite_local.dart';
 import '../db/database.dart';
 import '../db/read_failures.dart';
 import '../db/schema.dart';
@@ -166,6 +167,42 @@ class SyncQueueDao {
     table: Schema.syncQueue,
     failures: db.readFailures,
   );
+
+  /// 从**任意一份快照文件**里读出未同步条目（与 [unsent] 同一口径）。
+  ///
+  /// ## 为什么要有这个入口（提案 63-③，2026-11-12 用户裁定）
+  ///
+  /// 手机「导出本机数据」的用途是「照着清单核对哪些单还没传上去」。所以清单
+  /// **必须和分享出去的那个 `.db` 出自同一个时间边界** —— 活队列是动的：查完
+  /// 3 条之后其中 1 条推送成功、或又新开 1 单，等快照做好时库里的已经不是那 3 条了。
+  /// 于是包里会出现「清单写 3 条、库里有 2 条」，用户就没法判断到底丢没丢。
+  ///
+  /// ⇒ 顺序改成：**先出快照 → 再从这份快照里读队列 → 最后生成清单**。
+  ///
+  /// ## 为什么不是 `SyncQueueDao(Db.open(快照)).unsent()`
+  ///
+  /// `Db.open` 会跑迁移链、并把文件切成 WAL —— 那等于顺手改掉刚导出的副本
+  /// （`packages/shensuanzi_app/pubspec.yaml` 里 `sqlite3` 那条依赖注释写过同款纪律）。
+  /// 这里只读打开，读完就关。
+  static List<SyncQueueEntry> unsentIn(String databasePath) {
+    useLocalSqlite();
+    final Database raw = sqlite3.open(databasePath, mode: OpenMode.readOnly);
+    try {
+      // ⚠️ 逐行保护照旧（`decodeRows`）：快照是**旧版本**写的也不该整份读崩
+      return decodeRows(
+        raw.select(
+          'SELECT * FROM ${Schema.syncQueue} WHERE status != ? '
+          'ORDER BY created_at, id',
+          <Object?>[SyncQueueStatus.sent.wire],
+        ),
+        SyncQueueEntry.fromRow,
+        table: Schema.syncQueue,
+        failures: ReadFailureLog(),
+      );
+    } finally {
+      raw.dispose();
+    }
+  }
 
   SyncQueueEntry? findById(String id) {
     final List<SyncQueueEntry> found = decodeRows(
