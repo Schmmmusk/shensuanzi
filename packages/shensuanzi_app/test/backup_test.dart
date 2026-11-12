@@ -421,6 +421,149 @@ void main() {
       expect(count, 1, reason: 'checkpoint 后副本必须包含全部事务');
     });
 
+    test('P1：有其它连接持读事务时，副本仍含全部已提交事务（旧实现会丢）', () async {
+      // ## 这条测试为什么能抓住旧实现（2026-11-11 用户审查 P1）
+      //
+      // 旧做法是主线程 `PRAGMA wal_checkpoint(TRUNCATE)` → 拷主库文件。
+      // 但 WAL 模式下，**只要还有别的连接持着读事务**，checkpoint 就无法把
+      // 后面的帧归并进主库 —— 此时 `wal_checkpoint` 返回 `busy=1`，
+      // 而旧代码**没有检查这个返回值**，直接拷主库 ⇒ 副本缺最新事务。
+      //
+      // 新做法（`VACUUM INTO`）走的是一个**读事务快照**，它读的是逻辑内容，
+      // 与「WAL 有没有归并」无关 ⇒ 事务一条都不会丢。
+      //
+      // 反向灵敏度：把 `_backupAndVerifyInIsolate` 换回 `File.copySync`
+      // 并恢复 checkpoint ⇒ 本用例必须红（会报「缺 d2」）。
+      //
+      // ⚠️ **实测结果（2026-11-11，别把它当成已证实的区分度）**：
+      // 换回旧实现后本用例**仍然通过**。原因是 `wal_checkpoint(TRUNCATE)` 在
+      // 因读者存在而无法截断 WAL 时，**通常仍会先把数据帧写回主库**，只是
+      // 文件没变短 —— 于是「拷主库」恰好也拿到了全部已提交事务。
+      // 换句话说：**这条用例锁定的是「副本必须含全部已提交事务」这个性质，
+      // 不是「旧实现一定失败」的证明。** 保留它是因为将来若有人改回
+      // 「拷文件 + 不做校验」，在某些时序下仍会踩到。
+      final int t = 1700000000000;
+      db.raw.execute(
+        "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
+        'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+        'business_day) '
+        "VALUES ('d2', 'CG20260928-002', 'purchase', 'confirmed', 0, 0, "
+        '$t, 0, $t, $t, ${businessDayOf(t)})',
+      );
+
+      // 另一条连接：**显式开一个读事务并保持住**，制造「checkpoint 无法归并」
+      final Db reader = Db.open(p.join(dataDir, 'shensuanzi.db'));
+      reader.raw.execute('BEGIN');
+      reader.raw.select('SELECT COUNT(*) AS c FROM documents');
+
+      final BackupOutcome r = await service.backupNow(db: db);
+      expect(r.ok, isTrue, reason: r.message ?? '');
+
+      final Db copy = Db.open(r.path!);
+      final List<Object?> ids = copy.raw
+          .select('SELECT id FROM documents ORDER BY id')
+          .map((Map<String, Object?> row) => row['id'])
+          .toList();
+      copy.close();
+      reader.raw.execute('COMMIT');
+      reader.close();
+
+      expect(
+        ids,
+        containsAll(<String>['d1', 'd2']),
+        reason: '有其它读者时 checkpoint 可能只做了一半 —— 副本必须依然拿到全部已提交事务',
+      );
+    });
+
+    test('P1：备份期间另一连接连续写入 ⇒ 副本是一致的快照（无洞）', () async {
+      // ⚠️ **这条用例的局限（实测，2026-11-11）**：换回旧实现（checkpoint +
+      // `File.copySync`）它**也是绿的**。原因很具体：
+      // 备份开始之后才写入的那 500 条 live 数据，在旧实现下本来就该不在副本里
+      // ——「备份开始时的快照」与「拷贝时刻的主库文件」在小数据量下结果相同。
+      // 旧实现的真正风险是「写入超过 1000 页触发**自动 checkpoint**，
+      // 复制进行到一半时主库页被改写 ⇒ 读到混合状态」，那需要几十 MB 数据
+      // 才复现，不适合放进单元测试。
+      //
+      // ⇒ 本用例锁定的是**性质**（副本必须是一致快照：开始前的全在、
+      // 之后的成连续前缀），不是「新旧实现的判别器」。
+      final int t = 1700000000000;
+      void insert(Db target, String id, String docNo) {
+        target.raw.execute(
+          "INSERT INTO documents (id, doc_no, doc_type, status, total_amount, "
+          'paid_amount, occurred_at, time_estimated, created_at, updated_at, '
+          'business_day) '
+          "VALUES ('$id', '$docNo', 'purchase', 'confirmed', 0, 0, "
+          '$t, 0, $t, $t, ${businessDayOf(t)})',
+        );
+      }
+
+      // 预置一批（让 VACUUM 有活干，制造与并发写的重叠窗口）
+      db.raw.execute('BEGIN');
+      for (int i = 0; i < 3000; i++) {
+        insert(db, 'seed-${i.toString().padLeft(4, '0')}', 'SEED-$i');
+      }
+      db.raw.execute('COMMIT');
+
+      // 启动备份但**不等它完成**
+      final Future<BackupOutcome> pending = service.backupNow(db: db);
+
+      // 备份进行中：另一条连接连续写入（模拟「用户一边开单一边备份」、
+      // 或后台同步在写）。备份如果被这些写打断，就会出现空洞或倒退。
+      final Db writer = Db.open(p.join(dataDir, 'shensuanzi.db'));
+      int written = 0;
+      try {
+        for (int i = 0; i < 500; i++) {
+          insert(writer, 'live-${i.toString().padLeft(4, '0')}', 'LIVE-$i');
+          written++;
+          // ⚠️ 每 25 条**让出一次事件循环**：500 次同步 INSERT 只要几毫秒，
+          // 如果一口气跑完，备份 isolate 可能还没启动，就测不到真正的并发。
+          // 让出之后 isolate 才有机会真的与写入交错 —— 这也是这条用例能区分
+          // 「一致快照」与「拷到一半的文件」的前提。
+          if (i % 25 == 0) await Future<void>.delayed(Duration.zero);
+        }
+      } finally {
+        writer.close();
+      }
+
+      final BackupOutcome r = await pending;
+      expect(r.ok, isTrue, reason: r.message ?? '');
+
+      final Db copy = Db.open(r.path!);
+      int seed = 0;
+      List<Object?> live = const <Object?>[];
+      try {
+        seed =
+            copy.raw
+                    .select(
+                      "SELECT COUNT(*) AS c FROM documents WHERE id LIKE 'seed-%'",
+                    )
+                    .first['c']!
+                as int;
+        live = copy.raw
+            .select(
+              "SELECT id FROM documents WHERE id LIKE 'live-%' ORDER BY id",
+            )
+            .map((Map<String, Object?> row) => row['id'])
+            .toList();
+      } finally {
+        copy.close();
+      }
+
+      // ① 备份开始前已提交的，一条都不能少（抓「checkpoint 不完整 / 复制中途变化」）
+      expect(seed, 3000, reason: '备份开始前的 3000 条必须全在');
+      // ② 并发写的部分只能是**一个前缀**：出现 live-0000, live-0002 这种空洞，
+      //    就说明拿到的是「东拼西凑」而不是某一时刻的快照
+      for (int i = 0; i < live.length; i++) {
+        expect(
+          live[i],
+          'live-${i.toString().padLeft(4, '0')}',
+          reason: '副本里的并发写部分必须连续 —— 出现空洞/乱序 = 不是一致快照',
+        );
+      }
+      // ③ 不可能多于实际写入（也不可能为负）
+      expect(live.length, lessThanOrEqualTo(written));
+    });
+
     test('距上次不足 24h → 自动 skipped', () async {
       await service.autoBackup(db: db, hasContent: true);
       final BackupOutcome r = await service.autoBackup(

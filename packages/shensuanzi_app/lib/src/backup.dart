@@ -2,8 +2,10 @@
 ///
 /// ## 判断都在本文件（纯 Dart，`dart test` 覆盖），UI 只摆放
 ///
-/// - **AE-1 核心（WAL）**：`PRAGMA wal_checkpoint(TRUNCATE)` 后再拷，
-///   否则副本缺最新事务（数据库是 WAL 模式，`database.dart`）
+/// - **AE-1 核心（一致性）**：备份副本必须是一致快照。
+///   2026-11-11 起用 **`VACUUM INTO`**（读事务快照，并发写不会打断它）——
+///   取代原来的「主线程 checkpoint 后拷文件」（那个做法没检查 checkpoint 结果，
+///   且 checkpoint 与复制之间主库仍可写，见 `_backupAndVerifyInIsolate`）
 /// - **AE-1 加固**：副本 `PRAGMA quick_check` 通过才算成功——
 ///   把「看起来成功的备份」变成「确实能用的备份」；失败删残件。
 ///   （2026-10-28：`integrity_check` → `quick_check`。478 MB 库实测
@@ -34,6 +36,8 @@ import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+// `VACUUM INTO` 由 isolate 里的新连接执行（2026-11-11 起不再拷文件）
+import 'package:sqlite3/sqlite3.dart';
 // 校验在 isolate 里跑：测试环境需要显式覆盖 SQLite 的加载路径（生产是 no-op）
 import 'package:shensuanzi_core/sqlite_local.dart';
 
@@ -283,7 +287,7 @@ String backupOutcomeMessage(BackupOutcome outcome) {
 
 /// 备份执行服务。判断都在这里；UI 只调 [backupNow] / [autoBackup] /
 /// [lastBackupTime] / [status]。
-/// **顶层函数**：在 isolate 里拷贝 + 校验备份副本。
+/// **顶层函数**：在 isolate 里生成备份副本 + 校验。
 ///
 /// ⚠️ `Isolate.run` 的闭包**不能捕获不可发送的对象**（`Db` / `Database` /
 /// `Completer` 都不行 —— 2026-10 真机炸过「object is unsendable: _AsyncCompleter」，
@@ -291,21 +295,67 @@ String backupOutcomeMessage(BackupOutcome outcome) {
 /// 校验需要数据库时，**在 isolate 里按路径新开一条连接**（连接不能跨 isolate，
 /// 但「同一个文件再开一条」可以）。
 ///
-/// ## 为什么校验也搬进来（2026-11-09，用户实测「备份时界面假死」）
+/// ## 为什么用 `VACUUM INTO` 而不是「checkpoint 后拷文件」（2026-11-11，用户审查 P1）
 ///
-/// `PRAGMA quick_check` 要走遍所有页：478 MB 实测 **850 ms**，26 万单（546 MB）
-/// 在低配机上要好几秒。它原来跑在**主 isolate** 上（因为「`Db.open` 不能跨
-/// isolate」—— 那句话对**搬连接**成立，对「按路径新开」不成立），
-/// 正好对上真机那次「备份假死」。
+/// 旧做法是：主线程 `PRAGMA wal_checkpoint(TRUNCATE)` → 在 isolate 里
+/// `File.copySync` 主库。**它有两个洞**（用户指出，均已证实）：
 ///
-/// 返回 `null` = 拷贝且校验通过；否则是**给用户看的原因**。
-String? _copyAndVerifyInIsolate(({String source, String target}) job) {
-  File(job.source).copySync(job.target);
+/// 1. **checkpoint 的结果没检查**。WAL 模式下有别的连接持读事务时，
+///    `wal_checkpoint(TRUNCATE)` 可能只做了一部分 —— 它返回 `(busy, log, checkpointed)`
+///    三列，而旧代码把返回值丢了。此时只拷主库 = 丢掉 WAL 里还没合并的事务。
+///    新增的导出 isolate 会另开连接，这个风险不再只是理论。
+/// 2. **checkpoint 之后主库仍可写**。`checkpoint` 与 `copy` 之间隔着
+///    `await Isolate.run(...)`，主 isolate 会把执行权交还给事件循环 ——
+///    用户切页、录单、后台同步都能写库，并触发新的自动 checkpoint。
+///    于是「复制进行到一半时主库变了」是可能的。
+///    `quick_check` 只验证**结构完整**，证明不了「备份是某一时刻的完整快照」。
+///
+/// ### 试过 `sqlite3_backup` API，但它在我们的场景下会反复重启
+///
+/// `package:sqlite3` 的 `Database.backup()` 是正统答案，但 SQLite 文档写明：
+/// **源库被treat「另一个连接」修改时，备份会从头重启**。我们的场景恰好是
+/// 「主 isolate 一直在写 + 备份在另一个 isolate 读」—— 用户一边开单一边备份时，
+/// 备份可能长时间完不成。
+///
+/// ### 所以选 `VACUUM INTO`
+///
+/// SQLite 官方把 `VACUUM INTO` 列为 **backup API 的替代方案**，且明确
+/// 「可以在活动数据库上运行而不阻塞其它连接」。它在一个**读事务**里读整个库、
+/// 写到新文件 ⇒ 拿到的是**事务开始那一刻的一致快照**，并发写不会让它重启。
+///
+/// 额外好处：输出**紧凑**（不含 freelist 页），备份文件比主库小。
+/// 代价：要读 478 MB 再写 478 MB（比纯文件拷贝慢），所以仍然必须留在 isolate 里。
+///
+/// 顺带：**不再需要手工 checkpoint**。WAL 的自动 checkpoint（1000 页）照常工作，
+/// 而 `VACUUM INTO` 读的是逻辑内容，与 WAL 是否已合并无关 —— 少一步 = 少一个失败点。
+///
+/// 返回 `null` = 已生成且校验通过；否则是**给用户看的原因**。
+Future<String?> _backupAndVerifyInIsolate(
+  ({String source, String target}) job,
+) async {
   // 测试环境（`flutter test`）里 `sqlite3.dll` 不在应用目录 ⇒ 需要显式覆盖加载；
   // 生产环境 `sqlite3_flutter_libs` 已经把库放在 exe 旁边，这一步是幂等 no-op。
   useLocalSqlite();
+  Database? source;
   Db? check;
   try {
+    // `VACUUM INTO` 要求目标**不存在**（否则报「output file already exists」）
+    final File targetFile = File(job.target);
+    if (targetFile.existsSync()) targetFile.deleteSync();
+
+    source = sqlite3.open(job.source);
+    // 路径里的单引号要双写（SQL 字符串字面量规则）；反斜杠在 SQL 里不是转义字符。
+    // 统一成正斜杠：Windows 路径也可以用，且免掉一类「路径里带反斜杠」的疑虑。
+    final String sqlPath = job.target
+        .replaceAll(r'\', '/')
+        .replaceAll("'", "''");
+    source.execute("VACUUM INTO '$sqlPath'");
+    source.dispose();
+    source = null;
+
+    // 校验：与从前一致，`quick_check` 走遍所有页。
+    // ⚠️ 它**不是**一致性证明（那条由 VACUUM 的读事务保证），而是
+    // 「文件确实写完整了」的证明（磁盘满 / 断电 / 杀软拦截都会在这里暴露）。
     check = Db.open(job.target);
     final List<Map<String, Object?>> rows = check.raw.select(
       'PRAGMA quick_check',
@@ -316,8 +366,10 @@ String? _copyAndVerifyInIsolate(({String source, String target}) job) {
   } catch (_) {
     return '备份校验失败，已删除不完整的备份';
   } finally {
+    source?.dispose();
     check?.close();
-    // 副本的 -wal/-shm 只是校验过程产生的，别留在备份目录里
+    // 副本的 -wal/-shm 只是校验过程产生的（`Db.open` 会把库切成 WAL），
+    // 别留在备份目录里
     for (final String suffix in <String>['-wal', '-shm']) {
       try {
         final File f = File('${job.target}$suffix');
@@ -438,25 +490,22 @@ class BackupService {
         return BackupOutcome.ok(target, skipped: true);
       }
 
-      // ⚠️ AE-1 核心：WAL 模式下直接拷会缺最新事务 —— 先 checkpoint 落盘
-      db.raw.execute('PRAGMA wal_checkpoint(TRUNCATE)');
-
       final File source = File(p.join(dataDirectory, 'shensuanzi.db'));
       if (!source.existsSync()) {
         return BackupOutcome.failure('找不到数据文件（$source），无法备份');
       }
-      // 5a（2026-10-24，§CV·一百）：**文件拷贝搬进 isolate**。
+      // 5a（2026-10-24，§CV·一百）：**生成 + 校验搬进 isolate**。
       //
-      // 机械盘上 100 MB 库 ≈ 1–3 s（SSD 实测 42 ms），同步拷贝会把主线程
-      // 冻住 —— 期间界面完全不动，用户会连点或强杀。
+      // 机械盘上 100 MB 库 ≈ 1–3 s（SSD 实测 42 ms），同步做会把主线程冻住
+      // —— 期间界面完全不动，用户会连点或强杀。
       //
-      // ⚠️ `wal_checkpoint(TRUNCATE)` **必须留在主线程**（上一行）：它要数据库
-      // 连接，而连接不能跨 isolate。语义仍是「同步拷贝」—— 拷出来的仍是一个
-      // 一致的库文件（`Agents.md` §4.5 的承诺没变），只是不再占 UI 线程。
-      // 拷贝 **+ 完整性校验** 一起进 isolate（2026-11-09）：
-      // 校验要开库，所以只能在 isolate 里按路径新开一条连接。
+      // ⚠️ 2026-11-11（用户审查 P1）**删掉了主线程的 `wal_checkpoint(TRUNCATE)`**：
+      // 它的返回值没被检查（有别的连接持读事务时可能只做了一半），而且
+      // checkpoint 与复制之间主库仍可写。`VACUUM INTO` 用**读事务快照**替代
+      // 了这两件事 —— 一致性由 SQLite 保证，不再依赖「先 checkpoint」。
+      // 详见 `_backupAndVerifyInIsolate` 的 docstring。
       final String? verifyProblem = await Isolate.run(
-        () => _copyAndVerifyInIsolate((source: source.path, target: tmp)),
+        () => _backupAndVerifyInIsolate((source: source.path, target: tmp)),
       );
       if (verifyProblem != null) return BackupOutcome.failure(verifyProblem);
 
