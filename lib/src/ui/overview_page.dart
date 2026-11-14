@@ -25,6 +25,7 @@ import 'low_stock_card.dart';
 import 'month_compare.dart';
 import 'notice.dart';
 import 'revenue_chart.dart';
+import 'scaled.dart';
 import 'shortage.dart';
 import 'stock_top.dart';
 import 'paint_first.dart';
@@ -690,16 +691,38 @@ class _OverviewPageState extends State<OverviewPage> {
         ],
       );
     }
-    // 桌面：三卡横排（各 1/3）
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Expanded(child: todayCard),
-        const SizedBox(width: 12),
-        Expanded(child: careCard),
-        const SizedBox(width: 12),
-        Expanded(child: _entriesCard(theme)),
-      ],
+    // 桌面：**宽就三卡横排，窄就竖排**（2026-11-14 裁定「小项 1」）。
+    //
+    // 判据随缩放派生（`businessRowBase`）：系统 200% + 应用超大时，
+    // 三卡横排会把「今日销售（按单据日期）」折成两行、金额挤成三行
+    //（用户截图）。竖排更窄、更好读，代价是页面变长 —— 大字用户本来就在滚动。
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        if (isNarrowOf(context, constraints.maxWidth, base: businessRowBase)) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              todayCard,
+              const SizedBox(height: 10),
+              careCard,
+              if (widget.onNavigate != null) ...<Widget>[
+                const SizedBox(height: 10),
+                _entriesCard(theme),
+              ],
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(child: todayCard),
+            const SizedBox(width: 12),
+            Expanded(child: careCard),
+            const SizedBox(width: 12),
+            Expanded(child: _entriesCard(theme)),
+          ],
+        );
+      },
     );
   }
 

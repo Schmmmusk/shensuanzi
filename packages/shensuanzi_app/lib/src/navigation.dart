@@ -79,7 +79,11 @@ class AppNavigation {
   /// 紧凑模式（高级选项，默认关闭）
   static const double compactWidth = 160;
 
-  /// 仅图标（只在「200% 缩放 + 小窗口」时自动启用）
+  /// 仅图标宽度 —— **下限兜底**，不是一种会启用的形态。
+  ///
+  /// ⚠️ 2026-11-14 更正（纪律 17）：这里从前写「只在 200% 缩放 + 小窗口时自动启用」，
+  /// 但 `_NavColumn` **没有「仅图标」的渲染实现**（永远画图标 + 文字）。所以真退到这里
+  /// 时是一列带省略号的窄条 —— 「有总比没有强」的极端兜底，不是设计形态。
   static const double iconOnlyWidth = 60;
 
   /// 每一项的高度。按 `docs/ui_principles.md` §二：点击区 ≥ 44，表格行 48 —— 取 48
@@ -87,6 +91,24 @@ class AppNavigation {
 
   /// 选中的左侧竖条宽度（高亮三重信号之一）
   static const double indicatorWidth = 3;
+
+  /// 导航列最多占窗口的多少（2026-10-19 定的上限，2026-11-14 保留作兜底）。
+  static const double maxShareOfWindow = 0.4;
+
+  /// 最长标签的字数（「销售开单」「采购入库」）—— 列宽按它算内容需求。
+  ///
+  /// 改导航结构时**必须同步**：加一个比 4 字更长的入口，这里不改就会被截断。
+  /// `navigation_test` 会对着 [destinations] 的实际标签长度校验。
+  static const int labelMaxChars = 4;
+
+  /// 标签的基准字号（导航项没有显式 `fontSize` ⇒ 主题 `bodyMedium` = 14）。
+  static const double labelFontBase = 14;
+
+  /// 图标基准尺寸（与 `_NavItem` 的图标大小同源，那里用 `scaledOf(context, iconBase)`）。
+  static const double iconBase = 20;
+
+  /// 行内**不随缩放**的固定占位：左竖条 3 + 间距 13 + 间距 12。
+  static const double chromeFixed = indicatorWidth + 13 + 12;
 
   /// 一个都没选时落到哪一项
   static const String fallbackId = 'overview';
@@ -196,28 +218,62 @@ class AppNavigation {
   /// 拖动窗口时导航该多宽。缩放系数由设置页提供（默认 1.0）。
   ///
   /// 按 §八：**宽度按比例缩放，但文字不换行**；窗口再窄也不低于
-  /// [iconOnlyWidth]（那时才轮到「仅图标」，且这是自动兜底不是默认）。
+  /// [iconOnlyWidth]（那只是兜底下限，见该常量的更正）。
+  ///
+  /// ⚠️ **界面上别直接调它** —— 实际列宽走 [navWidth]（它按内容增长、还有窗口占比上限）。
+  /// 本方法保留是因为「1.0 档的基准宽」仍是列宽的锚点（[navWidth] 从它出发）。
   static double widthFor({double scale = 1.0, bool compact = false}) {
     final double base = compact ? compactWidth : expandedWidth;
     final double scaled = base * scale;
     return scaled < iconOnlyWidth ? iconOnlyWidth : scaled;
   }
 
-  /// **导航列实际宽度**（2026-10-19，用户实测：分屏 + 系统 200% + 应用超大）。
+  /// 导航列里的**内容需求宽**（逻辑像素）：左竖条 + 间距 + 图标 + 4 字标签。
+  ///
+  /// 每一项的横向占位在 `lib/src/ui/app_shell.dart` 的 `_NavItem` 里是写死的
+  /// （`indicatorWidth` / 13 / 图标 / 12 / 文字），本方法**必须与它逐项对应** ——
+  /// 改了那边忘了这边，「列宽按内容算」就退化成拍脑袋。
+  static double contentWidthFor({required double scale}) =>
+      chromeFixed + iconBase * scale + labelMaxChars * labelFontBase * scale;
+
+  /// **导航列实际宽度**（2026-10-19 定上限；**2026-11-14 改成按内容增长**）。
+  ///
+  /// ## 2026-10-19 那次的病根
   ///
   /// [widthFor] 只保证「不低于 60」，**没有上限**：`220 × 2.0 = 440`，
-  /// 而那时窗口只有 ~480 逻辑像素（1920 的屏幕被 200% 缩放砍半、再与编辑器分屏）
-  /// ⇒ 导航吃掉 92%，工作区只剩一条缝（截图：只剩「往来方」三个竖字）。
+  /// 而那时窗口只有 ~480 逻辑像素 ⇒ 导航吃掉 92%，工作区只剩一条缝。
+  /// ⇒ 加了「不超过可用宽度的 [maxShareOfWindow]」。
   ///
-  /// 规则：取 [widthFor]，但**不超过可用宽度的 40%**；
-  /// 连 40% 都装不下 [iconOnlyWidth]（极端窄窗口）时才退到 60 —— 那时是
-  /// 「有总比没有强」，不是默认形态。
+  /// ## 2026-11-14 真机实测：上限没兜住，因为**空列被一起放大了**
+  ///
+  /// 系统 200% + 应用「超大」时，列宽 440 逻辑、**标签只要 143**（实测 ink 宽度），
+  /// 列内 68% 是空的，导航仍吃掉 35% 横向空间，工作区只剩 65%
+  /// （用户原话：「左侧导航栏占据约 3~4 成横向空间」）。根因不是上限太低，
+  /// 而是 `基准宽 × 缩放` 这条式子把「本来就空着的余量」也一起放大了。
+  ///
+  /// ## 现在的规则（裁定「甲」）
+  ///
+  /// ```
+  /// 列宽 = widthFor(1.0) + (内容需求(scale) − 内容需求(1.0))
+  /// ```
+  ///
+  /// 即 **余量固定、只有内容那部分随字号增长**：1.0 档仍是 220（观感不变），
+  /// 2.0 档 220 → 296（窗口 1247 逻辑宽时占比 35% → 24%）。
+  /// 仍保留 [maxShareOfWindow] 上限与 [iconOnlyWidth] 下限作兜底。
+  ///
+  /// ⚠️ [scale] 必须传**生效缩放**（`uiScaleOf(context)` = max(系统, 应用)），
+  /// 不能传应用档位 —— 否则「系统 200% + 应用 100%」时字是 2 倍、列宽按 1 倍算
+  /// （§CV·八十五 的判据：尺寸从环境取，不层层传参）。
   static double navWidth({
     required double scale,
     required double availableWidth,
+    bool compact = false,
   }) {
-    final double wanted = widthFor(scale: scale);
-    final double cap = availableWidth * 0.4;
+    final double grown =
+        widthFor(compact: compact) +
+        (contentWidthFor(scale: scale) - contentWidthFor(scale: 1.0));
+    final double wanted = grown < iconOnlyWidth ? iconOnlyWidth : grown;
+    final double cap = availableWidth * maxShareOfWindow;
     if (wanted <= cap) return wanted;
     return cap < iconOnlyWidth ? iconOnlyWidth : cap;
   }

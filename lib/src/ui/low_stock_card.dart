@@ -67,6 +67,11 @@ class LowStockCard extends StatelessWidget {
     // 做成警告会让新用户以为软件坏了；完全空白则让人以为功能没做。
     if (summary.showGuide) return _guideCard(theme);
 
+    // 2026-11-14 用户裁定：**空榜只留一句话 + 一个跳转按钮**，按钮不隐藏。
+    // 没有数据时，标题与「按预计补货金额排……」那句长说明都是噪音；
+    // 但出口必须留着 —— 空榜不等于库存页没东西可看（用户原话：「千万别隐藏」）。
+    if (!summary.hasAny) return _emptyCard();
+
     final List<ShortageRow> oversold = summary.oversold;
     final List<ShortageRow> restock = summary.restock;
     final int maxCents = <ShortageRow>[
@@ -96,19 +101,6 @@ class LowStockCard extends StatelessWidget {
                 color: theme.textTheme.bodySmall?.color,
               ),
             ),
-            if (!summary.hasAny)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  '没有要补的货 —— 设了安全库存的商品都还够。',
-                  key: const Key('low-stock-none'),
-                  style: TextStyle(
-                    height: 1.7,
-                    fontSize: 15,
-                    color: theme.textTheme.bodySmall?.color,
-                  ),
-                ),
-              ),
             // ⚠️ 超卖**置顶**：账已经对不上了，比「缺货」更严重（决策 2）。
             if (oversold.isNotEmpty) ...<Widget>[
               const SizedBox(height: 12),
@@ -179,6 +171,44 @@ class LowStockCard extends StatelessWidget {
   }
 
   int _shownCount() => summary.oversold.length + summary.restock.length;
+
+  /// 空态（**没有要补的货**）：一句话 + 一个跳转按钮（2026-11-14 用户裁定）。
+  ///
+  /// 用户原话：「空榜部分只留一句话和一个跳转按钮就行，千万别隐藏。」
+  /// ⇒ 标题与「按预计补货金额排……」那句说明在这里是**噪音**（没有数据时无从解释），
+  /// 但**出口必须留着** —— 空榜不等于库存页没东西可看。
+  ///
+  /// 一句话里带「缺货榜」三个字是有意的：不然这张卡会像一条无主的提示，
+  /// 用户不知道它在说哪件事。
+  Widget _emptyCard() => Card(
+    key: const Key('low-stock-card'),
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: mobileShell ? 14 : 16,
+        vertical: 12,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            '缺货榜：没有要补的货 —— 设了安全库存的商品都还够。',
+            key: Key('low-stock-none'),
+            style: TextStyle(height: 1.7, fontSize: 15),
+          ),
+          if (onOpenAll != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                key: const Key('low-stock-open-all'),
+                onPressed: onOpenAll,
+                child: const Text('去库存页看'),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
 
   /// 引导卡（决策 4 乙）：**普通提示**，用主题色而不是橙/红。
   Widget _guideCard(ThemeData theme) => Card(

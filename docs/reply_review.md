@@ -20205,4 +20205,66 @@ Bad state: Too many elements
 **推广**：`scrollUntilVisible` 在**含可选文本 / 输入框**的页面上必须显式给滚动体 ——
 这跟台账里「`find.text` 会连 `EditableText` 一起匹配」是同一族坑（§BG·补 1 的旁注）：
 Flutter 的可编辑控件在树里**自己就是一个滚动体/文本**，会污染按类型/按文本的查找。
+### 八十六、2026-11-14 **导航列宽改按内容增长（裁定甲）+ 概览三卡窄则竖排 + 缺货榜空态精简**
+
+用户真机复验提案 61（四张截图：系统 200% + 应用 125% / 超大 / 系统 100% + 小 / 跳转效果），
+结论：**缺货榜本体与跳转正常**；唯一新问题是双重大缩放下**导航占 3~4 成**。
+裁定：**甲**（按内容增长）+ 两个小项 + 空榜「只留一句话和一个跳转按钮，千万别隐藏」。
+
+#### ① 证据（从截图像素实测，不是目测）
+
+| 场景 | 导航列 | 占窗口 | 标签实际用到 | 列内空着 |
+|---|---|---|---|---|
+| 系统 200% + 应用标准(1.25) | 275 逻辑 | 22% | 101 | 63% |
+| 系统 200% + 应用超大(2.0) | **440 逻辑** | **35%** | 143 | **68%** |
+
+窗口内容宽 ≈1247 逻辑（2560 物理 / DPR 2，减去窗口留白 33 物理）。
+
+#### ② 根因
+
+1. `widthFor` 是 `基准宽 × 缩放`：`220 × 2.0 = 440`，**把「本来就空着的余量」也一起放大**
+   ⇒ 列宽是内容需求的 3 倍。40% 上限（§CV·七十一）根本没触发，因为它不是上限问题。
+2. **尺寸源与字号源不同源**：列宽用应用档位（`widget.uiScale.factor`），标签字号用生效缩放
+   （`MediaQuery.textScalerOf` = max(系统, 应用)）。今天没露馅只因标签只有 4 个字。
+3. 「仅图标」形态**从未实现**：`iconOnlyWidth` / `widthFor(compact:)` / 「退到 60」那条分支
+   只是注释承诺 —— 纪律 17 的实例（本次把注释改成实话，见下「没做的」）。
+
+#### ③ 改动
+
+| 文件 | 改动 |
+|---|---|
+| `packages/shensuanzi_app/lib/src/navigation.dart` | `navWidth` 改为 **`widthFor(1.0) + (内容需求(scale) − 内容需求(1.0))`**；新增 `contentWidthFor` / `labelMaxChars` / `labelFontBase` / `iconBase` / `chromeFixed` / `maxShareOfWindow` |
+| `lib/src/ui/app_shell.dart` | 传 `math.max(uiScaleOf(context), widget.uiScale.factor)`（生效缩放为主，档位只兜测试/独立预览）；导航图标 `size: scaledOf(context, AppNavigation.iconBase)`（从前固定 20） |
+| `lib/src/ui/scaled.dart` | 新断点 `businessRowBase = 720`（概览三卡横排） |
+| `lib/src/ui/overview_page.dart` | 三卡**宽横排 / 窄竖排**（`isNarrowOf` 判据随缩放派生） |
+| `lib/src/ui/low_stock_card.dart` | 空态改 `_emptyCard`：**一句话 + 一个跳转按钮**，无标题、无排序说明，**按钮不隐藏** |
+
+**效果（1247 逻辑宽窗口）**：1.0 → 220（不变）· 1.25 → 239（原 275）· 1.5 → 258（原 330）·
+1.75 → 277（原 385）· 2.0 → **296（原 440；占比 35% → 24%）**。
+
+#### ④ 测试
+
+- `packages/shensuanzi_app/test/navigation_test.dart`：新增「导航实际列宽」组 5 条
+  （1.0 基准 / 2.0 = 296 且窄于旧值 / 480 宽撞 40% 上限 = 192 / 极窄退 60 /
+  **最长标签 ≤ labelMaxChars** 防将来加长入口）；
+- `test/widget_test.dart`：`shell()` 助手加 `textScale` 参数（用 `MaterialApp.builder` 模拟系统字号）；
+  标准档断言 275 → 239；**新增「系统 200% + 应用标准 ⇒ 列宽按 2 倍算」**；
+- `test/low_stock_card_test.dart`：空态两条（一句话 + 按钮 / 库存页无出口时只有一句话）；
+- `test/overview_page_test.dart`：三卡竖排（700 宽）与横排（800 宽）各一条。
+
+#### ⑤ 门禁
+
+本侧亲跑：`app` typecheck **29 入口** · 根 `import_guard` **0 处缺导入** ·
+临时脚本真跑公式（1.0/1.25/1.5/1.75/2.0 五档占比 + 480/100 两个边界）**全绿** ·
+**反向灵敏度**：把 `navWidth` 退回 `widthFor(scale)` ⇒ 「2.0 档 = 296」与「窄于旧值」**双双变红**，
+回滚后复绿 · 改动文件 `dart format` 0 changed。
+**待用户复跑**：`flutter analyze` / `flutter test` / 各包 `dart test`。
+
+#### ⑥ 没做的 / 仍欠的
+
+- **「仅图标」形态仍未实现**（本次只把注释改成实话：它是下限兜底，真退到 60 就是一列省略号）。
+  要做的话是独立一笔（要新写渲染 + 与「入口必须带文字」的立场对账），**未裁不动**。
+- 概览页 `+130 ms` 的实测仍未做（判据已写在 `overview_page._loadLowStock` 注释里）。
+- 导航 `13 / 12` 两处间距仍**不随缩放**（与 `chromeFixed` 逐项对应）；2× 字号下图标与文字略紧，
+  真机上若不顺眼再一起改（那时 `chromeFixed` 要跟着改，公式与实现必须同步）。
 

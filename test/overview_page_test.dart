@@ -360,6 +360,57 @@ void main() {
     );
   });
 
+  // 2026-11-14（裁定「小项 1」）：**工作区窄 ⇒ 经营三卡竖排**。
+  //
+  // 真机（系统 200% + 应用超大）三卡横排时每张只剩 ~290 逻辑像素：
+  // 「今日销售（按单据日期）」折两行、金额挤三行（用户截图）。
+  // 断点 `businessRowBase` 随缩放派生，所以 2.0 档下正常窗口都会竖排。
+  testWidgets('2026-11-14：工作区窄 ⇒ 经营三卡竖排', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(700, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final QueryDao queries = await seedBiz(
+      todayMs: DateTime.now().millisecondsSinceEpoch,
+      withReceivable: true,
+    );
+    await tester.pumpWidget(page(queries: queries, onNavigate: (_) {}));
+    await tester.pumpAndSettle();
+
+    final Rect today = tester.getRect(
+      find.byKey(const Key('overview-card-today')),
+    );
+    final Rect care = tester.getRect(
+      find.byKey(const Key('overview-card-care')),
+    );
+    expect(
+      care.top,
+      greaterThanOrEqualTo(today.bottom),
+      reason: '窄工作区必须竖排 —— 横排会把每张卡挤成窄条',
+    );
+  });
+
+  testWidgets('2026-11-14：宽窗口仍然三卡横排（别把好的一起改）', (WidgetTester tester) async {
+    final QueryDao queries = await seedBiz(
+      todayMs: DateTime.now().millisecondsSinceEpoch,
+      withReceivable: true,
+    );
+    await tester.pumpWidget(page(queries: queries, onNavigate: (_) {}));
+    await tester.pumpAndSettle();
+
+    final Rect today = tester.getRect(
+      find.byKey(const Key('overview-card-today')),
+    );
+    final Rect care = tester.getRect(
+      find.byKey(const Key('overview-card-care')),
+    );
+    expect(
+      care.top,
+      closeTo(today.top, 1),
+      reason: '默认 800 宽 ⇒ 内容 768 > 720 ⇒ 横排',
+    );
+  });
+
   testWidgets('#32：有单 ⇒ 今日经营两行 + 要留心应收 + 快捷入口跳转', (WidgetTester tester) async {
     final int todayMs = DateTime.now().millisecondsSinceEpoch;
     final QueryDao queries = await seedBiz(

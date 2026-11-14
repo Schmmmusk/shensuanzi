@@ -13,6 +13,8 @@
 /// **本文件只做两件事**：把 `iconKey` 换成 `IconData`、把控件摆出来。
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -255,7 +257,12 @@ class AppShell extends StatefulWidget {
   /// 库存页显示占位）
   final RuleEngine? engine;
 
-  /// 界面缩放（设置页可改；导航宽度随它缩放）
+  /// 界面缩放档位（设置页可改）。
+  ///
+  /// ⚠️ 2026-11-14（裁定甲）：导航列宽改按**生效缩放**（`uiScaleOf(context)`
+  /// = max(系统, 应用)）计算，本档位**只作兜底** —— 独立预览 / 测试里没有
+  /// `app.dart` 那层 MediaQuery 包装，这时生效缩放只剩系统值，
+  /// 用本档位兜一下，否则「超大档」在这些场景等于没设。
   final UiScale uiScale;
 
   /// 月度对比用百分数还是倍数（设置页可切；默认倍数）
@@ -652,7 +659,12 @@ class _AppShellState extends State<AppShell> {
               current: _current,
               onSelect: _select,
               width: AppNavigation.navWidth(
-                scale: widget.uiScale.factor,
+                // ⚠️ 2026-11-14（裁定甲）：传**生效缩放**（max(系统, 应用)），
+                // 不是应用档位 —— 否则「系统 200% + 应用 标准」时字是 2 倍、
+                // 列宽按 1.25 倍算（§CV·八十五：尺寸从环境取）。
+                // 再与 `widget.uiScale` 取大：生产路径上后者已含在前者里，
+                // 兜的是没有 MediaQuery 包装的测试/独立预览（见字段注释）。
+                scale: math.max(uiScaleOf(context), widget.uiScale.factor),
                 availableWidth: constraints.maxWidth,
               ),
             ),
@@ -811,7 +823,13 @@ class _NavItem extends StatelessWidget {
             ),
             const SizedBox(width: 13),
             // 图标 + 文字**必须成对**：只有图标的入口对中老年用户等于不存在
-            Icon(navIcon(destination.iconKey), size: 20, color: foreground),
+            // 图标随缩放派生（2026-11-14 裁定甲的配套项）：从前固定 20，
+            // 2 倍字号下图标偏小，与「尺寸随缩放」自相矛盾。
+            Icon(
+              navIcon(destination.iconKey),
+              size: scaledOf(context, AppNavigation.iconBase),
+              color: foreground,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(

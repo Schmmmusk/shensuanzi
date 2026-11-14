@@ -160,7 +160,44 @@ void main() {
     }
   });
 
-  testWidgets('全都不缺 ⇒ 出「没有要补的货」（不是空白，也不是引导卡）', (WidgetTester tester) async {
+  testWidgets('全都不缺 ⇒ **只留一句话 + 跳转按钮**（2026-11-14 裁定）', (
+    WidgetTester tester,
+  ) async {
+    bool opened = false;
+    await tester.pumpWidget(
+      host(
+        summaryOf(
+          <Product>[product('a', safety: 5)],
+          <String, StockAgg>{'a': stock(100)},
+        ),
+        onOpenAll: () => opened = true,
+      ),
+    );
+
+    expect(find.byKey(const Key('low-stock-none')), findsOneWidget);
+    expect(find.byKey(const Key('low-stock-guide')), findsNothing);
+    expect(
+      find.textContaining('缺货榜：没有要补的货'),
+      findsOneWidget,
+      reason: '那一句话里要带「缺货榜」，否则像一条无主提示',
+    );
+    // 空榜时标题与长说明是噪音 —— 一律不出现
+    expect(find.text('缺货榜'), findsNothing, reason: '不加标题');
+    expect(
+      find.textContaining('按预计补货金额排'),
+      findsNothing,
+      reason: '没有数据时不解释排序口径',
+    );
+
+    // 「千万别隐藏」：按钮必须在，且仍然能跳
+    expect(find.byKey(const Key('low-stock-open-all')), findsOneWidget);
+    expect(find.text('去库存页看'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('low-stock-open-all')));
+    await tester.pump();
+    expect(opened, isTrue);
+  });
+
+  testWidgets('空态 + 没有出口（库存页自己）⇒ 只留那一句话，不出现按钮', (WidgetTester tester) async {
     await tester.pumpWidget(
       host(
         summaryOf(
@@ -169,9 +206,8 @@ void main() {
         ),
       ),
     );
-
     expect(find.byKey(const Key('low-stock-none')), findsOneWidget);
-    expect(find.byKey(const Key('low-stock-guide')), findsNothing);
+    expect(find.byKey(const Key('low-stock-open-all')), findsNothing);
   });
 
   testWidgets('「查看全部 N 个」用真数，点了回调', (WidgetTester tester) async {

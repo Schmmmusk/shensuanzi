@@ -45,7 +45,21 @@ void main() {
     bool databaseReady = true,
     ReadFailureLog? readFailures,
     UiScale uiScale = UiScale.standard,
+    double textScale = 1.0,
   }) => MaterialApp(
+    // 2026-11-14：把**系统字号**也模拟出来。
+    //
+    // 生产里 `app.dart` 用 `effectiveTextScale(system, app)` 取大值写进 MediaQuery；
+    // 测试里默认是 1.0，于是「系统 200% + 应用标准」这种组合根本测不到 ——
+    // 而导航列宽的 bug 恰恰出在那里（列宽按应用档位算、字号按生效值）。
+    // `builder` 里 `MediaQuery.of(context)` 拿到的是 MaterialApp 自己的（含正确 size），
+    // 只替换 textScaler，不影响布局。
+    builder: (BuildContext context, Widget? child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: child!,
+    ),
     home: AppShell(
       uiScale: uiScale,
       dataDirectory: r'D:\神算子数据',
@@ -105,8 +119,46 @@ void main() {
 
     expect(
       tester.getSize(find.byKey(const ValueKey<String>('nav-overview'))).width,
-      AppNavigation.widthFor(scale: UiScale.standard.factor),
+      AppNavigation.navWidth(
+        scale: UiScale.standard.factor,
+        availableWidth: 1200,
+      ),
       reason: '40% 上限只在挤的时候生效',
+    );
+    // 2026-11-14（裁定甲）：列宽不再线性放大 —— 1.25 档从 275 收到 239，
+    // 收掉的正是「列里本来就空着」的那部分余量。
+    expect(
+      tester.getSize(find.byKey(const ValueKey<String>('nav-overview'))).width,
+      239,
+    );
+  });
+
+  // 2026-11-14（裁定甲）：**列宽必须按生效缩放算**。
+  //
+  // 从前传的是应用档位（`widget.uiScale.factor`）：系统 200% + 应用「标准」时
+  // 字是 2 倍、列宽按 1.25 倍算 —— 靠「标签只有 4 个字」才没露馅。
+  testWidgets('系统字号 200% + 应用标准 ⇒ 列宽按 2 倍算（不是 1.25）', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1247, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(shell(textScale: 2.0));
+    await tester.pumpAndSettle();
+
+    final double width = tester
+        .getSize(find.byKey(const ValueKey<String>('nav-overview')))
+        .width;
+    expect(
+      width,
+      AppNavigation.navWidth(scale: 2.0, availableWidth: 1247),
+      reason: '传的必须是 max(系统, 应用)，不是应用档位',
+    );
+    expect(
+      width,
+      greaterThan(AppNavigation.navWidth(scale: 1.25, availableWidth: 1247)),
+      reason: '若按 1.25 算就会等于 239 —— 字放大 2 倍、列却按 1.25 算',
     );
   });
 

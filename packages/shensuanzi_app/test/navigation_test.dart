@@ -166,4 +166,49 @@ void main() {
       expect(AppNavigation.indicatorWidth, 3, reason: '高亮竖条是三重信号之一');
     });
   });
+
+  // ============================================================ 实际列宽
+  //
+  // 2026-11-14 用户真机（系统 200% + 应用超大）：列宽 440 逻辑，而标签只要 143
+  // ⇒ **列内 68% 是空的**，导航仍吃掉 35% 横向空间。裁定「甲」：
+  // 列宽 = 基准宽 + **内容增长量**（余量固定，不跟着缩放放大）。
+  group('导航实际列宽（navWidth）', () {
+    test('1.0 档：等于基准宽 220（观感不变）', () {
+      expect(AppNavigation.contentWidthFor(scale: 1.0), 104);
+      expect(AppNavigation.navWidth(scale: 1.0, availableWidth: 1247), 220);
+    });
+
+    test('2.0 档：296 而不是 440（旧式子的空列被一起放大了）', () {
+      // 改坏点：navWidth 退回 `widthFor(scale)` ⇒ 这条红（440）
+      expect(AppNavigation.contentWidthFor(scale: 2.0), 180);
+      expect(
+        AppNavigation.navWidth(scale: 2.0, availableWidth: 1247),
+        296,
+        reason: '220 + (180 − 104)：只让内容那 76 增长',
+      );
+      expect(
+        AppNavigation.navWidth(scale: 2.0, availableWidth: 1247),
+        lessThan(AppNavigation.widthFor(scale: 2.0)),
+        reason: '必须比线性放大的旧值窄 —— 否则等于没改',
+      );
+    });
+
+    test('窗口占比上限仍兜底（分屏 480 逻辑宽 ⇒ 40% = 192）', () {
+      expect(AppNavigation.navWidth(scale: 2.0, availableWidth: 480), 192);
+    });
+
+    test('极窄窗口退到 iconOnlyWidth（有总比没有强）', () {
+      expect(AppNavigation.navWidth(scale: 2.0, availableWidth: 100), 60);
+    });
+
+    test('最长标签不超过 labelMaxChars（否则列宽算小了会截断）', () {
+      for (final NavDestination destination in AppNavigation.destinations) {
+        expect(
+          destination.label.length,
+          lessThanOrEqualTo(AppNavigation.labelMaxChars),
+          reason: '「${destination.label}」比 labelMaxChars 长 —— 改导航结构时忘了同步列宽公式',
+        );
+      }
+    });
+  });
 }
