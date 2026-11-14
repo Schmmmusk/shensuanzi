@@ -58,6 +58,7 @@ export 'src/db/read_failures.dart'
 
 // 工具
 export 'src/util/ids.dart' show newId;
+export 'src/util/in_store.dart' show effectiveInStoreOf;
 export 'src/util/money.dart' show Money;
 
 // 用户可见文本的规范（**项目级**：core / host / app 三层共用 —— §CV·十三 归类修正）

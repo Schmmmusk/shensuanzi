@@ -54,6 +54,12 @@ const double narrowBase = 480;
 /// 流水页（单号 + 类型 + 金额同排）的基准断点 —— 比列表行宽，因为列更多。
 const double flowNarrowBase = 600;
 
+/// **两张卡片并排**的基准断点（提案 61：库存页缺货榜 + 压货榜）。
+///
+/// 一张榜至少要约 340 逻辑像素才不至于把「名称 + 金额」挤成两行
+/// ⇒ 两张 + 间距 ≈ 720。低于它（或字号放大到装不下）就上下叠。
+const double twoColumnBase = 720;
+
 /// 金额列基准宽度（商品列表）。
 const double amountColumnBase = 96;
 

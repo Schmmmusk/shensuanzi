@@ -1237,4 +1237,86 @@ void main() {
       reason: '必须说真实总数 —— 停在 200 会让用户以为后 50 个商品不存在',
     );
   });
+
+  // ------------------------------------------- 缺货榜（提案 61，2026-11-13）
+  //
+  // 页面级的接线断言（判定逻辑本体在 `test/shortage_test.dart`，
+  // 卡片摆放在 `test/low_stock_card_test.dart`）：
+  //   ① 默认**收起**（一行摘要）—— 展开的榜会把搜索框挤出第一屏；
+  //   ② 点开能看到「该补货」/「已超卖」两段；
+  //   ③ 手机端的**未同步**会让「不缺」变成「缺」—— 与库存页大字同口径。
+  group('缺货榜（提案 61）', () {
+    testWidgets('默认收起，点开出现该补货行（安全库存 5 / 账面 0）', (WidgetTester tester) async {
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('low-stock-card')), findsNothing);
+      expect(find.byKey(const Key('low-stock-expand')), findsOneWidget);
+      expect(
+        find.textContaining('缺货 / 超卖：1 个商品'),
+        findsOneWidget,
+        reason: '收起状态也要报个数 —— 不然「收起」等于「藏起来」',
+      );
+
+      await tester.ensureVisible(find.byKey(const Key('low-stock-expand')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('low-stock-expand')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('low-stock-card')), findsOneWidget);
+      expect(
+        find.byKey(Key('low-stock-restock-$productId')),
+        findsOneWidget,
+        reason: '账面 0、安全库存 5 ⇒ 该补货（缺口 5）',
+      );
+      expect(find.byKey(const Key('low-stock-restock-header')), findsOneWidget);
+
+      await tester.ensureVisible(find.byKey(const Key('low-stock-collapse')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('low-stock-collapse')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('low-stock-card')), findsNothing);
+    });
+
+    testWidgets('负库存在「已超卖」段（不是「该补货」段）', (WidgetTester tester) async {
+      buy(1);
+      sell(5); // 账面 −4 ⇒ 在店可售 −4
+
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('low-stock-expand')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('low-stock-expand')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(Key('low-stock-oversold-$productId')), findsOneWidget);
+      expect(find.byKey(Key('low-stock-restock-$productId')), findsNothing);
+      // 缺口 = 安全库存 5 − (−4) = 9（补 4 件只到 0）
+      expect(find.textContaining('补 9 件'), findsOneWidget);
+    });
+
+    testWidgets('手机端未同步让「不缺」变「缺」（与大字同口径）', (WidgetTester tester) async {
+      buy(8); // 账面 8 > 安全库存 5 ⇒ 桌面不缺
+      enqueueSale('q-low-stock', productId, 4); // 离线卖 4 ⇒ 在店可售 4
+
+      // 桌面：unsynced ≡ 0 ⇒ 8 > 5 ⇒ 不进榜（只剩「没有要补的货」）
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('low-stock-expand')), findsNothing);
+
+      // 手机：带 stockDelta ⇒ 在店可售 4 ≤ 5 ⇒ 缺货
+      await tester.pumpWidget(
+        page(
+          stockDelta: StockDelta(db: db, queue: SyncQueueDao(db)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('low-stock-expand')), findsOneWidget);
+      expect(
+        find.textContaining('缺货 / 超卖：1 个商品'),
+        findsOneWidget,
+        reason: '同一份账面数据，手机把未同步算进去才与库存页大字一致',
+      );
+    });
+  });
 }

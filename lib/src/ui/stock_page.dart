@@ -44,42 +44,19 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'document_detail_page.dart';
 import 'export_button.dart';
 import 'list_scaffold.dart';
+import 'low_stock_card.dart';
 import 'opening_stock_page.dart';
+import 'scaled.dart';
+import 'shortage.dart';
 import 'stock_top.dart';
 import 'product_form_dialog.dart';
 import 'search_field_chips.dart';
 import 'stock_flow_page.dart';
 import 'card_rows_sliver.dart';
 
-/// **在店可售的唯一公式**（F17-b 甲，2026-10-26 用户裁定）。
-///
-/// ```
-/// 在店可售 = 账面库存 + 本地未同步影响 − 送货在途
-/// ```
-///
-/// ## 为什么必须是**一个**顶层函数
-///
-/// 这个数字有三处消费者：**行内大字**、**负/低库存判定**（颜色 + 「该补货了」）、
-/// **列表排序**。三处若各算各的，就会出现用户无法理解的自相矛盾：
-///
-/// - 只改大字 ⇒ 大字写 34（低于安全库存 5）却仍是黑色、不报补货；
-/// - 只改大字 ⇒ A 显示 3、B 显示 5，A 却排在 B 前面；
-/// - 只改大字 ⇒ 大字 34、下方叠加行算出 36（两边算式不同）。
-///
-/// 所以公式只在这里写一次，三处一律调它。用户 `docs/reply.md` 的原话：
-/// 「抽一个统一的函数，不要各处算 —— 将来加字段或改公式时一定会漏」。
-///
-/// ⚠️ **放顶层而不是 `State` 里的闭包**：`_StockRow` 是 `StatelessWidget`，
-/// 只拿到本行的三个数（`book` / `unsynced` / `inTransit`），拿不到页面的 map，
-/// 用不了 `State` 的闭包。顶层纯函数两边都能调，且可单独测。
-///
-/// ⚠️ 桌面端 `unsynced` 恒为 `0`（`stockDelta == null`）⇒ 这里与旧口径
-/// `book - inTransit` **逐字相同**，桌面零回归。
-int effectiveInStoreOf({
-  required int book,
-  required int unsynced,
-  required int inTransit,
-}) => book + unsynced - inTransit;
+// 在店可售的公式**只在 core 一处**：`shensuanzi_core/lib/src/util/in_store.dart`
+// 的 `effectiveInStoreOf`（2026-11-13 提案 61 决策 61-⑦ 下沉）。
+// ⚠️ 本文件**不许**再写一份 —— 机械保证：`test/in_store_single_source_test.dart`。
 
 /// 库存查询页。
 class StockPage extends StatefulWidget {
@@ -199,6 +176,20 @@ class _StockPageState extends State<StockPage> {
   /// 压货榜是否展开（默认收起 —— 见 build 里那段注释）
   bool _showTopAll = false;
 
+  /// 缺货榜是否展开（提案 61）。**默认收起**，理由与压货榜逐字相同：
+  /// 展开的榜有半屏高，会把搜索框挤出第一屏 —— 而库存页 95% 的用法是
+  /// 「搜一个商品看还有多少」。
+  ///
+  /// ⚠️ 但**引导卡与「暂时都不缺」不受它影响**（那两种形态只有两三行，
+  /// 而且正是新用户需要看见的）。
+  bool _showLowAll = false;
+
+  /// 库存聚合的原始 map（账面 / 成本余值 / 是否进过货）。
+  ///
+  /// 缺货榜要用 `hasInbound`（判「从没进过货」），而 `_book` / `_cost` /
+  /// `_inbound` 是有损拆分 ⇒ 直接留一份原表，避免再扫一次库。
+  late Map<String, StockAgg> _agg;
+
   /// **临时埋点（2026-11-09「甲」）**：本次进入的重建 / 聚合成本账。
   ///
   /// 恒 `null` 除非编了 `--dart-define=SSZ_PAGE_COST_TRACE=true`
@@ -250,6 +241,7 @@ class _StockPageState extends State<StockPage> {
     final Map<String, StockAgg> agg = widget.queries.stockAggregates();
     aggWatch?.stop();
     _pageCost?.aggregates(aggWatch?.elapsedMicroseconds ?? 0);
+    _agg = agg;
     _book = <String, int>{
       for (final MapEntry<String, StockAgg> e in agg.entries)
         e.key: e.value.quantity,
@@ -360,6 +352,157 @@ class _StockPageState extends State<StockPage> {
     final PageCostTrace? trace = _pageCost;
     if (trace != null) unawaited(trace.finish());
     super.dispose();
+  }
+
+  /// 两张榜的摆放（提案 61 §四 决策 3 甲）。
+  ///
+  /// | 条件 | 布局 |
+  /// |---|---|
+  /// | 宽屏 | **并排**（缺货在前、压货在后），各占一半 |
+  /// | 窄屏 / 大字号 | **上下叠**（缺货在上） |
+  ///
+  /// 断点**随缩放派生**（`scaled.dart` 的 `twoColumnBase`）：200% 字号下
+  /// 1440 逻辑像素也只装得下一张卡；写死断点会让两张卡互相挤压
+  /// （§CV·八十五 那批的教训）。
+  Widget _boards(ThemeData theme, ShortageSummary lowStock) {
+    final bool showLow = lowStock.isVisible;
+    final bool showTop = !_stockTop.isEmpty;
+    if (!showLow && !showTop) return const SizedBox.shrink();
+
+    final Widget low = showLow
+        ? _lowStockBlock(theme, lowStock)
+        : const SizedBox.shrink();
+    final Widget top = showTop
+        ? _stockTopBlock(theme)
+        : const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final bool twoUp = !isNarrowOf(
+            context,
+            constraints.maxWidth,
+            base: twoColumnBase,
+          );
+          if (!showLow || !showTop) return showLow ? low : top;
+          if (!twoUp) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[low, const SizedBox(height: 12), top],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(child: low),
+              const SizedBox(width: 12),
+              Expanded(child: top),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// 缺货榜的两种形态：**一行摘要（默认收起）** 或完整卡。
+  ///
+  /// ⚠️ 引导卡与「暂时都不缺」**永远展开** —— 它们只有两三行，不挤搜索框，
+  /// 而且正是新用户（决策 4）需要看见的那句话；藏在一次点击后面等于没做。
+  Widget _lowStockBlock(ThemeData theme, ShortageSummary summary) {
+    final bool alwaysExpanded = summary.showGuide || !summary.hasAny;
+    if (alwaysExpanded || _showLowAll) {
+      return Column(
+        key: const Key('low-stock-expanded'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          LowStockCard(summary: summary, mobileShell: widget.mobileShell),
+          if (summary.hasAny)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: const Key('low-stock-collapse'),
+                onPressed: () => setState(() => _showLowAll = false),
+                icon: const Icon(Icons.expand_less, size: 18),
+                label: const Text('收起缺货榜'),
+              ),
+            ),
+        ],
+      );
+    }
+    return _lowStockSummaryRow(theme, summary);
+  }
+
+  /// 收起状态的缺货榜：**一行摘要 + 展开**（与压货榜同款，不画横条）。
+  Widget _lowStockSummaryRow(ThemeData theme, ShortageSummary summary) {
+    return OutlinedButton(
+      key: const Key('low-stock-expand'),
+      onPressed: () => setState(() => _showLowAll = true),
+      style: OutlinedButton.styleFrom(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(Icons.expand_more, size: 18),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '缺货 / 超卖：${summary.totalCount} 个商品',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '超卖 ${summary.oversoldCount} 个 · 该补货 ${summary.restockCount} 个，点开看是哪些',
+            style: TextStyle(
+              height: 1.6,
+              color: theme.textTheme.bodySmall?.color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 压货榜的两种形态：**一行摘要（默认收起）** 或完整卡。
+  ///
+  /// 2026-11-01（用户裁定 A1）：完整压货榜从概览页搬到这里，放最上面是有意的 ——
+  /// 概览那个「查看全部」按钮跳过来时，「跳到库存页顶部」就等于「定位到压货榜」。
+  ///
+  /// ⚠️ 但**默认收起**（2026-11-01 真机，用户当场指出）：10 行榜展开时有半屏高，
+  /// 把**搜索框挤到了它下面** —— 而库存页 95% 的用法是「搜一个商品看还有多少」，
+  /// 搜索框必须留在第一屏。收起后只剩一行摘要，「定位到压货榜」仍然成立
+  ///（那一行就是榜），要细节点一下展开。
+  Widget _stockTopBlock(ThemeData theme) {
+    // ⚠️ `_stockTop.isEmpty` 是「行 + 待校准 + 负成本」三者皆空，
+    // 所以「非空但一行都没有」（只有待校准/负成本计数）是可能的 ——
+    // 那种情况收起状态没有第一名可写，直接展开完整卡。
+    if (_showTopAll || _stockTop.rows.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          StockTopCard(summary: _stockTop, mobileShell: widget.mobileShell),
+          if (_stockTop.rows.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: const Key('stock-top-collapse'),
+                onPressed: () => setState(() => _showTopAll = false),
+                icon: const Icon(Icons.expand_less, size: 18),
+                label: const Text('收起压货榜'),
+              ),
+            ),
+        ],
+      );
+    }
+    return _stockTopSummaryRow(theme);
   }
 
   /// 收起状态的压货榜：**一行摘要 + 展开**。
@@ -547,6 +690,19 @@ class _StockPageState extends State<StockPage> {
     final Map<String, int> openingPending =
         widget.pendingMarks?.openingQuantityByProduct() ??
         const <String, int>{};
+
+    // 缺货榜（提案 61 §五）：**零新增查询** —— 全量商品 + 三张现成 map
+    // （`_agg` / 在途 / 未同步）在纯 Dart 里 join，缺失键按 0。
+    //
+    // ⚠️ 传入的是**全量 `all`**，不是下面那份 `shown` —— 后者已按 `hasFlow`
+    // 过滤（只留有流水的），拿它算会把「刚建档、设了安全库存、还没进货」
+    // 那类**最紧急**的商品整类漏掉（提案 §三 洞 1）。
+    final ShortageSummary lowStock = computeShortage(
+      products: all,
+      agg: _agg,
+      inTransit: inTransit,
+      unsynced: unsyncedByProduct,
+    );
     // 搜索：按 `_searchField` 决定在哪儿找（默认三路全找）
     final List<Product> matched = _searchText.isEmpty
         ? all
@@ -649,45 +805,10 @@ class _StockPageState extends State<StockPage> {
                       ],
                     ),
 
-                    // 2026-11-01（用户裁定 A1）：完整压货榜从概览页搬到这里。
-                    //
-                    // 放**最上面**是有意的：概览那个「查看全部」按钮跳过来时，
-                    // 「跳到库存页顶部」就等于「定位到压货榜」。
-                    //
-                    // ⚠️ 但**默认收起**（2026-11-01 真机，用户当场指出）：
-                    // 10 行榜展开时有半屏高，把**搜索框挤到了它下面** ——
-                    // 而库存页 95% 的用法是「搜一个商品看还有多少」，搜索框必须留在
-                    // 第一屏。收起后只剩一行摘要，「定位到压货榜」仍然成立
-                    //（那一行就是榜），要细节点一下展开。
-                    if (!_stockTop.isEmpty) ...<Widget>[
-                      const SizedBox(height: 12),
-                      // ⚠️ `_stockTop.isEmpty` 是「行 + 待校准 + 负成本」三者皆空，
-                      // 所以「非空但一行都没有」（只有待校准/负成本计数）是可能的 ——
-                      // 那种情况收起状态没有第一名可写，直接展开完整卡。
-                      if (_showTopAll || _stockTop.rows.isEmpty)
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: <Widget>[
-                            StockTopCard(
-                              summary: _stockTop,
-                              mobileShell: widget.mobileShell,
-                            ),
-                            if (_stockTop.rows.isNotEmpty)
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: TextButton.icon(
-                                  key: const Key('stock-top-collapse'),
-                                  onPressed: () =>
-                                      setState(() => _showTopAll = false),
-                                  icon: const Icon(Icons.expand_less, size: 18),
-                                  label: const Text('收起压货榜'),
-                                ),
-                              ),
-                          ],
-                        )
-                      else
-                        _stockTopSummaryRow(theme),
-                    ],
+                    // 两张榜（提案 61 §四 决策 3 甲）：**缺货榜在前、压货榜在后**，
+                    // 宽屏并排、窄屏（或大字号）上下叠。缺货要行动，压货只是知晓 ——
+                    // 目标用户的注意力在上面。
+                    _boards(theme, lowStock),
                     const SizedBox(height: 4),
                     Text(
                       '「在店可售」= 账面库存 − 送货在途；低库存按它判断。',

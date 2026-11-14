@@ -38,6 +38,8 @@ void main() {
     Future<BackupOutcome> Function()? onBackupNow,
     bool mobileShell = false,
     QueryDao? queries,
+    ProductService? products,
+    StockDelta? stockDelta,
     PendingMarks? pendingMarks,
     void Function(String destinationId)? onNavigate,
     VoidCallback? onPriceLookup,
@@ -53,6 +55,9 @@ void main() {
         mobileShell: mobileShell,
         // #32：经营速览三卡
         queries: queries,
+        // 提案 61：缺货榜（商品全集 + 手机端未同步）
+        products: products,
+        stockDelta: stockDelta,
         pendingMarks: pendingMarks,
         onNavigate: onNavigate,
         onPriceLookup: onPriceLookup,
@@ -560,7 +565,10 @@ void main() {
       await tester.pumpWidget(page(queries: q));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('overview-gross-margin-chart')), findsOneWidget);
+      expect(
+        find.byKey(const Key('overview-gross-margin-chart')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const Key('overview-gross-margin-summary')),
         findsOneWidget,
@@ -1447,6 +1455,94 @@ void main() {
         greaterThanOrEqualTo(8),
         reason: '图表卡与欠款卡贴在一起了',
       );
+    });
+  });
+
+  // ===== 提案 61：缺货榜（2026-11-13）=====
+  //
+  // 这里钉的是**概览页特有的两条**：
+  //   ① 它**不依赖任何单据** —— 空库（`hasAnyDocument() == false`）时
+  //      `_load()` 返回 null、经营区整块不显示，但缺货榜/引导卡必须还在
+  //      （决策 4 要照顾的正是「刚装上软件、还没开过单」的人）；
+  //   ② 全都没设安全库存 ⇒ 出引导卡（不是空白卡）。
+  group('缺货榜（提案 61）', () {
+    /// 空库 + [products] 个商品；返回概览页可用的两个依赖。
+    (QueryDao, ProductService) emptyShop(List<Product> products) {
+      useLocalSqlite();
+      final Directory tmp = Directory.systemTemp.createTempSync(
+        'shensuanzi_overview_lowstock_',
+      );
+      final Db local = Db.open(p.join(tmp.path, 'shensuanzi.db'));
+      addTearDown(() {
+        local.close();
+        tmp.deleteSync(recursive: true);
+      });
+      final ProductService service = ProductService(local);
+      for (final Product product in products) {
+        ProductDao(local).insert(product);
+      }
+      return (QueryDao(local), service);
+    }
+
+    Product product(String id, {String name = '大米', int safety = 0}) {
+      const int t = 1700000000000;
+      return Product(
+        id: id,
+        code: 'P-$id',
+        name: name,
+        unit: '袋',
+        costPrice: 300,
+        safetyStock: safety,
+        createdAt: t,
+        updatedAt: t,
+      );
+    }
+
+    /// 把缺货卡滚进视口（`ListView` 只挂载可见项）。
+    ///
+    /// ⚠️ **必须显式指定 `scrollable`**：不传的话 [WidgetTester.scrollUntilVisible]
+    /// 会拿 `find.byType(Scrollable)` 去 `widget<Scrollable>()`，而概览页里
+    /// 「你的数据在」那张卡的 `SelectableText` **自带一个 `EditableText` 的
+    /// Scrollable** ⇒ 匹配到两个 ⇒ `Bad state: Too many elements`
+    /// （2026-11-13 实测红：00:32 那两条「缺货榜（提案 61）」用例）。
+    /// `.first` 取到的是外层 `ListView`（先序遍历，祖先在前）。
+    Future<void> scrollToCard(WidgetTester tester, Key key) =>
+        tester.scrollUntilVisible(
+          find.byKey(key),
+          200,
+          scrollable: find.byType(Scrollable).first,
+        );
+
+    testWidgets('空库也显示：全都没设安全库存 ⇒ 引导卡', (WidgetTester tester) async {
+      final (QueryDao queries, ProductService products) = emptyShop(<Product>[
+        product('a'),
+        product('b'),
+      ]);
+
+      await tester.pumpWidget(page(queries: queries, products: products));
+      await tester.pumpAndSettle();
+      // 概览页是 ListView：卡片可能在首屏之下（`ListView(children:)` 只挂载可见项）
+      await scrollToCard(tester, const Key('low-stock-card'));
+
+      expect(
+        find.byKey(const Key('low-stock-guide')),
+        findsOneWidget,
+        reason: '空库时经营区整块不显示，但「去设安全库存」这句话必须看得见',
+      );
+    });
+
+    testWidgets('设了安全库存但没货 ⇒ 该补货行（空库分支）', (WidgetTester tester) async {
+      final (QueryDao queries, ProductService products) = emptyShop(<Product>[
+        product('a', safety: 5),
+      ]);
+
+      await tester.pumpWidget(page(queries: queries, products: products));
+      await tester.pumpAndSettle();
+      await scrollToCard(tester, const Key('low-stock-card'));
+
+      expect(find.byKey(const Key('low-stock-card')), findsOneWidget);
+      expect(find.byKey(const Key('low-stock-restock-a')), findsOneWidget);
+      expect(find.byKey(const Key('low-stock-guide')), findsNothing);
     });
   });
 }

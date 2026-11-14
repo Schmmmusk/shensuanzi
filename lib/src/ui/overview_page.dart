@@ -21,9 +21,11 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'balance_bars.dart';
 import 'gross_margin_chart.dart';
+import 'low_stock_card.dart';
 import 'month_compare.dart';
 import 'notice.dart';
 import 'revenue_chart.dart';
+import 'shortage.dart';
 import 'stock_top.dart';
 import 'paint_first.dart';
 
@@ -80,6 +82,8 @@ class OverviewPage extends StatefulWidget {
     this.locationNote,
     this.mobileShell = false,
     this.queries,
+    this.products,
+    this.stockDelta,
     this.pendingMarks,
     this.onNavigate,
     this.onPriceLookup,
@@ -117,6 +121,19 @@ class OverviewPage extends StatefulWidget {
   /// **#32（2026-10-17 裁定甲）**：聚合查询（手机壳 = 镜像实例化，与
   /// stock_page 同源 —— app.dart 装配）。`null` = 不显示经营卡（库未开）。
   final QueryDao? queries;
+
+  /// **提案 61**：缺货榜的商品全集（`listForExport(active: true)`）。
+  ///
+  /// ⚠️ 必须**不分页**：概览页要算出「第 201 个商品也缺货」，
+  /// `findAll()` 默认 `limit: 200` 会让它静默消失（2026-10-27 同源事故）。
+  /// `null` = 不显示缺货榜（库未开 / 测试不传）。
+  final ProductService? products;
+
+  /// **提案 61 决策 61-⑥**：本地未同步影响（手机壳才有；桌面 `null`）。
+  ///
+  /// 库存页早就在用它（「在店可售」），概览页从前没有 ⇒ 同一台手机上
+  /// 「库存页说缺货、概览页说不缺」，同一个指标两套公式。
+  final StockDelta? stockDelta;
 
   /// **#32（裁定④）**：手机壳「有 N 条未同步」的数据源（诚实口径 ——
   /// 镜像算不出未同步的金额，只如实报条数）。`null` = 不显示该行。
@@ -164,10 +181,43 @@ class _OverviewPageState extends State<OverviewPage> {
   /// 现建页面」，不是 `IndexedStack`（`app_shell.dart` 的 `appShellPage`）。
   _OverviewData? _data;
 
+  /// 缺货榜（提案 61）。**不进 `_load()`**：那张榜不依赖任何单据
+  /// （判据是商品档案 + 库存流水 + 安全库存），而 `_load()` 在
+  /// `hasAnyDocument() == false` 时整块返回 `null` —— 缺货榜若挂在里面，
+  /// 「刚装上软件、建了商品、设了安全库存」的店就永远看不到它
+  /// （那恰好是决策 4 引导卡要照顾的人）。
+  ShortageSummary _lowStock = ShortageSummary.none;
+
   @override
   void initState() {
     super.initState();
     _data = _load();
+    _loadLowStock();
+  }
+
+  /// 概览页缺货榜的数据源（提案 61 §六 决策 甲：复用现有查询，约 +130 ms）。
+  ///
+  /// 与 `_load()` 分开的理由见 [_lowStock] 的注释；刷新时机与 `_data` 一致
+  /// （`initState` 一次 + `queries` / 库版本 / 未同步队列变化时重算）。
+  ///
+  /// ⚠️ 回退判据（写死在这里，防止将来「感觉慢就撤功能」）：概览页首帧
+  /// **连续 3 次冷启动** > 600 ms，或这两条聚合计时**连续 3 次** > 200 ms
+  /// ⇒ 才按提案 §六 的「丙」（只显示缺货数量 + 跳转）调整，
+  /// 且**标题、说明、交互要一起改**（只隐藏明细会让用户找不到那 N 个是什么）。
+  void _loadLowStock() {
+    final QueryDao? q = widget.queries;
+    final ProductService? products = widget.products;
+    if (q == null || products == null) {
+      _lowStock = ShortageSummary.none;
+      return;
+    }
+    // ⚠️ `listForExport`（不分页）而不是 `findAll()`（默认 limit 200）
+    _lowStock = computeShortage(
+      products: products.listForExport(active: true),
+      agg: q.stockAggregates(),
+      inTransit: q.inTransitByProduct(),
+      unsynced: widget.stockDelta?.unsyncedDelta() ?? const <String, int>{},
+    );
   }
 
   @override
@@ -177,8 +227,11 @@ class _OverviewPageState extends State<OverviewPage> {
     // 2026-11-01：主机**落库了**手机推上来的数据也要重算 —— 否则「今日 / 应收 / 应付」
     // 停在旧数字，用户会以为没同步（真机报的就是这个）。
     if (oldWidget.queries != widget.queries ||
-        oldWidget.remoteVersion != widget.remoteVersion) {
+        oldWidget.remoteVersion != widget.remoteVersion ||
+        oldWidget.products != widget.products ||
+        oldWidget.stockDelta != widget.stockDelta) {
       _data = _load();
+      _loadLowStock();
     }
   }
 
@@ -413,6 +466,13 @@ class _OverviewPageState extends State<OverviewPage> {
         if (widget.onNavigate != null && data == null) ...<Widget>[
           const SizedBox(height: 12),
           _entriesCard(theme),
+        ],
+        // 提案 61 决策 4：**空库也要能看见缺货榜 / 引导卡**。
+        // 这一条不依赖任何单据 —— 刚建了商品、设了安全库存还没开过单的店，
+        // 正是「该补货」和「去设安全库存」这两句话最该出现的时候。
+        if (data == null && _lowStock.isVisible) ...<Widget>[
+          const SizedBox(height: 12),
+          _lowStockCard(),
         ],
       ],
     );
@@ -693,6 +753,15 @@ class _OverviewPageState extends State<OverviewPage> {
             mobileShell: widget.mobileShell,
           ),
         ],
+        // 提案 61 决策 3 甲：**缺货榜在压货榜上面** —— 缺货要行动（补货），
+        // 压货只是知晓（钱压着），中老年店主的注意力在上面。
+        // 两张**独立**的卡（否决「合成一张卡」的丙案：一张卡两套颜色两套口径，
+        // 读起来要来回切上下文）。概览这里只截前 3 行、不加收起按钮 ——
+        // 收起省不了多少，而「查看全部」已经把出口给足了。
+        if (_lowStock.isVisible) ...<Widget>[
+          const SizedBox(height: 12),
+          _lowStockCard(),
+        ],
         // 2026-11-01（用户裁定 A1）：完整压货榜**搬到库存页**，概览只留前三名。
         //
         // 概览回答「今天要干什么」，压货榜回答「去库存看看」—— 后者本来就
@@ -721,6 +790,19 @@ class _OverviewPageState extends State<OverviewPage> {
       ],
     );
   }
+
+  /// 概览页的缺货榜：**只显示前 3 行**（与压货榜同款），出口是库存页。
+  ///
+  /// 不另写「精简版」渲染 —— `LowStockCard` 只有一份实现，这里只截行
+  /// （[ShortageSummary.limitTo] **只截行、不动计数**，按钮上要写真实的
+  /// 「查看全部 N 个」）。
+  Widget _lowStockCard() => LowStockCard(
+    summary: _lowStock.limitTo(3),
+    mobileShell: widget.mobileShell,
+    onOpenAll: widget.onNavigate == null
+        ? null
+        : () => widget.onNavigate!('stock'),
+  );
 
   Widget _bizCard(
     ThemeData theme, {

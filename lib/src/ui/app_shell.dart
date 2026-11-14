@@ -366,6 +366,11 @@ Widget appShellPage(
       mobileShell: shell.mobileShell,
       // #32（裁定甲）：经营速览三卡 —— queries 手机壳 = 镜像（同源先例）
       queries: shell.queries,
+      // 提案 61（2026-11-13）：缺货榜。products 必须传**服务**（不是 DAO）——
+      // 它带 `listForExport`（不分页），缺货榜不能漏掉第 201 个商品。
+      // stockDelta 与库存页同源：桌面 null ⇒ 未同步 ≡ 0 ⇒ 零回归。
+      products: shell.products,
+      stockDelta: shell.stockDelta,
       pendingMarks: shell.pendingMarks,
       onNavigate: onNavigate,
       // ③ 查价：只读页（商品 + 账面库存），不动库存页

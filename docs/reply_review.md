@@ -3532,6 +3532,7 @@ selfcheck_manual 8 ✓ / import_guard 40 文件 0 ✓
 | 4 | **Android（AH-B/C）** | 客户端镜像 + **重建而非迁移**（`mirror_schema_version`） | **依赖 #2（✅ 已落地）** | §AH / `schema_migration.md`「客户端镜像」 |
 | ↑ | **⚠️ 构建阻塞已解除（2026-10-10）** | Gradle wrapper 的 `PKIX` 根因 = **Watt Toolkit 对 github.com 中间人**（`services.gradle.org` 307 → github）；已换腾讯云镜像 ⇒ **实测 16 秒下完、Gradle 8.14 启动**，依赖缓存已预热（`~/.gradle/caches` 1.9 GB）⇒ **现在可以真正出 APK 了** | — | 本文件 §CV·二十一 |
 | 5 | **D2b（主数据本地建档 + UI）** | ✅ **接线已落地**（§CV·八，2026-10-09）：8 文件 + 7 夹具；`MasterDataPolicy` 按能力门控 + 表单走 `MasterDataSink`（手机 = 乐观写镜像 + 入队）；`stock_page` 的期初改由 `mobileShell` 管。✅ **§CV·九 收尾两项**：`mobile()` 页面断言 ×3（缺口 1）+ 期初 `assert` 语义门（缺口 2）。✅ **① 已落地（2026-10-10，§CV·二十）**：`PendingMarks`（core）+ 商品 / 往来 / 账户三个列表各加一行浅灰「待同步」+ 3 组 widget 断言 ⇒ **D2b 闭环**。⚠️ 原「剩余」的另一项（失败明细关联引用 id）**按裁定移出 D2b** ⇒ 见 §AR·二 第 **24** 行 | — | **§CV·八 / §CV·九 / §CV·二十** |
+| ~~6~~ | ~~**缺货榜（提案 61）**~~ | ✅ **已落地（2026-11-13，§八十五）**：core 新 `util/in_store.dart`（在店可售下沉、UI 那份删净）；`shortage.dart` 纯函数（超卖与安全库存解耦、缺口补到安全库存、金额用参考进价）；`low_stock_card.dart`（超卖置顶 + 该补货 + 引导卡）；概览页加 `products`/`stockDelta` 并插卡在压货榜之上；库存页两榜并排（窄屏上下叠）+ 默认收起。**零新增 SQL、零 schema** | — | **§八十五** |
 
 > ⏱️ **优先级指令（2026-10-03，用户）**：**先把 v3 搞完，再说退货**（退货留在 §AR·三 候选不动）；
 > **「时间不多了，得尽快出安卓版」** —— v3 排在 Android 前的理由因此更硬：
@@ -20105,4 +20106,103 @@ core **863** · app **515** · host **229** · root **533**（1 条按平台跳�
 
 #### ⑥ 下一步
 
-提案 **61（缺货榜）** —— 7 个决策点仍待确认，未开工。
+提案 **61（缺货榜）** —— 已在下一节落地（§八十五）。
+
+### 八十五、2026-11-13 **提案 61 落地：缺货榜（含在店可售下沉 core）**
+
+用户裁定见 `docs/reply.md`（63 与 61 同批），指令「同意，可以开始」。
+按 7 个决策点逐条落地 —— ① 乙 ② 要（先修候选范围）③ 甲 ④ 乙 ⑤ 甲 ⑥ 要 ⑦ 要。
+
+#### ① 落地清单
+
+| 文件 | 改动 |
+|---|---|
+| `core/lib/src/util/in_store.dart`（新） | `effectiveInStoreOf` **整体搬迁**（不是 re-export）；文件头写明「为什么现在在 core」与「UI 不许再有一份」 |
+| `core/lib/shensuanzi_core.dart` | 导出 `effectiveInStoreOf` |
+| `lib/src/ui/stock_page.dart` | **删掉**本地那份公式（只留一句指针注释）；`_agg` 留一份 `stockAggregates()` 原表（缺货榜要 `hasInbound`）；`_boards` 决定两榜布局 |
+| `lib/src/ui/shortage.dart`（新） | `computeShortage` + `ShortageRow` / `ShortageSummary`：超卖与安全库存**解耦**、`gapQty = max(0, safety − inStore)`、金额用 `cost_price`、稳定次级键 |
+| `lib/src/ui/low_stock_card.dart`（新） | 超卖段（红、置顶）+ 该补货段 + 「单价未填」/「从没进过货」两条诚实计数 + 引导卡 + 「查看全部」 |
+| `lib/src/ui/overview_page.dart` | 加 `products` / `stockDelta` 参数；`_lowStock` 独立于 `_load()`（**空库也要显示**）；缺货卡插在压货榜**之上** |
+| `lib/src/ui/app_shell.dart` | 概览装配传 `shell.products` / `shell.stockDelta`（与库存页同源） |
+| `lib/src/ui/scaled.dart` | 新断点 `twoColumnBase = 720`（两卡并排；随字号缩放派生） |
+| `packages/shensuanzi_app/lib/src/manual_content.dart` | 手册「看库存」章补两榜说明（含「金额是估算、以供应商报价为准」） |
+| `README.md` | 能力表两行（库存查询 / 经营图表）同步 |
+| `packaging/用户手册.html` | 重新生成（`make_manual_html.dart`，36269 字节，版本戳 v0.7.9） |
+
+**测试**（新增 4 个入口）：`test/shortage_test.dart`（19 条口径）、
+`test/low_stock_card_test.dart`（8 条摆放/文案）、`test/in_store_single_source_test.dart`（3 条单源 grep）、
+`core/test/in_store_test.dart`（4 条公式）；另在 `test/stock_page_test.dart`（3 条接线）、
+`test/overview_page_test.dart`（2 条空库分支）就地补断言。
+
+#### ② 施工中冒出来的三件事（方案里没写）
+
+1. **中文名称的「按名称排序」是码位序，不是拼音序**：`丙`(U+4E19) < `甲`(U+7532)。
+   我第一版临时脚本按拼音写断言 ⇒ **当场红**（`c,a,b`）。要求本来就是「**稳定**」，
+   不是「符合拼音」⇒ 断言改成「两次一致 + 码位序」，并补一条 ASCII 名称的用例让它读起来不含糊。
+2. **库存页要留一份 `stockAggregates()` 原表**：页面原来只拆成 `_book` / `_cost` / `_inbound`，
+   而缺货榜要 `StockAgg.hasInbound`（且 `_inbound` 是 `Set`）⇒ 留 `_agg`，**零新增查询**。
+3. **缺货榜在库存页也必须默认收起**：2026-11-01 的裁定（压货榜收起是为了保住搜索框）
+   同一条理由对第二张榜**同样成立**，且更严重（两张榜叠起来更挤）。
+   ⇒ 收起只留一行摘要；但**引导卡与「暂时都不缺」永远展开**（只有两三行，
+   而且正是新用户要看的那句话）。
+
+#### ③ 与方案的偏差（都在方案预留的口子里）
+
+- 方案 §五是「`computeShortage` 直接用 `Product` + `StockAgg`，不造 `ShortageCandidate`」
+  —— 落地时仍有一个 `ShortageRow`（**派生视图行**，带 `inStore` / `gapQty` / `everInbound`）。
+  理由：卡片要渲染的是算好的数，把算式搬到 UI 就会变成「第二份公式」。
+  **没有**新增查询模型，`shortageCandidates()` 也确实没做（全案零新 SQL）。
+- `_lowStock` **不进** `_load()`：`_load()` 在 `hasAnyDocument() == false` 时整体返回 `null`，
+  缺货榜若挂在里面，决策 4 要照顾的「刚装上软件、还没开过单」的店永远看不到引导卡。
+  ⇒ 单独一条刷新链（`initState` + `didUpdateWidget` 的同款条件）。
+- 库存页两榜「并排」加了**窄屏回落**：`maxWidth < 720 × 缩放` 时上下叠。方案没写这一层，
+  但 §CV·八十五 那批的教训（200% 字号 + 分屏）要求断点随缩放派生。
+
+#### ④ 门禁
+
+本侧已跑（全部亲跑）：
+
+| 门禁 | 结果 |
+|---|---|
+| `core` `dart run tool/typecheck.dart` | **51 个入口**通过（含新增 `in_store_test`） |
+| `app` `dart run tool/typecheck.dart` | **29 个入口**通过 |
+| 根 `dart run tool/import_guard.dart` | 114 个文件、**0 处缺导入** |
+| 临时脚本真跑 `computeShortage` | 19 条断言 **全部通过** |
+| **反向灵敏度 ×4** | ① 去掉 `+ unsynced` ⇒ #8 红 ② 候选集加回 `safety_stock > 0` ⇒ #18 红 ③ `hasInbound`→`hasLedger` ⇒ #13 红 ④ `gapQty` 改成 `max(0, −inStore)` ⇒ #14 红（四条均已回滚并复绿） |
+| `dart format` | 改动文件已格式化（`-o none` 复查 0 changed） |
+
+**待用户复跑**（本侧跑不了）：`flutter analyze`（0 issues）+ `flutter test` + 各包 `dart test`。
+
+#### ⑤ 没做的（写清理由）
+
+- **没有**为「概览页 +130 ms」做实测：方案 §六 的回退判据要求**同一库、同一机器、冷缓存连续 3 次**，
+  属于真机/虚拟机测量（走 `perf_bench` 那条线），我这边造的临时库量级不对，测了也是假数。
+  判据已写进 `overview_page._loadLowStock` 的注释里，等真机轮次。
+- **没动** `stockTop` 的 `INNER JOIN`（方案 §五「显式不做」），也没给 `stockTop` 加 `LEFT JOIN` 开关。
+- 概览页**没有**为缺货榜加「收起」按钮：它只显示前 3 行，收起省不了多少。
+
+#### ⑥ 下一步
+
+提案 **62（服务绑定收紧 TM-1 甲）** 仍待裁；提案 **60**（保存失败滚动定位）仍待裁。
+#### ⑦ 补 1（2026-11-13 用户复跑）：两条新用例红 —— **我的测试写错，不是产品错**
+
+用户 `flutter test` 报了两条红，都在本节点新增的「缺货榜（提案 61）」组里：
+
+```
+Bad state: Too many elements
+#2  WidgetController.scrollUntilVisible.<anonymous closure>
+#7  test/overview_page_test.dart:1510
+```
+
+根因：`scrollUntilVisible(finder, 200)` **不传 `scrollable`** 时，内部拿
+`find.byType(Scrollable)` 去 `widget<Scrollable>()`；而概览页「你的数据在」那张卡的
+`SelectableText` **自带一个 `EditableText` 的 Scrollable** ⇒ 匹配到两个 ⇒ `single` 抛。
+
+**产品代码零改动**（`Agents.md` 纪律 12：测试红不是改生产代码的授权）。
+修法：显式给外层滚动体 `scrollable: find.byType(Scrollable).first`（先序遍历里
+`ListView` 在 `SelectableText` 之前），并在用例里写清这条前提。
+
+**推广**：`scrollUntilVisible` 在**含可选文本 / 输入框**的页面上必须显式给滚动体 ——
+这跟台账里「`find.text` 会连 `EditableText` 一起匹配」是同一族坑（§BG·补 1 的旁注）：
+Flutter 的可编辑控件在树里**自己就是一个滚动体/文本**，会污染按类型/按文本的查找。
+
