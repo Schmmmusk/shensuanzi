@@ -5,7 +5,8 @@
 /// 导航本身是「画出来的」，但**关于它的几条原则**是硬规则：
 ///
 /// - 所有功能都有**常驻可见的入口**
-/// - 每个入口都**带文字标签**（不能只有图标）
+/// - 每个入口的**文字标签是常态**（只有图标的入口对中老年用户等于不存在）；
+///   仅当窗口窄到**放不下文字**时退为「图标 + 悬停提示」，判据见 [AppNavigation.navLayout]
 /// - 分组清晰、顺序固定；高频动作在最上面
 /// - 开单页是**沉浸模式**（不显示面包屑）
 ///
@@ -51,7 +52,10 @@ class NavDestination {
   /// 稳定标识（用于选中状态、测试、后续的路由键）—— **不要用 label 当键**
   final String id;
 
-  /// 界面上的文字。**必填且非空** —— 只有图标的入口对中老年用户等于不存在
+  /// 界面上的文字。**必填且非空** —— 只有图标的入口对中老年用户等于不存在。
+  ///
+  /// ⚠️ 唯一例外：窗口窄到放不下文字时（[AppNavigation.navLayout] 的 `iconOnly`），
+  /// 界面上不画它，但必须**放进 `Tooltip`** —— 悬停/长按仍能读到。
   final String label;
 
   /// Material 图标名（如 `dashboard`）；Flutter 侧查表映射
@@ -264,17 +268,54 @@ class AppNavigation {
   /// ⚠️ [scale] 必须传**生效缩放**（`uiScaleOf(context)` = max(系统, 应用)），
   /// 不能传应用档位 —— 否则「系统 200% + 应用 100%」时字是 2 倍、列宽按 1 倍算
   /// （§CV·八十五 的判据：尺寸从环境取，不层层传参）。
+  ///
+  /// 只要宽度，用 [navWidth]；**要摆界面用 [navLayout]**（它还会告诉你「该不该退成仅图标」）。
   static double navWidth({
     required double scale,
     required double availableWidth,
     bool compact = false,
+  }) => navLayout(
+    scale: scale,
+    availableWidth: availableWidth,
+    compact: compact,
+  ).width;
+
+  /// **导航列该多宽 + 要不要退成「仅图标」**（2026-11-14 用户裁定「仅图标可以实现」）。
+  ///
+  /// [width] 的算法见 [navWidth]。这里多回答一个问题：
+  /// **窗口窄到连一个标签都装不下时**（`40% 上限 < 内容需求`），与其画一排省略号，
+  /// 不如退成「图标 + 悬停提示」—— 那是 [iconOnly] 为 `true` 的情形。
+  ///
+  /// 判据是**可计算的**，不是感觉：
+  /// - 1247 逻辑宽 + 2.0 档 ⇒ 上限 498 > 内容 180 ⇒ 正常（带文字）；
+  /// - 480 + 2.0 档 ⇒ 上限 192 > 180 ⇒ 仍是文字（挤但够）；
+  /// - 420 + 2.0 档 ⇒ 上限 168 < 180 ⇒ **仅图标**。
+  ///
+  /// ⚠️ 仅图标是**兜底**，不是默认形态：`docs/ui_principles.md` §1.1 的
+  /// 「入口必须带文字」仍然成立，退化的前提是「真的放不下」。所以除了图标，
+  /// 每一项还必须带 `Tooltip`（鼠标悬停/长按可读），见 `app_shell.dart` 的 `_NavItem`。
+  static ({double width, bool iconOnly}) navLayout({
+    required double scale,
+    required double availableWidth,
+    bool compact = false,
   }) {
-    final double grown =
-        widthFor(compact: compact) +
-        (contentWidthFor(scale: scale) - contentWidthFor(scale: 1.0));
-    final double wanted = grown < iconOnlyWidth ? iconOnlyWidth : grown;
+    final double base = widthFor(compact: compact);
+    final double need = contentWidthFor(scale: scale);
     final double cap = availableWidth * maxShareOfWindow;
-    if (wanted <= cap) return wanted;
-    return cap < iconOnlyWidth ? iconOnlyWidth : cap;
+
+    if (cap < need) {
+      // 装不下标签 ⇒ 仅图标。宽度按「竖条 + 间距 + 图标 + 一点余量」算，
+      // 且**不再受 40% 上限约束**：这里是在「工作区几乎没地方」和
+      // 「图标被裁掉一半」之间取舍，选前者（与旧代码「退到 60」同一立场）。
+      final double iconOnly = chromeFixed + iconBase * scale + 8;
+      return (
+        width: iconOnly < iconOnlyWidth ? iconOnlyWidth : iconOnly,
+        iconOnly: true,
+      );
+    }
+
+    final double grown = base + (need - contentWidthFor(scale: 1.0));
+    final double wanted = grown < iconOnlyWidth ? iconOnlyWidth : grown;
+    return (width: wanted <= cap ? wanted : cap, iconOnly: false);
   }
 }

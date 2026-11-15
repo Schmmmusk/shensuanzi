@@ -201,6 +201,40 @@ void main() {
       expect(AppNavigation.navWidth(scale: 2.0, availableWidth: 100), 60);
     });
 
+    test('装不下标签 ⇒ 退成仅图标（iconOnly=true），宽度按图标算', () {
+      // 420 宽 / 2.0 档：40% 上限 168 < 内容需求 180 ⇒ 只剩图标
+      final ({double width, bool iconOnly}) at420 = AppNavigation.navLayout(
+        scale: 2.0,
+        availableWidth: 420,
+      );
+      expect(at420.iconOnly, isTrue);
+      expect(at420.width, 3 + 13 + 12 + 20 * 2.0 + 8, reason: '竖条+间距+图标+余量');
+      expect(at420.width, greaterThan(AppNavigation.iconOnlyWidth));
+    });
+
+    test('挤但还装得下 ⇒ 仍是文字（480 宽 / 2.0 档 ⇒ 192）', () {
+      // 改坏点：把 iconOnly 判据写成「比 widthFor 小就退化」⇒ 这条会红
+      final ({double width, bool iconOnly}) at480 = AppNavigation.navLayout(
+        scale: 2.0,
+        availableWidth: 480,
+      );
+      expect(at480.iconOnly, isFalse);
+      expect(at480.width, 192, reason: '撞 40% 上限，但 192 ≥ 内容 180 ⇒ 标签放得下');
+    });
+
+    test('正常窗口（1247 宽 / 2.0 档）⇒ 296，且不是仅图标', () {
+      final ({double width, bool iconOnly}) big = AppNavigation.navLayout(
+        scale: 2.0,
+        availableWidth: 1247,
+      );
+      expect(big.iconOnly, isFalse);
+      expect(big.width, 296);
+      expect(
+        AppNavigation.navWidth(scale: 2.0, availableWidth: 1247),
+        big.width,
+      );
+    });
+
     test('最长标签不超过 labelMaxChars（否则列宽算小了会截断）', () {
       for (final NavDestination destination in AppNavigation.destinations) {
         expect(

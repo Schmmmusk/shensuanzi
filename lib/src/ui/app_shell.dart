@@ -652,26 +652,32 @@ class _AppShellState extends State<AppShell> {
       // 2026-10-19（用户实测：分屏 + 系统 200% + 应用超大 ⇒ 导航吃掉 92%）：
       // 导航宽度**必须**按可用宽度设上限，否则工作区只剩一条缝。
       body: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) => Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            _NavColumn(
-              current: _current,
-              onSelect: _select,
-              width: AppNavigation.navWidth(
-                // ⚠️ 2026-11-14（裁定甲）：传**生效缩放**（max(系统, 应用)），
-                // 不是应用档位 —— 否则「系统 200% + 应用 标准」时字是 2 倍、
-                // 列宽按 1.25 倍算（§CV·八十五：尺寸从环境取）。
-                // 再与 `widget.uiScale` 取大：生产路径上后者已含在前者里，
-                // 兜的是没有 MediaQuery 包装的测试/独立预览（见字段注释）。
-                scale: math.max(uiScaleOf(context), widget.uiScale.factor),
-                availableWidth: constraints.maxWidth,
+        builder: (BuildContext context, BoxConstraints constraints) {
+          // 2026-11-14（用户裁定「仅图标可以实现」）：列宽与「要不要退成仅图标」
+          // 一起算 —— 判据在纯 Dart 里（`AppNavigation.navLayout`），Flutter 只照着摆。
+          final ({double width, bool iconOnly}) nav = AppNavigation.navLayout(
+            // ⚠️ 2026-11-14（裁定甲）：传**生效缩放**（max(系统, 应用)），
+            // 不是应用档位 —— 否则「系统 200% + 应用 标准」时字是 2 倍、
+            // 列宽按 1.25 倍算（§CV·八十五：尺寸从环境取）。
+            // 再与 `widget.uiScale` 取大：生产路径上后者已含在前者里，
+            // 兜的是没有 MediaQuery 包装的测试/独立预览（见字段注释）。
+            scale: math.max(uiScaleOf(context), widget.uiScale.factor),
+            availableWidth: constraints.maxWidth,
+          );
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              _NavColumn(
+                current: _current,
+                onSelect: _select,
+                width: nav.width,
+                iconOnly: nav.iconOnly,
               ),
-            ),
-            const VerticalDivider(width: 1, thickness: 1),
-            Expanded(child: _content()),
-          ],
-        ),
+              const VerticalDivider(width: 1, thickness: 1),
+              Expanded(child: _content()),
+            ],
+          );
+        },
       ),
     );
   }
@@ -739,14 +745,22 @@ class _NavColumn extends StatelessWidget {
     required this.current,
     required this.onSelect,
     required this.width,
+    this.iconOnly = false,
   });
 
   final NavDestination current;
   final ValueChanged<NavDestination> onSelect;
 
-  /// 导航列宽度 —— **由外壳按「可用宽度」算好传进来**（`AppNavigation.navWidth`），
+  /// 导航列宽度 —— **由外壳按「可用宽度」算好传进来**（`AppNavigation.navLayout`），
   /// 本类不再自己乘缩放系数（那正是 2026-10-19 那次的病根：只有下限没有上限）。
   final double width;
+
+  /// 只画图标（2026-11-14 用户裁定可做）。
+  ///
+  /// 触发条件是**可计算的**：`40% 上限 < 内容需求`，即窗口窄到连一个标签都装不下
+  /// （`AppNavigation.navLayout` 的 `iconOnly`）。此时每一项**必须带 `Tooltip`** ——
+  /// 否则「入口还在、但认不出是什么」，对中老年用户等于没有。
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -764,6 +778,7 @@ class _NavColumn extends StatelessWidget {
             destination: destination,
             selected: destination.id == current.id,
             onTap: () => onSelect(destination),
+            iconOnly: iconOnly,
           ),
         );
       }
@@ -791,11 +806,18 @@ class _NavItem extends StatelessWidget {
     required this.destination,
     required this.selected,
     required this.onTap,
+    this.iconOnly = false,
   });
 
   final NavDestination destination;
   final bool selected;
   final VoidCallback onTap;
+
+  /// 只画图标（窗口窄到装不下标签时的兜底，见 `AppNavigation.navLayout`）。
+  ///
+  /// 此时**必须**有 `Tooltip`：图标本身说明不了「采购入库」和「销售开单」的区别，
+  /// 而「认不出的入口」对中老年用户等于不存在（`docs/ui_principles.md` §1.1）。
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -821,36 +843,48 @@ class _NavItem extends StatelessWidget {
               height: double.infinity,
               color: selected ? theme.colorScheme.primary : Colors.transparent,
             ),
-            const SizedBox(width: 13),
-            // 图标 + 文字**必须成对**：只有图标的入口对中老年用户等于不存在
-            // 图标随缩放派生（2026-11-14 裁定甲的配套项）：从前固定 20，
-            // 2 倍字号下图标偏小，与「尺寸随缩放」自相矛盾。
-            Icon(
-              navIcon(destination.iconKey),
-              size: scaledOf(context, AppNavigation.iconBase),
-              color: foreground,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                destination.label,
-                maxLines: 1,
-                softWrap: false,
-                // 宽度被夹紧后（40% 上限）标签仍可能不够 —— 省略号而不是硬切
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: foreground,
-                  height: 1.6,
-                  // 信号之三：文字加粗
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+            if (iconOnly)
+              // 仅图标：**居中**摆放（左边一律留 13 的间距会显得偏左）
+              Expanded(
+                child: Tooltip(
+                  message: destination.label,
+                  child: Center(child: _icon(context, foreground)),
+                ),
+              )
+            else ...<Widget>[
+              const SizedBox(width: 13),
+              // 图标 + 文字**成对**才是常态（只有图标的入口对中老年用户等于不存在）；
+              // 图标随缩放派生（2026-11-14 裁定甲的配套项）：从前固定 20，
+              // 2 倍字号下图标偏小，与「尺寸随缩放」自相矛盾。
+              _icon(context, foreground),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  destination.label,
+                  maxLines: 1,
+                  softWrap: false,
+                  // 宽度被夹紧后（40% 上限）标签仍可能不够 —— 省略号而不是硬切
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foreground,
+                    height: 1.6,
+                    // 信号之三：文字加粗
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+                  ),
                 ),
               ),
-            ),
+            ],
           ],
         ),
       ),
     );
   }
+
+  Widget _icon(BuildContext context, Color foreground) => Icon(
+    navIcon(destination.iconKey),
+    size: scaledOf(context, AppNavigation.iconBase),
+    color: foreground,
+  );
 }
 
 /// 面包屑：告诉用户「我在哪」。

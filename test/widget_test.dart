@@ -137,6 +137,47 @@ void main() {
   //
   // 从前传的是应用档位（`widget.uiScale.factor`）：系统 200% + 应用「标准」时
   // 字是 2 倍、列宽按 1.25 倍算 —— 靠「标签只有 4 个字」才没露馅。
+  // 2026-11-14（用户裁定「仅图标可以实现」）：窗口窄到**装不下标签**时退成图标 + 悬停提示。
+  //
+  // 判据在纯 Dart（`AppNavigation.navLayout`）；这里钉 Flutter 侧三件事：
+  // ① 标签确实不画了（画成省略号更糟）；② 每一项**都有 Tooltip**（认不出的入口等于不存在）；
+  // ③ 宽度按图标算（不是被 40% 上限压成一条缝）。
+  testWidgets('极窄窗口 ⇒ 仅图标 + 悬停提示（标签不画，但名字还能查到）', (WidgetTester tester) async {
+    // 300 逻辑宽 + 标准档(1.25)：40% 上限 120 < 内容需求 123 ⇒ 仅图标
+    tester.view.physicalSize = const Size(300, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(shell());
+    await tester.pumpAndSettle();
+
+    final Finder saleItem = find.byKey(const ValueKey<String>('nav-sale'));
+    expect(saleItem, findsOneWidget);
+    expect(
+      find.descendant(of: saleItem, matching: find.text('销售开单')),
+      findsNothing,
+      reason: '放不下就不画 —— 「采购入…」这种省略号比图标更糟',
+    );
+    expect(
+      find.descendant(of: saleItem, matching: find.byType(Icon)),
+      findsOneWidget,
+      reason: '图标必须在，否则入口就消失了',
+    );
+    expect(
+      find.byTooltip('销售开单'),
+      findsOneWidget,
+      reason: '仅图标时名字只能靠 Tooltip —— 少了它，入口在但认不出',
+    );
+
+    final double width = tester.getSize(saleItem).width;
+    expect(
+      width,
+      AppNavigation.navLayout(scale: 1.25, availableWidth: 300).width,
+      reason: '宽度按「竖条 + 间距 + 图标 + 余量」算',
+    );
+    expect(width, greaterThan(AppNavigation.iconOnlyWidth - 1));
+  });
+
   testWidgets('系统字号 200% + 应用标准 ⇒ 列宽按 2 倍算（不是 1.25）', (
     WidgetTester tester,
   ) async {
