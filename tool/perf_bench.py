@@ -107,14 +107,24 @@ def q_stock_cost(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
     )
 
 
+def q_stock_merged(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
+    return (_STOCK_MERGED, ())
+
+
+def q_products_active(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
+    return (_PRODUCTS_ACTIVE, ())
+
+
+_IN_TRANSIT_SQL = (
+    "SELECT dl.product_id AS k, COALESCE(SUM(dl.quantity), 0) AS v "
+    "FROM document_lines dl JOIN documents d ON d.id = dl.document_id "
+    "WHERE d.doc_type = 'delivery' AND d.status = 'in_transit' "
+    "GROUP BY dl.product_id"
+)
+
+
 def q_in_transit(limit: int, window_ms: int) -> Tuple[str, Sequence[Any]]:
-    return (
-        "SELECT dl.product_id AS k, COALESCE(SUM(dl.quantity), 0) AS v "
-        "FROM document_lines dl JOIN documents d ON d.id = dl.document_id "
-        "WHERE d.doc_type = 'delivery' AND d.status = 'in_transit' "
-        "GROUP BY dl.product_id",
-        (),
-    )
+    return (_IN_TRANSIT_SQL, ())
 
 
 # ---------------------------------------------------------------------------
@@ -777,6 +787,25 @@ _STOCK_TOP = (
     "WHERE s.qty > 0 ORDER BY s.cost DESC, p.name ASC"
 )
 
+# 2026-11-14（裁定「甲-a」）：概览页与库存页的**压货榜 + 库存聚合**合成一次扫描
+# （`QueryDao.stockOverview()`）。缺货榜另要两条：`inTransitByProduct()`（与
+# `q_in_transit` 逐字同形）与 `listForExport(active: true)`（不分页的商品全表读）。
+# ⚠️ 这里**必须**照生产的合并形态写：拆成 `stock_top` + `stock_aggregates` 两条会
+# 把一次扫描算成两次（实测 183 ms vs 100 ms），数字偏慢 —— 反方向的假红。
+_STOCK_MERGED = (
+    "SELECT p.id AS id, p.name AS name, p.unit AS unit, "
+    "       s.product_id IS NOT NULL AS has_ledger, "
+    "       COALESCE(s.q, 0) AS q, COALESCE(s.c, 0) AS c, COALESCE(s.inb, 0) AS inb "
+    "FROM products p "
+    "LEFT JOIN (SELECT product_id, COALESCE(SUM(quantity), 0) AS q, "
+    "                  COALESCE(SUM(total_cost), 0) AS c, "
+    "                  MAX(CASE WHEN quantity > 0 THEN 1 ELSE 0 END) AS inb "
+    "           FROM stock_ledger GROUP BY product_id) s ON s.product_id = p.id"
+)
+
+_PRODUCTS_ACTIVE = "SELECT * FROM products WHERE is_active = 1 ORDER BY created_at, id"
+
+
 _PARTY_BALANCES = (
     "SELECT party_id AS k, COALESCE(SUM(amount), 0) AS v FROM party_ledger GROUP BY party_id"
 )
@@ -801,8 +830,15 @@ def q_overview_load(limit: int, window_ms: int):
     | 3 | `todaySummary(本地零点)` | 1 条（含上界） |
     | 4 | `receivablesSummary()` | `partyBalances()` **全表 GROUP BY** + 1 条点查 |
     | 5 | `payablesSummary()` | **又一遍** `partyBalances()` + 1 条点查 |
-    | 6 | `stockTop()` | 1 条（`stock_ledger` 全表 GROUP BY + 排序） |
+    | 6 | `stockOverview()` | 1 条（`products` LEFT JOIN 库存聚合 —— **压货榜与缺货榜共用**）|
     | 7 | `dailyGrossMargin(30 天)` | 6 条腿 |
+    | 8 | `_loadLowStock()` → `inTransitByProduct()` | 1 条（送货未签收）|
+    | 9 | `_loadLowStock()` → `listForExport(active)` | 1 条（`products` 全表，不分页）|
+
+    ⚠️ 第 6 条在 2026-11-14（裁定甲-a）由两条合成一条：从前 `stockTop()` 与
+    `stockAggregates()` 各扫一遍 `stock_ledger`（实测 84 + 98 ms），合并后 100 ms。
+    ⚠️ 第 8–9 条是**缺货榜**（提案 61）加进来的：它不依赖任何单据，
+    所以在 `hasAnyDocument() == false` 的空库上也会跑 —— 那时前 7 条一条都不跑。
 
     ⚠️ 第 4/5 步的**两遍** `partyBalances()` 是现状，不是压测脚本写错了 ——
     要不要合并是**性能优化提案**，本轮（纯测试工具）不动生产代码。
@@ -837,8 +873,12 @@ def q_overview_load(limit: int, window_ms: int):
                         "SELECT name, is_active FROM parties WHERE id = ?", (top[0],)
                     ).fetchall()
                 )
-        rows += len(conn.execute(_STOCK_TOP).fetchall())
+        # ⑥ 压货榜 + 库存聚合成**一次扫描**（2026-11-14 裁定甲-a）
+        rows += len(conn.execute(_STOCK_MERGED).fetchall())
         rows += _run_legs(conn, _REVENUE_LEGS + _MARGIN_LEGS, from_day, to_day)
+        # ⑧⑨ 缺货榜（提案 61）：在途 + 商品全表读
+        rows += len(conn.execute(_IN_TRANSIT_SQL).fetchall())
+        rows += len(conn.execute(_PRODUCTS_ACTIVE).fetchall())
         return rows
 
     def steps(conn: sqlite3.Connection):
@@ -866,7 +906,9 @@ def q_overview_load(limit: int, window_ms: int):
         out.append(
             ("④ 欠款 top 点查", "SELECT name, is_active FROM parties WHERE id = ?", ("—",))
         )
-        out.append(("⑥ stockTop", _STOCK_TOP, ()))
+        out.append(("⑥ 库存两榜合并扫描（压货榜 + 库存聚合）", _STOCK_MERGED, ()))
+        out.append(("⑧ 缺货榜 inTransitByProduct", _IN_TRANSIT_SQL, ()))
+        out.append(("⑨ 缺货榜 listForExport(active)", _PRODUCTS_ACTIVE, ()))
         out += [
             ("⑦ %s" % label, sql, (*head, from_day, to_day))
             for label, (sql, head) in zip(
@@ -963,7 +1005,9 @@ GATES: Dict[str, float] = {
 QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]], ...] = (
     ("stock_group", "库存合计（每商品）", q_stock_group),
     ("stock_cost", "成本余值（每商品）", q_stock_cost),
+    ("stock_merged", "库存两榜一次扫完（压货榜+账面+成本+进过货；概览/库存页）", q_stock_merged),
     ("in_transit", "在途数量（送货未签收）", q_in_transit),
+    ("products_active", "商品全表读（启用中，不分页；缺货榜）", q_products_active),
     ("list_documents", "单据列表首屏", q_list_documents),
     ("doc_search", "单据页搜索（四路全命中，三段）", q_doc_search),
     ("doc_search_count", "单据页搜索「共 N 条」", q_doc_search_count),
@@ -981,7 +1025,7 @@ QUERIES: Tuple[Tuple[str, str, Callable[[int, int], Tuple[str, Sequence[Any]]]],
     ("count_roots", "单据页「共 N 条」（rootsOnly，每帧都跑）", q_count_roots),
     ("list_roots", "单据页首屏（rootsOnly 三段，每帧都跑）", q_list_roots),
     ("gross_margin", "概览毛利趋势（近 30 天，6 条腿）", q_gross_margin),
-    ("overview_load", "概览首屏一次 _load()（全部 SQL，最多 16 条）", q_overview_load),
+    ("overview_load", "概览首屏一次 _load()（全部 SQL，含缺货榜三条）", q_overview_load),
     # 搜索的四个「单独一路」场景（2026-11-07 用户审查 §二·6）：从 _SEARCH_SCENARIOS
     # 展开，**不在这里手抄一遍** —— 手抄就是第二份名单，必然漂移。
     *(

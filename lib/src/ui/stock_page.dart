@@ -238,9 +238,15 @@ class _StockPageState extends State<StockPage> {
     // （从前是三次全表聚合：30 万行 × 3）。
     // ⚠️ 埋点的 Stopwatch 只在开关打开时才建（编译期常量，关着时整段被折叠）。
     final Stopwatch? aggWatch = kPageCostTrace ? (Stopwatch()..start()) : null;
-    final Map<String, StockAgg> agg = widget.queries.stockAggregates();
+    // 2026-11-14（裁定甲-a）：压货榜与聚合**同一次扫描**。
+    // 从前这里是 `stockAggregates()`、`initState` 里另有一次 `stockTop()`，
+    // 两条各自把 `stock_ledger` 全表 GROUP BY 一遍（498.9 MB 实测 98 + 84 ms）；
+    // `stockOverview()` 一次扫完给两榜（99.7 ms），顺带让压货榜跟着 4 个刷新点一起更新。
+    final StockOverview overview = widget.queries.stockOverview();
     aggWatch?.stop();
     _pageCost?.aggregates(aggWatch?.elapsedMicroseconds ?? 0);
+    _stockTop = overview.top;
+    final Map<String, StockAgg> agg = overview.agg;
     _agg = agg;
     _book = <String, int>{
       for (final MapEntry<String, StockAgg> e in agg.entries)
@@ -266,14 +272,14 @@ class _StockPageState extends State<StockPage> {
   @override
   void initState() {
     super.initState();
-    // ⚠️ 必须早于 `stockTop()`：体感的起点是「点下导航」，不是第一次 build。
+    // ⚠️ 体感的起点是「点下导航」，不是第一次 build ⇒ 数据在 `initState` 里一次算完
+    // （压货榜与库存聚合同一条 SQL，见 `_loadAggregates` 的注释）。
     _pageCost = kPageCostTrace
         ? PageCostTrace(
             page: 'stock',
             file: PageCostTrace.fileFor(widget.queries.db.path),
           )
         : null;
-    _stockTop = widget.queries.stockTop();
     _loadAggregates();
   }
 

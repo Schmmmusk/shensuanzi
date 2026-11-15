@@ -20267,4 +20267,106 @@ Flutter 的可编辑控件在树里**自己就是一个滚动体/文本**，会�
 - 概览页 `+130 ms` 的实测仍未做（判据已写在 `overview_page._loadLowStock` 注释里）。
 - 导航 `13 / 12` 两处间距仍**不随缩放**（与 `chromeFixed` 逐项对应）；2× 字号下图标与文字略紧，
   真机上若不顺眼再一起改（那时 `chromeFixed` 要跟着改，公式与实现必须同步）。
+### 八十七、2026-11-14 **导航「仅图标」落地 + 概览页代价实测（判据触发，待裁）**
+
+用户真机确认 §八十六 的效果（「确实变窄了」），并裁定：**仅图标可以实现**、
+**概览页可以实测看看**、导航间距**先不管**。
+
+#### ① 仅图标（已落地）
+
+| 位置 | 改动 |
+|---|---|
+| `navigation.dart` | 新 `navLayout({scale, availableWidth, compact})` → `({double width, bool iconOnly})`；`navWidth` 变成它的 `.width`。**判据可计算**：`40% 上限 < 内容需求` 时才退仅图标，宽度 = `竖条+间距+图标+8`（不再受 40% 约束，理由同旧兜底） |
+| `app_shell.dart` | `_NavColumn` / `_NavItem` 加 `iconOnly`：图标**居中**，每项包 `Tooltip(message: label)` |
+| `docs/ui_principles.md` §1.1 / §八 | 原则后补「唯一例外」：放不下文字才退图标 + 悬停提示；判据在纯 Dart、Flutter 侧必须有 Tooltip |
+
+实测档位：300 逻辑宽 + 标准(1.25) ⇒ 上限 120 < 内容 123 ⇒ 仅图标（宽 61）；
+480 宽 + 2.0 档 ⇒ 上限 192 ≥ 内容 180 ⇒ **仍是文字**（挤但够）。
+
+**测试**：`navigation_test` 新增 3 条（420 ⇒ 仅图标、480 ⇒ 文字 192、1247 ⇒ 296）；
+`widget_test` 新增「极窄窗口 ⇒ 仅图标 + Tooltip，且标签确实不画」。
+本侧门禁：app typecheck 29 · import_guard 0 · format 0 changed。
+
+#### ② 概览页代价实测（**判据触发**）
+
+库：`D://shensuanzi//perf_overview61.db`（`perf_seed.py` 造，**498.9 MB / 263,042 张单 /
+364,452 行库存流水**，与你真机库同量级）。工具：`perf_bench.py` + core 真跑脚本。
+
+| 项 | p50 | 说明 |
+|---|---|---|
+| `stockAggregates`（缺货榜①） | **110.7 ms** | `stock_ledger` 全表 GROUP BY |
+| `inTransitByProduct`（缺货榜②） | **136.1 ms** | 14,377 张在途送货单 + 明细 + TEMP B-TREE；**已在用 `idx_documents_type_status`**，不缺索引 |
+| `listForExport(active)`（缺货榜③） | 2.8 ms | 300 个商品 |
+| **合计（新增）** | **249.6 ms** | 提案估 **+130 ms** ⇒ 实际 **1.9 倍** |
+| 对照 `stockTop` / `partyBalances` | 92.4 / 55.8 ms | 概览页原本就有 |
+| `overview_load`（含新增三条） | **498.0 ms**（p95 509.8） | 改前约 260 ms |
+
+⇒ **提案 §六 的回退判据已触发**（「新增两条聚合连续 3 次 > 200 ms」实测 250 ms，
+5 轮全在 249–250）。**没有擅自回退**，先把可选的省法都量了：
+
+| 方案 | 实测 | 结论 |
+|---|---|---|
+| **合并扫描**：`products LEFT JOIN (stock 聚合)` 一条喂两榜 | **99.7 ms**（现 `stockTop` 84.2 + `stockAggregates` 98.3 = 182.5）⇒ **省 ~83 ms** | 纯读优化、零 schema；库存页与开单页同受益（它们也分别调这两个） |
+| 覆盖索引 `document_lines(document_id, product_id, quantity)` | 在途 **136 → 101 ms**（−26%），库 **+30 MB** | 收益小而占盘，**不建议** |
+| 提案原文「丙：只放计数」 | **省不掉** —— 算「缺货 N 个」同样要这三条 | 提案里写的「+0」**是错的**（此处更正） |
+| 「丁」概览不算缺货榜 | 省 250 ms，首帧回到 ~260 | 决策 3 甲「缺货在上」作废 |
+| 「异步补算」：首帧后（或 isolate）算完再 setState | 首帧不受影响，卡晚 ~0.25 s 出现 | 要占位骨架 + 测试改时序 |
+
+#### ③ 顺带修的测试工具
+
+`perf_bench.py` 原有「改了 DAO 的 SQL 必须同步这里」的纪律（2026-11-04 踩过假红）。
+本次概览页多了三条 SQL，已同步：新增 `stock_aggregates` / `products_active` 两个基准键，
+`overview_load` 补第 8–10 步与对应 `explain` 步骤，并把在途 SQL 抽成常量供两处共用。
+
+#### ④ 待裁
+
+概览页缺货榜的代价怎么收 —— **合并扫描（省 83，判据回到 139 < 200）** /
+**异步补算（首帧 0，卡晚出现）** / **丁（概览不算）**。三者都要动生产代码，未裁不动。
+### 八十八、2026-11-14 **裁定「甲-a」落地：库存两榜合并扫描**
+
+用户裁定：**甲-a**；「甲-b 会带来额外卡顿，丁撤掉了用户没法马上看」—— 两者否决。
+
+#### ① 改了什么
+
+| 层 | 文件 | 改动 |
+|---|---|---|
+| core | `dao/query_dao.dart` | 新 `stockOverview({limit})` → `StockOverview{top, agg}`：`products` **LEFT JOIN** 一次 `stock_ledger` 聚合。`_stockAggSubquery` 抽成常量；`stockTop` / `stockAggregates` **保留原样**（其它调用方与既有测试不动） |
+| ui | `stock_page.dart` | `_loadAggregates()` 改调 `stockOverview()`，一次拿到 `top` + `agg`；`initState` 不再单独调 `stockTop()`。**副作用（有意）**：压货榜现在跟着 4 个刷新点（期初 / 流水页返回 / 详情返回）一起更新，从前它只算一次 |
+| ui | `overview_page.dart` | `_reload()` 统管：`final StockOverview stocks = q.stockOverview()` → `_load(q, stocks)` + `_loadLowStock(q, stocks)`，**两榜共享同一次扫描**（各自调一次就等于没合并） |
+| tool | `perf_bench.py` | `stock_aggregates` 键改为 `stock_merged`（照生产合并形态）；`overview_load` 第 6 步由「stockTop + 聚合」合成一条，`explain` 步骤同步；文档表更正 |
+
+#### ② 实测（同一份库：498.9 MB / 26.3 万单 / 36.4 万流水）
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 压货榜 + 库存聚合 | `stockTop` 93.5 + `stockAggregates` 107.2 = **200.7 ms** | `stockOverview` **111.2 ms** |
+| 在途（缺货榜要） | 136.4 | 136.4（未动） |
+| 商品全表读 | 2.1 | 2.1 |
+| **概览页库存部分合计** | 339.2 | **249.7 ms** |
+| **缺货榜的净增量**（相对无缺货榜） | +245.7 ms | **+156.2 ms**（判据 200 ⇒ **达标**）|
+| `perf_bench overview_load` | 498.0 | **411.7 ms**（p95 414.9）|
+
+库存页同受益：它原来也是 `stockTop()` + `stockAggregates()` 各一遍。
+
+#### ③ 测试
+
+- 新 `core/test/stock_overview_test.dart`（7 条，已登记 typecheck ⇒ **52 入口**）：
+  `agg` 只收有流水商品 / 三列与单查方法一致 / 压货榜只取 `q>0 且 cost>0` /
+  待校准与负成本**不含零流水商品** / `limit` 只截行 / **与两条老方法交叉相等** / 并列金额按名称升序。
+- **真跑**（临时脚本，已删）：13 条断言全绿 —— 其中第一次跑就抓到**我自己写错的夹具**
+  （「负成本」用例用了 `q=-3`，而 `stockTop` 的 `WHERE qty>0` 本来就不统计它；
+  改为「正数量 + 负成本」，另补一个「只有出库」的商品专测 `hasInbound=false`）。
+- **反向灵敏度**：去掉 `if (q > 0)` 过滤 ⇒ 「负成本 1」变 2、「与 stockTop 负成本一致」红，
+  回滚后复绿。
+
+#### ④ 门禁
+
+core typecheck **52** · app typecheck **29** · 根 `import_guard` **0 处缺导入** ·
+改动文件 `dart format` 0 changed。**待用户复跑** `flutter analyze` / `flutter test` / 各包 `dart test`。
+
+#### ⑤ 没做的
+
+- 概览页**首帧**仍要 ~410 ms SQL（这台机器）。真要再降得动 `partyBalances`（应收/应付各跑一遍，
+  55.8 × 2）与 `dailyGrossMargin`（6 条腿）—— 属另一批提案，未裁不动。
+- 开单页仍用 `stockByProduct()`（只读账面），**没有**并进合并扫描：它只要一列，合并反而更贵。
 

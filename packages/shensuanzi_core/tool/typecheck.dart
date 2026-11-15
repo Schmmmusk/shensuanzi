@@ -68,6 +68,8 @@ import '../test/sync_failure_test.dart' as sync_failure_test;
 import '../test/util_test.dart' as util_test;
 // ignore: unused_import
 import '../test/in_store_test.dart' as in_store_test;
+// ignore: unused_import
+import '../test/stock_overview_test.dart' as stock_overview_test;
 
 // ⚠️ `tool/` 下的自检脚本也必须纳入 —— 它们**不被 `test/` 引用**，
 // 曾经因此漏掉一个真实编译错误（`createParty(name:)` 参数不存在），
@@ -145,6 +147,7 @@ void main() {
     sync_failure_test.main,
     util_test.main,
     in_store_test.main,
+    stock_overview_test.main,
     // tool/
     selfcheck.main,
     selfcheck_account.main,

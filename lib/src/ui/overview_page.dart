@@ -192,30 +192,46 @@ class _OverviewPageState extends State<OverviewPage> {
   @override
   void initState() {
     super.initState();
-    _data = _load();
-    _loadLowStock();
+    _reload();
   }
 
-  /// 概览页缺货榜的数据源（提案 61 §六 决策 甲：复用现有查询，约 +130 ms）。
+  /// 一次把「经营区」与「缺货榜」都算好。
   ///
-  /// 与 `_load()` 分开的理由见 [_lowStock] 的注释；刷新时机与 `_data` 一致
-  /// （`initState` 一次 + `queries` / 库版本 / 未同步队列变化时重算）。
+  /// ## 为什么要合成一个入口
   ///
-  /// ⚠️ 回退判据（写死在这里，防止将来「感觉慢就撤功能」）：概览页首帧
-  /// **连续 3 次冷启动** > 600 ms，或这两条聚合计时**连续 3 次** > 200 ms
-  /// ⇒ 才按提案 §六 的「丙」（只显示缺货数量 + 跳转）调整，
-  /// 且**标题、说明、交互要一起改**（只隐藏明细会让用户找不到那 N 个是什么）。
-  void _loadLowStock() {
+  /// 2026-11-14 实测（498.9 MB / 26.3 万单）：缺货榜给概览页加了 **249.6 ms**
+  /// （`stockAggregates` 110.7 + `inTransitByProduct` 136.1 + 商品读 2.8），
+  /// 而压货榜本来就要跑 `stockTop`（84.2）—— 两条各把 `stock_ledger` 全表扫一遍。
+  /// 裁定「甲-a」：**一次扫描喂两榜**（`QueryDao.stockOverview()`），实测 99.7 ms，
+  /// 比分开跑省 83 ms。所以两者必须**共享同一次调用**，不能各自调各自的方法。
+  ///
+  /// ## 为什么缺货榜不挂进 `_load()`
+  ///
+  /// `_load()` 在 `hasAnyDocument() == false` 时整块返回 `null`，而缺货榜不依赖任何单据
+  /// （判据是商品档案 + 库存流水 + 安全库存）。挂进去的话，「刚装上软件、建了商品、
+  /// 设了安全库存」的店永远看不到它 —— 那恰好是决策 4 引导卡要照顾的人。
+  void _reload() {
     final QueryDao? q = widget.queries;
-    final ProductService? products = widget.products;
-    if (q == null || products == null) {
+    if (q == null) {
+      _data = null;
       _lowStock = ShortageSummary.none;
       return;
     }
+    // 两榜共用这一次扫描（裁定甲-a）。⚠️ 空库也要算：缺货榜/引导卡与单据无关。
+    final StockOverview stocks = q.stockOverview();
+    _data = _load(q, stocks);
+    _lowStock = _loadLowStock(q, stocks);
+  }
+
+  /// 缺货榜（提案 61）。数据源里最贵的那一条（`stockAggregates`）已由
+  /// [stockOverview] 一并算出，这里只补「在途」与「未同步」。
+  ShortageSummary _loadLowStock(QueryDao q, StockOverview stocks) {
+    final ProductService? products = widget.products;
+    if (products == null) return ShortageSummary.none;
     // ⚠️ `listForExport`（不分页）而不是 `findAll()`（默认 limit 200）
-    _lowStock = computeShortage(
+    return computeShortage(
       products: products.listForExport(active: true),
-      agg: q.stockAggregates(),
+      agg: stocks.agg,
       inTransit: q.inTransitByProduct(),
       unsynced: widget.stockDelta?.unsyncedDelta() ?? const <String, int>{},
     );
@@ -231,17 +247,15 @@ class _OverviewPageState extends State<OverviewPage> {
         oldWidget.remoteVersion != widget.remoteVersion ||
         oldWidget.products != widget.products ||
         oldWidget.stockDelta != widget.stockDelta) {
-      _data = _load();
-      _loadLowStock();
+      _reload();
     }
   }
 
   /// 一次把概览要的数字都算出来。
   ///
   /// 空库（`hasAnyDocument() == false`）⇒ `null`：整块经营区不显示。
-  _OverviewData? _load() {
-    final QueryDao? q = widget.queries;
-    if (q == null || !q.hasAnyDocument()) return null;
+  _OverviewData? _load(QueryDao q, StockOverview stocks) {
+    if (!q.hasAnyDocument()) return null;
 
     // 业务日按**本地日**算 —— 与 `documents.business_day` 同一口径
     final int toDay = businessDayOf(DateTime.now().millisecondsSinceEpoch);
@@ -259,7 +273,8 @@ class _OverviewPageState extends State<OverviewPage> {
       today: q.todaySummary(_dayStart()),
       receivables: q.receivablesSummary(),
       payables: q.payablesSummary(),
-      stockTop: q.stockTop(),
+      // 压货榜与缺货榜**同一次扫描**（裁定甲-a，见 `_reload`）
+      stockTop: stocks.top,
       // 传的是**宽数据**（含上月同期，月度对比要用）——
       // 营收卡自己按 `fromDay..toDay` 裁，这样「平均每个有生意的日子」
       // 不会把上月的天算进去，也不依赖调用方记得裁。

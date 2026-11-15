@@ -134,6 +134,113 @@ class QueryDao {
     );
   }
 
+  /// 库存聚合子查询（`stockOverview` 用）。
+  ///
+  /// ⚠️ 与 `stockAggregates()` 的分组键与三列**同形**（`quantity` / `total_cost` /
+  /// `MAX(quantity > 0)`）。改一处必须改另一处 —— 两边口径分叉的话，
+  /// 库存页与缺货榜会对同一个商品给出「有没有进过货」的不同答案。
+  static const String _stockAggSubquery =
+      'SELECT product_id, COALESCE(SUM(quantity), 0) AS q, '
+      '       COALESCE(SUM(total_cost), 0) AS c, '
+      '       MAX(CASE WHEN quantity > 0 THEN 1 ELSE 0 END) AS inb '
+      'FROM ${Schema.stockLedger} GROUP BY product_id';
+
+  /// **库存两榜共用的那一次扫描**（2026-11-14 用户裁定「甲-a」）。
+  ///
+  /// ## 为什么要有它
+  ///
+  /// 概览页同时要压货榜（`stockTop`）与缺货榜（`stockAggregates` 的 `hasInbound`），
+  /// 两条各自把 `stock_ledger` 全表 GROUP BY 一遍。498.9 MB / 26.3 万单实测：
+  /// `stockTop` 84.2 ms + `stockAggregates` 98.3 ms = **182.5 ms**；
+  /// 合成「`products` LEFT JOIN 一次聚合」后 **99.7 ms**（省 83 ms）。
+  ///
+  /// ## 口径（两条老方法都从这一份结果派生，因而**逐字一致**）
+  ///
+  /// | 项 | 判据 | 与老方法的关系 |
+  /// |---|---|---|
+  /// | [StockOverview.agg] | 只收**有流水**的商品（`s.product_id IS NOT NULL`） | 与 `stockAggregates()` 同（它是 `FROM stock_ledger GROUP BY`，天然只含有流水的商品） |
+  /// | [StockOverview.top] | 有流水 **且 `q > 0`**，`cost` 降序、同名按名称升序 | 与 `stockTop()` 的 `WHERE s.qty > 0 ORDER BY cost DESC, name ASC` 同 |
+  /// | 待校准 / 负成本计数 | 同上，`cost == 0` / `< 0` | 与 `stockTop` 同；**LEFT JOIN 出来的零流水商品不计数**（否则那个数会从 3 变 297 —— 提案 61 §三 洞 1 的陷阱） |
+  ///
+  /// ⚠️ **不要**把它简化回 `stockTop` 的 INNER JOIN：那会让「从没进过货但设了安全库存」
+  /// 的商品整类消失（缺货榜最该报的那一类）。
+  StockOverview stockOverview({int limit = 10}) {
+    final List<Map<String, Object?>> rows = _raw.select(
+      'SELECT p.id AS id, p.name AS name, p.unit AS unit, '
+      '       s.product_id IS NOT NULL AS has_ledger, '
+      '       COALESCE(s.q, 0) AS q, COALESCE(s.c, 0) AS c, '
+      '       COALESCE(s.inb, 0) AS inb '
+      'FROM ${Schema.products} p '
+      'LEFT JOIN ($_stockAggSubquery) s ON s.product_id = p.id',
+    );
+
+    final Map<String, StockAgg> agg = <String, StockAgg>{};
+    final List<Map<String, Object?>> withStock = <Map<String, Object?>>[];
+    for (final Map<String, Object?> row in rows) {
+      // 零流水商品：不进 agg（与 stockAggregates 同口径 —— 库存页用 `agg.isNotEmpty`
+      // 判「这个账本还没有任何库存流水」，混进零行会把首次开账的判据弄坏）
+      if ((row['has_ledger']! as int) == 0) continue;
+      final int q = row['q']! as int;
+      final int c = row['c']! as int;
+      agg[row['id']! as String] = StockAgg(
+        quantity: q,
+        cost: c,
+        hasInbound: (row['inb']! as int) != 0,
+      );
+      // 与 stockTop 的 `WHERE s.qty > 0` 同口径：零库存商品既不上榜也不计数
+      if (q > 0) withStock.add(row);
+    }
+
+    if (limit <= 0) {
+      return StockOverview(
+        top: const StockTopSummary(
+          rows: <StockValueRow>[],
+          uncalibratedCount: 0,
+          negativeCostCount: 0,
+        ),
+        agg: agg,
+      );
+    }
+
+    withStock.sort((Map<String, Object?> a, Map<String, Object?> b) {
+      final int byCost = (b['c']! as int).compareTo(a['c']! as int);
+      if (byCost != 0) return byCost;
+      return (a['name']! as String).compareTo(b['name']! as String);
+    });
+
+    final List<StockValueRow> top = <StockValueRow>[];
+    int uncalibrated = 0;
+    int negativeCost = 0;
+    for (final Map<String, Object?> row in withStock) {
+      final int c = row['c']! as int;
+      if (c > 0) {
+        if (top.length < limit) {
+          top.add(
+            StockValueRow(
+              productId: row['id']! as String,
+              name: row['name']! as String,
+              unit: row['unit']! as String,
+              quantity: row['q']! as int,
+              valueCents: c,
+            ),
+          );
+        }
+      } else if (c == 0) {
+        uncalibrated++;
+      } else {
+        negativeCost++;
+      }
+    }
+    return StockOverview(
+      top: StockTopSummary(
+        rows: top,
+        uncalibratedCount: uncalibrated,
+        negativeCostCount: negativeCost,
+      ),
+      agg: agg,
+    );
+  }
+
   /// **在途数量**：送货单里 `status = in_transit` 的未签收数量
   /// （`docs/rules.md` RULE-003 的在途视图）。
   Map<String, int> inTransitByProduct() => _keyedSum(
@@ -409,10 +516,8 @@ class QueryDao {
 
     // ① 收入腿：直接复用营收口径（见上方「为什么复用」）
     final Map<int, RevenueDay> revenue = <int, RevenueDay>{
-      for (final RevenueDay d in dailyRevenue(
-        fromDay: fromDay,
-        toDay: toDay,
-      )) d.day: d,
+      for (final RevenueDay d in dailyRevenue(fromDay: fromDay, toDay: toDay))
+        d.day: d,
     };
 
     final Map<int, int> saleCost = <int, int>{};
@@ -846,6 +951,20 @@ class StockTopSummary {
   /// 三样都没有 ⇒ 整张卡不显示
   bool get isEmpty =>
       rows.isEmpty && uncalibratedCount == 0 && negativeCostCount == 0;
+}
+
+/// [QueryDao.stockOverview] 的结果：**一次扫描**同时喂两张榜。
+///
+/// - [top]：压货榜（与 `stockTop()` 逐字同口径）
+/// - [agg]：每商品的库存聚合（与 `stockAggregates()` 逐字同口径），缺货榜要它的 `hasInbound`
+///
+/// 为什么捆在一起：两份都源自同一次 `stock_ledger` 全表扫描，
+/// 分开返回就必然有人多扫一遍（2026-11-14 实测：183 ms vs 100 ms）。
+class StockOverview {
+  const StockOverview({required this.top, required this.agg});
+
+  final StockTopSummary top;
+  final Map<String, StockAgg> agg;
 }
 
 /// [QueryDao.stockTop] 的一行：一个商品的压货情况。
