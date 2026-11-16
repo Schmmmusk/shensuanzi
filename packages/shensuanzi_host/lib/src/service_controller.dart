@@ -423,8 +423,15 @@ class HostServiceController {
   /// 发现码又没了，会以为软件在丢东西。
   bool get identityPersistFailed => _identities.lastWriteFailed;
 
-  /// 真正的启动逻辑（**不设单飞**，只给 [start] 与 [resetToken] 用）。
-  Future<HostServiceSnapshot> _startRaw() async {
+  /// 真正的启动逻辑（**不设单飞**，只给 [start] / [resetToken] / [selectAddress] 用）。
+  ///
+  /// [preferredAddress] / [keepOptions]（2026-11-16，提案 62 第二刀）：
+  /// **换地址重启时不要再探测**。重新探测会把地址覆盖回「排序第一」——
+  /// 而那正是用户要换掉的那个，等于按一下「换地址」又换回原样。
+  Future<HostServiceSnapshot> _startRaw({
+    String? preferredAddress,
+    List<NetAddressOption>? keepOptions,
+  }) async {
     if (_state == HostServiceState.running ||
         _state == HostServiceState.starting) {
       return snapshot;
@@ -439,13 +446,20 @@ class HostServiceController {
       // 直接 `load() ?? reset()` 会把 [resetToken] 刚生成的明文丢掉 ——
       // 因为 `load()` 只读得到哈希。
       _identity ??= _identities.load() ?? _identities.reset(now: _clock());
-      // 先探**全部**候选（已按优先级排序），取第一个作默认地址。
-      // 探不到任何候选时才退回单地址探测 —— 两条路都走完仍为 null 才是真没有。
-      _addressOptions =
-          await _detectAddresses?.call() ?? const <NetAddressOption>[];
-      _address = _addressOptions.isNotEmpty
-          ? _addressOptions.first.address
-          : await _detectLocalIp();
+      if (preferredAddress != null) {
+        // 换地址重启：用**用户选的那一个**，候选表沿用上一次探测的结果
+        //（网卡枚举要几百毫秒，而这几百毫秒里用户的码正等着重画）
+        _address = preferredAddress;
+        _addressOptions = keepOptions ?? _addressOptions;
+      } else {
+        // 先探**全部**候选（已按优先级排序），取第一个作默认地址。
+        // 探不到任何候选时才退回单地址探测 —— 两条路都走完仍为 null 才是真没有。
+        _addressOptions =
+            await _detectAddresses?.call() ?? const <NetAddressOption>[];
+        _address = _addressOptions.isNotEmpty
+            ? _addressOptions.first.address
+            : await _detectLocalIp();
+      }
       // 2026-11-16（裁定「乙」，提案 62 第一刀）：**只绑探测到的局域网网卡**。
       // 探不到（或字面量解析失败）才回退 `0.0.0.0`，并且把这件事**标出来** ——
       // 文档里那句「只监听局域网网卡」从这一刀起才是真话（纪律 17）。
@@ -547,26 +561,84 @@ class HostServiceController {
   /// 而那个故障比现在这个更难查。真正的「随便填」由**手机端**兜底
   ///（扫码页的手动输入，那边有令牌可以校验）。
   ///
-  /// ⚠️ **现状（提案 62 第一刀之后）：换地址只改二维码与界面，绑定不变。**
-  /// 从前服务绑 `0.0.0.0`，所以换地址确实"只影响二维码"；第一刀改成
-  /// **只绑探测到的那块网卡**之后，这条路径就**半真半假**了 ——
-  /// 选另一个网卡后，码里写着新地址、服务却还听在启动时那块网卡上。
+  /// ## 2026-11-16 第二刀：换地址 = **真的换绑定**
   ///
-  /// 这是**已知的中间态**：2026-11-16 裁定「先绑定、后异步化」把修法留到第二刀
-  /// （停旧服务 → 用新地址重绑，本方法随之改成 `Future`，对话框加忙碌态）。
-  /// 在那之前，**只有候选列表的第一个地址是真的可用**（启动时就是绑它）。
-  bool selectAddress(String address) {
+  /// 第一刀把服务收紧成「只绑探测到的那块网卡」之后，「只改二维码」的旧实现
+  /// 变成半真半假：码里写着新地址、服务却还听在旧网卡上。现在这个方法是
+  /// **停掉旧监听 → 用新地址重绑**，代价是这台机器会断连一瞬间。
+  ///
+  /// 五件必须一起做对的事：
+  ///
+  /// | # | 事 | 为什么 |
+  /// |---|---|---|
+  /// | 1 | 重绑时**不重新探测**（`preferredAddress`） | 重新探测会把地址覆盖回「排序第一」，也就是用户要换掉的那个 |
+  /// | 2 | **短码要重新发**（`hadShortCode` ⇒ `issueCode`） | 停服务会 `clear()` 掉短码；不补发的话用户在短码对话框里换完地址，屏幕上那个码凭空消失 |
+  /// | 3 | 失败时**退回原地址**再返回 `false` | 否则用户「换了个连不上的」还把本来能用的服务弄停了 —— 比不让换更糟 |
+  /// | 4 | 返回值判 `_address == address` | 地址字面量解析失败会回退「绑全部网卡」，那时 `running` 但不是用户要的那个地址 |
+  /// | 5 | 全程**不抛异常** | 与启停同一个约定：界面据此显示「换地址没成功」，不让按钮卡死 |
+  ///
+  /// 没在听（`stopped` / `failed`）时只改界面与二维码 —— 没有绑定可换，
+  /// 与第二刀之前的旧行为逐字相同。
+  Future<bool> selectAddress(String address) async {
     if (!_addressOptions.any(
       (NetAddressOption option) => option.address == address,
     )) {
       return false;
     }
+    if (_state != HostServiceState.running) {
+      if (_address == address) return true;
+      _address = address;
+      // 换完就不再是「探不到地址」的状态了（原来那条提示要撤掉）
+      _addressHint = null;
+      _notifyListeners();
+      return true;
+    }
     if (_address == address) return true;
-    _address = address;
-    // 换完就不再是「探不到地址」的状态了（原来那条提示要撤掉）
-    _addressHint = null;
+
+    final String? previous = _address;
+    final List<NetAddressOption> options = _addressOptions;
+    // 停服务会 clear() 掉短码（「服务没在听，谁也用不了」）—— 记下来，重绑成功后补发
+    final bool hadShortCode = pairRequests.code != null;
+    // 先叫醒一次界面：重绑要几百毫秒，这期间界面把列表画成「正在重启服务…」
     _notifyListeners();
-    return true;
+
+    Future<HostServiceSnapshot> rebind(String to) =>
+        _single(_Op.select, () async {
+          await _stopRaw();
+          // `_stopRaw` 会清空地址与候选表（它以为这一轮结束了）⇒ 用存下来的那份重绑
+          _addressOptions = options;
+          return _startRaw(preferredAddress: to, keepOptions: options);
+        });
+
+    try {
+      final HostServiceSnapshot next = await rebind(address);
+      final bool ok =
+          next.state == HostServiceState.running && _address == address;
+      if (ok) {
+        if (hadShortCode) pairRequests.issueCode();
+        return true;
+      }
+      if (previous != null) {
+        // 换失败（新地址没了 / 字面量解析不了 / 端口抢不回来）⇒ 退回原地址，
+        // 别让用户「换了个连不上的地址」又丢了本来能用的服务
+        await rebind(previous);
+      }
+      return false;
+    } catch (error, stack) {
+      // 与启停同一约定：不往外抛。真到了这一步说明 `_stopRaw` / `_startRaw`
+      // 自己炸了（它们原本都兜住了），记日志 + 尽量把服务恢复
+      onInternalError?.call('换同步服务的监听地址失败', error, stack);
+      if (previous != null && _state != HostServiceState.running) {
+        try {
+          await rebind(previous);
+        } catch (_) {
+          // 恢复也失败就只能停在当前状态 —— 界面会显示失败原因
+        }
+      }
+      return false;
+    } finally {
+      _notifyListeners();
+    }
   }
 
   void _noteTraffic() {
@@ -628,4 +700,4 @@ const String hostIdentityFileName = 'host.json';
 
 /// 启停动作的种类 —— 只给 [HostServiceController] 的 `_single` 判
 /// 「是不是**同一种**动作」用（同种去重、异种排队，见那里的说明）。
-enum _Op { start, stop, reset }
+enum _Op { start, stop, reset, select }

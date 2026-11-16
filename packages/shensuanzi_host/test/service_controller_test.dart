@@ -266,7 +266,7 @@ void main() {
       expect(started.hasAddressChoice, isTrue);
       expect(c.pairingPayload!.ip, '10.102.43.94');
 
-      expect(c.selectAddress('10.6.22.1'), isTrue);
+      expect(await c.selectAddress('10.6.22.1'), isTrue);
       expect(c.snapshot.address, '10.6.22.1');
       expect(
         c.pairingPayload!.ip,
@@ -276,7 +276,7 @@ void main() {
       expect(woke, greaterThan(0), reason: '界面要重画（否则用户以为没生效）');
 
       expect(
-        c.selectAddress('1.2.3.4'),
+        await c.selectAddress('1.2.3.4'),
         isFalse,
         reason: '不在候选里的地址不接受 —— 手填错 IP 会变成"码看着正常、就是连不上"',
       );
@@ -290,6 +290,103 @@ void main() {
       expect(started.addressOptions, isEmpty);
       expect(started.hasAddressChoice, isFalse);
       expect(started.address, fakeIp, reason: '退回单地址探测，行为与从前一致');
+    });
+  });
+
+  // ------------------------------------------------ 提案 62 第二刀（2026-11-16）
+  //
+  // 第一刀之后「换地址只改二维码」变成半真半假。第二刀 = **真的换绑定**。
+  // 反向灵敏度（手动验过）：把 `_startRaw(preferredAddress: to)` 的
+  // `preferredAddress` 去掉 ⇒ 「重绑用的是新地址」与「不再重新探测」双双变红。
+  group('换地址 = 真的换绑定（提案 62 第二刀）', () {
+    List<NetAddressOption> twoNics() => const <NetAddressOption>[
+      NetAddressOption(name: 'WLAN', address: '10.102.43.94'),
+      NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
+    ];
+
+    test('换地址后服务**重新绑到新地址**，且不重新探测网卡', () async {
+      final List<String> bindings = <String>[];
+      int detected = 0;
+      final HostServiceController c = build(
+        detectAddresses: () async {
+          detected++;
+          return twoNics();
+        },
+        resolveBindAddress: (String ip) {
+          bindings.add(ip);
+          return InternetAddress.loopbackIPv4;
+        },
+      );
+      addTearDown(c.stop);
+
+      final HostServiceSnapshot started = await c.start();
+      expect(bindings, <String>['10.102.43.94'], reason: '启动绑的是第一个候选');
+
+      expect(await c.selectAddress('10.6.22.1'), isTrue);
+      expect(bindings, <String>[
+        '10.102.43.94',
+        '10.6.22.1',
+      ], reason: '必须**重新绑**到新地址 —— 这是第二刀的全部意义');
+      expect(detected, 1, reason: '重绑不许重新探测：探测会把地址覆盖回「排序第一」，等于没换');
+      expect(c.snapshot.state, HostServiceState.running, reason: '断连一瞬间后要自己起来');
+      expect(c.boundAddress, InternetAddress.loopbackIPv4);
+      expect(c.snapshot.address, '10.6.22.1');
+      expect(c.pairingPayload!.ip, '10.6.22.1', reason: '码里的地址与绑定同源');
+    });
+
+    test('换地址时那个 6 位短码**重新发一个**（旧的会被 clear 掉）', () async {
+      final HostServiceController c = build(
+        detectAddresses: () async => twoNics(),
+      );
+      addTearDown(c.stop);
+      await c.start();
+
+      final String before = c.pairRequests.issueCode();
+      expect(before.length, 6);
+
+      expect(await c.selectAddress('10.6.22.1'), isTrue);
+      final String? after = c.pairRequests.code;
+      expect(
+        after,
+        isNotNull,
+        reason: '停服务会 clear() 掉短码；不补发的话用户在短码对话框里换完地址，码就凭空消失',
+      );
+      expect(after, isNot(before), reason: '补发的是新码（旧码随服务一起作废了）');
+    });
+
+    test('新地址绑不上 ⇒ 退回原地址 + 返回 false（不让用户丢服务）', () async {
+      final HostServiceController c = build(
+        detectAddresses: () async => twoNics(),
+        // 新地址解析成一个本机没有的地址 ⇒ `HttpServer.bind` 抛 SocketException
+        resolveBindAddress: (String ip) => ip == '10.6.22.1'
+            ? InternetAddress('8.8.8.8')
+            : InternetAddress.loopbackIPv4,
+      );
+      addTearDown(c.stop);
+      expect((await c.start()).address, '10.102.43.94');
+
+      expect(await c.selectAddress('10.6.22.1'), isFalse, reason: '不许假装成功');
+      expect(
+        c.snapshot.state,
+        HostServiceState.running,
+        reason: '换失败也要退回原地址把服务拉起来 —— 否则用户「换了个连不上的」还丢了服务',
+      );
+      expect(c.snapshot.address, '10.102.43.94', reason: '地址行要退回能用的那个');
+      expect(c.pairingPayload!.ip, '10.102.43.94');
+    });
+
+    test('没在听时换地址只改界面（没有绑定可换）', () async {
+      final HostServiceController c = build(
+        detectAddresses: () async => twoNics(),
+      );
+      addTearDown(c.stop);
+      await c.start();
+      await c.stop();
+
+      // 停掉之后候选表已经清空 ⇒ 一律拒绝（第二刀之前也是这个结果）
+      expect(c.snapshot.addressOptions, isEmpty);
+      expect(await c.selectAddress('10.6.22.1'), isFalse);
+      expect(c.snapshot.state, HostServiceState.stopped);
     });
   });
 

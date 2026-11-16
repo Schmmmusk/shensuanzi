@@ -20407,4 +20407,87 @@ host `typecheck` **11 入口** · `selfcheck_service` **100 / 100 通过**（含
 
 第二刀（`selectAddress` 改 async + 停旧服务用新地址重绑 + 对话框忙碌态）**未开工** ——
 它会让换地址短暂断连，按裁定单独一刀做、单独验。
+### 九十、2026-11-16 **提案 62 第二刀落地：换地址 = 真的换绑定**
+
+用户：「提交好了，可以直接开始第二刀」—— 承接 §八十九 的裁定「分两刀」（第一刀只绑定，
+第二刀把 `selectAddress` 异步化）。
+
+#### ① 落地清单
+
+| 层 | 文件 | 改动 |
+|---|---|---|
+| host | `service_controller.dart` | `selectAddress()` → **`Future<bool>`**：在听时**停旧监听 → 用新地址重绑**；`_startRaw({preferredAddress, keepOptions})` 新增两个可选参数（重绑时**不重新探测**）；`_Op` 加 `select`（与启停同一条单飞队列） |
+| ui | `host_service_section.dart` | 两个对话框（二维码 / 6 位短码）加 `_switching` 忙碌态：换地址期间列表**灰掉不可点** + 明说「正在用 x.x.x.x 重启同步服务…」；失败时显示原因（`host-address-switch-error` / `host-short-code-switch-error`）；短码对话框成功后再加一句「**配对码是新的**」（`host-short-code-switched`，否则用户以为码被人改了）；`_AddressChoice.onTap` 改可空并加 50% 透明度的禁用观感 |
+| host | `test/service_controller_test.dart` | 旧断言改 `await`；新增「换地址 = 真的换绑定」组 **4 条** |
+| host | `tool/selfcheck_service.dart` | 同款 **14 条**（**互为镜像**）；`build()` 加 `detectAddresses` |
+| ui | `test/host_service_section_test.dart` | 五处控制器补 `resolveBindAddress → loopback`（假 IP 在本机绑不上，见 ③）；两处「点另一个网卡」改用 `runAsync` + 轮询（真 bind 在假时钟里推不动）；**新增**「换地址失败 ⇒ 如实说失败 + 退回原地址」1 条 |
+| doc | `threat_model.md` §2.1 / §七 · `Security_Test_Principles.md` 层次三 · `proposals/README.md` · `proposals/62` · `proposals/复跑发现修复…` | 纪律 17 清算：五处「服务监听全部网卡」「换地址不用重启」的旧口径全部改成事实 |
+
+#### ② 五条不变量（`selectAddress` 的文档注释里逐条写明）
+
+| # | 不变量 | 不守的后果 |
+|---|---|---|
+| 1 | 重绑**不重新探测**（`preferredAddress`） | 探测会把地址覆盖回「排序第一」，也就是用户要换掉的那个 —— 按一下等于没按 |
+| 2 | **短码要补发**（`hadShortCode ⇒ issueCode`） | 停服务会 `clear()` 掉短码；不补发的话用户在短码对话框里换完地址，屏幕上那个码凭空消失 |
+| 3 | 失败**退回原地址**再返回 `false` | 否则用户「换了个连不上的」还把本来能用的服务弄停了 |
+| 4 | 返回值判 `_address == address` | 字面量解析失败会回退「绑全部网卡」，那时 `running` 但不是用户要的地址 |
+| 5 | **不抛异常**（与启停同约定） | 抛到界面 ⇒ 对话框卡在「正在重启…」，只能重启软件 |
+
+没在听（`stopped` / `failed`）时只改界面，与第二刀之前逐字相同。
+
+#### ③ 施工中撞到的两件事（都不在方案里）
+
+1. **UI 测试原本是「靠运气绿」**：`test/host_service_section_test.dart` 的五处控制器用
+   `detectLocalIp: () async => '192.168.1.7'` 之类假 IP 起服务。第一刀之后服务**真去 bind 那个地址**，
+   本机没有就会 `cannot assign requested address` ⇒ 这些用例在「机器恰好有那个 IP」时绿、
+   换台机器就红。第二刀必须重绑，正好一起修：五处全部注入 `resolveBindAddress → loopback`，
+   而**二维码/地址行显示的仍是假 IP**（那是 `_address`，不是绑定地址）。
+   ⇒ 又一次印证「测试用自己顺手造的值、而不是调用方真正会传的值，得到的是假信心」。
+2. **真 bind 在 widget 测试的假时钟里推不动**：`selectAddress` 现在要真起 socket，
+   而 `pump/pumpAndSettle` 不推进真实 I/O ⇒ 两处「点另一个网卡」必须
+   `tester.runAsync` + 轮询到条件成立（写死 `Duration` 睡等会 flaky）。
+   失败用例用「数据监听者被叫醒两次」当完成信号（`selectAddress` 开始时一次、`finally` 一次），
+   比猜时间稳。
+
+#### ④ 顺手修掉的两处（一处既有 bug + 一处本轮自查）
+
+1. **既有 bug**：`_ShortCodeDialog` 的「换一个地址」列表里，`selected` 判的是
+   `option.address == address`，而 `address` 是 `snapshot.addressLine`（**`主机地址：ip:port`**）
+   ⇒ 那个「选中」圆圈**永远不亮**。改成与 `snapshot.address` 比。
+   （属纪律 17 的「描述与实现不一致」：界面画了一个从不生效的选中态。）
+2. **本轮新引入、落地时自查发现**：服务真停的那几百毫秒里，`pairingPayload` 与
+   `addressLine` 都会短暂为 null ⇒ ① 二维码对话框会闪一句「二维码暂时画不出来，
+   请关掉再打开一次同步服务。」（用户会以为坏了）② 短码对话框里整块地址区
+   连同忙碌提示一起消失。修法：前者在 `_switching != null` 时改说「正在换地址，
+   码马上就好…」；后者把忙碌提示**移到 `if (address != null)` 外面**（注释写明原因）。
+3. **用户复跑抓到的一处红（测试没跟上，产品行为正确）**：短码对话框多了
+   「已换到 X」那两行后，「允许」按钮被顶到 **600 高的测试视口折叠线以下** ⇒
+   `tester.tap` 打空（`warnIfMissed` **只警告不中断**），随后「批准过的行要撤掉」
+   那条断言变红。两处修：文案压成**一行**；测试里 `ensureVisible` 再点
+   （真机用户也是滚一下再点）。**又一次**是「tap 落空 ⇒ 假红」：
+   `warnIfMissed` 的警告是唯一线索，必须当错误读。
+
+#### ⑤ 门禁
+
+本侧亲跑：
+
+| 门禁 | 结果 |
+|---|---|
+| host `dart run tool/typecheck.dart` | **11 个入口**通过 |
+| `dart run tool/selfcheck_service.dart` | **114 / 114 通过**（第二刀新增 14 条，**首次真跑即全绿**） |
+| **反向灵敏度 ×2** | ① 去掉 `preferredAddress` ⇒ **6 条红**（含「重新绑到了新地址」「重绑不重新探测」）② 去掉短码补发 ⇒ 1 条红；**两次均已回滚并复绿** |
+| 端口实测（临时脚本，已删） | 换地址后 `port` 仍是换之前的那个（先关旧监听、再按 range 取最小空闲）⇒ 手机手填过的 `ip:port` 不用改 |
+| `dart format` | 改动文件 0 changed |
+
+**待用户复跑**：`flutter analyze` / `flutter test` / `pushd packages\shensuanzi_host; dart test; popd`。
+
+#### ⑥ 仍欠 / 明确的取舍
+
+- **换 WiFi / 网线后服务仍听在旧网卡上**：需手动重启服务。2026-11-16 裁定「提示先不加」，
+  但**第二刀之后这条更值得提示**了（从前绑 `0.0.0.0` 时换网卡还能用）。现在只在
+  `selectAddress` 与提案 62 §六 里写着，**界面上没有**。要不要加一句提醒，等你定。
+- **端口没有强保证**：`HostHttpServer.start` 只收 `PortRange`，重绑时按「最小空闲端口」取 ——
+  实测与旧端口相同，但理论上被别的程序抢走就会换（那时二维码会重画，用户重扫即可）。
+  提案 §五 用例 3 写的「端口不变」目前是**实测事实，不是契约**。
+- 提案 §四 里「地址列表标『推荐』」「虚拟网卡提示」**仍未做**（不在裁定范围）。
 

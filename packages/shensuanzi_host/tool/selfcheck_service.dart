@@ -40,6 +40,7 @@ HostServiceController build(
   HostIdentityStore store, {
   PortRange ports = testPorts,
   Future<String?> Function()? detectLocalIp,
+  Future<List<NetAddressOption>> Function()? detectAddresses,
   InternetAddress? Function(String address)? resolveBindAddress,
   void Function(String label, Object error, StackTrace stack)? onInternalError,
 }) => HostServiceController(
@@ -47,6 +48,7 @@ HostServiceController build(
   identities: store,
   ports: ports,
   detectLocalIp: detectLocalIp ?? () async => fakeIp,
+  detectAddresses: detectAddresses,
   // 2026-11-16（提案 62 第一刀）：服务绑探测到的地址；假 IP 在本机绑不上 ⇒ 映射到 loopback
   resolveBindAddress:
       resolveBindAddress ?? (String _) => InternetAddress.loopbackIPv4,
@@ -323,6 +325,71 @@ Future<void> main() async {
   check('绝不绑 anyIPv4', bound.boundAddress != InternetAddress.anyIPv4);
   check('bindFallback = false', !sBound.bindFallback);
   await bound.stop();
+
+  // -------------------------------------------- 提案 62 第二刀（2026-11-16）
+  //
+  // 第一刀之后「换地址只改二维码」变成半真半假 ⇒ 第二刀 = **真的换绑定**。
+  section('换地址 = 真的换绑定（提案 62 第二刀）');
+  const List<NetAddressOption> twoNics = <NetAddressOption>[
+    NetAddressOption(name: 'WLAN', address: '10.102.43.94'),
+    NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
+  ];
+  final List<String> bindings = <String>[];
+  int detected = 0;
+  final HostServiceController swap = build(
+    db,
+    HostIdentityStore.inMemory(),
+    detectAddresses: () async {
+      detected++;
+      return twoNics;
+    },
+    resolveBindAddress: (String ip) {
+      bindings.add(ip);
+      return InternetAddress.loopbackIPv4;
+    },
+  );
+  final HostServiceSnapshot sSwap = await swap.start();
+  check('启动绑第一个候选', sSwap.address == '10.102.43.94');
+  final String codeBefore = swap.pairRequests.issueCode();
+  check('换之前先发一个短码（模拟用户在短码对话框里）', codeBefore.length == 6);
+
+  final bool switched = await swap.selectAddress('10.6.22.1');
+  check('换地址返回 true', switched);
+  check(
+    '重新绑到了新地址（不是只改二维码）',
+    bindings.length == 2 && bindings[1] == '10.6.22.1',
+    bindings.join(' → '),
+  );
+  check('重绑不重新探测网卡', detected == 1, '探测次数 $detected');
+  check('换完仍是 running', swap.snapshot.state == HostServiceState.running);
+  check('地址行跟着换', swap.snapshot.address == '10.6.22.1');
+  check('二维码里的地址与绑定同源', swap.pairingPayload?.ip == '10.6.22.1');
+  check(
+    '短码补发了一个新的（旧的随服务作废）',
+    swap.pairRequests.code != null && swap.pairRequests.code != codeBefore,
+  );
+  check('不在候选里的地址拒绝', !await swap.selectAddress('1.2.3.4'));
+  await swap.stop();
+
+  // 失败回滚：新地址解析成本机没有的地址 ⇒ bind 抛 SocketException
+  final HostServiceController broken = build(
+    db,
+    HostIdentityStore.inMemory(),
+    detectAddresses: () async => twoNics,
+    resolveBindAddress: (String ip) => ip == '10.6.22.1'
+        ? InternetAddress('8.8.8.8')
+        : InternetAddress.loopbackIPv4,
+  );
+  final HostServiceSnapshot sRollback = await broken.start();
+  check('失败回滚用例：启动在第一个地址', sRollback.address == '10.102.43.94');
+  final bool failed = await broken.selectAddress('10.6.22.1');
+  check('新地址绑不上 ⇒ 返回 false（不假装成功）', !failed);
+  check(
+    '退回原地址把服务拉起来（不让用户丢服务）',
+    broken.snapshot.state == HostServiceState.running,
+  );
+  check('地址行退回能用的那个', broken.snapshot.address == '10.102.43.94');
+  await broken.stop();
 
   section('探不到局域网地址：服务照起，但不画码、给「怎么办」');
   final HostServiceController noIp = build(

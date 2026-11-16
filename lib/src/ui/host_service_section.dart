@@ -475,6 +475,42 @@ class _PairingDialog extends StatefulWidget {
 }
 
 class _PairingDialogState extends State<_PairingDialog> {
+  /// 正在换到哪个地址（`null` = 没在换）。换地址现在是**真的重绑**
+  ///（停旧监听 → 用新地址起，2026-11-16 第二刀），要几百毫秒 ——
+  /// 这期间必须：① 列表灰掉（否则连点会排队换好几次）② 明说在干什么。
+  String? _switching;
+
+  /// 换地址失败的原因（人话）。失败时服务会退回原地址，这里只说事实。
+  String? _switchError;
+
+  Future<void> _switch(String address) async {
+    if (_switching != null) return;
+    setState(() {
+      _switching = address;
+      _switchError = null;
+    });
+    final bool ok = await widget.controller.selectAddress(address);
+    if (!mounted) return;
+    setState(() {
+      _switching = null;
+      _switchError = ok ? null : _switchProblem(address);
+    });
+  }
+
+  /// 换地址失败时给用户的话。
+  ///
+  /// 分两种：**回滚成功**（服务仍在听旧地址 ⇒ 让他先接着用），
+  /// 与**回滚也失败**（服务没起来 ⇒ 给失败原因 + 让他关掉重开）。
+  /// 两种都必须说清「还能不能连」，否则用户只能对着一屏灰猜。
+  String _switchProblem(String address) {
+    final HostServiceSnapshot s = widget.controller.snapshot;
+    if (s.state == HostServiceState.running) {
+      return '换到 $address 没成功 —— 服务已退回原来的地址，先接着用。';
+    }
+    return '换到 $address 没成功，服务现在也没起来。'
+        '${s.detail ?? '请把同步服务关掉再打开一次。'}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -492,7 +528,17 @@ class _PairingDialogState extends State<_PairingDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               if (payload == null)
-                const Text('二维码暂时画不出来，请关掉再打开一次同步服务。')
+                // ⚠️ 换地址的那几百毫秒里服务是停的 ⇒ `pairingPayload` 为 null。
+                // 这时不能说「请关掉再打开一次同步服务」（用户会以为坏了），
+                // 只说正在干什么。
+                Text(
+                  _switching == null
+                      ? '二维码暂时画不出来，请关掉再打开一次同步服务。'
+                      : '正在用 $_switching 换地址，码马上就好…',
+                  key: _switching == null
+                      ? null
+                      : const Key('host-qr-switching-placeholder'),
+                )
               else
                 Center(child: _QrView(payload: payload)),
               const SizedBox(height: 12),
@@ -549,15 +595,32 @@ class _PairingDialogState extends State<_PairingDialog> {
                     key: Key('host-address-option-${option.address}'),
                     option: option,
                     selected: option.address == snapshot.address,
-                    onTap: () {
-                      widget.controller.selectAddress(option.address);
-                      setState(() {});
-                    },
+                    onTap: _switching == null
+                        ? () => _switch(option.address)
+                        : null,
                   ),
-                Text(
-                  '换完要用手机重新扫一次上面的码。',
-                  style: TextStyle(height: 1.6, color: secondary),
-                ),
+                if (_switching != null)
+                  Text(
+                    '正在用 $_switching 重启同步服务…'
+                    '（这台电脑会断连一瞬间，最多几秒）',
+                    key: const Key('host-address-switching'),
+                    style: TextStyle(height: 1.6, color: secondary),
+                  )
+                else if (_switchError != null)
+                  Text(
+                    _switchError!,
+                    key: const Key('host-address-switch-error'),
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.colorScheme.error,
+                    ),
+                  )
+                else
+                  Text(
+                    '换完要用手机重新扫一次上面的码。'
+                    '（换地址会让正在连着的手机断开，这是正常的）',
+                    style: TextStyle(height: 1.6, color: secondary),
+                  ),
               ],
             ],
           ),
@@ -610,6 +673,44 @@ class _ShortCodeDialog extends StatefulWidget {
 class _ShortCodeDialogState extends State<_ShortCodeDialog> {
   late final PairRequests _store = widget.controller.pairRequests;
   Timer? _ticker;
+
+  /// 正在换到哪个地址（`null` = 没在换）。见 `_PairingDialogState._switching`。
+  String? _switching;
+
+  /// 换地址失败的原因（人话）。
+  String? _switchError;
+
+  /// 刚换成功的地址 —— 这一屏的**配对码会跟着换一个新的**（停服务会清掉旧码，
+  /// 重绑成功后补发），不说明的话用户会以为码被人改了。
+  String? _switched;
+
+  Future<void> _switch(String address) async {
+    if (_switching != null) return;
+    setState(() {
+      _switching = address;
+      _switchError = null;
+      _switched = null;
+    });
+    final bool ok = await widget.controller.selectAddress(address);
+    if (!mounted) return;
+    setState(() {
+      _switching = null;
+      _switchError = ok ? null : _switchProblem(address);
+      _switched = ok ? address : null;
+    });
+  }
+
+  /// 见 `_PairingDialogState._switchProblem` —— 同一套话。
+  /// 两处各写一份是因为它们是两个独立对话框的私有状态，
+  /// 抽成共用要再造一个 mixin，为三行文案不划算。
+  String _switchProblem(String address) {
+    final HostServiceSnapshot s = widget.controller.snapshot;
+    if (s.state == HostServiceState.running) {
+      return '换到 $address 没成功 —— 服务已退回原来的地址，先接着用。';
+    }
+    return '换到 $address 没成功，服务现在也没起来。'
+        '${s.detail ?? '请把同步服务关掉再打开一次。'}';
+  }
 
   @override
   void initState() {
@@ -718,14 +819,48 @@ class _ShortCodeDialogState extends State<_ShortCodeDialog> {
                     _AddressChoice(
                       key: Key('host-short-code-address-${option.address}'),
                       option: option,
-                      selected: option.address == address,
-                      onTap: () {
-                        widget.controller.selectAddress(option.address);
-                        _refresh();
-                      },
+                      // ⚠️ 与**纯地址**比，不是与上面那行 `主机地址：ip:port` 比 ——
+                      // 从前这里比的是 `addressLine`，于是「选中」的圆圈永远不亮
+                      //（2026-11-16 第二刀顺手修正）。
+                      selected:
+                          option.address == widget.controller.snapshot.address,
+                      onTap: _switching == null
+                          ? () => _switch(option.address)
+                          : null,
+                    ),
+                  if (_switchError != null)
+                    Text(
+                      _switchError!,
+                      key: const Key('host-short-code-switch-error'),
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.colorScheme.error,
+                      ),
+                    )
+                  else if (_switched != null)
+                    // 只占一行：这一屏下面还有「允许 / 拒绝」，多两行就会把
+                    // 主按钮顶到折叠线以下（用户得先滚一下才点得到）
+                    Text(
+                      '已换到 $_switched（服务已重启）—— 配对码是新的。',
+                      key: const Key('host-short-code-switched'),
+                      style: TextStyle(height: 1.6, color: secondary),
                     ),
                 ],
               ],
+              // ⚠️ 忙碌提示放在 `if (address != null)` **外面**：换地址的那几百毫秒里
+              // `addressLine` 会短暂为 null（服务正停着），放里面会连带整块一起消失 ——
+              // 用户看到的就只是「这块突然没了」，不知道在干什么。
+              if (_switching != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    '正在用 $_switching 重启同步服务…'
+                    '（这台电脑会断连一瞬间，最多几秒。'
+                    '重启后配对码会换一个新的，请以屏幕上的为准）',
+                    key: const Key('host-short-code-switching'),
+                    style: TextStyle(height: 1.6, color: secondary),
+                  ),
+                ),
               const Divider(height: 28),
               Text(
                 pending.isEmpty
@@ -797,35 +932,41 @@ class _AddressChoice extends StatelessWidget {
     super.key,
     required this.option,
     required this.selected,
-    required this.onTap,
+    this.onTap,
   });
 
   final NetAddressOption option;
   final bool selected;
-  final VoidCallback onTap;
+
+  /// `null` = 暂时不可点（正在重启服务，2026-11-16 第二刀）。
+  /// 不用 `IgnorePointer`：`InkWell` 传 `null` 本身就不响应，且能给出灰化的观感。
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        // 44 高：`ui_principles.md` §二 的触控目标下限
-        padding: const EdgeInsets.symmetric(vertical: 11),
-        child: Row(
-          children: <Widget>[
-            Icon(
-              selected ? Icons.check_circle : Icons.circle_outlined,
-              size: 18,
-              color: selected
-                  ? theme.colorScheme.primary
-                  : theme.colorScheme.outline,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(option.label, style: const TextStyle(height: 1.6)),
-            ),
-          ],
+    return Opacity(
+      opacity: onTap == null ? 0.5 : 1,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          // 44 高：`ui_principles.md` §二 的触控目标下限
+          padding: const EdgeInsets.symmetric(vertical: 11),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                selected ? Icons.check_circle : Icons.circle_outlined,
+                size: 18,
+                color: selected
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.outline,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(option.label, style: const TextStyle(height: 1.6)),
+              ),
+            ],
+          ),
         ),
       ),
     );

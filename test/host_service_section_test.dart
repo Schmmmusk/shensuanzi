@@ -7,9 +7,11 @@
 // 「打开开关 → 跑起服务 → 弹二维码」这条路径需要一个**真实绑定的端口**，
 // 而本侧（AI 沙箱）编译不到 Flutter 层 ⇒ 写完没法跑。
 // 状态机本身已经被 `shensuanzi_host` 的
-// `test/service_controller_test.dart` + `tool/selfcheck_service.dart`（56 项）
+// `test/service_controller_test.dart` + `tool/selfcheck_service.dart`（114 项）
 // 完整覆盖；这里只钉住「摆放」这一层不会退化。
 // 绑定端口的 widget 测试见 `docs/reply_review.md` §BB·六 的待补清单。
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shensuanzi/src/ui/host_service_section.dart';
@@ -17,12 +19,34 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_core/sqlite_local.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 
+/// 等一个**真实**异步动作落地（最多 5 秒）。
+///
+/// 换地址从提案 62 第二刀起是「停旧监听 → 用新地址重绑」，要真的 bind socket；
+/// 而 widget 测试的假时钟不会推进真实 I/O ⇒ 只能 `runAsync` + 轮询。
+/// 固定 `Duration` 睡等会变成 flaky（机器慢就红），所以轮询到条件成立为止。
+Future<void> _waitFor(
+  bool Function() done, {
+  Duration limit = const Duration(seconds: 5),
+}) async {
+  final DateTime deadline = DateTime.now().add(limit);
+  while (!done()) {
+    if (DateTime.now().isAfter(deadline)) {
+      throw StateError('等待超时：条件在 ${limit.inSeconds} 秒内没有成立');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+}
+
 /// 一按开关就抛异常的控制器 —— 专门用来钉「失败后界面不会卡死」。
 class _ThrowingController extends HostServiceController {
   _ThrowingController({required super.db, required super.identities})
     : super(
         ports: const PortRange(start: 17970, end: 17979),
         detectLocalIp: () async => '192.168.1.7',
+        // 2026-11-16（提案 62）：服务绑**探测到的地址**，而假 IP 在本机绑不上
+        // （cannot assign requested address）⇒ 测试映射到 loopback。
+        // 二维码/地址行显示的仍是假 IP（那是 `_address`，不是绑定地址）。
+        resolveBindAddress: (String _) => InternetAddress.loopbackIPv4,
       );
 
   @override
@@ -51,6 +75,10 @@ void main() {
       // 不绑生产端口（17890），也不与 host 包自检的 17985~17999 撞
       ports: const PortRange(start: 17960, end: 17969),
       detectLocalIp: () async => '192.168.1.7',
+      // 2026-11-16（提案 62）：服务绑**探测到的地址**，而假 IP 在本机绑不上
+      // （cannot assign requested address）⇒ 测试映射到 loopback。
+      // 二维码/地址行显示的仍是假 IP（那是 `_address`，不是绑定地址）。
+      resolveBindAddress: (String _) => InternetAddress.loopbackIPv4,
     );
   });
 
@@ -134,6 +162,10 @@ void main() {
       // 不与其它用例的端口段撞（17960~17969 / 17985~17999）
       ports: const PortRange(start: 17970, end: 17979),
       detectLocalIp: () async => '10.102.43.94',
+      // 2026-11-16（提案 62）：服务绑**探测到的地址**，而假 IP 在本机绑不上
+      // （cannot assign requested address）⇒ 测试映射到 loopback。
+      // 二维码/地址行显示的仍是假 IP（那是 `_address`，不是绑定地址）。
+      resolveBindAddress: (String _) => InternetAddress.loopbackIPv4,
       detectAddresses: () async => const <NetAddressOption>[
         NetAddressOption(name: 'WLAN', address: '10.102.43.94'),
         NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
@@ -188,13 +220,28 @@ void main() {
     );
     await tester.ensureVisible(second);
     await tester.pumpAndSettle();
-    await tester.tap(second);
+    // 换地址 = **真的换绑定**（提案 62 第二刀）：停旧监听 → 用新地址起，
+    // 要真的 bind socket ⇒ 假时钟推不动，必须 runAsync + 轮询到换完
+    await tester.runAsync(() async {
+      await tester.tap(second);
+      await _waitFor(() => multi.snapshot.address == '10.6.22.1');
+    });
     await tester.pumpAndSettle();
 
+    expect(
+      multi.snapshot.state,
+      HostServiceState.running,
+      reason: '换完要自己起来 —— 半路上停掉服务是最糟的结局',
+    );
     expect(
       inDialog('主机地址：10.6.22.1'),
       findsOneWidget,
       reason: '换了地址，地址行必须当场变（不许关掉再开才生效）',
+    );
+    expect(
+      find.byKey(const Key('host-address-switching')),
+      findsNothing,
+      reason: '换完就得把「正在重启…」收掉',
     );
     expect(inDialog('主机地址：10.102.43.94'), findsNothing);
     expect(multi.pairingPayload!.ip, '10.6.22.1', reason: '二维码内容也要跟着换');
@@ -206,6 +253,82 @@ void main() {
     // ⚠️ 而且必须包在 `runAsync` 里：`testWidgets` 默认跑在**假时钟**下，
     // 直接 `await stop()` 会一直等不到真实 I/O 的回调 —— 实测卡死 4 分 54 秒。
     await tester.runAsync(() => multi.stop());
+  });
+
+  testWidgets('换地址失败 ⇒ 如实说失败 + 服务退回原地址（提案 62 第二刀）', (
+    WidgetTester tester,
+  ) async {
+    // 真机上的失败形态：换到的那块网卡已经没了 / 被别的程序占住。
+    // 界面绝不能假装成功（用户会对着一个连不上的码猜半天），
+    // 也绝不能把服务弄停（那比不让换更糟）。
+    final HostServiceController flaky = HostServiceController(
+      db: db,
+      identities: HostIdentityStore.inMemory(),
+      ports: const PortRange(start: 17940, end: 17949),
+      detectLocalIp: () async => '10.102.43.94',
+      // 第二个地址解析成本机没有的 8.8.8.8 ⇒ `HttpServer.bind` 抛
+      // SocketException（真机上等价于「那块网卡不在了」）
+      resolveBindAddress: (String ip) => ip == '10.6.22.1'
+          ? InternetAddress('8.8.8.8')
+          : InternetAddress.loopbackIPv4,
+      detectAddresses: () async => const <NetAddressOption>[
+        NetAddressOption(name: 'WLAN', address: '10.102.43.94'),
+        NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
+      ],
+    );
+    addTearDown(flaky.stop);
+    await tester.runAsync(() => flaky.start());
+
+    // `selectAddress` 全程调两次数据监听者（开始时一次、finally 一次）——
+    // 用它当「换完了」的信号，比猜 `Duration` 稳
+    int notes = 0;
+    flaky.addDataListener(() => notes++);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: HostServicePanel(controller: flaky),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-service-show-qr')));
+    await tester.pumpAndSettle();
+
+    final Finder second = find.byKey(
+      const Key('host-address-option-10.6.22.1'),
+    );
+    await tester.ensureVisible(second);
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      await tester.tap(second);
+      await _waitFor(() => notes >= 2);
+    });
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('host-address-switch-error')),
+      findsOneWidget,
+      reason: '失败必须说出来 —— 假装成功会把人引向「码看着正常、就是连不上」',
+    );
+    expect(find.textContaining('没成功'), findsOneWidget);
+    expect(
+      flaky.snapshot.state,
+      HostServiceState.running,
+      reason: '换失败要退回原地址把服务拉起来',
+    );
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.textContaining('主机地址：10.102.43.94'),
+      ),
+      findsOneWidget,
+      reason: '地址行要退回能用的那个',
+    );
+
+    await tester.runAsync(() => flaky.stop());
   });
 
   testWidgets('操作抛异常时**不会把界面卡在「忙」状态**（2026-10-31 真机）', (
@@ -265,6 +388,10 @@ void main() {
       identities: HostIdentityStore.inMemory(),
       ports: const PortRange(start: 17970, end: 17979),
       detectLocalIp: () async => '192.168.1.7',
+      // 2026-11-16（提案 62）：服务绑**探测到的地址**，而假 IP 在本机绑不上
+      // （cannot assign requested address）⇒ 测试映射到 loopback。
+      // 二维码/地址行显示的仍是假 IP（那是 `_address`，不是绑定地址）。
+      resolveBindAddress: (String _) => InternetAddress.loopbackIPv4,
       detectAddresses: () async => const <NetAddressOption>[
         NetAddressOption(name: 'WLAN', address: '192.168.1.7'),
         NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
@@ -320,7 +447,11 @@ void main() {
     );
     await tester.ensureVisible(alt);
     await tester.pumpAndSettle();
-    await tester.tap(alt);
+    // 同上：真 bind，得喂真实事件循环
+    await tester.runAsync(() async {
+      await tester.tap(alt);
+      await _waitFor(() => host.snapshot.address == '10.6.22.1');
+    });
     await tester.pump();
     expect(
       tester
@@ -330,6 +461,11 @@ void main() {
           .data,
       contains('10.6.22.1'),
       reason: '换完地址行要当场变（手机照着抄的就是它）',
+    );
+    expect(
+      find.byKey(const Key('host-short-code-switched')),
+      findsOneWidget,
+      reason: '换地址会重发配对码 —— 不说明的话用户以为码被人改了',
     );
 
     // 模拟手机来请求（真机上是 HTTP 打进来的，这里直接打状态机）
@@ -346,9 +482,16 @@ void main() {
       reason: '约束 4：必须显示是哪台设备，用户才知道自己在批准谁',
     );
     expect(find.textContaining('192.168.1.23'), findsOneWidget);
-    expect(find.byKey(Key('host-pair-approve-${pending.id}')), findsOneWidget);
+    final Finder approve = find.byKey(Key('host-pair-approve-${pending.id}'));
+    expect(approve, findsOneWidget);
+    // ⚠️ 必须先滚到它：这一屏上方有「6 位码 + 地址 + 换地址列表 + 换完提示」，
+    // 600 高的测试视口装不下，按钮落在对话框折叠线以下 ⇒ `tap` 会打空
+    //（`warnIfMissed` 只警告不中断，结果就是「点了但没生效」的假红）。
+    // 真机用户也是滚一下再点，这里照着做。
+    await tester.ensureVisible(approve);
+    await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(Key('host-pair-approve-${pending.id}')));
+    await tester.tap(approve);
     await tester.pump();
 
     expect(
@@ -370,6 +513,10 @@ void main() {
       identities: HostIdentityStore.inMemory(),
       ports: const PortRange(start: 17970, end: 17979),
       detectLocalIp: () async => '192.168.1.7',
+      // 2026-11-16（提案 62）：服务绑**探测到的地址**，而假 IP 在本机绑不上
+      // （cannot assign requested address）⇒ 测试映射到 loopback。
+      // 二维码/地址行显示的仍是假 IP（那是 `_address`，不是绑定地址）。
+      resolveBindAddress: (String _) => InternetAddress.loopbackIPv4,
     );
     addTearDown(host.stop);
     await tester.runAsync(() => host.start());
