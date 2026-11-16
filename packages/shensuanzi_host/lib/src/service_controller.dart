@@ -44,6 +44,7 @@ class HostServiceSnapshot {
     this.trafficCount = 0,
     this.lastTrafficAt,
     this.addressOptions = const <NetAddressOption>[],
+    this.bindFallback = false,
   });
 
   final HostServiceState state;
@@ -76,6 +77,15 @@ class HostServiceSnapshot {
 
   /// 现在能画二维码（= 在听 + 有明文 + 有地址）
   final bool qrAvailable;
+
+  /// **回退绑了全部网卡**（2026-11-16 裁定「乙」，提案 62 第一刀）。
+  ///
+  /// 正常情况服务只绑**探测到的局域网网卡**；探不到地址时才回退 `0.0.0.0`，
+  /// 并且必须在这里标出来 —— 界面据此说明「当前监听全部网卡」，
+  /// 否则文档里那句「只监听局域网网卡」就又变成假话了（纪律 17）。
+  ///
+  /// `true` ⇒ [address] 必为 `null`（两个零散字段之间这条不变量由控制器保证）。
+  final bool bindFallback;
 
   /// 启动时**明文令牌恢复到了什么程度**（2026-11-01，提案 57 裁定 ②③⑤）。
   ///
@@ -202,6 +212,7 @@ class HostServiceController {
     PortRange ports = PortRange.defaults,
     Future<String?> Function()? detectLocalIp,
     Future<List<NetAddressOption>> Function()? detectAddresses,
+    InternetAddress? Function(String address)? resolveBindAddress,
     int Function()? clock,
     this.onInternalError,
   }) : _db = db,
@@ -215,6 +226,11 @@ class HostServiceController {
            (detectLocalIp == null ? LocalIp.detectAll : null),
        // ⚠️ 括号不能省：初始化列表里 `?? ` 后面直接跟 `() => ...` 会被解析成
        // 「构造函数带返回类型」而报错（Dart 的已知歧义）
+       // ⚠️ **可注入的缝**：把「选定的地址字面量」变成真正要绑的地址。
+       // 生产就是 `tryParse`；测试注入它，是因为假 IP（192.168.x）在本机绑不上
+       // （`SocketException: cannot assign requested address`），
+       // 而「绑定的是不是探测到的那个」必须能被断言（见 service_controller_test）。
+       _resolveBind = resolveBindAddress ?? InternetAddress.tryParse,
        _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch);
 
   /// **同步内部错误的日志出口**（§CS·五 裁定 ③）：主机把原始异常交给宿主
@@ -243,6 +259,16 @@ class HostServiceController {
 
   String? _address;
 
+  /// 本次启动是否**回退绑了全部网卡**（探不到地址时）。见 [HostServiceSnapshot.bindFallback]。
+  bool _bindFallback = false;
+
+  /// 地址字面量 → 要绑的地址（生产 = `InternetAddress.tryParse`；测试注入映射）。
+  final InternetAddress? Function(String address) _resolveBind;
+
+  /// 实际绑定的地址（`null` = 没在听）。**测试与诊断用** ——
+  /// 用来钉「绑的是选定地址，不是 `0.0.0.0`」（反向灵敏度见测试文件）。
+  InternetAddress? get boundAddress => _server?.address;
+
   /// 本次启动探到的全部候选（[selectAddress] 只能在里面挑）
   List<NetAddressOption> _addressOptions = const <NetAddressOption>[];
   int _trafficCount = 0;
@@ -270,6 +296,7 @@ class HostServiceController {
     trafficCount: _trafficCount,
     lastTrafficAt: _lastTrafficAt,
     addressOptions: _addressOptions,
+    bindFallback: _bindFallback,
   );
 
   /// 手里是否有**明文**令牌（判断依据是 `HostIdentity.plaintextToken`）
@@ -419,13 +446,30 @@ class HostServiceController {
       _address = _addressOptions.isNotEmpty
           ? _addressOptions.first.address
           : await _detectLocalIp();
-      if (_address == null) {
-        _addressHint = '找不到局域网地址。请先把电脑连上路由器或手机热点，再关掉重开这个服务。';
+      // 2026-11-16（裁定「乙」，提案 62 第一刀）：**只绑探测到的局域网网卡**。
+      // 探不到（或字面量解析失败）才回退 `0.0.0.0`，并且把这件事**标出来** ——
+      // 文档里那句「只监听局域网网卡」从这一刀起才是真话（纪律 17）。
+      final InternetAddress? bind = _address == null
+          ? null
+          : _resolveBind(_address!);
+      if (bind == null && _address != null) {
+        // 理论上走不到（地址来自网卡枚举）；真走到了就按「没有地址」处理，
+        // 不能让二维码写一个服务根本没在听的地址 —— 那是更难查的假话。
+        _address = null;
+      }
+      _bindFallback = bind == null;
+      if (_bindFallback) {
+        _addressHint =
+            '找不到局域网地址 —— 现在监听全部网卡（手机多半连不上）。'
+            '请先把电脑连上路由器或手机热点，再关掉重开这个服务。';
       }
       _server = await HostHttpServer.start(
         db: _db,
         identity: _identity!,
         ports: _ports,
+        // `null` ⇒ 回退 `InternetAddress.anyIPv4`（`http_server.dart` 的默认），
+        // 与 [bindFallback] 是同一个判据，不许各算各的
+        address: bind,
         onAuthenticated: _noteTraffic,
         onDataApplied: _noteDataApplied,
         onInternalError: onInternalError,
@@ -468,6 +512,7 @@ class HostServiceController {
     }
     _state = HostServiceState.stopped;
     _address = null;
+    _bindFallback = false;
     _addressOptions = const <NetAddressOption>[];
     _failureHint = null;
     _addressHint = null;
@@ -502,8 +547,14 @@ class HostServiceController {
   /// 而那个故障比现在这个更难查。真正的「随便填」由**手机端**兜底
   ///（扫码页的手动输入，那边有令牌可以校验）。
   ///
-  /// 换地址**不用重启服务**：服务绑的是 `0.0.0.0`，地址只影响二维码内容
-  /// 与界面上那行提示 ⇒ 换完把监听者叫醒重画即可。
+  /// ⚠️ **现状（提案 62 第一刀之后）：换地址只改二维码与界面，绑定不变。**
+  /// 从前服务绑 `0.0.0.0`，所以换地址确实"只影响二维码"；第一刀改成
+  /// **只绑探测到的那块网卡**之后，这条路径就**半真半假**了 ——
+  /// 选另一个网卡后，码里写着新地址、服务却还听在启动时那块网卡上。
+  ///
+  /// 这是**已知的中间态**：2026-11-16 裁定「先绑定、后异步化」把修法留到第二刀
+  /// （停旧服务 → 用新地址重绑，本方法随之改成 `Future`，对话框加忙碌态）。
+  /// 在那之前，**只有候选列表的第一个地址是真的可用**（启动时就是绑它）。
   bool selectAddress(String address) {
     if (!_addressOptions.any(
       (NetAddressOption option) => option.address == address,

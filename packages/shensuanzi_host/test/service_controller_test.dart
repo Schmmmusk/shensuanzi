@@ -34,13 +34,20 @@ void main() {
     PortRange ports = testPorts,
     Future<String?> Function()? detectLocalIp,
     Future<List<NetAddressOption>> Function()? detectAddresses,
-    void Function(String label, Object error, StackTrace stack)? onInternalError,
+    InternetAddress? Function(String address)? resolveBindAddress,
+    void Function(String label, Object error, StackTrace stack)?
+    onInternalError,
   }) => HostServiceController(
     db: db,
     identities: identities ?? store,
     ports: ports,
     detectLocalIp: detectLocalIp ?? () async => fakeIp,
     detectAddresses: detectAddresses,
+    // 2026-11-16（提案 62 第一刀）：服务现在**绑探测到的地址**，
+    // 而 `fakeIp`（192.168.x）在本机绑不上 ⇒ 测试把它映射到 loopback。
+    // 「绑的是不是探测到的那个」由专门的用例断言（会捕获入参）。
+    resolveBindAddress:
+        resolveBindAddress ?? (String _) => InternetAddress.loopbackIPv4,
     clock: now,
     onInternalError: onInternalError,
   );
@@ -283,6 +290,77 @@ void main() {
       expect(started.addressOptions, isEmpty);
       expect(started.hasAddressChoice, isFalse);
       expect(started.address, fakeIp, reason: '退回单地址探测，行为与从前一致');
+    });
+  });
+
+  // ---------------------------------------------------------------- 提案 62 第一刀
+  //
+  // 2026-11-16 裁定「乙」：**只绑探测到的局域网网卡**；探不到才回退 `0.0.0.0`，
+  // 并用 `bindFallback` 明说（界面上那句 addressHint 就是「明说」）。
+  //
+  // 反向灵敏度（手动验过）：把 `_startRaw` 里的 `address: bind` 删掉
+  // ⇒ 「绑的是探测地址」那条立刻红（服务会绑回 `0.0.0.0`）。
+  group('绑定收紧（提案 62 第一刀）', () {
+    test('启动时绑的是**探测到的局域网地址**，不是 0.0.0.0', () async {
+      String? resolved;
+      final HostServiceController c = build(
+        resolveBindAddress: (String ip) {
+          resolved = ip;
+          return InternetAddress.loopbackIPv4;
+        },
+      );
+      addTearDown(c.stop);
+
+      final HostServiceSnapshot snapshot = await c.start();
+      expect(resolved, fakeIp, reason: '生产把**选定地址**交给 tryParse —— 这里捕获到的必须是它');
+      expect(c.boundAddress, InternetAddress.loopbackIPv4);
+      expect(
+        c.boundAddress,
+        isNot(InternetAddress.anyIPv4),
+        reason: '绑 0.0.0.0 就是文档里那句假话的根源',
+      );
+      expect(snapshot.bindFallback, isFalse);
+      expect(snapshot.address, fakeIp, reason: '二维码里的地址不受绑定方式影响');
+    });
+
+    test('探不到地址 ⇒ 仍然 running + 回退绑全部网卡 + 界面明说', () async {
+      final HostServiceController c = build(
+        detectLocalIp: () async => null,
+        detectAddresses: () async => const <NetAddressOption>[],
+      );
+      addTearDown(c.stop);
+
+      final HostServiceSnapshot snapshot = await c.start();
+      expect(
+        snapshot.state,
+        HostServiceState.running,
+        reason: '裁定乙：不拒绝启动 —— 拒绝会让用户以为软件坏了',
+      );
+      expect(snapshot.bindFallback, isTrue);
+      expect(c.boundAddress, InternetAddress.anyIPv4);
+      expect(snapshot.address, isNull);
+      expect(
+        snapshot.detail,
+        contains('监听全部网卡'),
+        reason: '不能留假话：必须让用户在界面上看到这一句',
+      );
+      expect(snapshot.qrAvailable, isFalse, reason: '没地址就画不出码（现状不变）');
+    });
+
+    test('先回退、后探到地址 ⇒ bindFallback 复位为 false', () async {
+      bool hasIp = false;
+      final HostServiceController c = build(
+        detectLocalIp: () async => hasIp ? fakeIp : null,
+        detectAddresses: () async => const <NetAddressOption>[],
+      );
+      addTearDown(c.stop);
+
+      expect((await c.start()).bindFallback, isTrue);
+      hasIp = true;
+      await c.stop();
+      final HostServiceSnapshot again = await c.start();
+      expect(again.bindFallback, isFalse);
+      expect(c.boundAddress, InternetAddress.loopbackIPv4);
     });
   });
 

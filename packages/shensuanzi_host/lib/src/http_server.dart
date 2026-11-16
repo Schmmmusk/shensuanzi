@@ -113,6 +113,8 @@ class HostHttpServer {
       // 而且用户可能换过网卡地址 —— 现取才能与二维码里那张逐字相同）
       pairingUri: pairingUri,
     );
+    // 2026-11-16（提案 62 第一刀）：**调用方正常会传真地址**（探测到的局域网网卡）；
+    // `null` 只剩「探不到地址」这一条路径（控制器据此置 `bindFallback`）。
     final InternetAddress bind = address ?? InternetAddress.anyIPv4;
 
     SocketException? lastError;

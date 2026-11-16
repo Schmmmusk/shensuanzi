@@ -20369,4 +20369,42 @@ core typecheck **52** · app typecheck **29** · 根 `import_guard` **0 处缺�
 - 概览页**首帧**仍要 ~410 ms SQL（这台机器）。真要再降得动 `partyBalances`（应收/应付各跑一遍，
   55.8 × 2）与 `dailyGrossMargin`（6 条腿）—— 属另一批提案，未裁不动。
 - 开单页仍用 `stockByProduct()`（只读账面），**没有**并进合并扫描：它只要一列，合并反而更贵。
+### 八十九、2026-11-16 **提案 62 第一刀落地：服务只绑局域网网卡（TM-1 甲）**
+
+三个裁定（用户 2026-11-16）：① 探不到地址 ⇒ **乙**（回退 `0.0.0.0` + `bindFallback` 明说）；
+② **分两刀**（先绑定、后 `selectAddress` 异步化）；③ 「网络变化后请重启服务」的提示**先不加**。
+
+#### ① 落地清单
+
+| 层 | 文件 | 改动 |
+|---|---|---|
+| host | `service_controller.dart` | `_startRaw()` 把选定地址交给 `HostHttpServer.start(address: …)`；探不到（或字面量解析失败）⇒ 回退 `0.0.0.0` 并置 `bindFallback`，`addressHint` 改写为「找不到局域网地址 —— 现在监听全部网卡（手机多半连不上）…」（**界面上那句就是"明说"**，`detail` 已经会渲染它，无需新增 UI 元素）；`_stopRaw()` 复位；新增 `boundAddress`（诊断/测试用）与 `resolveBindAddress` 注入缝 |
+| host | `local_ip.dart` · `http_server.dart` | 两处**过期注释**改实话（纪律 17）：前者原写「服务绑的是 `0.0.0.0`」，后者补「`null` 只剩『探不到地址』一条路径」 |
+| host | `test/service_controller_test.dart` · `tool/selfcheck_service.dart` | 新增「绑定收紧」3 条 + 自检 4 条（**互为镜像，两边都改**）；`build()` 注入 `resolveBindAddress → loopback`（假 IP `192.168.x` 在本机绑不上，且生产传参仍被捕获断言） |
+| host | `tool/probe_controller_restart.dart` | 同步注入缝（否则探针在被收紧后一启动就 `cannot assign requested address`） |
+| doc | `threat_model.md` §2.1 / §七 TM-1 | 「端口被公网可达」改 ✅ 并写清**唯一例外**（探不到地址时的回退态）；TM-1 标甲已落地、第二刀仍欠 |
+
+#### ② 行为变化（用户可见）
+
+- 正常情况：服务**只**在探测到的那块网卡上监听 ⇒ 路由器映射出去的端口在**非回退态**下不再可达（威胁模型那句话从今天起是真的）。
+- 探不到地址：**仍然启动**（不拒绝，避免用户以为软件坏了），但界面明说「现在监听全部网卡」，且照旧画不出二维码（没地址）。
+- 不变：二维码内容、`addressLine`、令牌与配对流程。
+
+#### ③ ⚠️ 中间态风险（必须知道）
+
+`selectAddress()`（设置页「换一个地址」）**只改二维码、不改绑定** —— 从前绑 `0.0.0.0` 时这没毛病，
+收紧后选第二个网卡就是「码里写着新地址、服务还听在旧网卡上」。这就是裁定里那条**第二刀**。
+已把该方法的注释改成实话并指向第二刀；**在那之前只有候选列表第一个地址真的可用**。
+
+#### ④ 门禁
+
+host `typecheck` **11 入口** · `selfcheck_service` **100 / 100 通过**（含新增 4 条）·
+**反向灵敏度**：把 `address: bind` 改成 `address: null` ⇒ 「实际绑的是它」「绝不绑 anyIPv4」**双红**，
+回滚后复绿 · 改动文件 `dart format` 0 changed。
+**待用户复跑**：`flutter analyze` / `flutter test` / `pushd packages\shensuanzi_host; dart test; popd`。
+
+#### ⑤ 下一步
+
+第二刀（`selectAddress` 改 async + 停旧服务用新地址重绑 + 对话框忙碌态）**未开工** ——
+它会让换地址短暂断连，按裁定单独一刀做、单独验。
 

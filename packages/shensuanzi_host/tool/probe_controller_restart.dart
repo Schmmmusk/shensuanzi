@@ -43,6 +43,9 @@ Future<void> main(List<String> args) async {
     detectAddresses: () async => const <NetAddressOption>[
       NetAddressOption(address: '192.168.1.7', name: 'probe'),
     ],
+    // 2026-11-16（提案 62 第一刀）：服务现在绑探测到的地址，而 192.168.1.7
+    // 在本机绑不上（cannot assign requested address）⇒ 探针映射到 loopback。
+    resolveBindAddress: (String _) => InternetAddress.loopbackIPv4,
   );
 
   HostServiceSnapshot snapshot = await controller.start();

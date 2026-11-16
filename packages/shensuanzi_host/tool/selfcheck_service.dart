@@ -40,12 +40,16 @@ HostServiceController build(
   HostIdentityStore store, {
   PortRange ports = testPorts,
   Future<String?> Function()? detectLocalIp,
+  InternetAddress? Function(String address)? resolveBindAddress,
   void Function(String label, Object error, StackTrace stack)? onInternalError,
 }) => HostServiceController(
   db: db,
   identities: store,
   ports: ports,
   detectLocalIp: detectLocalIp ?? () async => fakeIp,
+  // 2026-11-16（提案 62 第一刀）：服务绑探测到的地址；假 IP 在本机绑不上 ⇒ 映射到 loopback
+  resolveBindAddress:
+      resolveBindAddress ?? (String _) => InternetAddress.loopbackIPv4,
   clock: now,
   onInternalError: onInternalError,
 );
@@ -300,6 +304,26 @@ Future<void> main() async {
     controller.snapshot.trafficLabel(at + 3 * 3600000) == '最近连接：3 小时前',
   );
 
+  section('绑定收紧（提案 62 第一刀）：绑的是**探测到的地址**，不是 0.0.0.0');
+  String? resolvedBind;
+  final HostServiceController bound = build(
+    db,
+    HostIdentityStore.inMemory(),
+    resolveBindAddress: (String ip) {
+      resolvedBind = ip;
+      return InternetAddress.loopbackIPv4;
+    },
+  );
+  final HostServiceSnapshot sBound = await bound.start();
+  check('把选定地址交给解析（不是任何 0.0.0.0）', resolvedBind == fakeIp);
+  check(
+    '实际绑的是它（测试里映射成 loopback）',
+    bound.boundAddress == InternetAddress.loopbackIPv4,
+  );
+  check('绝不绑 anyIPv4', bound.boundAddress != InternetAddress.anyIPv4);
+  check('bindFallback = false', !sBound.bindFallback);
+  await bound.stop();
+
   section('探不到局域网地址：服务照起，但不画码、给「怎么办」');
   final HostServiceController noIp = build(
     db,
@@ -312,6 +336,9 @@ Future<void> main() async {
   check('addressLine = null', sNoIp.addressLine == null);
   check('qrAvailable = false（不把 0.0.0.0 画进码）', !sNoIp.qrAvailable);
   check('detail 透出 addressHint', sNoIp.detail == sNoIp.addressHint);
+  check('bindFallback = true（回退绑全部网卡）', sNoIp.bindFallback);
+  check('绑的是 anyIPv4', noIp.boundAddress == InternetAddress.anyIPv4);
+  check('detail 说清「监听全部网卡」', (sNoIp.detail ?? '').contains('监听全部网卡'));
   await noIp.stop();
 
   section('resetToken：换令牌 + 换 host_id + 旧令牌立刻失效');
@@ -348,10 +375,7 @@ Future<void> main() async {
     );
     check('**qrAvailable = true**（重启后仍能画码）', sRestart.qrAvailable);
     check('**needsReset = false**（不再需要重新生成）', !sRestart.needsReset);
-    check(
-      '重启后画的还是**同一个令牌**',
-      restarted.pairingPayload?.token == fresh.token,
-    );
+    check('重启后画的还是**同一个令牌**', restarted.pairingPayload?.token == fresh.token);
   } else {
     check('（本机不支持加密）qrAvailable = false', !sRestart.qrAvailable);
     check('（本机不支持加密）needsReset = true', sRestart.needsReset);
@@ -367,9 +391,9 @@ Future<void> main() async {
     'ssz_selfcheck_host_json_',
   );
   // 「父路径其实是个文件」⇒ 写盘必然失败（与真机 errno 5 同类效果）
-  final File hostJsonBlocker =
-      File('${hostJsonBox.path}${Platform.pathSeparator}blocker')
-        ..writeAsStringSync('x');
+  final File hostJsonBlocker = File(
+    '${hostJsonBox.path}${Platform.pathSeparator}blocker',
+  )..writeAsStringSync('x');
   final HostIdentityStore brokenStore = HostIdentityStore(
     File('${hostJsonBlocker.path}${Platform.pathSeparator}host.json'),
   );
@@ -381,10 +405,7 @@ Future<void> main() async {
         hostJsonLogged.add('$label / $error'),
   );
   final HostServiceSnapshot sBroken = await brokenHost.resetToken();
-  check(
-    '功能照旧（降级，不是 failed）',
-    sBroken.state != HostServiceState.failed,
-  );
+  check('功能照旧（降级，不是 failed）', sBroken.state != HostServiceState.failed);
   check('identityPersistFailed = true', brokenHost.identityPersistFailed);
   // 2026-10-31 用户裁定（提案 56 批复 §二）：失败时要能说出**失败在哪一步**。
   // 这里只验「现场存在且带 stage」，具体分级由 `test/host_write_test.dart` 的
@@ -397,7 +418,8 @@ Future<void> main() async {
   );
   check(
     '失败原文进日志（带路径 —— 根因未定，下次复现要有现场）',
-    hostJsonLogged.length == 1 && hostJsonLogged.single.contains(hostJsonBox.path),
+    hostJsonLogged.length == 1 &&
+        hostJsonLogged.single.contains(hostJsonBox.path),
     hostJsonLogged.join(' | '),
   );
   await brokenHost.stop();
@@ -407,7 +429,8 @@ Future<void> main() async {
     // 删不掉不影响结论
   }
 
-  section('stop：清空运行期状态');  final HostServiceSnapshot stopped = await restarted.stop();
+  section('stop：清空运行期状态');
+  final HostServiceSnapshot stopped = await restarted.stop();
   check('state = stopped', stopped.state == HostServiceState.stopped);
   check('端口清空', stopped.port == null);
   check('地址清空（不能留下会过期的地址行）', stopped.address == null);
@@ -451,32 +474,41 @@ Future<void> main() async {
   // 与 `test/auth_test.dart` 的「令牌加密持久化」一组互为镜像。
   section('令牌加密持久化（DPAPI）');
   {
-    final Directory box = Directory.systemTemp.createTempSync('ssz_selfcheck_dpapi_');
+    final Directory box = Directory.systemTemp.createTempSync(
+      'ssz_selfcheck_dpapi_',
+    );
     try {
-      final File file = File(
-        '${box.path}${Platform.pathSeparator}host.json',
-      );
+      final File file = File('${box.path}${Platform.pathSeparator}host.json');
       final HostIdentityStore store = HostIdentityStore(file);
       final HostIdentity created = store.reset(now: 1000);
-      check('加密失败被记下来（本机支持时应当为空）', store.lastProtectProblem == null,
-          store.lastProtectProblem);
+      check(
+        '加密失败被记下来（本机支持时应当为空）',
+        store.lastProtectProblem == null,
+        store.lastProtectProblem,
+      );
       final String raw = file.readAsStringSync();
-      check('文件里有 token_protected（支持加密时）',
-          !const DpapiTokenProtector().isSupported || raw.contains('token_protected'));
+      check(
+        '文件里有 token_protected（支持加密时）',
+        !const DpapiTokenProtector().isSupported ||
+            raw.contains('token_protected'),
+      );
       check('文件里**没有明文令牌**', !raw.contains(created.plaintextToken!));
 
       // 「重启」= 新 store 读同一个文件
       final HostIdentityStore again = HostIdentityStore(file);
       final HostIdentity? loaded = again.load();
       check('重启后能读回身份', loaded != null);
-      check('令牌校验不变（手机照连）',
-          loaded?.tokenHash == created.tokenHash);
+      check('令牌校验不变（手机照连）', loaded?.tokenHash == created.tokenHash);
       if (const DpapiTokenProtector().isSupported) {
-        check('重启后明文恢复 ⇒ 能画码',
-            again.lastRestoreState == TokenRestoreState.restored &&
-                loaded?.canShowQr == true);
-        check('恢复出来的令牌与原来逐字相同',
-            loaded?.plaintextToken == created.plaintextToken);
+        check(
+          '重启后明文恢复 ⇒ 能画码',
+          again.lastRestoreState == TokenRestoreState.restored &&
+              loaded?.canShowQr == true,
+        );
+        check(
+          '恢复出来的令牌与原来逐字相同',
+          loaded?.plaintextToken == created.plaintextToken,
+        );
       }
     } finally {
       try {
