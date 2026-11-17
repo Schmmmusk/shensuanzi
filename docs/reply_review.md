@@ -20804,8 +20804,9 @@ host `typecheck` **11 入口** · `selfcheck_service` **100 / 100 通过**（含
 N-l **仍然开放**（发布目录里三个 dll 一个都没有，而 exe 是 load-time 导入）。
 
 ⇒ `甲`（先在目标机验一遍）**事实上不可行**（手上没有裸机）⇒ **定 `乙`（app-local 随包带 dll）**。
-落地三件（`make_release.py` 拷三 dll / 带上 `REDIST.TXT` / 改 `使用说明.txt`）**未开工**，
+落地三件（`make_release.py` 拷三 dll / 附许可说明 / 改 `使用说明.txt`）**未开工**，
 等 go-ahead；来源已定为本机 `VC/Redist/MSVC/14.51.36231/x64/Microsoft.VC145.CRT/`，
+**（2026-11-17 19:3x 核对更正：VS 2026 的 Redist 目录里并没有 `REDIST.TXT` 这个文件 —— 那是一份**线上清单**（MS Learn「Distributable code files for Visual Studio」），条款在 VS License Terms 的 Distributable Code 一节。原话写「带上 REDIST.TXT」不准确，见 §九十七）**，
 **不从 `System32` 拷**。`docs/windows_build.md` §8.4.1 的「LTSC 不带任何运行库」已按纪律 17
 改成「裸 Windows 不自带；装过 VS / 运行库的机器会有」，并写明这次证据。
 
@@ -20921,3 +20922,126 @@ core / app / host 三个包未跑：本轮只动 `lib/src/ui/sale_page.dart` 与
 | app `dart test` | **524 / 524** —— 那条挂了一天的红项（60 vs 76）**转绿**，另 +1 条护栏 |
 
 root / core / host 未跑：本轮只动 `packages/shensuanzi_app/test/navigation_test.dart` 一个文件（+ 文档）。
+
+### 九十七、2026-11-17 **N-l 替代方案评估：启动前检测 + 自动下载（不建议当主路径）**
+
+用户：「N-l 其实没必要直接塞 3 个 dll，没授权直接塞容易引来麻烦，有个主意：不妨写一个
+启动前检测脚本，若用户环境没有那 3 个 dll，就自动去官网下载（反正 3 样加起来也就 2~3 MiB），
+有就正常启动。」
+
+#### ① 三个事实核对（查完才说的）
+
+| 用户的说法 | 实测 / 查证 |
+|---|---|
+| 「3 样加起来 2~3 MiB」 | 643,512 + 178,616 + 50,112 = **872,240 字节 = 0.83 MiB** |
+| 「自动去官网下载那 3 个 dll」 | **不存在单文件直链**。微软只发 `vc_redist.x64.exe`（打包安装器，约 25 MB）；MS Learn 的「Redistribute Visual C++ files」把找单个 dll 的人直接指向安装器下载页 |
+| 「没授权直接塞容易引来麻烦」 | **从 `System32` 拷才有这个问题**；从 `VC/Redist` 拷是官方文档承认的做法：「Distribution… is limited to **licensed Visual Studio users** and subject to the Microsoft Software License Terms」（我们是 VS 许可用户），且专设一节「Install individual redistributable files… the **application local folder**」 |
+
+**顺手更正我上一轮的一处不准确**：我说过「带上 `REDIST.TXT`」——VS 2026 的
+`VC/Redist/MSVC/14.51.36231/x64/Microsoft.VC145.CRT/` 目录里**并没有**这个文件（实列目录核过，
+只有 10 个 dll）。REDIST 是一份**线上清单**（MS Learn「Distributable code files for Visual Studio」），
+条款在 VS License Terms 的 Distributable Code 一节。⇒ 落地时改成「zip 内附一页
+`运行库说明.txt`（来源 / 用途 / 许可出处）」，不再提 REDIST.TXT。决策单与 §九十五 ③ 已同步更正。
+
+#### ② 脚本方案的三个硬伤（为什么不该当主路径）
+
+1. **启动器不能是我们的 exe**：`MSVCP140` / `VCRUNTIME140` 是 load-time 导入，缺了 exe 起不来
+   ⇒ 检测器只能是 `.bat`/`.cmd`/`.ps1`。而用户拿到 zip 会双击 `shensuanzi.exe`（名字最像），
+   直接撞系统「找不到 MSVCP140.dll」，脚本没机会跑。对中老年店主，「按说明双击 启动.bat」
+   是最不可靠的一环。
+2. **自动下载 + 执行安装器 = dropper 特征**：未签名程序下载并执行另一个 exe，正是
+   360/火绒/Defender 的启发式高危；且 `vc_redist /install /passive` **要管理员**（UAC），
+   门店机常是标准账户 ⇒ 卡死。
+3. **无网即死**：app-local 断网照跑，脚本方案罢工。
+
+#### ③ 也把 app-local 的代价写清（不能只讲它好）
+
+MS Learn 同一页：**「For servicing reasons, we don't recommend that you use this
+application-local installation location.」** —— 随包那份运行库不随微软安全更新升级，
+要我们重新发包。对本项目可接受（CRT 的安全修复极少且多走系统更新），但这是
+**已知代价**，不是「微软推荐」。
+
+#### ④ 待裁定（都未实现）
+
+| 方案 | 做法 | 我的评价 |
+|---|---|---|
+| **甲** | app-local 三 dll（0.83 MiB）+ `运行库说明.txt` | **建议**：离线可用、不要管理员、无 dropper 特征、授权有官方文档 |
+| **乙** | `检查运行库.bat`：**只检测不下载**，打印三份 dll 在不在 + 官方链接 | 可叠加：售后排障用，零 UAC、零杀软特征 |
+| 丙 | 用户原意：检测 → 自动下 25 MB → 装 | **不建议**作为发行主路径（②的三条硬伤） |
+
+详细评估已写进 `docs/proposals/待裁事项-2026-11-04.md`（N-l 附）。
+
+### 九十八、2026-11-17 **N-l 落地：运行库随包（打包脚本自动带 3 个 dll）**
+
+用户裁定：「最终意见：同意在安装文件里放那 3 个 dll 文件。如果要改打包脚本，可以一起改。」
+⇒ 按「随包（app-local）」实施，脚本一起改。
+
+#### ① 落地清单
+
+| 文件 | 改动 |
+|---|---|
+| `packaging/make_release.py` | 新增 `CRT_FILES` / `CRT_NOTE` / `PE_X64` 常量；新增 `pe_machine()` · `_ver_key()` · `_version_of()` · `crt_roots()` · `find_crt()` · `crt_note_text()`；`main()` 里加「2b 运行库」段、把三个 dll 挂到 `entries`（**包根**）、生成说明进 zip、收尾提示改口；文件头的「解压即用的前提」整段重写 |
+| `packaging/运行库说明.txt`（新） | 给用户的许可/来源说明**模板**，带 `{{FILES}}` `{{CRT_VERSION}}` `{{CRT_DIR}}` 三个占位符；UTF-8 **BOM** + LF（与 `使用说明.txt` 同款，老记事本可读） |
+| `packaging/使用说明.txt` | 新增一段「这几个文件别删」（`msvcp140.dll` 等，删了打不开） |
+| `docs/windows_build.md` | §八 开头「解压即用有个前提」→「现在是字面意思」；§8.4 的「第 0 步先装运行库」**反转**成「不要装，那正是要验的」，表格第 0 行改成「确认三个 dll 与 exe 同级」；§8.4.1 记落地 + **命名统一**（不再用甲乙字母，只叫「随包」） |
+
+#### ② 四个设计决定（都不是默认值，值得记）
+
+1. **放 zip 根目录，不是子目录**：app-local 只认 **exe 所在目录**；放 `redist\` 子目录等于没放。
+2. **校验 PE 架构**：`VC/Redist/MSVC/<ver>/x64` 与 `<ver>/x86` 文件名完全一样，拿错架构
+   用户那边报的是「不是有效的 Win32 应用程序」—— 比缺 dll 更难排查。所以读 PE 头
+   `machine` 必须 **0x8664**，否则中止。
+3. **找不到就中止，不出包**：静默出一个缺 dll 的包 = 把当初那个 bug 再发一遍。
+   错误信息里列出「找过哪些路径」+ 怎么用 `SHENSUANZI_VC_REDIST` 指定。
+4. **说明是「模板填实」而不是「仓库里写死一份」**：版本号/来源由脚本注入，
+   两处手抄必然漂（与 `使用说明.txt` 的版本号校验同一个理由）。
+
+#### ③ 验证（本机亲跑，不是"应该能行"）
+
+**A. 真跑一次打包**：`python packaging/make_release.py --force` ⇒
+`🔧 VC++ 运行库：14.51.36231（D:/VS product/.../Microsoft.VC145.CRT）`，
+打印的清单里出现 `msvcp140.dll 628 KB` / `vcruntime140.dll 174 KB` / `vcruntime140_1.dll 49 KB` /
+`运行库说明.txt 1 KB（随包生成）`。
+
+**B. 拆开 zip 看位置**（这一步才是关键 —— 放错目录等于没放）：
+
+```
+包根目录文件（节选）：LICENSE  THIRD_PARTY.md  flutter_windows.dll
+  msvcp140.dll 643512   shensuanzi.exe 191488
+  vcruntime140.dll 178616   vcruntime140_1.dll 50112
+  使用说明.txt  用户手册.html  运行库说明.txt 1341
+三个 dll 是否与 exe 同级: True
+说明里的占位符都填了: True（版本 14.51.36231、来源路径已写进去）
+```
+
+**C. 反向灵敏度 ×3（证明这几道闸真的会响）**：
+
+| 破坏 | 结果 |
+|---|---|
+| 环境变量指到一个「三个文件都在、但 PE machine = 0x14C（x86）」的临时目录 | ✅ **exit 1**，报「❌ msvcp140.dll 的 machine=0x14C，不是 x64（0x8664）」 |
+| 同一个临时目录只有 2 个文件（删掉 `vcruntime140_1.dll`） | ✅ 不当成"找到了"，**回退到真目录** `Microsoft.VC145.CRT` |
+| 把候选根清空（模拟没装 VS） | ✅ 中止，信息首行「❌ 找不到 VC++ x64 运行库（msvcp140.dll / vcruntime140.dll / vcruntime140_1.dll）」 |
+
+#### ④ 顺便更正两处我自己的错
+
+1. 打包脚本路径：前几轮我写成 `tool/make_release.py`，**实际是 `packaging/make_release.py`**。
+2. `REDIST.TXT`：VS 2026 的 Redist 目录里**没有这个文件**（已实列目录，只有 10 个 dll）；
+   REDIST 是线上清单。⇐ §九十五 ③ 与决策单都已同步更正。
+
+#### ⑤ 未做 / 已知边界（别当遗漏）
+
+- **只带 x64**（项目也只有 x64 发行版）；将来若做 arm64，`CRT_FILES` 与目录选择都要按架构参数化。
+- **运行库不随安全更新**（servicing 代价，微软原文写在 §8.4.1）——将来 CRT 有安全公告时，
+  要重新打包并把版本号告诉用户；脚本每次打包都打印版本号，就是为这个。
+- **干净机验证还没跑**（用户手上那台 VM 有运行库，验不出随包是否生效）。清单第 0 步已经
+  改成「先确认包里三个 dll」，下一趟验收照它走。
+- 本轮造的 zip 已删除：里面是 **11-11 20:15 的旧 exe**（今天改过 `sale_page.dart` 等），
+  留着容易被误当成可发布的包。真要出包先 `flutter build windows --release`。
+
+#### ⑥ 门禁
+
+| 项 | 结果 |
+|---|---|
+| `python -m compileall packaging/make_release.py` | 通过 |
+| 真跑打包（`--force`） | 成功，三个 dll + 说明进包根 |
+| Dart 侧门禁 | 未跑 —— 本轮无 Dart 代码改动（analyze 上轮 0 / root 589 / app 524 仍然有效） |

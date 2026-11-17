@@ -35,14 +35,28 @@
 
 见 §AG-2：解压即用、不需要管理员权限、符合「数据可携带性原则」。
 安装包（Inno / MSI）与代码签名都排在首发之后。
-⚠️ 「解压即用」有个前提：目标机要有 **VC++ 2015-2022 运行库**（本脚本不检查、也不打包它）。
-LTSC / 裸系统上没有 ⇒ 双击起不来。裁定项见 `docs/proposals/待裁事项-2026-11-04.md` N-l，
-判据与实测证据在 `docs/windows_build.md` §8.4.1。
+
+## 运行库随包（N-l 裁定「甲」，2026-11-17）
+
+`msvcp140.dll` / `vcruntime140.dll` / `vcruntime140_1.dll` **随包放在 exe 同目录**
+（微软文档里的 app-local 装法），三个加起来 0.83 MiB。这样「解压即用」才真的成立：
+裸 Windows / LTSC 不必先装 VC++ 运行库，也不需要管理员权限。
+
+- 来源：本机 Visual Studio 的 `VC/Redist/MSVC/<ver>/x64/Microsoft.VC*.CRT/`
+  —— 那就是微软为「再分发」准备的目录，**绝不从 `C://Windows//System32` 拷**；
+- 找不到、或拿到的不是 x64 ⇒ **直接中止**，不会静默出一个跑不起来的包；
+- 许可说明随包（`运行库说明.txt`，模板在 `packaging/`），条款依据见
+  `docs/windows_build.md` §8.4.1；
+- 代价（写清，别当成推荐）：微软对 app-local 的原话是「For servicing reasons,
+  we don't recommend that you use this application-local installation location.」
+  —— 运行库有更新时得我们重新发包。对本项目可接受，属已知取舍。
 """
 
+import glob
 import hashlib
 import os
 import re
+import subprocess
 import sys
 import time
 import zipfile
@@ -61,6 +75,16 @@ EXTRA = [
     ('LICENSE', 'LICENSE'),
     ('THIRD_PARTY.md', 'THIRD_PARTY.md'),
 ]
+
+# ---------------------------------------------------------------- VC++ 运行库（随包）
+#
+# 2026-11-17 用户裁定「甲」：放 exe 同目录，不做「启动前检测 + 自动下载」。
+# 只带这三个，因为发布产物里**只有它们被导入**（`dumpbin /dependents` 实测：
+# shensuanzi.exe 与 4 个插件要 MSVCP140 / VCRUNTIME140 / VCRUNTIME140_1；
+# flutter_windows.dll 自带、不依赖；sqlite3.dll 只要 VCRUNTIME140，已被覆盖）。
+CRT_FILES = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll']
+CRT_NOTE = os.path.join('packaging', '运行库说明.txt')  # 带 {{CRT_VERSION}} 等占位符的模板
+PE_X64 = 0x8664
 
 # 构建输入：任一比产物基准新 ⇒ 产物是旧的（说明改了代码没重新构建）
 INPUT_FILES = ['pubspec.yaml', 'pubspec.lock']
@@ -114,6 +138,141 @@ def stamp(p):
     return time.strftime('%m-%d %H:%M:%S', time.localtime(os.path.getmtime(p)))
 
 
+def pe_machine(path):
+    """PE 头的 machine 字段（0x8664 = x64）；不是 PE ⇒ None。
+
+    为什么值得查：`VC/Redist/MSVC/<ver>/x64` 与 `<ver>/x86` 里的文件名一模一样。
+    拿错架构放进包，exe 照样起不来，而且报错完全不同（「不是有效的 Win32 应用程序」）——
+    这种错误在用户的店里排查起来比缺 dll 更贵。
+    """
+    try:
+        with open(path, 'rb') as fh:
+            head = fh.read(0x40)
+            if len(head) < 0x40 or head[:2] != b'MZ':
+                return None
+            fh.seek(int.from_bytes(head[0x3C:0x40], 'little'))
+            sig = fh.read(6)
+            if len(sig) < 6 or sig[:4] != b'PE\x00\x00':
+                return None
+            return int.from_bytes(sig[4:6], 'little')
+    except OSError:
+        return None
+
+
+def _ver_key(name):
+    try:
+        return tuple(int(x) for x in name.split('.'))
+    except ValueError:
+        return (-1,)
+
+
+def _version_of(path):
+    """从路径里认出 `14.51.36231` 这种版本段（找不到就 '(unknown)'）。"""
+    d = path
+    while True:
+        name = os.path.basename(d)
+        if re.match(r'^\d+(\.\d+)+$', name):
+            return name
+        parent = os.path.dirname(d)
+        if parent == d:
+            return '(unknown)'
+        d = parent
+
+
+def crt_roots():
+    """可能藏着 `VC/Redist/MSVC` 的地方（按可信度排、去重保序）。
+
+    顺序：`SHENSUANZI_VC_REDIST` 显式指定 → `VCINSTALLDIR` → vswhere
+    （VS 自己登记的安装路径，装在 D://// 这种自定义盘符也能找对）→ 两个 Program Files 通配。
+    """
+    out = []
+    env = os.environ.get('SHENSUANZI_VC_REDIST')
+    if env:
+        out.append(env)
+    vc = os.environ.get('VCINSTALLDIR')
+    if vc:
+        out.append(os.path.join(vc, 'Redist', 'MSVC'))
+    pf86 = os.environ.get('ProgramFiles(x86)', r'C://Program Files (x86)')
+    vswhere = os.path.join(pf86, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
+    if os.path.isfile(vswhere):
+        try:
+            res = subprocess.run(
+                [vswhere, '-latest', '-products', '*', '-property',
+                 'installationPath'],
+                capture_output=True, text=True, timeout=20)
+            for line in res.stdout.splitlines():
+                p = line.strip()
+                if p:
+                    out.append(os.path.join(p, 'VC', 'Redist', 'MSVC'))
+        except (OSError, subprocess.SubprocessError):
+            pass  # 拿不到就靠下面的通配兜底
+    for pf in (os.environ.get('ProgramFiles', r'C://Program Files'), pf86):
+        out.extend(glob.glob(os.path.join(
+            pf, 'Microsoft Visual Studio', '*', 'VC', 'Redist', 'MSVC')))
+    seen, uniq = set(), []
+    for p in out:
+        key = os.path.normcase(os.path.normpath(p))
+        if key not in seen:
+            seen.add(key)
+            uniq.append(p)
+    return uniq
+
+
+def find_crt():
+    """定位 x64 的 `Microsoft.VC*.CRT` 目录 ⇒ (目录, 版本串)。
+
+    **找不到就中止**：N-l 裁的「运行库随包」，静默出一个缺 dll 的包，
+    等于把「双击起不来」那个 bug 又发一遍。
+    """
+    env = os.environ.get('SHENSUANZI_VC_REDIST')
+    if env and all(os.path.isfile(os.path.join(env, f)) for f in CRT_FILES):
+        d = os.path.abspath(env)
+        return d, _version_of(d)
+
+    tried = []
+    for root in crt_roots():
+        if not os.path.isdir(root):
+            continue
+        tried.append(root)
+        # 根可能已指到 <ver> 或 <ver>/x64（环境变量写法各异），三种层级都试
+        levels = [root] + [
+            os.path.join(root, v)
+            for v in sorted(os.listdir(root), key=_ver_key, reverse=True)
+            if os.path.isdir(os.path.join(root, v))
+        ]
+        for base in levels:
+            x64 = os.path.join(base, 'x64')
+            if not os.path.isdir(x64):
+                continue
+            for folder in sorted(os.listdir(x64)):
+                d = os.path.join(x64, folder)
+                if not (folder.startswith('Microsoft.VC') and
+                        folder.endswith('.CRT')):
+                    continue
+                if all(os.path.isfile(os.path.join(d, f)) for f in CRT_FILES):
+                    return d, _version_of(d)
+    raise SystemExit(
+        '❌ 找不到 VC++ x64 运行库（' + ' / '.join(CRT_FILES) + '）。\n'
+        '   N-l 的裁定是「运行库随包」—— 找不到就不出包，\n'
+        '   免得发出去的软件在没装运行库的机器上打不开。\n'
+        '   装好「Visual Studio 生成工具 + 桌面 C++ 生成工具」，或设环境变量\n'
+        '   SHENSUANZI_VC_REDIST 指向 ...\\VC\\Redist\\MSVC\\<ver>\\x64\\Microsoft.VC143.CRT。\n'
+        '   找过：' + ('、'.join(tried) if tried else '（没有任何候选根）'))
+
+
+def crt_note_text(crt_dir, crt_ver):
+    """把 `运行库说明.txt` 模板填成随包的那一页（版本/来源写实，避免手抄漂移）。"""
+    path = os.path.join(REPO, CRT_NOTE)
+    if not os.path.isfile(path):
+        raise SystemExit(f'❌ 运行库说明模板缺失：{CRT_NOTE}')
+    with open(path, encoding='utf-8-sig') as fh:
+        text = fh.read().replace('\r\n', '\n')
+    return (text
+            .replace('{{FILES}}', '、'.join(CRT_FILES))
+            .replace('{{CRT_VERSION}}', crt_ver)
+            .replace('{{CRT_DIR}}', crt_dir.replace(os.sep, '/')))
+
+
 def artifact_baseline():
     """产物新鲜度基准 = max(exe, data/app.so) 的 mtime。
 
@@ -158,6 +317,19 @@ def main():
     for rel, _ in EXTRA:
         if not os.path.isfile(os.path.join(REPO, rel)):
             raise SystemExit(f'❌ 随包文件缺失：{rel}')
+
+    # ---------------------------------------------------------------- 2b 运行库
+    # N-l 裁定「随包」：找不到 / 架构不对就中止，**绝不静默出一个缺 dll 的包**。
+    crt_dir, crt_ver = find_crt()
+    for name in CRT_FILES:
+        m = pe_machine(os.path.join(crt_dir, name))
+        if m is None:
+            raise SystemExit(f'❌ {name} 不是有效的 PE 文件：{crt_dir}')
+        if m != PE_X64:
+            raise SystemExit(
+                f'❌ {name} 的 machine=0x{m:X}，不是 x64（0x{PE_X64:X}）：{crt_dir}\n'
+                '   多半是拿到了 x86 目录 —— 用户那边会报「不是有效的 Win32 应用程序」。')
+    print(f'🔧 VC++ 运行库：{crt_ver}（{crt_dir}）')
     # 版本号不能有两处（文档侧）
     with open(os.path.join(REPO, EXTRA[0][0]), encoding='utf-8-sig') as fh:
         manual = fh.read()
@@ -195,15 +367,25 @@ def main():
             entries.append((p, os.path.relpath(p, RELEASE).replace(os.sep, '/')))
     for rel, name in EXTRA:
         entries.append((os.path.join(REPO, rel), name))
+    # 运行库放**包根**（= exe 同目录）：app-local 只认 exe 所在目录，放子目录等于没放
+    for name in CRT_FILES:
+        entries.append((os.path.join(crt_dir, name), name))
     entries.sort(key=lambda e: e[1])
+    # 许可/来源说明：模板填实后**直接写进 zip**（不落盘 —— 本脚本不留中间文件）
+    note_arc = '运行库说明.txt'
+    note_text = crt_note_text(crt_dir, crt_ver)
+    note_size = len(note_text.encode('utf-8'))
 
     print(f'📁 {top}/')
     for src, arc in entries:
         pad = '   ' * arc.count('/')
         print(f'   {pad}{arc.split("/")[-1]:<40} {human(os.path.getsize(src)):>9}')
 
-    total = sum(os.path.getsize(src) for src, _ in entries)
-    print(f'\n   未压缩合计 {human(total)}（{len(entries)} 个文件）')
+    pad = '   '
+    print(f'   {note_arc:<40} {human(note_size):>9}  （随包生成）')
+
+    total = sum(os.path.getsize(src) for src, _ in entries) + note_size
+    print(f'\n   未压缩合计 {human(total)}（{len(entries) + 1} 个文件）')
 
     # ---------------------------------------------------------------- 4 压缩
     os.makedirs(DIST, exist_ok=True)
@@ -211,6 +393,7 @@ def main():
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for src, arc in entries:
             z.write(src, f'{top}/{arc}')
+        z.writestr(f'{top}/{note_arc}', note_text)
 
     zipped = os.path.getsize(zip_path)
     digest = hashlib.sha256()
@@ -227,10 +410,11 @@ def main():
     print(f'   sha256 {sha}')
     print()
     print('   发给用户前，按 docs/windows_build.md §8.4 的 15 步清单在干净环境验一遍。')
-    # 本包依赖系统 VC++ 运行库（exe 与插件 dll 的导入表里有 VCRUNTIME140/MSVCP140），
-    # 裸系统 / LTSC 上没装会起不来 —— 每次打包都提醒一次，别等用户反馈才知道。
-    print('   ⚠️ 目标机需先装 VC++ 2015-2022 运行库（LTSC / 裸系统必装），'
-          '见 docs/windows_build.md §8.4.1。')
+    # N-l（2026-11-17 裁定甲）：运行库已随包，用户**不需要**再装任何东西。
+    # 每次打包都把「带了哪一版」打出来 —— 将来排查 dll 版本时这是第一手信息。
+    print(f'   ✅ 已随包带 VC++ 运行库 {crt_ver}（{len(CRT_FILES)} 个 dll，放 exe 同目录）'
+          ' —— 裸 Windows 上不需要另装；')
+    print('      随包依据与代价见 docs/windows_build.md §8.4.1。')
 
 
 if __name__ == '__main__':

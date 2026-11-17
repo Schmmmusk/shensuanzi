@@ -1,0 +1,27 @@
+﻿神算子 附带的 VC++ 运行库说明
+
+本文件夹里的这几个文件是微软 Visual C++ 运行库，不是第三方破解文件：
+  {{FILES}}
+
+为什么放这里
+  神算子是用微软编译器（Visual C++）做的，跑起来需要这几个文件。
+  把它们放在程序同目录（微软文档里叫 app-local），程序就能在
+  「从没装过运行库的 Windows」上直接打开 —— 不用先装别的、也不需要管理员权限。
+
+来源与许可
+  版本：{{CRT_VERSION}}
+  取自：{{CRT_DIR}}
+  这几个文件是 Microsoft Visual C++ Redistributable 的再分发文件，
+  按 Visual Studio 许可条款中「Distributable Code」一节，随本软件一同分发；
+  **未作任何修改**，也不单独提供。
+
+  条款与清单（微软官方页面）：
+    https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files
+    https://visualstudio.microsoft.com/license-terms/
+
+  如果你更愿意系统级安装（所有软件共用、能自动更新）：
+    https://aka.ms/vs/17/release/vc_redist.x64.exe
+
+请注意
+  · 删掉这几个文件，神算子就打不开了（会提示「找不到 MSVCP140.dll」）。
+  · 它们是给本软件运行用的，不要单独拷去别的地方。
