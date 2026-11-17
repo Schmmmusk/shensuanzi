@@ -1651,6 +1651,54 @@ void main() {
     );
   });
 
+  // ------------------------------------------------------------ F18-4 极窄窗口（2026-11-17）
+  //
+  // 真机日志（用户拖窗口拖到只剩一条）+ 界面大小超大：
+  // `sale_page.dart:1735` 的 Row overflowed by 9.6 pixels on the right。
+  // 现场布局：导航列 76 + 内容区 **108**（日志里 `BoxConstraints(0<=w<=108)`）。
+  //
+  // 根因不是「字段太宽」—— 那一行里 **标签「顾客给了」不可压缩**
+  // （2 倍字号下 4 个汉字就 ~96 px），加上两个 `SizedBox(width: 8/12)` 固定间距，
+  // 光它们就吃掉 116 px > 108；两个 `Flexible` 只能缩到 0，救不回来。
+  //
+  // 修法：窄屏分支改 `Wrap` —— 放不下就换行，而不是缩到 0 或溢出。
+  // ⚠️ 108 px 宽的内容区本身没法用（用户拖得太窄），这条测的是
+  // **「不许出现红黄条 / 不许抛异常」**，不是「好用」。
+  group('F18-4：极窄窗口（内容区 108）+ 超大字号', () {
+    Future<void> pumpHairline(WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(108, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(page(textScale: 2.0));
+    }
+
+    testWidgets('整页不许有 RenderFlex 溢出，「顾客给了」那一行也要换行', (
+      WidgetTester tester,
+    ) async {
+      await pumpHairline(tester);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: '真机日志：Row ← Column ← LayoutBuilder 溢出 9.6 px（sale_page.dart:1735）',
+      );
+
+      // 换成可滚动到底部，逐段检查（惰性构建的行要滚到才会 layout）
+      final Finder list = find.byType(Scrollable).first;
+      for (int i = 0; i < 12; i++) {
+        await tester.drag(list, const Offset(0, -260));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: '滚到第 $i 屏时溢出');
+      }
+
+      expect(
+        find.byKey(const Key('sale-given')),
+        findsWidgets,
+        reason: '换行后金额框仍须存在（不许为了不溢出把它藏起来）',
+      );
+    });
+  });
+
   // ------------------------------------------------------------ 商品名自动补全（2026-10-29）
   //
   // 落地依据：`docs/proposals/商品名称自动补全-方案.md`（裁定 D1′乙 前缀豁免 / D2′甲 只做桌面）。

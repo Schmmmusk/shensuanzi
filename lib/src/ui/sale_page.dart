@@ -1523,20 +1523,23 @@ class _SalePageState extends State<SalePage> {
         // `Row[Text, Spacer, Text]`：金额那格没有弹性，小屏 + 超大字号下
         // 「¥ 9,999,990」会被裁掉（报告实测）。改成「合计 + Expanded(右对齐金额)」：
         // 放得下视觉同旧，放不下自动换行。
-        Row(
+        // F18-4（2026-11-17）：极窄（内容区 108）时「合计 + 金额」也放不下 ——
+        // 金额那格是 `Expanded`，但**金额本身是一个不可断行的词**
+        //（`¥ 19.00` 在 2 倍字号下 ~130 px），缩到 32 px 也换不了行 ⇒ 溢出 8.3 px。
+        // 改 `Wrap`：放得下时 `spaceBetween` 与旧 `Row` 视觉一致（标签靠左、金额贴右），
+        // 放不下就让金额落到第二行。**能换行，不许挤。**
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          runSpacing: 2,
           children: <Widget>[
             Text('合计', style: theme.textTheme.titleMedium),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                '¥ ${Money.formatGrouped(_draft.totalCents)}',
-                textAlign: TextAlign.right,
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontFeatures: const <FontFeature>[
-                    FontFeature.tabularFigures(),
-                  ],
-                ),
+            Text(
+              '¥ ${Money.formatGrouped(_draft.totalCents)}',
+              textAlign: TextAlign.right,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
               ),
             ),
           ],
@@ -1567,9 +1570,14 @@ class _SalePageState extends State<SalePage> {
   Widget _paymentSection(ThemeData theme) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: <Widget>[
-      Row(
+      // F18-4：同样改 `Wrap`（溢出 4.2 px）—— 「本次收款」+「全款」按钮在 108 px
+      // 里放不下，而按钮的固有最小宽（≥64）不肯缩。放不下就换行。
+      Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        runSpacing: 4,
         children: <Widget>[
-          Expanded(child: Text('本次收款', style: theme.textTheme.titleMedium)),
+          Text('本次收款', style: theme.textTheme.titleMedium),
           TextButton(
             // 没有账户时「全款」只会造出一条解不开的错 —— 禁用（死局预防）
             onPressed: (_saving || _accounts.isEmpty) ? null : _fillFullPayment,
@@ -1725,39 +1733,45 @@ class _SalePageState extends State<SalePage> {
       ),
     ];
 
+    // F18-4（2026-11-17 真机日志）：极窄窗口（内容区 108）+ 2 倍字号下，
+    // 这一整块有三处 `Row` 溢出。共同原因是**「不可压缩的标签 + 不可断行的数」**：
+    // 标签「顾客给了」在 2 倍字号下 4 个汉字≈96 px，加两个固定间距就已过 108，
+    // 而 `Flexible` 只能缩到 0，救不回来。⇒ 窄屏按 `Wrap` 排：放不下就换行。
+    // 找零文字的样式只写一处（两个分支共用），免得改一边忘另一边。
+    final Widget? changeWidget = changeText == null
+        ? null
+        : Text(
+            changeText,
+            style: TextStyle(
+              height: 1.6,
+              fontWeight: FontWeight.w700,
+              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+              // 「不够」是提醒不是拦截 —— 用内联橙，错误红只留给真错误
+              color: notEnough
+                  ? AppColors.warningOrange
+                  : theme.colorScheme.onSurface,
+            ),
+          );
+
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final List<Widget> content;
         // 批 3 第 13 条：断点随缩放派生
         if (isNarrowOf(context, constraints.maxWidth)) {
           // 窄屏（手机）：chips 独立成行右对齐 —— 不再挤爆
+          //
+          // ⚠️ `givenField` 是 `SizedBox(width: 缩放后)`，在 `Wrap` 里会被父级
+          // 约束夹到可用宽度（`BoxConstraints.enforce`）—— 这就是它在 108 px
+          // 里也活得下来的原因，不必再包 `Flexible`。
           content = <Widget>[
-            Row(
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 4,
               children: <Widget>[
                 Text('顾客给了', style: theme.textTheme.bodySmall),
-                const SizedBox(width: 8),
-                // 批 3 第 13 条：**窄屏里必须可收缩**。字段宽随缩放变大后
-                //（120→240），360px 窗口 + 2 倍字号直接溢出 38px。
-                // `SizedBox` 会服从父级约束 ⇒ 用 Flexible 让它在不够时缩。
-                Flexible(child: givenField),
-                const SizedBox(width: 12),
-                if (changeText != null)
-                  Flexible(
-                    child: Text(
-                      changeText,
-                      style: TextStyle(
-                        height: 1.6,
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const <FontFeature>[
-                          FontFeature.tabularFigures(),
-                        ],
-                        // 「不够」是提醒不是拦截 —— 用内联橙，错误红只留给真错误
-                        color: notEnough
-                            ? AppColors.warningOrange
-                            : theme.colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
+                givenField,
+                ?changeWidget,
               ],
             ),
             Align(
@@ -1776,22 +1790,7 @@ class _SalePageState extends State<SalePage> {
                 const SizedBox(width: 8),
                 givenField,
                 const SizedBox(width: 12),
-                if (changeText != null)
-                  Flexible(
-                    child: Text(
-                      changeText,
-                      style: TextStyle(
-                        height: 1.6,
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const <FontFeature>[
-                          FontFeature.tabularFigures(),
-                        ],
-                        color: notEnough
-                            ? AppColors.warningOrange
-                            : theme.colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
+                if (changeWidget != null) Flexible(child: changeWidget),
                 Expanded(
                   child: Align(
                     alignment: Alignment.centerRight,

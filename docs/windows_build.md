@@ -393,8 +393,13 @@ build/dist/神算子-v0.1.0-win64.zip.sha256
 #### 8.4.1 前置条件：Visual C++ 运行库（**LTSC / 裸 Windows 会踩**，2026-11-06 实测）
 
 **结论**：当前 zip **不是完全自包含** —— 它依赖系统的 **VC++ 2015-2022 运行库**。
-干净系统（尤其 **LTSC**，不带任何运行库）上双击 `shensuanzi.exe` 会
+**裸 Windows 上**双击 `shensuanzi.exe` 会
 **「找不到 vcruntime140.dll / 无法启动此程序」，或者干脆没反应**。
+
+> ⚠️ **措辞更正（2026-11-17）**：这一节原来写「**LTSC 不带任何运行库**」，说得太满。
+> 准确说法是「**裸 Windows 不自带**；装过 VS / 运行库 / 某些驱动的机器会有」——
+> 用户那台 LTSC 虚拟机 `System32` 里三个 dll **全都在**（见下面的补测），
+> 所以**「某台机器是 LTSC」不能推出「它没有运行库」**。
 
 **证据**（解析 `build/windows/x64/runner/Release/` 里每个二进制的导入表，不是猜的）：
 
@@ -419,8 +424,25 @@ build/dist/神算子-v0.1.0-win64.zip.sha256
 | **甲：装运行库**（推荐先用它验 VM） | 目标机装一次 [`VC_redist.x64.exe`](https://aka.ms/vs/17/release/vc_redist.x64.exe)（微软官方，约 25 MB，需管理员） | 用户多一步；`使用说明.txt` 要写清楚 |
 | **乙：随包带 dll**（app-local） | 把 `vcruntime140.dll` `vcruntime140_1.dll` `msvcp140.dll` 放进 zip 根目录，与 exe 同目录 | 多约 0.8 MB；**要确认再分发许可**（微软允许 app-local 部署，但随包分发要按许可条款核对）；且**必须带对版本**，带旧了比不带更糟 |
 
-**判据（怎么确认某台机器缺不缺）**：`dir C:\Windows\System32\vcruntime140.dll`。
-缺 ⇒ 装运行库；有 ⇒ 直接跑。
+**判据（怎么确认某台机器缺不缺，10 秒）**：三条都查，别只查一个 ——
+
+```text
+dir %SystemRoot%\System32\msvcp140.dll
+dir %SystemRoot%\System32\vcruntime140.dll
+dir %SystemRoot%\System32\vcruntime140_1.dll
+```
+
+三个都在 ⇒ 能跑；**缺任意一个 ⇒ 起不来**（都是 load-time 导入，不是 delay load）。
+
+**2026-11-17 补测（用户提供的 LTSC 虚拟机）**：用户报「LTSC 里所有测试都没额外装
+VC++，软件照样能启动」⇒ 按上面三条一查，**三个 dll 全在**。⇒ 与「开发机测不出」
+同源：那台 VM 装过 VS Build Tools（本项目工具链要求），运行库随之进了系统目录，
+**它天然测不出这个缺陷**。「LTSC 上能跑」因此**证明不了**「裸机能跑」。
+
+**据此的裁定**：`甲`（先在目标机验一遍）**事实上不可行** —— 手上没有裸机，
+能测的机器都带运行库。⇒ 走 **`乙`（app-local 随包带 dll）**，列进发行前必办。
+⚠️ 落地改动（`make_release.py` 拷三个 dll + `使用说明.txt` 写清）**待 go-ahead**，
+本文件只记结论。
 
 > ⚠️ 别用「拷开发机的 `System32` 版本」当乙方案的来源去随手试 —— 那台机器的版本号
 > 与目标机的其它组件未必匹配。真要随包，来源应是 **VC++ 可再分发组件包**解出来的
