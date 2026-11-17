@@ -26,7 +26,7 @@
 ///
 /// | 点位 | 位置 | 慢了说明什么 |
 /// |---|---|---|
-/// | `T0_main` | `main()` 第一行 | 到 `main` 之前的加载器 / 引擎开销 |
+/// | `T0_main` | `main()` 第一行 | **恒 0** —— 它就是计时零点。到 `main` 之前的加载器 / 引擎开销**看 `preMainMs`**（2026-11-17 更正：原来这里写「T0 慢了说明加载器开销」，是错的） |
 /// | `T1_run_app` | `runApp` 之前 | 绑定初始化 + 日志 + 环境探测 |
 /// | `T2_db_open` | `Db.open` 返回（含迁移） | 开库 / WAL 恢复 / 迁移 |
 /// | `T3_services` | 服务构造完（自动备份判定之前） | 启动期的准备工作 |
@@ -39,6 +39,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+
+import 'process_age.dart';
 
 /// 埋点总开关。**编译期常量**：不传 `--dart-define=SSZ_STARTUP_TRACE=true` 时恒 `false`。
 const bool kStartupTrace = bool.fromEnvironment('SSZ_STARTUP_TRACE');
@@ -63,18 +65,37 @@ class StartupTrace {
   /// 在 `main()` 的**第一行**调用（正式包也要调）—— 它只起一个秒表，没有 IO。
   static void startClock() {
     if (!_always.isRunning) _always.start();
+    // 顺手记下「进程已经活了多久」= `CreateProcess` → `main()` 的那一段。
+    // 计时器在这里才起表，那一段对它**永久不可见**；而 2026-11-17 真机「14 秒」
+    // 恰恰全在那一段里（进程内只花了 43 ms）。见 `process_age.dart`。
+    _preMainMs ??= currentProcessAgeMs();
   }
 
   /// 从 [startClock] 起算的毫秒数。**埋点开关关着也有效**。
   static int get elapsedMs => _always.elapsedMilliseconds;
 
+  /// `CreateProcess` → `main()` 的毫秒数（Windows）；其它平台或拿不到是 `null`。
+  ///
+  /// ⟳ 与 [elapsedMs] 相加 ≈ 用户从双击到看见数据的总时长。
+  static int? get preMainMs => _preMainMs;
+
+  static int? _preMainMs;
+
   /// 「启动完成」那一行（**纯函数**：格式歪了现场就解析不出来）。
   ///
   /// 字段用 `key=value`，方便 grep / 正则；不带库路径 —— `dbProbe` 那行已经记了，
   /// 这里重复只会把行拉长、反而在日志里被截断。
-  static String reportLine({required int elapsedMs, double? dbMb}) {
+  ///
+  /// 顺序按**时间先后**：`preMain`（进程创建 → main）→ `elapsed`（main → 数据就绪）
+  /// → `db`。这样一眼能看出慢在哪一段，不用做减法。
+  static String reportLine({
+    required int elapsedMs,
+    double? dbMb,
+    int? preMainMs,
+  }) {
     final String db = dbMb == null ? 'db=?' : 'db=${dbMb.toStringAsFixed(1)}MB';
-    return '启动完成 到数据就绪 elapsed=${elapsedMs}ms $db';
+    final String pre = preMainMs == null ? 'preMain=?' : 'preMain=${preMainMs}ms';
+    return '启动完成 到数据就绪 $pre elapsed=${elapsedMs}ms $db';
   }
 
   static final List<Map<String, Object?>> _marks = <Map<String, Object?>>[];
@@ -187,6 +208,7 @@ class StartupTrace {
       DateTime.now(),
       db: _dbPath,
       dbMb: _dbMb,
+      preMainMs: preMainMs,
       host: Platform.localHostname,
       partial: partial,
     );
@@ -310,6 +332,7 @@ String startupLine(
   double? dbMb,
   String? host,
   bool partial = false,
+  int? preMainMs,
 }) {
   final StringBuffer buffer = StringBuffer()
     ..write('{"kind":"startup","ts":"')
@@ -318,6 +341,14 @@ String startupLine(
   // `partial: true` = 这条记录**缺 T2_db_open**（10 秒兜底先落盘，库还没开完）。
   // 没有这个标记，缺 T2 的记录会被读成「开库快到没打点」——正好反了。
   if (partial) buffer.write(',"partial":true');
+  // `preMainMs` = CreateProcess → main（2026-11-17 补）。
+  // ⚠️ 它**不在** `marks` 里：marks 的 ms 都相对 `T0_main`，而这一段在 T0 之前，
+  // 混进去会让「T0 恒 0」这条不变量失效。所以单独一个字段。
+  if (preMainMs != null) {
+    buffer
+      ..write(',"preMainMs":')
+      ..write(preMainMs);
+  }
   // 库信息放在 marks 之前：现场第一眼要看的就是「这次测的是哪个库」
   // ⚠️ 注意引号：`ts` 已经收尾了，这里每段都要**自带前导逗号**；
   // 第一版写成 `","db":"`（多了个引号）⇒ 生成 `478.1","marks"` 非法 JSON。

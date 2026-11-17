@@ -57,6 +57,8 @@ export 'src/startup_trace.dart'
         dbProbeLine;
 export 'src/page_cost_trace.dart'
     show PageCostTrace, kPageCostTrace, pageCostLine;
+export 'src/process_age.dart'
+    show currentProcessAgeMs, fileTimeOf, msBetweenFileTimes;
 export 'src/instance_lock.dart'
     show InstanceLock, InstanceLockResult, instanceLockFileName;
 export 'src/http_transport.dart' show HttpTransport;

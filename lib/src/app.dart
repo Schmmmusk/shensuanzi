@@ -1415,6 +1415,7 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 口径：从 `main()` 第一行到「数据就绪（备份状态读完）」，含开库/迁移/建服务。
       _log.write(
         StartupTrace.reportLine(
+          preMainMs: StartupTrace.preMainMs,
           elapsedMs: StartupTrace.elapsedMs,
           dbMb: File(location.databasePath).existsSync()
               ? File(location.databasePath).lengthSync() / (1024 * 1024)

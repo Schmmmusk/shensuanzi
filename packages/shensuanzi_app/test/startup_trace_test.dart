@@ -249,17 +249,28 @@ void main() {
   // 2026-11-17：正式包不埋点 ⇒ 真机报「启动 14 秒」时一条记录都没有，只能靠用户掐表。
   // 所以另加一条**始终记**的日志线（`main()` 第一行起表）。这里钉格式与「关着也在走」。
   group('启动完成那一行（始终记，与埋点开关无关）', () {
-    test('有库大小 ⇒ key=value，一位小数', () {
+    test('有库大小 ⇒ key=value，一位小数；preMain 在前（按时间先后）', () {
       expect(
-        StartupTrace.reportLine(elapsedMs: 1240, dbMb: 512.25),
-        '启动完成 到数据就绪 elapsed=1240ms db=512.3MB',
+        StartupTrace.reportLine(
+          preMainMs: 13820,
+          elapsedMs: 1240,
+          dbMb: 512.25,
+        ),
+        '启动完成 到数据就绪 preMain=13820ms elapsed=1240ms db=512.3MB',
       );
     });
 
     test('库打不开 / 刚新建 ⇒ db=?', () {
       expect(
-        StartupTrace.reportLine(elapsedMs: 87, dbMb: null),
-        '启动完成 到数据就绪 elapsed=87ms db=?',
+        StartupTrace.reportLine(preMainMs: 90, elapsedMs: 87, dbMb: null),
+        '启动完成 到数据就绪 preMain=90ms elapsed=87ms db=?',
+      );
+    });
+
+    test('拿不到进程年龄（非 Windows）⇒ preMain=?，其余字段不受影响', () {
+      expect(
+        StartupTrace.reportLine(elapsedMs: 87, dbMb: 3.5),
+        '启动完成 到数据就绪 preMain=? elapsed=87ms db=3.5MB',
       );
     });
 
@@ -267,6 +278,18 @@ void main() {
       StartupTrace.startClock();
       await Future<void>.delayed(const Duration(milliseconds: 30));
       expect(StartupTrace.elapsedMs, greaterThanOrEqualTo(20));
+    });
+
+    test('startClock() 会顺手记下 preMain（Windows 上非空）', () {
+      StartupTrace.startClock();
+      if (Platform.isWindows) {
+        expect(
+          StartupTrace.preMainMs,
+          isNotNull,
+          reason: '拿不到就没法判断「14 秒是不是全在 main 之前」——这条是排障的关键数',
+        );
+        expect(StartupTrace.preMainMs, greaterThanOrEqualTo(0));
+      }
     });
   });
 }
