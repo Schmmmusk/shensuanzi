@@ -245,4 +245,28 @@ void main() {
       expect(json['head'], isEmpty);
     });
   });
+
+  // 2026-11-17：正式包不埋点 ⇒ 真机报「启动 14 秒」时一条记录都没有，只能靠用户掐表。
+  // 所以另加一条**始终记**的日志线（`main()` 第一行起表）。这里钉格式与「关着也在走」。
+  group('启动完成那一行（始终记，与埋点开关无关）', () {
+    test('有库大小 ⇒ key=value，一位小数', () {
+      expect(
+        StartupTrace.reportLine(elapsedMs: 1240, dbMb: 512.25),
+        '启动完成 到数据就绪 elapsed=1240ms db=512.3MB',
+      );
+    });
+
+    test('库打不开 / 刚新建 ⇒ db=?', () {
+      expect(
+        StartupTrace.reportLine(elapsedMs: 87, dbMb: null),
+        '启动完成 到数据就绪 elapsed=87ms db=?',
+      );
+    });
+
+    test('埋点关着，秒表照样在走（正式包靠这条）', () async {
+      StartupTrace.startClock();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(StartupTrace.elapsedMs, greaterThanOrEqualTo(20));
+    });
+  });
 }

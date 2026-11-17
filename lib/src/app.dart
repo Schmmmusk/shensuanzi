@@ -1410,6 +1410,18 @@ class _ShensuanziAppState extends State<ShensuanziApp>
       // 2026-10-28 实测：T3(14 ms) → 首屏开始构建(1.02 s) 之间空了 1 秒，
       // 最可能就是这一段在等磁盘（F: 若是机械盘/外置，首次访问要等它转起来）。
       StartupTrace.mark('T3b_backup_status');
+      // **始终记一行**「启动完成」（2026-11-17）：
+      // 起因是真机首启 14 s、二次 1.2 s —— 而正式包不埋点，现场是空的，只能靠用户掐表。
+      // 口径：从 `main()` 第一行到「数据就绪（备份状态读完）」，含开库/迁移/建服务。
+      _log.write(
+        StartupTrace.reportLine(
+          elapsedMs: StartupTrace.elapsedMs,
+          dbMb: File(location.databasePath).existsSync()
+              ? File(location.databasePath).lengthSync() / (1024 * 1024)
+              : null,
+        ),
+        level: '启动',
+      );
       unawaited(_autoBackup());
     } on SchemaTooNewException catch (error) {
       // 旧版程序打开新版库：**文件一点没坏**，是软件版本不匹配。

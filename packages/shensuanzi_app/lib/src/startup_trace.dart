@@ -50,6 +50,33 @@ class StartupTrace {
   /// 从**第一次打点**开始计时 —— 所以 `T0_main` 恒为 0 ms。
   static final Stopwatch _clock = Stopwatch()..start();
 
+  // ------------------------------------------------------------------ 始终开着的计时
+  //
+  // 为什么另起一个（2026-11-17）：
+  // 上面那个 `_clock` 只在 `kStartupTrace == true` 时才会被读到（`mark` 第一行就 return），
+  // 而正式包**不传** `--dart-define=SSZ_STARTUP_TRACE`。于是「用户说打开要 14 秒」的时候，
+  // 我们手上一条记录都没有，只能靠猜（那次就是靠用户手动掐表两次才分辨出冷启/热启）。
+  //
+  // ⇒ 这条**始终记一行**，成本是一次 `Stopwatch` + 一次写日志。
+  static final Stopwatch _always = Stopwatch()..start();
+
+  /// 在 `main()` 的**第一行**调用（正式包也要调）—— 它只起一个秒表，没有 IO。
+  static void startClock() {
+    if (!_always.isRunning) _always.start();
+  }
+
+  /// 从 [startClock] 起算的毫秒数。**埋点开关关着也有效**。
+  static int get elapsedMs => _always.elapsedMilliseconds;
+
+  /// 「启动完成」那一行（**纯函数**：格式歪了现场就解析不出来）。
+  ///
+  /// 字段用 `key=value`，方便 grep / 正则；不带库路径 —— `dbProbe` 那行已经记了，
+  /// 这里重复只会把行拉长、反而在日志里被截断。
+  static String reportLine({required int elapsedMs, double? dbMb}) {
+    final String db = dbMb == null ? 'db=?' : 'db=${dbMb.toStringAsFixed(1)}MB';
+    return '启动完成 到数据就绪 elapsed=${elapsedMs}ms $db';
+  }
+
   static final List<Map<String, Object?>> _marks = <Map<String, Object?>>[];
 
   /// 本次打开的库（路径 + MB）。
