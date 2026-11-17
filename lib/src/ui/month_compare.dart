@@ -72,6 +72,7 @@ class MonthCompareCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _row(
+              context,
               theme,
               key: 'overview-month-current',
               label: '本月',
@@ -82,6 +83,7 @@ class MonthCompareCard extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             _row(
+              context,
               theme,
               key: 'overview-month-prior',
               label: '上月同期',
@@ -111,7 +113,27 @@ class MonthCompareCard extends StatelessWidget {
     );
   }
 
+  /// 区间至少留这么宽（逻辑像素）：再窄就只剩省略号，用户看不出那是哪一段日期。
+  static const double _minRangeWidth = 56;
+
+  /// 量一段**单行**文本的宽度（用当前 `TextScaler`，所以系统字号 200% 也算得准）。
+  ///
+  /// 为什么量而不是猜断点：标签与金额的字数会变（`¥190.00` 与 `¥123,456.00` 差一倍），
+  /// 写死「宽度 < 200 就换行」在某个金额上必然失效。
+  static double _textWidth(String text, TextStyle style, TextScaler scaler) {
+    final TextPainter painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+      maxLines: 1,
+    )..layout();
+    final double width = painter.width;
+    painter.dispose();
+    return width;
+  }
+
   Widget _row(
+    BuildContext context,
     ThemeData theme, {
     required String key,
     required String label,
@@ -120,36 +142,78 @@ class MonthCompareCard extends StatelessWidget {
     required int maxCents,
     required Color color,
   }) {
+    const TextStyle labelStyle = TextStyle(height: 1.5, fontSize: 15);
+    const TextStyle moneyStyle = TextStyle(
+      height: 1.5,
+      fontSize: 16,
+      fontWeight: FontWeight.w600,
+    );
+    const TextStyle rangeStyle = TextStyle(height: 1.5, fontSize: 13);
+    final TextScaler scaler = MediaQuery.textScalerOf(context);
+    final String money = '¥${Money.formatGrouped(cents)}';
+
     return Column(
       key: Key(key),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Row(
-          children: <Widget>[
-            Text(label, style: const TextStyle(height: 1.5, fontSize: 15)),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                range,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  height: 1.5,
-                  fontSize: 13,
-                  color: theme.textTheme.bodySmall?.color,
+        // **2026-11-17（用户真机日志）**：原来这里是一行
+        // 「标签 + 区间(Expanded) + 金额」，标签与金额**都不可压缩**。
+        // 窄窗口（卡片 154 逻辑宽）+ 大字时，光「上月同期」+「¥7,930.00」就超宽，
+        // 区间已经挤到 0 宽也救不回来 ⇒ `RenderFlex overflowed by 17 pixels`，
+        // 截图上金额右侧被黄黑条切掉 —— **账上的钱看不全**。
+        //
+        // 现在的判据：量出「标签 + 金额」的真实宽度，**金额永远完整一行**，
+        // 放不下就把金额落到第二行（区间继续在它上面的那一行吃省略号）。
+        // 不给金额加 `FittedBox(scaleDown)`：金额缩小到读不清，比换行更糟。
+        LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints box) {
+            final double need =
+                _textWidth(label, labelStyle, scaler) +
+                _textWidth(money, moneyStyle, scaler) +
+                14; // 6 + 8 两个间距
+            if (box.maxWidth >= need + _minRangeWidth) {
+              return Row(
+                children: <Widget>[
+                  Text(label, style: labelStyle),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      range,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: rangeStyle.copyWith(
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(money, style: moneyStyle),
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Text(label, style: labelStyle),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        range,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: rangeStyle.copyWith(
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              '¥${Money.formatGrouped(cents)}',
-              style: const TextStyle(
-                height: 1.5,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
+                Text(money, style: moneyStyle),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 3),
         RatioBar(

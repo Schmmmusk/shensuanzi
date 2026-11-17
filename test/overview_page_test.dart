@@ -1023,8 +1023,74 @@ void main() {
       });
     });
 
-    testWidgets('月度对比：**上月条不能与轨道同色**（真机截图发现的）', (tester) async {
-      // 2026-10-31 真机：¥973 对 ¥140，两条看起来一样长 ——
+    testWidgets('窄窗口 + 特大字号：本月 / 上月同期两行都**不许溢出**，金额完整可见', (
+      tester,
+    ) async {
+      // 2026-11-17 真机日志（用户报）：`month_compare.dart:127` 的 Row
+      // 「A RenderFlex overflowed by 17 pixels on the right」，
+      // 截图上 ¥190.00 / ¥7,930.00 右侧被黄黑条切掉 —— 金额看不全。
+      //
+      // 成因：那一行是「标签 + 区间(Expanded) + 金额」，标签与金额**都不可压缩**；
+      // 卡片只有 154 逻辑宽、字号 2 倍时，光「上月同期」+「¥7,930.00」就超宽，
+      // 区间已经挤到 0 宽也救不回来。
+      //
+      // 判据（两条一起看）：① 不报 overflow；② 金额文本**完整**渲染且宽度不超过
+      // 可用宽度（`Text` 的 rect 落得进卡片里 —— 溢出被裁时 rect 仍可能超界）。
+      tester.view.physicalSize = const Size(186, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final int d = businessDayOf(
+        DateTime(2026, 10, 31, 12).millisecondsSinceEpoch,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (BuildContext context, Widget? child) => MediaQuery(
+            // 系统 200%（中老年用户常见设置）
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: Scaffold(
+            // 纵向给滚动：本条只钉**横向**那处溢出（真机日志里的 17px / 7.5px），
+            // 让高度不足不要来抢镜
+            body: SingleChildScrollView(
+              child: MonthCompareCard(
+                compare: MonthCompare(
+                  window: monthCompareWindow(d),
+                  currentCents: 19000,
+                  priorCents: 793000,
+                  currentHasActivity: true,
+                  priorHasActivity: true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: '窄 + 大字下这一行不许溢出（真机日志里的 17px / 7.5px 就是它）',
+      );
+
+      for (final String money in <String>['¥190.00', '¥7,930.00']) {
+        final Finder f = find.text(money);
+        expect(f, findsOneWidget, reason: '金额必须完整一行显示，不许被裁成「¥190.0…」');
+        final Rect box = tester.getRect(f);
+        expect(box.left, greaterThanOrEqualTo(0));
+        expect(
+          box.right,
+          lessThanOrEqualTo(186),
+          reason: '$money 的右边界落到了卡片外面 —— 那就是被裁掉了',
+        );
+      }
+    });
+
+    testWidgets('月度对比：**上月条不能与轨道同色**（真机截图发现的）', (tester) async {      // 2026-10-31 真机：¥973 对 ¥140，两条看起来一样长 ——
       // 因为上月条用了 `dividerColor`，那正是 `RatioBar` 的轨道色，
       // 填充和轨道同色，条长等于看不见。
       final int d = businessDayOf(
