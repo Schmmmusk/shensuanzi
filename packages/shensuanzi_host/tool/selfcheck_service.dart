@@ -391,6 +391,105 @@ Future<void> main() async {
   check('地址行退回能用的那个', broken.snapshot.address == '10.102.43.94');
   await broken.stop();
 
+  // ------------------------------------------------------------ 提案 64（2026-11-17）
+  //
+  // 绑定收紧带来新代价：换 WiFi / 拔网线之后监听还挂在旧 IP 上，
+  // 二维码里写的地址已经不存在，界面却仍显示「已开启」。
+  // ⚠️ 与 `test/service_controller_test.dart` 的「地址失效提示」组**互为镜像**。
+  section('地址失效提示（提案 64）：换网卡后服务听在旧地址上');
+  const List<NetAddressOption> wifiA = <NetAddressOption>[
+    NetAddressOption(name: 'WLAN', address: '192.168.1.7'),
+    NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
+  ];
+  const List<NetAddressOption> wifiB = <NetAddressOption>[
+    NetAddressOption(name: 'WLAN', address: '192.168.0.20'),
+  ];
+  List<NetAddressOption> current = wifiA;
+  int probed = 0;
+  final HostServiceController mover = build(
+    db,
+    HostIdentityStore.inMemory(),
+    detectAddresses: () async {
+      probed++;
+      return current;
+    },
+  );
+  await mover.start();
+  check('刚探过 ⇒ 不能说它失效', mover.snapshot.staleAddress == null);
+
+  current = wifiB; // 用户切到另一个 WiFi
+  final HostServiceSnapshot sStale = await mover.recheckAddress();
+  check('换了网卡 ⇒ 报出旧地址', sStale.staleAddress == '192.168.1.7');
+  check(
+    '候选表换成这次探到的（否则对话框里换不过去）',
+    sStale.addressOptions.length == 1 &&
+        sStale.addressOptions.first.address == '192.168.0.20',
+  );
+  check('启动一次 + 重探一次', probed == 2, '探测次数 $probed');
+  check(
+    '提示里三件事齐全：旧地址 / 新地址 / 怎么办',
+    (sStale.staleAddressHint ?? '').contains('192.168.1.7') &&
+        (sStale.staleAddressHint ?? '').contains('192.168.0.20') &&
+        (sStale.staleAddressHint ?? '').contains('显示二维码'),
+    sStale.staleAddressHint ?? '(null)',
+  );
+  check(
+    '不自动重绑：地址仍是旧的，等用户点',
+    sStale.address == '192.168.1.7' &&
+        sStale.state == HostServiceState.running,
+  );
+
+  final bool okSwitch = await mover.selectAddress('192.168.0.20');
+  check('换到新地址成功', okSwitch);
+  check('换完失效标记被清掉', mover.snapshot.staleAddress == null);
+  await mover.stop();
+
+  // 地址没变 ⇒ 不许误报（多一块网卡也不算失效）
+  current = wifiA;
+  final HostServiceController steady = build(
+    db,
+    HostIdentityStore.inMemory(),
+    detectAddresses: () async => current,
+  );
+  await steady.start();
+  current = const <NetAddressOption>[
+    NetAddressOption(name: 'WLAN', address: '192.168.1.7'),
+    NetAddressOption(name: '以太网', address: '192.168.1.9'),
+  ];
+  final HostServiceSnapshot sSteady = await steady.recheckAddress();
+  check('地址没变 ⇒ 不报失效', sSteady.staleAddress == null);
+  check('候选表仍要更新（多了一块网卡）', sSteady.addressOptions.length == 2);
+  await steady.stop();
+
+  // 探不到 ⇒ 不判断（凭空吓唬人比不提示更糟），候选表也不许清空
+  current = wifiA;
+  final HostServiceController blind = build(
+    db,
+    HostIdentityStore.inMemory(),
+    detectAddresses: () async => current,
+    detectLocalIp: () async => null,
+  );
+  await blind.start();
+  current = const <NetAddressOption>[];
+  final HostServiceSnapshot sBlind = await blind.recheckAddress();
+  check('探测失败 ⇒ 不报失效', sBlind.staleAddress == null);
+  check('证据不足时保留上一份候选表', sBlind.addressOptions.length == 2);
+  await blind.stop();
+
+  // 没在听 ⇒ 一次都不探测
+  int idleProbes = 0;
+  final HostServiceController idle = build(
+    db,
+    HostIdentityStore.inMemory(),
+    detectAddresses: () async {
+      idleProbes++;
+      return wifiA;
+    },
+  );
+  await idle.recheckAddress();
+  check('没在听 ⇒ 不探测', idleProbes == 0, '探测次数 $idleProbes');
+  check('没在听 ⇒ 不报失效', idle.snapshot.staleAddress == null);
+
   section('探不到局域网地址：服务照起，但不画码、给「怎么办」');
   final HostServiceController noIp = build(
     db,

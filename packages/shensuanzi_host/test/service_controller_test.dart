@@ -319,7 +319,7 @@ void main() {
       );
       addTearDown(c.stop);
 
-      final HostServiceSnapshot started = await c.start();
+      await c.start();
       expect(bindings, <String>['10.102.43.94'], reason: '启动绑的是第一个候选');
 
       expect(await c.selectAddress('10.6.22.1'), isTrue);
@@ -387,6 +387,138 @@ void main() {
       expect(c.snapshot.addressOptions, isEmpty);
       expect(await c.selectAddress('10.6.22.1'), isFalse);
       expect(c.snapshot.state, HostServiceState.stopped);
+    });
+  });
+
+  // ---------------------------------------------------------------- 提案 64
+  //
+  // 2026-11-17：绑定收紧（第一刀）带来**新代价** —— 换 WiFi / 拔网线之后监听套接字
+  // 还挂在旧 IP 上，二维码里写的地址已经不存在，而界面仍显示「已开启」。
+  // 控制器负责判断（`recheckAddress`），UI 只取值显示。
+  //
+  // 反向灵敏度（落定时手动验过）：把 `_staleAddress = ... : null` 的三元写反
+  // ⇒ 「换了网卡 ⇒ 报失效」立刻红；只保留 `latest.any(...)` 不写 `_addressOptions`
+  // ⇒ 「候选表要换成新的」那条红。
+  group('地址失效提示（提案 64）', () {
+    List<NetAddressOption> nicsWifiA() => const <NetAddressOption>[
+      NetAddressOption(name: 'WLAN', address: '192.168.1.7'),
+      NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
+    ];
+
+    /// 换了 WiFi：旧的 192.168.1.7 没了，新的是 192.168.0.20
+    List<NetAddressOption> nicsWifiB() => const <NetAddressOption>[
+      NetAddressOption(name: 'WLAN', address: '192.168.0.20'),
+    ];
+
+    test('换了网卡 ⇒ 报失效，并把候选表换成新的（否则「换地址」列表还是旧的）', () async {
+      int detected = 0;
+      late List<NetAddressOption> current;
+      current = nicsWifiA();
+      final HostServiceController c = build(
+        detectAddresses: () async {
+          detected++;
+          return current;
+        },
+      );
+      addTearDown(c.stop);
+      await c.start();
+      expect(c.snapshot.staleAddress, isNull, reason: '刚探过，这会儿还不能说它失效');
+
+      // 用户切到另一个 WiFi
+      current = nicsWifiB();
+      final HostServiceSnapshot after = await c.recheckAddress();
+
+      expect(after.staleAddress, '192.168.1.7');
+      expect(
+        after.addressOptions.map((NetAddressOption o) => o.address),
+        <String>['192.168.0.20'],
+        reason: '候选表必须是**这次**探到的 —— 不然对话框里换不过去',
+      );
+      expect(detected, 2, reason: '启动一次 + 重探一次');
+      // 提示里三件事都要有：旧地址、新地址、怎么办
+      expect(after.staleAddressHint, contains('192.168.1.7'));
+      expect(after.staleAddressHint, contains('192.168.0.20'));
+      expect(after.staleAddressHint, contains('显示二维码'));
+      // **不自动重绑**：服务还听在旧地址上，等用户点
+      expect(after.address, '192.168.1.7');
+      expect(after.state, HostServiceState.running);
+    });
+
+    test('地址没变 ⇒ 不报失效（探到多一块网卡也不算）', () async {
+      late List<NetAddressOption> current;
+      current = nicsWifiA();
+      final HostServiceController c = build(
+        detectAddresses: () async => current,
+      );
+      addTearDown(c.stop);
+      await c.start();
+
+      current = const <NetAddressOption>[
+        NetAddressOption(name: 'WLAN', address: '192.168.1.7'),
+        NetAddressOption(name: '以太网', address: '192.168.1.9'),
+      ];
+      final HostServiceSnapshot after = await c.recheckAddress();
+
+      expect(after.staleAddress, isNull);
+      expect(after.staleAddressHint, isNull);
+      expect(after.addressOptions.length, 2, reason: '候选表仍要更新（多了一块网卡）');
+    });
+
+    test('探测失败（一块网卡都没有）⇒ **不**报失效，也**不**清空候选表', () async {
+      late List<NetAddressOption> current;
+      current = nicsWifiA();
+      final HostServiceController c = build(
+        detectAddresses: () async => current,
+        detectLocalIp: () async => null,
+      );
+      addTearDown(c.stop);
+      await c.start();
+
+      current = const <NetAddressOption>[];
+      final HostServiceSnapshot after = await c.recheckAddress();
+
+      expect(
+        after.staleAddress,
+        isNull,
+        reason: '探不到 ≠ 地址失效 —— 凭空吓唬人比不提示更糟',
+      );
+      expect(after.addressOptions.length, 2, reason: '证据不足时保留上一份候选表');
+    });
+
+    test('没在听 ⇒ 不探测（`recheckAddress` 只对运行中的服务有意义）', () async {
+      int detected = 0;
+      final HostServiceController c = build(
+        detectAddresses: () async {
+          detected++;
+          return nicsWifiA();
+        },
+      );
+      addTearDown(c.stop);
+
+      await c.recheckAddress();
+      expect(detected, 0);
+      expect(c.snapshot.staleAddress, isNull);
+    });
+
+    test('换到新地址之后 ⇒ 失效标记被清掉', () async {
+      late List<NetAddressOption> current;
+      current = nicsWifiA();
+      final HostServiceController c = build(
+        detectAddresses: () async => current,
+      );
+      addTearDown(c.stop);
+      await c.start();
+
+      current = nicsWifiB();
+      expect((await c.recheckAddress()).staleAddress, '192.168.1.7');
+
+      expect(await c.selectAddress('192.168.0.20'), isTrue);
+      expect(
+        c.snapshot.staleAddress,
+        isNull,
+        reason: '换过去了就不该继续红着 —— 否则用户会以为没生效',
+      );
+      expect(c.snapshot.address, '192.168.0.20');
     });
   });
 

@@ -65,6 +65,12 @@ class _HostServicePanelState extends State<HostServicePanel> {
     // A4：手机来请求配对时要**立刻**看出来（否则用户会对着一个死码干等）。
     // 订阅的是 6 位短码那台状态机，不是快照 —— 它不经过 controller 的启停流程。
     widget.controller.pairRequests.addListener(_onHostData);
+    // 提案 64（2026-11-17）：服务现在只绑**一个具体地址**，用户换了 WiFi /
+    // 拔了网线之后套接字还挂在旧地址上 —— 打开这一屏就重新探一次，
+    // 让「电脑的地址变了」在他去扫码之前就看得见。
+    // ⚠️ 不能 `await`（`initState` 里等异步会把首帧卡住），也不能忽略它的失败
+    // （`recheckAddress` 自己不抛，失败就当作「没发现问题」）。
+    unawaited(_recheckAddress());
   }
 
   @override
@@ -77,6 +83,16 @@ class _HostServicePanelState extends State<HostServicePanel> {
   void _onHostData() {
     if (!mounted) return;
     setState(() => _snapshot = widget.controller.snapshot);
+  }
+
+  /// 重新探一次网卡（判据在控制器里，这里只把结果搬到界面）。
+  ///
+  /// 面板打开时、以及**打开二维码 / 短码对话框之前**各跑一次 ——
+  /// 那两处正是「手机要扫码」的时刻，地址失效在那里最要命。
+  Future<void> _recheckAddress() async {
+    final HostServiceSnapshot next = await widget.controller.recheckAddress();
+    if (!mounted) return;
+    setState(() => _snapshot = next);
   }
 
   /// 正在等启停结果（按钮与开关都要禁用，否则能连点出好几次启停）
@@ -143,6 +159,10 @@ class _HostServicePanelState extends State<HostServicePanel> {
   }
 
   Future<void> _showQr() async {
+    // 提案 64：手机连不上最常见的原因就是「电脑换了 WiFi，服务还听在旧地址」。
+    // 先把候选表与失效判断刷新一遍，再决定要不要摆码（码里写的地址必须是对的）。
+    await _recheckAddress();
+    if (!mounted) return;
     final PairingPayload? payload = widget.controller.pairingPayload;
     if (payload == null) {
       // ⚠️ **不能静默 return**（2026-10-31 真机）：用户点了「显示二维码」，
@@ -199,6 +219,9 @@ class _HostServicePanelState extends State<HostServicePanel> {
   /// 每次打开都发一个新码：旧码可能已经过期 / 被上一台手机用掉了，
   /// 让用户对着一个死码输入是这一屏最容易发生的挫败。
   Future<void> _showShortCode() async {
+    // 与 `_showQr` 同一条理由：这一屏也要摆地址，地址失效时先刷新再打开
+    await _recheckAddress();
+    if (!mounted) return;
     widget.controller.pairRequests.issueCode();
     await showDialog<void>(
       context: context,
@@ -329,6 +352,16 @@ class _HostServicePanelState extends State<HostServicePanel> {
 
         if (snapshot.isRunning) ...<Widget>[
           const SizedBox(height: 8),
+          // 提案 64：地址失效（换 WiFi / 拔网线）—— 二维码里写的 IP 已经不存在了。
+          // ⚠️ 用 error 色：这不是「小提示」，是「手机现在根本连不上」。
+          if (snapshot.staleAddressHint != null) ...<Widget>[
+            const SizedBox(height: 6),
+            Text(
+              snapshot.staleAddressHint!,
+              key: const Key('host-service-address-stale'),
+              style: TextStyle(height: 1.6, color: theme.colorScheme.error),
+            ),
+          ],
           // 手输兜底（遗漏 4）—— 扫码失败时用户要能照着敲
           if (snapshot.addressLine != null)
             SelectableText(
@@ -527,6 +560,19 @@ class _PairingDialogState extends State<_PairingDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
+              // 提案 64：这张码里的地址可能已经不在电脑上了。
+              // 摆在**二维码上面**，而不是等用户扫完连不上再解释。
+              if (snapshot.staleAddressHint != null) ...<Widget>[
+                Text(
+                  snapshot.staleAddressHint!,
+                  key: const Key('host-qr-address-stale'),
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               if (payload == null)
                 // ⚠️ 换地址的那几百毫秒里服务是停的 ⇒ `pairingPayload` 为 null。
                 // 这时不能说「请关掉再打开一次同步服务」（用户会以为坏了），

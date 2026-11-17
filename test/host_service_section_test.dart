@@ -255,6 +255,80 @@ void main() {
     await tester.runAsync(() => multi.stop());
   });
 
+  testWidgets('提案 64：换了 WiFi ⇒ 面板上就说「地址变了」，二维码对话框也带同一句', (
+    WidgetTester tester,
+  ) async {
+    // 先用 WiFi A 起服务，再把「网卡」换成 WiFi B —— 模拟用户切了 WiFi
+    List<NetAddressOption> current = const <NetAddressOption>[
+      NetAddressOption(name: 'WLAN', address: '192.168.1.7'),
+      NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
+    ];
+    final HostServiceController mover = HostServiceController(
+      db: db,
+      identities: HostIdentityStore.inMemory(),
+      // 与文件里其它用例的端口段错开（17940/17960/17970 都被占了）
+      ports: const PortRange(start: 17920, end: 17929),
+      detectLocalIp: () async => '192.168.1.7',
+      resolveBindAddress: (String _) => InternetAddress.loopbackIPv4,
+      detectAddresses: () async => current,
+    );
+    // 绑端口是真实 I/O ⇒ 必须先 runAsync 起好，面板 initState 直接读到 running
+    await tester.runAsync(() => mover.start());
+    current = const <NetAddressOption>[
+      NetAddressOption(name: 'WLAN', address: '192.168.0.20'),
+      NetAddressOption(name: '以太网', address: '192.168.0.21'),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: HostServicePanel(controller: mover),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle(); // initState 的 recheck 是纯内存异步，假时钟推得动
+
+    final Finder staleLine = find.byKey(
+      const Key('host-service-address-stale'),
+    );
+    expect(
+      staleLine,
+      findsOneWidget,
+      reason: '这是「手机现在根本连不上」的原因，必须主动说出来',
+    );
+    final String hint = tester.widget<Text>(staleLine).data!;
+    expect(hint, contains('192.168.1.7'), reason: '要说清服务还听在哪个已经不存在的地址');
+    expect(hint, contains('192.168.0.20'), reason: '要给出现在该用哪个');
+    expect(hint, contains('显示二维码'), reason: '要给「怎么办」');
+
+    // 二维码那一屏同样要红着说 —— 那正是用户扫码的地方
+    await tester.tap(find.byKey(const Key('host-service-show-qr')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('host-qr-address-stale')), findsOneWidget);
+
+    // 换到新地址 ⇒ 提示必须撤掉（否则用户以为没生效）
+    final Finder newOption = find.byKey(
+      const Key('host-address-option-192.168.0.20'),
+    );
+    await tester.ensureVisible(newOption);
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      await tester.tap(newOption);
+      await _waitFor(() => mover.snapshot.address == '192.168.0.20');
+    });
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('host-service-address-stale')),
+      findsNothing,
+      reason: '换成新地址之后不该继续红着',
+    );
+
+    // 必须在用例体里停（`addTearDown` 跑在「无遗留 Timer」检查之后）
+    await tester.runAsync(() => mover.stop());
+  });
+
   testWidgets('换地址失败 ⇒ 如实说失败 + 服务退回原地址（提案 62 第二刀）', (
     WidgetTester tester,
   ) async {
@@ -302,6 +376,10 @@ void main() {
     );
     await tester.ensureVisible(second);
     await tester.pumpAndSettle();
+    // ⚠️ 先把计数清零再点：`_showQr` 打开对话框之前会先 `recheckAddress()`
+    // （提案 64），它也会广播一次 —— 不清零的话 `notes` 在点之前就到 2 了，
+    // `_waitFor` 会立刻返回，断言跑在「换还没做完」的时刻（假红）。
+    notes = 0;
     await tester.runAsync(() async {
       await tester.tap(second);
       await _waitFor(() => notes >= 2);

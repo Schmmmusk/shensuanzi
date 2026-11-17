@@ -45,6 +45,7 @@ class HostServiceSnapshot {
     this.lastTrafficAt,
     this.addressOptions = const <NetAddressOption>[],
     this.bindFallback = false,
+    this.staleAddress,
   });
 
   final HostServiceState state;
@@ -86,6 +87,22 @@ class HostServiceSnapshot {
   ///
   /// `true` ⇒ [address] 必为 `null`（两个零散字段之间这条不变量由控制器保证）。
   final bool bindFallback;
+
+  /// 服务正听在**一个已经不在这台电脑网卡上的地址**（换 WiFi / 拔网线 / IP 变了）。
+  ///
+  /// ## 为什么要有这个字段（2026-11-17，提案 64）
+  ///
+  /// 提案 62 第一刀之后服务**只绑一个具体网卡地址**（不再是 `0.0.0.0`）。
+  /// 换 WiFi 时新网卡拿到新 IP，而监听套接字还挂在旧 IP 上 ——
+  /// 于是：**二维码里写的地址已经不存在了，手机永远连不上**，
+  /// 而界面还显示「已开启」。用户唯一的线索是「手机连不上」。
+  ///
+  /// 判据由控制器算（[HostServiceController.recheckAddress]），UI 只取值 ——
+  /// 与 [bindFallback] 同款：**两个零散字段之间不许各算各的判据**。
+  ///
+  /// `null` = 地址仍然有效，或者**还没重新探过**（`recheckAddress` 没被调用）。
+  /// ⇒ 「没提示」不等于「地址没问题」，界面不该把它当成健康证明。
+  final String? staleAddress;
 
   /// 启动时**明文令牌恢复到了什么程度**（2026-11-01，提案 57 裁定 ②③⑤）。
   ///
@@ -172,6 +189,22 @@ class HostServiceSnapshot {
 
   /// 候选地址不止一个 ⇒ 界面要提示「手机连不上就换一个试试」（D 批）。
   bool get hasAddressChoice => addressOptions.length > 1;
+
+  /// 地址失效时的整句提示（**单一出处**：UI 只取值、不造句）。
+  ///
+  /// 三件事必须同时说清，否则用户不知道问题出在哪：
+  /// ① 服务听的是哪个（已经不存在的）地址；② 现在该用哪个；
+  /// ③ **怎么办**（点「显示二维码」换过去 —— 那里本来就有换地址的入口）。
+  String? get staleAddressHint {
+    final String? stale = staleAddress;
+    if (stale == null) return null;
+    final String now = addressOptions.isEmpty
+        ? '这次也没探到别的局域网地址（先看看电脑连上网了没有）'
+        : '现在这台电脑的地址是 ${addressOptions.first.address}';
+    return '电脑的地址变了：服务还听在 $stale，但它已经不在这台电脑上了'
+        '（$now）。手机连不上就是这个原因 —— '
+        '点「显示二维码」，把服务换到新地址就行。';
+  }
 
   /// 服务在听时显示的一行；`running` 之外恒为 `null`。
   ///
@@ -262,6 +295,12 @@ class HostServiceController {
   /// 本次启动是否**回退绑了全部网卡**（探不到地址时）。见 [HostServiceSnapshot.bindFallback]。
   bool _bindFallback = false;
 
+  /// 重新探测后发现「当前绑定的地址已经不在这台电脑上」⇒ 记住那个旧地址。
+  ///
+  /// 只有 [recheckAddress] 会写它；启动 / 停服 / 换地址成功都会清掉
+  /// （那三种情况地址要么重新探过、要么已经不在听了）。
+  String? _staleAddress;
+
   /// 地址字面量 → 要绑的地址（生产 = `InternetAddress.tryParse`；测试注入映射）。
   final InternetAddress? Function(String address) _resolveBind;
 
@@ -297,6 +336,7 @@ class HostServiceController {
     lastTrafficAt: _lastTrafficAt,
     addressOptions: _addressOptions,
     bindFallback: _bindFallback,
+    staleAddress: _staleAddress,
   );
 
   /// 手里是否有**明文**令牌（判断依据是 `HostIdentity.plaintextToken`）
@@ -439,6 +479,8 @@ class HostServiceController {
     _state = HostServiceState.starting;
     _failureHint = null;
     _addressHint = null;
+    // 这一轮重新探过网卡了 ⇒ 上一轮「地址失效」的判断作废
+    _staleAddress = null;
     // 重新开始 = 上一轮那些码和待确认请求全部作废（服务没在听，谁也用不了）
     pairRequests.clear();
     try {
@@ -527,6 +569,7 @@ class HostServiceController {
     _state = HostServiceState.stopped;
     _address = null;
     _bindFallback = false;
+    _staleAddress = null;
     _addressOptions = const <NetAddressOption>[];
     _failureHint = null;
     _addressHint = null;
@@ -590,6 +633,7 @@ class HostServiceController {
       _address = address;
       // 换完就不再是「探不到地址」的状态了（原来那条提示要撤掉）
       _addressHint = null;
+      _staleAddress = null;
       _notifyListeners();
       return true;
     }
@@ -639,6 +683,63 @@ class HostServiceController {
     } finally {
       _notifyListeners();
     }
+  }
+
+  /// **重新探一次网卡，判断服务听的那个地址还在不在**（2026-11-17，提案 64）。
+  ///
+  /// ## 为什么需要它
+  ///
+  /// 提案 62 第一刀之后服务**只绑一个具体地址**。用户换 WiFi / 拔网线 / 路由器重发 IP
+  /// 时，监听套接字仍挂在**旧地址**上：二维码里写着一个已经不存在的 IP，手机永远连不上，
+  /// 而界面还是「已开启」。从前绑 `0.0.0.0` 时换网卡还能用，所以这是收紧绑定带来的**新代价**，
+  /// 必须由界面说出来（纪律 17：能力变了，说明也要跟着变）。
+  ///
+  /// ## 语义边界（三条都别越界）
+  ///
+  /// 1. **只判断、不重绑**：自动重绑会让手机里存的 `ip:port` 静默失效，
+  ///    而用户此刻可能正在推送单据；换不换由他自己点（`selectAddress` 已有入口）。
+  /// 2. **探不到 ≠ 地址失效**：探测失败（异常 / 一块网卡都没有）时**不写** stale —— 
+  ///    宁可这次不提示，也不能凭空吓唬人（与 `needsBackupAttention` 宁可少报同一立场）。
+  /// 3. **不抛**：与启停同一个约定，界面据此只换文案。
+  ///
+  /// 顺手把 [HostServiceSnapshot.addressOptions] 换成最新的一份 ——
+  /// 否则「换地址」列表里还是旧网卡，用户想换也换不过去。
+  Future<HostServiceSnapshot> recheckAddress() async {
+    if (_state != HostServiceState.running) return snapshot;
+    final String? bound = _address;
+    if (bound == null) return snapshot; // 回退绑 0.0.0.0 的情形，没有具体地址可比
+
+    List<NetAddressOption> latest;
+    try {
+      latest = await _detectAddresses?.call() ?? const <NetAddressOption>[];
+      if (latest.isEmpty) {
+        // 与 `_startRaw` 同一条兜底：没注入多地址探测时退回单地址探测
+        final String? single = await _detectLocalIp();
+        if (single != null) {
+          latest = <NetAddressOption>[
+            NetAddressOption(name: '', address: single),
+          ];
+        }
+      }
+    } catch (error, stack) {
+      onInternalError?.call('重新探测网卡地址失败', error, stack);
+      return snapshot; // 探不到 ⇒ 不做判断（见语义边界 2）
+    }
+
+    // 探测期间用户可能停了服务 / 换了地址 ⇒ 这次结果作废，别拿旧状态算新结论
+    if (_state != HostServiceState.running || _address != bound) return snapshot;
+    if (latest.isEmpty) return snapshot;
+
+    _addressOptions = latest;
+    _staleAddress = latest.any(
+      (NetAddressOption option) => option.address == bound,
+    )
+        ? null
+        : bound;
+    // 地址确实变了 ⇒ 把旧的「探不到地址」提示也撤掉（它说的是另一件事）
+    if (_staleAddress != null) _addressHint = null;
+    _notifyListeners();
+    return snapshot;
   }
 
   void _noteTraffic() {

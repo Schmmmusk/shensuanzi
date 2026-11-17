@@ -32,12 +32,15 @@ void main() {
   /// | 己 | −3 / 成本 −300（只有出库）| `hasInbound = false`；`q < 0` ⇒ **不计数** |
   /// | 丁 | 无任何流水 | **不进 agg**、**不进任何计数**（洞 1 的陷阱）|
   /// | 戊 | +2 / 成本 200 | 进榜，第二 |
-  late final String never;
-  late final String uncalibrated;
-  late final String negative;
-  late final String onlyOut;
-  late final String noLedger;
-  late final String second;
+  // ⚠️ **不能写 `late final`**：它们在 `setUp` 里赋值，而 `setUp` 每条用例都跑一次
+  // ⇒ `late final` 的第二次赋值抛 `LateInitializationError`，本文件第 2 条起全红
+  // （2026-11-17 本机复跑发现。`flutter analyze` 抓不到，只有真跑才暴露）。
+  late String never;
+  late String uncalibrated;
+  late String negative;
+  late String onlyOut;
+  late String noLedger;
+  late String second;
 
   setUp(() {
     resetClock();
