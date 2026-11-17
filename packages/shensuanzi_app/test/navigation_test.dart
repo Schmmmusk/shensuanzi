@@ -197,8 +197,27 @@ void main() {
       expect(AppNavigation.navWidth(scale: 2.0, availableWidth: 480), 192);
     });
 
-    test('极窄窗口退到 iconOnlyWidth（有总比没有强）', () {
-      expect(AppNavigation.navWidth(scale: 2.0, availableWidth: 100), 60);
+    test('极窄窗口：退成仅图标，宽度按缩放算（60 只是下限）', () {
+      // 2026-11-17（用户真机确认「够用」，裁定甲）：断言从 60 改成 76。
+      // 76 = 3 + 13 + 12 + 20×2 + 8 —— 图标本身随字号放大，60 是 1.0 档的下限。
+      // 原来的 60 是 2026-11-14「仅图标」落地**之前**的期望，两轮改动后
+      // 两条断言互相矛盾（挂了 1 天，见 docs/reply_review.md §九十六）。
+      expect(AppNavigation.navWidth(scale: 2.0, availableWidth: 100), 76);
+    });
+
+    test('仅图标宽度**永不低于** iconOnlyWidth（下限护栏）', () {
+      for (final double s in <double>[1.0, 1.25, 1.5, 2.0, 3.0]) {
+        final ({double width, bool iconOnly}) l = AppNavigation.navLayout(
+          scale: s,
+          availableWidth: 100,
+        );
+        expect(l.iconOnly, isTrue, reason: '100 宽的窗口必然装不下标签');
+        expect(
+          l.width,
+          greaterThanOrEqualTo(AppNavigation.iconOnlyWidth),
+          reason: 'scale $s：图标再小也不能窄过 1.0 档的下限（否则点击区不足）',
+        );
+      }
     });
 
     test('装不下标签 ⇒ 退成仅图标（iconOnly=true），宽度按图标算', () {
