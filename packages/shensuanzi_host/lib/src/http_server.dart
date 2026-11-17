@@ -84,6 +84,15 @@ class HostHttpServer {
     required Db db,
     required HostIdentity identity,
     PortRange ports = PortRange.defaults,
+    /// **优先试这个端口**（换地址重绑时传旧端口）。
+    ///
+    /// 为什么要有它：下面的循环是**升序**取第一个能绑的端口。若不指定偏好，
+    /// 「range 里更靠前的那个端口刚空出来」时，重绑会悄悄换端口 ——
+    /// 而手机上用户可能**手填过** `ip:port`，换端口就得让他重填。
+    /// 见 `HostServiceController.selectAddress` 的第 6 条不变量。
+    ///
+    /// 超出 `ports` 范围时忽略（配置只有 `PortRange` 一个出处）。
+    int? preferredPort,
     InternetAddress? address,
     int Function()? clock,
     void Function()? onAuthenticated,
@@ -117,8 +126,18 @@ class HostHttpServer {
     // `null` 只剩「探不到地址」这一条路径（控制器据此置 `bindFallback`）。
     final InternetAddress bind = address ?? InternetAddress.anyIPv4;
 
+    // 端口顺序：**先试偏好的那个**，再按 range 升序补齐（不重复）。
+    final List<int> candidates = <int>[
+      if (preferredPort != null &&
+          preferredPort >= ports.start &&
+          preferredPort <= ports.end)
+        preferredPort,
+      for (final int p in ports.ports)
+        if (p != preferredPort) p,
+    ];
+
     SocketException? lastError;
-    for (final int port in ports.ports) {
+    for (final int port in candidates) {
       try {
         final HttpServer server = await shelf_io.serve(
           routes.handler,

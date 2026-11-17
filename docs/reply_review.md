@@ -20694,3 +20694,61 @@ host `typecheck` **11 入口** · `selfcheck_service` **100 / 100 通过**（含
 
 未跑：core / host / app 三个包 —— 本轮只动 `lib/src/ui/month_compare.dart` 与 `tool/perf_bench.py`，
 三个包都不依赖它们（上一轮已绿：core 874 / host 241 / app 522+1 挂红）。
+
+### 九十四、2026-11-17 **端口契约落地 + N-g 关闭 + N-l 反证复测**
+
+用户一次性回了四件：`N-l`（LTSC 上不装 VC++ 也能启动）· `N-g`（无法还原，给不了证据）·
+导航挂红断言（要测试步骤）· `端口契约 可以开始`。
+
+#### ① 端口契约（本条是唯一改了生产代码的）
+
+**问题**：§九十·⑥ 登记的「换地址后端口不变」原来只是**实测事实**。而 `HostHttpServer.start`
+是按 `PortRange` **升序**取第一个能绑的端口 —— 只要 range 里更靠前的端口在重绑那一刻空出来，
+端口就换了。手机端有「连不上？手动填地址」那条路，用户手敲过 `ip:port`，端口一变他那份就失效。
+
+**做法**：`HostHttpServer.start` 加 `preferredPort`（先试它，再按 range 升序补齐、不重复）；
+`ServiceController._startRaw` 透传；`selectAddress` 在停服前记下 `_server?.port` 并传回去。
+写进 `selectAddress` 的**第 6 条不变量**（原来 5 条）。
+
+**怎么钉住的**（关键，不然「端口不变」还是碰运气）：
+先把 range 首端口用 `ServerSocket` 占住 ⇒ 服务落到第二个；**再把占位者放开**；
+然后 `selectAddress` ⇒ 断言端口**仍是第二个**。
+不守约的实现会退回第一个端口 ⇒ 红。
+反向灵敏度：把 `preferredPort` 改成 `null` ⇒ **红**（Expected 1460 / Actual 1459），已回滚。
+
+测试与 selfcheck 互为镜像：`service_controller_test`「端口契约」组 1 条 +
+`tool/selfcheck_service.dart` 同款 3 个 check（128 → **131**）。
+
+#### ② N-g ❌ 关闭（用户：无法还原）
+
+按决策单自己写过的判据收的口（「复现不出就按无法复现关闭」）。三个子项逐条写清理由，
+其中两条**没有**用「已被自动化覆盖」当借口 —— 那两处确实没有专门的窄窗断言。
+另注明：2026-11-17 用户报的溢出是 `month_compare.dart`（已修），**不是** #34④ 那两处，
+不能拿来当本项证据。
+
+#### ③ N-l 用户反证与我的复测（结论不变，但一句话说得太满要改）
+
+用户：「LTSC 虚拟机上所有测试全都没额外装 VC++，软件照样能启动。」
+
+我用 `dumpbin /dependents` 重新解析了发布产物：`shensuanzi.exe` 的
+`MSVCP140 / VCRUNTIME140 / VCRUNTIME140_1` 是 **load-time 导入**（不是 delay load），
+发布目录里**一个运行库 dll 都没有**。⇒ load-time 缺一个，进程在 `main()` 之前就起不来。
+所以「不装也能跑」只能解释为**那台机器上有这三个 dll** —— 最可能是它装了 VS Build Tools
+（本项目工具链要求），运行库随之进了系统目录。
+
+**给了用户一条 10 秒验证**（在 VM 里 `dir %SystemRoot%\System32\msvcp140.dll` 等三条）：
+三个都在 ⇒ N-l 仍开放；一个都没有 ⇒ 我判断错，关掉 N-l 并写「实测反证」。
+
+**要改的描述**（纪律 17）：原文「**LTSC 不带任何运行库**」太满 ⇒ 改成「裸 Windows 不自带；
+装过 VS / 运行库 / 某些驱动的机器会有」。等验证结果再同步 `windows_build.md`。
+
+#### ④ 门禁
+
+| 门禁 | 结果 |
+|---|---|
+| `flutter analyze` | **0 issues** |
+| host `dart test` | **242**（1 条按平台跳过；+1） |
+| host `tool/selfcheck_service.dart` | **131 / 131**（+3） |
+| 反向灵敏度 | 去掉 `preferredPort` ⇒ 端口契约那条红；已回滚复绿 |
+
+未跑 root/core/app：本轮只动 `packages/shensuanzi_host` 的 lib/test/tool 三个文件（+ 文档）。

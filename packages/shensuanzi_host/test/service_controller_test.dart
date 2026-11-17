@@ -390,6 +390,52 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------- 端口契约
+  //
+  // `docs/reply_review.md` §九十·⑥ 登记的欠账：「换地址后端口不变」原来只是
+  // **实测事实**，不是契约。2026-11-17 把它变成契约（`_startRaw` 的 `preferredPort`）。
+  //
+  // 为什么值一条测试：手机端有「连不上？手动填地址」那条路，用户手敲过 ip:port；
+  // 端口一换，他手填的那个就失效了，而界面只会说「连不上」。
+  //
+  // 反向灵敏度（落定时验过）：去掉 `preferredPort` ⇒ 下面这条红（端口从第二个退回第一个）。
+  group('端口契约（换地址不换端口）', () {
+    test('range 首端口刚空出来也不许换 —— 手机里手填过的 ip:port 不能失效', () async {
+      // 先把 range 的第一个端口占住 ⇒ 服务只能落到第二个
+      final ServerSocket blocker = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      addTearDown(blocker.close);
+      final int first = blocker.port;
+
+      final HostServiceController c = build(
+        ports: PortRange(start: first, end: first + 2),
+        detectAddresses: () async => const <NetAddressOption>[
+          NetAddressOption(name: 'WLAN', address: '10.102.43.94'),
+          NetAddressOption(name: 'natpierce', address: '10.6.22.1'),
+        ],
+      );
+      addTearDown(c.stop);
+
+      final HostServiceSnapshot started = await c.start();
+      expect(started.port, isNot(first), reason: '首端口被占着，服务只能落到下一个');
+      final int port = started.port!;
+
+      // 占着的人走了 —— 不守约的实现会在重绑时回到更靠前的那个端口
+      await blocker.close();
+
+      expect(await c.selectAddress('10.6.22.1'), isTrue);
+      expect(
+        c.snapshot.port,
+        port,
+        reason: '换地址只该换绑定地址；端口变了 = 用户手填的 ip:port 失效',
+      );
+      expect(c.snapshot.state, HostServiceState.running);
+      expect(c.snapshot.address, '10.6.22.1');
+    });
+  });
+
   // ---------------------------------------------------------------- 提案 64
   //
   // 2026-11-17：绑定收紧（第一刀）带来**新代价** —— 换 WiFi / 拔网线之后监听套接字

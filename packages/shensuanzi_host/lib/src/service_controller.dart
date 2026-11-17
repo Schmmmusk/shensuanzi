@@ -471,6 +471,7 @@ class HostServiceController {
   Future<HostServiceSnapshot> _startRaw({
     String? preferredAddress,
     List<NetAddressOption>? keepOptions,
+    int? preferredPort,
   }) async {
     if (_state == HostServiceState.running ||
         _state == HostServiceState.starting) {
@@ -523,6 +524,8 @@ class HostServiceController {
         db: _db,
         identity: _identity!,
         ports: _ports,
+        // 换地址重绑时复用旧端口（第 6 条不变量）：手机里手填过的 ip:port 不该失效
+        preferredPort: preferredPort,
         // `null` ⇒ 回退 `InternetAddress.anyIPv4`（`http_server.dart` 的默认），
         // 与 [bindFallback] 是同一个判据，不许各算各的
         address: bind,
@@ -619,6 +622,7 @@ class HostServiceController {
   /// | 3 | 失败时**退回原地址**再返回 `false` | 否则用户「换了个连不上的」还把本来能用的服务弄停了 —— 比不让换更糟 |
   /// | 4 | 返回值判 `_address == address` | 地址字面量解析失败会回退「绑全部网卡」，那时 `running` 但不是用户要的那个地址 |
   /// | 5 | 全程**不抛异常** | 与启停同一个约定：界面据此显示「换地址没成功」，不让按钮卡死 |
+  /// | 6 | **端口复用**（`preferredPort`，2026-11-17 端口契约） | 手机里用户可能手填过 `ip:port`（「连不上？手动换地址」那条路）：重绑时若让 range 里更靠前的端口抢走，端口就变了，他得重填。§九十·⑥ 原来写「端口不变只是实测事实、不是契约」—— 从这条起它**是契约**，并由 `service_controller_test` 的一条用例钉住（先把 range 首端口占住、再放开，重绑仍须留在原端口） |
   ///
   /// 没在听（`stopped` / `failed`）时只改界面与二维码 —— 没有绑定可换，
   /// 与第二刀之前的旧行为逐字相同。
@@ -641,6 +645,10 @@ class HostServiceController {
 
     final String? previous = _address;
     final List<NetAddressOption> options = _addressOptions;
+    // 第 6 条不变量（2026-11-17，端口契约）：**重绑复用原端口**。
+    // 不记下来的话，`_stopRaw` 一放、range 里更靠前的端口一空，重绑就会换端口 ——
+    // 而用户可能已经把 `ip:port` 手敲进手机（「连不上？手动填地址」那条路）。
+    final int? previousPort = _server?.port;
     // 停服务会 clear() 掉短码（「服务没在听，谁也用不了」）—— 记下来，重绑成功后补发
     final bool hadShortCode = pairRequests.code != null;
     // 先叫醒一次界面：重绑要几百毫秒，这期间界面把列表画成「正在重启服务…」
@@ -651,7 +659,11 @@ class HostServiceController {
           await _stopRaw();
           // `_stopRaw` 会清空地址与候选表（它以为这一轮结束了）⇒ 用存下来的那份重绑
           _addressOptions = options;
-          return _startRaw(preferredAddress: to, keepOptions: options);
+          return _startRaw(
+            preferredAddress: to,
+            keepOptions: options,
+            preferredPort: previousPort,
+          );
         });
 
     try {

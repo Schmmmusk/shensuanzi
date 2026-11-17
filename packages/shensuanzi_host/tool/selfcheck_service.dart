@@ -391,6 +391,39 @@ Future<void> main() async {
   check('地址行退回能用的那个', broken.snapshot.address == '10.102.43.94');
   await broken.stop();
 
+  // ------------------------------------------------------------ 端口契约（2026-11-17）
+  //
+  // §九十·⑥ 的欠账：「换地址后端口不变」原来只是实测事实。现在它是契约
+  //（`_startRaw` 的 `preferredPort`）。⚠️ 与 `test/service_controller_test.dart`
+  // 的「端口契约」组**互为镜像**。
+  section('端口契约：换地址不换端口（手机里手填过的 ip:port 不能失效）');
+  final ServerSocket portBlocker = await ServerSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+  );
+  final int firstPort = portBlocker.port;
+  final HostServiceController portKeeper = build(
+    db,
+    HostIdentityStore.inMemory(),
+    ports: PortRange(start: firstPort, end: firstPort + 2),
+    detectAddresses: () async => twoNics,
+  );
+  final HostServiceSnapshot sPort = await portKeeper.start();
+  check(
+    '首端口被占 ⇒ 落到下一个',
+    sPort.port != null && sPort.port != firstPort,
+    'port=${sPort.port}，被占的是 $firstPort',
+  );
+  final int keptPort = sPort.port!;
+  await portBlocker.close(); // 占着的人走了
+  check('换地址成功', await portKeeper.selectAddress('10.6.22.1'));
+  check(
+    '端口复用：不回到刚空出来的更靠前端口',
+    portKeeper.snapshot.port == keptPort,
+    '现在 ${portKeeper.snapshot.port}，原为 $keptPort',
+  );
+  await portKeeper.stop();
+
   // ------------------------------------------------------------ 提案 64（2026-11-17）
   //
   // 绑定收紧带来新代价：换 WiFi / 拔网线之后监听还挂在旧 IP 上，
