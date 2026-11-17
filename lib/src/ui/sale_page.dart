@@ -368,6 +368,16 @@ class _SalePageState extends State<SalePage> {
   /// 保存失败要**滚回页顶**（§CV·八十 批 1 ③：错误摘要放在页顶）
   final ScrollController _scroll = ScrollController();
 
+  // ---------------------------------------------------------------- 提案 60（乙）
+  //
+  // 摘要卡上的「跳到明细 / 跳到往来方」需要能定位到**区块**。
+  // 只挂 4 个**静态** key（往来+日期同一行 ⇒ 合一个），不挂行级 key：
+  // 行可以增删，行级 key 是纪律 18 点名的高发区。见 `submit_error_summary.dart`。
+  final GlobalKey _headerKey = GlobalKey();
+  final GlobalKey _linesKey = GlobalKey();
+  final GlobalKey _paymentKey = GlobalKey();
+  final GlobalKey _remarkKey = GlobalKey();
+
   /// 库存快照：一次会话内缓存，**提交成功后失效**（§CV·八十一 批 2）
   late final StockSnapshotCache _stockSnapshot = StockSnapshotCache(
     widget.service.stockSnapshot,
@@ -1234,15 +1244,29 @@ class _SalePageState extends State<SalePage> {
                       // ① 草稿橙条（在最上面：进页第一眼就该看到「上次的东西还在」）
                       if (_restoreRaw != null) _draftBanner(theme),
                       // §CV·八十 批 1 ③：失败时把「哪几处要填」摆在页顶
-                      SubmitErrorSummary(messages: _submitErrorMessages()),
-                      _headerRow(theme),
+                      // 提案 60（乙）：每条能跳的给个按钮，点了滚到那个区块
+                      SubmitErrorSummary(
+                        items: _submitErrorItems(),
+                        onJump: _jumpTo,
+                      ),
+                      KeyedSubtree(key: _headerKey, child: _headerRow(theme)),
                       const Divider(height: 24),
-                      _linesSection(theme, stockSnapshot, unsyncedDelta),
+                      KeyedSubtree(
+                        key: _linesKey,
+                        child: _linesSection(
+                          theme,
+                          stockSnapshot,
+                          unsyncedDelta,
+                        ),
+                      ),
                       _totalBar(theme),
                       const Divider(height: 24),
-                      _paymentSection(theme),
+                      KeyedSubtree(
+                        key: _paymentKey,
+                        child: _paymentSection(theme),
+                      ),
                       const SizedBox(height: 16),
-                      _remarkField(),
+                      KeyedSubtree(key: _remarkKey, child: _remarkField()),
                       const SizedBox(height: 24),
                       _actions(theme),
                     ],
@@ -1262,19 +1286,74 @@ class _SalePageState extends State<SalePage> {
     _scroll.jumpTo(0);
   }
 
-  /// 把 typed invalid 摊成「人话」列表给页顶摘要（去重保序）
-  List<String> _submitErrorMessages() {
+  /// 摘要卡上的「跳到 XX」：把那个区块滚进视口（提案 60 · 乙）。
+  ///
+  /// `alignment: 0.12` 而不是 0 —— 贴顶会把区块上面的「客户/日期」那一行也切掉，
+  /// 用户看不出自己在哪；留一点上文更好认。
+  Future<void> _jumpTo(SubmitSection section) async {
+    final BuildContext? target = switch (section) {
+      SubmitSection.header => _headerKey.currentContext,
+      SubmitSection.lines => _linesKey.currentContext,
+      SubmitSection.payments => _paymentKey.currentContext,
+      SubmitSection.remark => _remarkKey.currentContext,
+    };
+    if (target == null) return;
+    await Scrollable.ensureVisible(
+      target,
+      alignment: 0.12,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
+  /// 把 typed invalid 摊成「人话 + 跳到哪块」（去重保序）。
+  ///
+  /// 去重按**文案**：同一句话挂在两个字段上时（core 偶尔会那么写）只留第一次，
+  /// 连带保留它的跳转目标 —— 后出现的那条丢掉，不会出现「同一句话两个按钮」。
+  List<SubmitErrorItem> _submitErrorItems() {
     final SaleDraftInvalid? invalid = _invalid;
-    if (invalid == null) return const <String>[];
-    final List<String> all = <String>[
-      ...invalid.fieldErrors.values,
+    if (invalid == null) return const <SubmitErrorItem>[];
+
+    // 字段 → （跳到哪块，按钮上叫什么）
+    (SubmitSection, String) targetOf(SaleField field) {
+      switch (field) {
+        case SaleField.party:
+          return (SubmitSection.header, '往来方');
+        case SaleField.date:
+          return (SubmitSection.header, '日期');
+        case SaleField.lines:
+          return (SubmitSection.lines, '明细');
+        case SaleField.payments:
+          return (SubmitSection.payments, '收款');
+        case SaleField.remark:
+          return (SubmitSection.remark, '备注');
+      }
+    }
+
+    final List<SubmitErrorItem> all = <SubmitErrorItem>[
+      for (final MapEntry<SaleField, String> e in invalid.fieldErrors.entries)
+        if (e.value.trim().isNotEmpty)
+          SubmitErrorItem(
+            e.value,
+            section: targetOf(e.key).$1,
+            sectionLabel: targetOf(e.key).$2,
+          ),
+      // 行级错误只能跳到「明细」—— 具体第几行在文案里（core 已经写了「第 N 行」）
       for (final Map<SaleLineField, String> line in invalid.lineErrors)
-        ...line.values,
+        for (final String message in line.values)
+          if (message.trim().isNotEmpty)
+            SubmitErrorItem(
+              message,
+              section: SubmitSection.lines,
+              sectionLabel: '明细',
+            ),
     ];
-    return <String>{
-      for (final String m in all)
-        if (m.trim().isNotEmpty) m,
-    }.toList();
+
+    final Set<String> seen = <String>{};
+    return <SubmitErrorItem>[
+      for (final SubmitErrorItem item in all)
+        if (seen.add(item.message)) item,
+    ];
   }
 
   /// 客户 + 日期

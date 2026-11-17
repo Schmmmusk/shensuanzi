@@ -87,6 +87,11 @@ class _ReturnPageState extends State<ReturnPage> {
 
   /// 保存失败要**滚回页顶**（§CV·八十 批 1 ③）
   final ScrollController _scroll = ScrollController();
+
+  // 提案 60（乙）：只挂**静态区块** key。退货页只有两块
+  // （`ReturnField` 就是 lines + refunds）—— 没有往来方 / 日期 / 备注可跳。
+  final GlobalKey _linesKey = GlobalKey();
+  final GlobalKey _refundKey = GlobalKey();
   bool _saving = false;
 
   late final DocType _returnType;
@@ -329,18 +334,60 @@ class _ReturnPageState extends State<ReturnPage> {
   }
 
   /// 把 typed invalid 摊成「人话」列表给页顶摘要（去重保序）
-  List<String> _submitErrorMessages() {
+  List<SubmitErrorItem> _submitErrorItems() {
     final ReturnDraftInvalid? invalid = _invalid;
-    if (invalid == null) return const <String>[];
-    final List<String> all = <String>[
-      ...invalid.fieldErrors.values,
+    if (invalid == null) return const <SubmitErrorItem>[];
+
+    (SubmitSection, String) targetOf(ReturnField field) {
+      switch (field) {
+        case ReturnField.lines:
+          return (SubmitSection.lines, '退货明细');
+        case ReturnField.refunds:
+          return (SubmitSection.payments, '退款');
+      }
+    }
+
+    final List<SubmitErrorItem> all = <SubmitErrorItem>[
+      for (final MapEntry<ReturnField, String> e in invalid.fieldErrors.entries)
+        if (e.value.trim().isNotEmpty)
+          SubmitErrorItem(
+            e.value,
+            section: targetOf(e.key).$1,
+            sectionLabel: targetOf(e.key).$2,
+          ),
       for (final Map<ReturnLineField, String> line in invalid.lineErrors)
-        ...line.values,
+        for (final String message in line.values)
+          if (message.trim().isNotEmpty)
+            SubmitErrorItem(
+              message,
+              section: SubmitSection.lines,
+              sectionLabel: '退货明细',
+            ),
     ];
-    return <String>{
-      for (final String m in all)
-        if (m.trim().isNotEmpty) m,
-    }.toList();
+
+    final Set<String> seen = <String>{};
+    return <SubmitErrorItem>[
+      for (final SubmitErrorItem item in all)
+        if (seen.add(item.message)) item,
+    ];
+  }
+
+  /// 摘要卡上的「跳到 XX」：把那个区块滚进视口（提案 60 · 乙）。
+  Future<void> _jumpTo(SubmitSection section) async {
+    final BuildContext? target = switch (section) {
+      SubmitSection.lines => _linesKey.currentContext,
+      SubmitSection.payments => _refundKey.currentContext,
+      // 退货页没有往来方 / 备注区（`ReturnField` 里也没有）；真传进来就不动
+      SubmitSection.header => null,
+      SubmitSection.remark => null,
+    };
+    if (target == null) return;
+    await Scrollable.ensureVisible(
+      target,
+      alignment: 0.12,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
   }
 
   // ---------------------------------------------------------- 摆放
@@ -367,10 +414,22 @@ class _ReturnPageState extends State<ReturnPage> {
               ),
               const SizedBox(height: 16),
               // §CV·八十 批 1 ③：由纯 Text 换成统一摘要（带条数）
-              SubmitErrorSummary(messages: _submitErrorMessages()),
-              for (final String pid in _productIds) _lineCard(theme, pid),
+              // 提案 60（乙）：可跳的区块只有两块（明细 / 退款）
+              SubmitErrorSummary(
+                items: _submitErrorItems(),
+                onJump: _jumpTo,
+              ),
+              KeyedSubtree(
+                key: _linesKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    for (final String pid in _productIds) _lineCard(theme, pid),
+                  ],
+                ),
+              ),
               const SizedBox(height: 16),
-              _refundSection(theme),
+              KeyedSubtree(key: _refundKey, child: _refundSection(theme)),
               const SizedBox(height: 16),
               _remarkField(),
               const SizedBox(height: 24),

@@ -321,6 +321,13 @@ class _DeliveryPageState extends State<DeliveryPage> {
   /// 保存失败要**滚回页顶**（§CV·八十 批 1 ③）
   final ScrollController _scroll = ScrollController();
 
+  // 提案 60（乙）：摘要卡上的「跳到…」只挂**静态区块** key。
+  // ⚠️ 送货单只有 3 块 —— **没有收款区**（`DeliveryField` 也没有 payments），
+  // 多挂一个没人用的 key 只会让下一个人以为这里收钱。
+  final GlobalKey _headerKey = GlobalKey();
+  final GlobalKey _linesKey = GlobalKey();
+  final GlobalKey _remarkKey = GlobalKey();
+
   bool _saving = false;
 
   /// 自动补全的候选池（进页取一次；见 `initState`）
@@ -935,16 +942,22 @@ class _DeliveryPageState extends State<DeliveryPage> {
                       // ① 草稿橙条（最上面）
                       if (_restoreRaw != null) _draftBanner(theme),
                       // §CV·八十 批 1 ③：失败时把「哪几处要填」摆在页顶
-                      SubmitErrorSummary(messages: _submitErrorMessages()),
-                      _headerRow(theme),
+                      SubmitErrorSummary(
+                        items: _submitErrorItems(),
+                        onJump: _jumpTo,
+                      ),
+                      KeyedSubtree(key: _headerKey, child: _headerRow(theme)),
                       const Divider(height: 24),
-                      _linesSection(theme),
+                      KeyedSubtree(
+                        key: _linesKey,
+                        child: _linesSection(theme),
+                      ),
                       _totalBar(theme),
                       const Divider(height: 24),
                       // ⚠️ 这里**没有** `_paymentSection` —— 送货单不收钱（§AP）
                       _noPaymentNote(theme),
                       const SizedBox(height: 16),
-                      _remarkField(),
+                      KeyedSubtree(key: _remarkKey, child: _remarkField()),
                       const SizedBox(height: 24),
                       _actions(theme),
                     ],
@@ -964,19 +977,66 @@ class _DeliveryPageState extends State<DeliveryPage> {
     _scroll.jumpTo(0);
   }
 
-  /// 把 typed invalid 摊成「人话」列表给页顶摘要（去重保序）
-  List<String> _submitErrorMessages() {
+  /// 摘要卡上的「跳到 XX」：把那个区块滚进视口（提案 60 · 乙）。
+  Future<void> _jumpTo(SubmitSection section) async {
+    final BuildContext? target = switch (section) {
+      SubmitSection.header => _headerKey.currentContext,
+      SubmitSection.lines => _linesKey.currentContext,
+      SubmitSection.remark => _remarkKey.currentContext,
+      // 送货单没有收款区（`DeliveryField` 里也没有）；真传进来就当没这回事
+      SubmitSection.payments => null,
+    };
+    if (target == null) return;
+    await Scrollable.ensureVisible(
+      target,
+      alignment: 0.12,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
+  /// 把 typed invalid 摊成「人话 + 跳到哪块」（去重保序，按文案去重）
+  List<SubmitErrorItem> _submitErrorItems() {
     final DeliveryDraftInvalid? invalid = _invalid;
-    if (invalid == null) return const <String>[];
-    final List<String> all = <String>[
-      ...invalid.fieldErrors.values,
+    if (invalid == null) return const <SubmitErrorItem>[];
+
+    (SubmitSection, String) targetOf(DeliveryField field) {
+      switch (field) {
+        case DeliveryField.party:
+          return (SubmitSection.header, '往来方');
+        case DeliveryField.date:
+          return (SubmitSection.header, '日期');
+        case DeliveryField.lines:
+          return (SubmitSection.lines, '明细');
+        case DeliveryField.remark:
+          return (SubmitSection.remark, '备注');
+      }
+    }
+
+    final List<SubmitErrorItem> all = <SubmitErrorItem>[
+      for (final MapEntry<DeliveryField, String> e
+          in invalid.fieldErrors.entries)
+        if (e.value.trim().isNotEmpty)
+          SubmitErrorItem(
+            e.value,
+            section: targetOf(e.key).$1,
+            sectionLabel: targetOf(e.key).$2,
+          ),
       for (final Map<DeliveryLineField, String> line in invalid.lineErrors)
-        ...line.values,
+        for (final String message in line.values)
+          if (message.trim().isNotEmpty)
+            SubmitErrorItem(
+              message,
+              section: SubmitSection.lines,
+              sectionLabel: '明细',
+            ),
     ];
-    return <String>{
-      for (final String m in all)
-        if (m.trim().isNotEmpty) m,
-    }.toList();
+
+    final Set<String> seen = <String>{};
+    return <SubmitErrorItem>[
+      for (final SubmitErrorItem item in all)
+        if (seen.add(item.message)) item,
+    ];
   }
 
   /// 客户 + 日期

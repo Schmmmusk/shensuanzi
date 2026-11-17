@@ -290,6 +290,13 @@ class _PurchasePageState extends State<PurchasePage> {
   /// 保存失败要**滚回页顶**（§CV·八十 批 1 ③）
   final ScrollController _scroll = ScrollController();
 
+  // 提案 60（乙）：摘要卡上的「跳到…」只挂 4 个**静态区块** key（见
+  // `submit_error_summary.dart` 的说明；行级 key 是纪律 18 的高发区，不挂）。
+  final GlobalKey _headerKey = GlobalKey();
+  final GlobalKey _linesKey = GlobalKey();
+  final GlobalKey _paymentKey = GlobalKey();
+  final GlobalKey _remarkKey = GlobalKey();
+
   bool _saving = false;
 
   // ---- 草稿（①）----
@@ -1018,15 +1025,24 @@ class _PurchasePageState extends State<PurchasePage> {
                       // ① 草稿橙条（最上面：进页第一眼看到「上次的东西还在」）
                       if (_restoreRaw != null) _draftBanner(theme),
                       // §CV·八十 批 1 ③：失败时把「哪几处要填」摆在页顶
-                      SubmitErrorSummary(messages: _submitErrorMessages()),
-                      _headerRow(theme),
+                      SubmitErrorSummary(
+                        items: _submitErrorItems(),
+                        onJump: _jumpTo,
+                      ),
+                      KeyedSubtree(key: _headerKey, child: _headerRow(theme)),
                       const Divider(height: 24),
-                      _linesSection(theme),
+                      KeyedSubtree(
+                        key: _linesKey,
+                        child: _linesSection(theme),
+                      ),
                       _totalBar(theme),
                       const Divider(height: 24),
-                      _paymentSection(theme),
+                      KeyedSubtree(
+                        key: _paymentKey,
+                        child: _paymentSection(theme),
+                      ),
                       const SizedBox(height: 16),
-                      _remarkField(),
+                      KeyedSubtree(key: _remarkKey, child: _remarkField()),
                       const SizedBox(height: 24),
                       _actions(theme),
                     ],
@@ -1047,19 +1063,68 @@ class _PurchasePageState extends State<PurchasePage> {
     _scroll.jumpTo(0);
   }
 
-  /// 把 typed invalid 摊成「人话」列表给页顶摘要（去重保序）
-  List<String> _submitErrorMessages() {
+  /// 摘要卡上的「跳到 XX」：把那个区块滚进视口（提案 60 · 乙）。
+  Future<void> _jumpTo(SubmitSection section) async {
+    final BuildContext? target = switch (section) {
+      SubmitSection.header => _headerKey.currentContext,
+      SubmitSection.lines => _linesKey.currentContext,
+      SubmitSection.payments => _paymentKey.currentContext,
+      SubmitSection.remark => _remarkKey.currentContext,
+    };
+    if (target == null) return;
+    await Scrollable.ensureVisible(
+      target,
+      alignment: 0.12,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
+  /// 把 typed invalid 摊成「人话 + 跳到哪块」（去重保序，按文案去重）
+  List<SubmitErrorItem> _submitErrorItems() {
     final PurchaseDraftInvalid? invalid = _invalid;
-    if (invalid == null) return const <String>[];
-    final List<String> all = <String>[
-      ...invalid.fieldErrors.values,
+    if (invalid == null) return const <SubmitErrorItem>[];
+
+    // 采购页叫「供应商」「付款」，不叫「往来方」「收款」
+    (SubmitSection, String) targetOf(PurchaseField field) {
+      switch (field) {
+        case PurchaseField.party:
+          return (SubmitSection.header, '供应商');
+        case PurchaseField.date:
+          return (SubmitSection.header, '日期');
+        case PurchaseField.lines:
+          return (SubmitSection.lines, '明细');
+        case PurchaseField.payments:
+          return (SubmitSection.payments, '付款');
+        case PurchaseField.remark:
+          return (SubmitSection.remark, '备注');
+      }
+    }
+
+    final List<SubmitErrorItem> all = <SubmitErrorItem>[
+      for (final MapEntry<PurchaseField, String> e
+          in invalid.fieldErrors.entries)
+        if (e.value.trim().isNotEmpty)
+          SubmitErrorItem(
+            e.value,
+            section: targetOf(e.key).$1,
+            sectionLabel: targetOf(e.key).$2,
+          ),
       for (final Map<PurchaseLineField, String> line in invalid.lineErrors)
-        ...line.values,
+        for (final String message in line.values)
+          if (message.trim().isNotEmpty)
+            SubmitErrorItem(
+              message,
+              section: SubmitSection.lines,
+              sectionLabel: '明细',
+            ),
     ];
-    return <String>{
-      for (final String m in all)
-        if (m.trim().isNotEmpty) m,
-    }.toList();
+
+    final Set<String> seen = <String>{};
+    return <SubmitErrorItem>[
+      for (final SubmitErrorItem item in all)
+        if (seen.add(item.message)) item,
+    ];
   }
 
   Widget _headerRow(ThemeData theme) => Row(

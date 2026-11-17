@@ -353,6 +353,51 @@ void main() {
     expect(find.textContaining('请选一个商品'), findsWidgets);
   });
 
+  // 提案 60（乙，2026-11-17）：摘要卡从「只读的一句话」升级成**可点**的 ——
+  // 点「跳到明细」要真的把明细区滚进视口。
+  //
+  // 改坏点（反向灵敏度）：① 去掉 `onJump: _jumpTo` ⇒ 按钮根本不出现；
+  // ② `_jumpTo` 里对 lines 返回 null / 把 `_linesKey` 从布局上摘掉 ⇒ 滚不动、offset 仍为 0。
+  testWidgets('摘要卡「跳到明细」⇒ 页面真的滚下去（提案 60）', (
+    WidgetTester tester,
+  ) async {
+    // 视口压矮：内容必须溢出，否则「滚过去」和「本来就在眼前」分不出来
+    tester.view.physicalSize = const Size(800, 400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    await tapBottomButton(tester, '保存 (Ctrl+S)');
+
+    final Finder chip = find.byKey(const Key('submit-error-jump-lines'));
+    expect(
+      chip,
+      findsOneWidget,
+      reason: '明细那处错了就该给一个「跳到明细」的按钮',
+    );
+    expect(find.textContaining('跳到明细'), findsOneWidget);
+
+    final ScrollableState scroller = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(SingleChildScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(scroller.position.pixels, 0, reason: '失败时先滚回页顶（既有行为不变）');
+
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+
+    expect(
+      scroller.position.pixels,
+      greaterThan(0),
+      reason: '点了按钮页面却没动 —— 等于又回到「知道哪里错、还是要自己找」',
+    );
+  });
+
   testWidgets('散客全款 → 保存成功，库存 -10，SnackBar 已结清', (WidgetTester tester) async {
     stockUp();
     await tester.pumpWidget(page());
