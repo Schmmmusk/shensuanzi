@@ -9,6 +9,7 @@
 //   · 接回：新库能开且数据在、旧库改名留存**且仍可读**、`-wal`/`-shm` 一起走
 //   · 安全：候选坏了 ⇒ 一个字节都不动
 //   · 文案：不出现「损坏 / 数据库」这类吓人的词（用户补充建议）
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -396,5 +397,48 @@ void main() {
         reason: '留档的文件必须还能打开、数据还在',
       );
     });
+  });
+
+  // ------------------------------------------------------------ 2026-11-17（真机 P0）
+  //
+  // 现场：搬走假账后启动 → 数据恢复页 → 点「找回数据」→ **整个界面卡死**，只能强杀，
+  // 日志一行都没有。根因：接回在 UI isolate 上**同步**拷整个库 + `quick_check`。
+  // 这条钉「复制期间主 isolate 还能跑别的任务」—— 同步实现会让 ticks 恒为 0。
+  test('接回不在 UI 线程上跑（复制期间主 isolate 仍能执行任务）', () async {
+    // 候选撑到 ~30 MB：太小的话复制 + 体检短于一个 event-loop 滴答，
+    // 同步实现也「看起来没问题」，这条用例就废了。
+    final String candidate = p.join(
+      backupDir.path,
+      'shensuanzi-20261117-090000.db',
+    );
+    makeDb(candidate, docs: 3);
+    final Db pad = Db.open(candidate);
+    pad.raw.execute('CREATE TABLE pad(x BLOB)');
+    for (int i = 0; i < 30; i++) {
+      pad.raw.execute('INSERT INTO pad VALUES (randomblob(1000000))');
+    }
+    pad.close();
+    expect(File(candidate).lengthSync(), greaterThan(20 * 1024 * 1024));
+
+    makeDb(databasePath, docs: 1); // 现库（接回时会被改名留存）
+
+    int ticks = 0;
+    final Timer timer = Timer.periodic(
+      const Duration(milliseconds: 5),
+      (Timer _) => ticks++,
+    );
+    final RecoveryRestoreResult result = await restoreFromCandidate(
+      candidatePath: candidate,
+      databasePath: databasePath,
+      currentSchemaVersion: Schema.version,
+    );
+    timer.cancel();
+
+    expect(result.ok, isTrue, reason: result.message ?? '接回失败');
+    expect(
+      ticks,
+      greaterThan(0),
+      reason: '同步实现跑在 UI isolate 上 ⇒ 复制期间一个滴答都跑不了（真机 = 整窗卡死）',
+    );
   });
 }

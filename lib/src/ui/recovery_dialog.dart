@@ -152,10 +152,22 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
       _restoring = true;
       _error = null;
     });
+    // 2026-11-17 真机：接回把 500 MB 的库同步拷在 UI 线程上跑 ⇒ 整个界面卡死、
+    // 日志一行都没有（写日志也被同一线程堵住）。现在真正的活在 `recovery.dart`
+    // 的工作 isolate 里做；这里只负责「开始 / 结果」两行日志，让下一次有现场。
+    widget.log?.write(
+      '开始接回：${candidate.fileName}'
+      '（${(candidate.bytes / 1048576).toStringAsFixed(1)} MB）',
+    );
     final RecoveryRestoreResult result = await restoreFromCandidate(
       candidatePath: candidate.path,
       databasePath: widget.databasePath,
       currentSchemaVersion: widget.currentSchemaVersion,
+    );
+    widget.log?.write(
+      result.ok
+          ? '接回成功：${result.candidatePath}'
+          : '接回失败：${result.message}',
     );
     if (!mounted) return;
     if (result.ok) {

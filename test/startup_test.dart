@@ -376,8 +376,13 @@ void main() {
     // ⚠️ 不能用 pumpAndSettle：体检期间有一个**无限转圈**的进度指示，
     // 它会一直有待处理的帧 ⇒ pumpAndSettle 会一直等到超时。
     await tester.pump(); // 弹出对话框
-    for (int i = 0; i < 40; i++) {
-      await tester.pump(const Duration(milliseconds: 50));
+    // ⚠️ 2026-11-17：体检现在跑在**工作 isolate** 里（真机「点找回数据卡死」那次修的就是它）
+    // ⇒ 假时钟的 `pump(50ms)` 推不动它，必须用 `runAsync` 让**真实时间**流逝。
+    for (int i = 0; i < 80; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 25)),
+      );
+      await tester.pump();
       if (find.text('用这一份').evaluate().isNotEmpty) break;
     }
 
@@ -399,7 +404,18 @@ void main() {
     expect(find.textContaining('改名保存'), findsWidgets);
 
     await tester.tap(find.byKey(const Key('recovery-confirm-restore')));
-    await tester.pumpAndSettle();
+    // 同理：接回（体检 + 复制 + 校验）也在工作 isolate 里跑 —— `pumpAndSettle` 等不到。
+    for (int i = 0; i < 160; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 25)),
+      );
+      await tester.pump();
+      if (find.byType(AppShell).evaluate().isNotEmpty) break;
+    }
+
+    // 接回成功后 app 会「重试」开库，并排一次自动备份（`Timer(Duration.zero)`）——
+    // 让它们跑掉，否则收尾时会报「A Timer is still pending」。
+    await tester.pump(const Duration(milliseconds: 10));
 
     // 接回成功后自动走「重试」⇒ 这次能开，进主界面
     expect(find.byType(AppShell), findsOneWidget);
@@ -413,6 +429,13 @@ void main() {
       isNotEmpty,
       reason: '用户补充建议：必须告诉他「原来的文件我们帮你留着了」',
     );
+
+    // 收尾：进主界面后 app 会跑一次自动备份（真实 isolate + 300 ms 提示定时器）——
+    // 给它真实时间跑完，再 pump 掉定时器，否则测试结束时报「A Timer is still pending」。
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
+    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('场景 5d：库打不开时有「从坏文件里找回」入口（P1 抢救）', (WidgetTester tester) async {

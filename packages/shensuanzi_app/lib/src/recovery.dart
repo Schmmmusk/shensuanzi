@@ -25,6 +25,7 @@
 //    新版本备份（比如用户装回旧版软件）打不开，所以体检就标红，不让选。
 
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:shensuanzi_app/src/backup.dart';
@@ -114,7 +115,9 @@ Stream<RecoveryCandidate> scanRecoveryCandidates({
     dataDirectory: dataDirectory,
     backupDirectory: backupDirectory,
   )) {
-    yield _inspect(ref, currentSchemaVersion);
+    // ⚠️ 体检要给整个库跑 `quick_check`（500 MB ≈ 1 s）—— **必须**在工作 isolate 里做。
+    // 2026-11-17 真机：恢复页一进来就冻，正是因为这儿在 UI isolate 上同步跑。
+    yield await Isolate.run(() => _inspect(ref, currentSchemaVersion));
   }
 }
 
@@ -496,11 +499,45 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
   required int currentSchemaVersion,
   DateTime Function()? now,
 }) async {
-  final File candidate = File(candidatePath);
-  if (!candidate.existsSync()) {
+  if (!File(candidatePath).existsSync()) {
     return const RecoveryRestoreResult.failure('这份备份已经不在了，请重新体检');
   }
 
+  // 时间戳在**这边**算：闭包进不了 isolate。
+  final String stamp = brokenStamp((now ?? DateTime.now)());
+
+  // ⚠️ **真正的活全在工作 isolate 里同步跑**（体检 + 改名 + 复制 500 MB + 校验）。
+  // 2026-11-17 真机（P0）：这段原本在 UI isolate 上，用户点「找回数据」后
+  // **整个界面卡死、只能强杀**，日志里一行都没有（写日志也被同一个线程堵住了）。
+  final ({String? candidatePath, String? archivedPath, String? problem})
+  outcome = await Isolate.run(
+    () => _restoreSync(
+      candidatePath: candidatePath,
+      databasePath: databasePath,
+      currentSchemaVersion: currentSchemaVersion,
+      stamp: stamp,
+    ),
+  );
+  if (outcome.problem != null) {
+    return RecoveryRestoreResult.failure(outcome.problem);
+  }
+  return RecoveryRestoreResult.ok(
+    candidatePath: outcome.candidatePath,
+    archivedPath: outcome.archivedPath,
+  );
+}
+
+/// [restoreFromCandidate] 的**同步实体**（只在工作 isolate 里跑）。
+///
+/// 为什么单独一个函数：`Isolate.run` 的闭包只能捕获**可发送**的值 ——
+/// `File` / `Database` / `now` 闭包都不行。所以这里只收字符串与整数，
+/// 返回一个具名记录（三个 `String?`，同样可发送）。
+({String? candidatePath, String? archivedPath, String? problem}) _restoreSync({
+  required String candidatePath,
+  required String databasePath,
+  required int currentSchemaVersion,
+  required String stamp,
+}) {
   // ① 再体检一次（候选自己也得是好的 —— 拿坏的盖掉能用的，是最坏的结果）
   final _CandidateRef ref = _CandidateRef(
     path: candidatePath,
@@ -510,11 +547,10 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
   );
   final RecoveryCandidate check = _inspect(ref, currentSchemaVersion);
   if (!check.usable) {
-    return RecoveryRestoreResult.failure('这份备份现在不能用了：${check.note ?? '体检没通过'}');
+    return (candidatePath: null, archivedPath: null, problem: '这份备份现在不能用了：${check.note ?? '体检没通过'}');
   }
 
-  final String archived =
-      '$databasePath.broken-${brokenStamp((now ?? DateTime.now)())}';
+  final String archived = '$databasePath.broken-$stamp';
 
   // ② 现库改名留存。**`-wal` / `-shm` 必须一起挪** —— 库是 WAL 模式，
   //    只挪 `.db` 的话，新库一打开就会被旧库的 WAL 覆盖（比不恢复更糟）。
@@ -530,11 +566,9 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
       } on FileSystemException catch (error) {
         // 改不动（被占用 / 权限）⇒ 立刻退回，别继续往下走
         _rollbackArchive(databasePath, archived, moved);
-        return RecoveryRestoreResult.failure(
-          '原来的数据文件正被别的程序占用，改不了名'
+        return (candidatePath: null, archivedPath: null, problem: '原来的数据文件正被别的程序占用，改不了名'
           '（${error.osError?.message ?? '请关掉占用它的程序'}）。'
-          '数据没有动过。',
-        );
+          '数据没有动过。');
       }
     }
   }
@@ -544,14 +578,12 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
   try {
     final File stagingFile = File(staging);
     if (stagingFile.existsSync()) stagingFile.deleteSync();
-    candidate.copySync(staging);
+    File(candidatePath).copySync(staging);
     stagingFile.renameSync(databasePath);
   } on FileSystemException catch (error) {
     _deleteQuietly(staging);
     _rollbackArchive(databasePath, archived, moved);
-    return RecoveryRestoreResult.failure(
-      '复制备份时出错（${error.osError?.message ?? error.message}）。数据没有动过。',
-    );
+    return (candidatePath: null, archivedPath: null, problem: '复制备份时出错（${error.osError?.message ?? error.message}）。数据没有动过。');
   }
 
   // ④ 校验新库
@@ -559,12 +591,13 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
   if (problem != null) {
     _deleteQuietly(databasePath);
     _rollbackArchive(databasePath, archived, moved);
-    return RecoveryRestoreResult.failure('接回来之后检查不通过：$problem。数据没有动过。');
+    return (candidatePath: null, archivedPath: null, problem: '接回来之后检查不通过：$problem。数据没有动过。');
   }
 
-  return RecoveryRestoreResult.ok(
+  return (
     candidatePath: candidatePath,
     archivedPath: hadDatabase ? archived : null,
+    problem: null,
   );
 }
 

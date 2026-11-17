@@ -21242,3 +21242,63 @@ application-local installation location.」** —— 随包那份运行库不随
 | app `dart test` | **527 / 527** |
 | root `flutter test` | **595**（1 条按平台跳过；+4 = P0 两条 + IME 两条） |
 | 反向灵敏度 | P0 退回「sink 非空」⇒ 红；组合期闸加回 ⇒ 红。均已回滚 |
+
+### 一百零二、2026-11-17 **N-l 确证闭环 + 恢复页「找回数据」卡死（P0，同一类病）**
+
+#### ① N-l 闭环（用户实测进程模块）
+
+用户跑了 `(Get-Process shensuanzi).Modules`，三个模块的 `FileName` 都在
+**安装目录**：
+
+| 模块 | 实际加载路径 |
+|---|---|
+| `MSVCP140.dll` | `C://Program Files\神算子-v0.7.9\MSVCP140.dll` |
+| `VCRUNTIME140_1.dll` | `C://Program Files\神算子-v0.7.9\VCRUNTIME140_1.dll` |
+| `VCRUNTIME140.dll` | `C://Program Files\神算子-v0.7.9\VCRUNTIME140.dll` |
+
+⇒ **app-local 真的生效**（不是碰巧用了 `System32` 那份）。N-l 至此**彻底闭环**：
+打包自动带 → 真机启动 → 模块确实从包里加载。
+
+#### ② 恢复页「找回数据」→ 整个界面卡死（P0）
+
+| 项 | 内容 |
+|---|---|
+| 现场 | 搬走假账后启动 → 数据恢复页 → 点「找回数据」→ **界面完全无响应，只能强杀**；日志里**没有任何实质内容** |
+| 根因 | `restoreFromCandidate` **声明成 `async`，但体内全是同步阻塞 IO**：`_inspect`（对整个库跑 `quick_check`）、`copySync`（把候选整个复制过去，500 MB）、`_verifyRestored`（再跑一次 `quick_check`）。`async` 没有 `await` 真正让出 ⇒ 整段跑在 **UI isolate** 上，窗口直接冻住。日志没内容也是同一个原因：写日志的调用被同一个线程堵在后面 |
+| 为什么测试没抓到 | ① 覆盖这条路的测试（`recovery_test` / `startup_test` 场景 5c）用的是**几 KB～几 MB 的库**，复制+体检在毫秒级完成，冻不住；② 它「看起来」是异步（`Future`），静态检查也不会报 |
+| 同一类病 | `#43`（导出）/ 5a（自动备份）/ 提案 63（归档）都是「同步 IO 写在 UI 路径上」——这是**第四次**，所以这次连扫描一起治 |
+
+修法：
+
+1. **接回全程搬进工作 isolate**：`restoreFromCandidate` 只保留「文件还在吗 + 算时间戳」，
+   真正的活交给新的同步实体 `_restoreSync(...)`，用 `Isolate.run` 跑；返回
+   **只含三个 `String?` 的具名记录**（`File` / `Database` / `now` 闭包都进不去）。
+2. **扫描的体检也搬进 isolate**：`scanRecoveryCandidates` 每体检一个候选就
+   `await Isolate.run(...)` —— 否则 500 MB 的候选一被发现，界面先冻 1 秒。
+3. **补两行日志**（恢复对话框）：`开始接回：<文件名>（<大小> MB）` / `接回成功|失败：…`
+   —— 上次「日志无实质内容」正是因为它跑在堵死的线程上。
+
+测试（app 包 +1，共 15 条）：把候选**撑到 ~30 MB**（`randomblob` 30 × 1 MB），
+用 `Timer.periodic(5ms)` 数滴答，断言接回期间 **ticks > 0**。
+**反向灵敏度**：把 `Isolate.run` 换回直接调用 ⇒ ticks = 0 ⇒ 红。已回滚。
+
+⚠️ **测试时序也要跟着改**（与提案 63 那次同一个教训）：`testWidgets` 是假时钟，
+等不到真实 isolate。`startup_test` 场景 5c 的两处等待从 `pump(50ms)` / `pumpAndSettle()`
+改成「**真实等待 + pump**」的轮询，并在结尾给自动备份 500 ms 真实时间 + 一次
+`pump(1s)` 把它的提示定时器跑掉（否则报「A Timer is still pending」）。
+**断言一个字没动** —— 改的只是「怎么等」。
+
+#### ③ 门禁（本机亲跑）
+
+| 门禁 | 结果 |
+|---|---|
+| `flutter analyze` | **0 issues** |
+| app `dart test` | **528 / 528**（+1） |
+| root `flutter test` | **595**（1 条按平台跳过；与上轮同数 —— 场景 5c 的断言没改，只改了「怎么等」） |
+
+#### ④ 待办（下一件，用户已授权「可以直接开始」）
+
+首帧/启动调查：`T2_db_open = 9822 ms`（498 MB 冷库）是主体。下一步先要数据：
+用 `--dart-define=SSZ_STARTUP_TRACE=true` 构建一次，在**同一个库**上取冷启/热启两份
+`startup-trace.jsonl`；同时看 `shensuanzi.db-wal` 有多大（WAL 回放是开库慢的常见原因）。
+拿到再决定要不要动 `Db.open`（**不动没测量过的地方**）。
