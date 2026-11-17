@@ -84,6 +84,7 @@ void main() {
     required bool isFirstTime,
     Map<String, int>? book,
     required void Function() onDone,
+    DocumentSink? documentSink,
   }) => MaterialApp(
     home: Scaffold(
       body: OpeningStockPage(
@@ -92,6 +93,7 @@ void main() {
         masterDataSink: ServiceMasterSink(products),
         isFirstTime: isFirstTime,
         bookQuantities: book ?? const <String, int>{},
+        documentSink: documentSink,
         onDone: onDone,
       ),
     ),
@@ -226,4 +228,118 @@ void main() {
     expect(find.text('可乐'), findsOneWidget);
     expect(find.text('薯片'), findsOneWidget);
   });
+
+  // ------------------------------------------------------------ 真实用户 P0（2026-11-17）
+  //
+  // 现场日志：`Bad state: 这个出口没有装配盘点服务（ServiceSink.stocktakes）`
+  // ← `opening_stock_page.dart:240`。桌面壳把**没装盘点服务**的 `ServiceSink`
+  // 传进了期初页，老写法只看「sink 非空」就走它 ⇒ 抛异常 ⇒ **数量一条没落库**，
+  // 用户再点一次还是 0（「重新清点后库存仍为 0」）。
+  group('提交出口：按能力分支（P0 回归）', () {
+    testWidgets('出口装不了盘点 ⇒ 退回直连服务，数量真的进库存', (WidgetTester tester) async {
+      final ServiceSink sink = ServiceSink(
+        sales: SaleService(engine: RuleEngine(db), queries: queries),
+        purchases: PurchaseService(engine: RuleEngine(db), queries: queries),
+        deliveries: DeliveryService(engine: RuleEngine(db), queries: queries),
+        // ⚠️ 故意不传 stocktakes —— 桌面壳（`app.dart`）就是这么装配的
+      );
+      expect(
+        sink.canSubmitStocktake,
+        isFalse,
+        reason: '没装 StocktakeService 就不该声称能提交盘点单',
+      );
+
+      bool done = false;
+      await tester.pumpWidget(
+        page(
+          isFirstTime: true,
+          documentSink: sink,
+          onDone: () => done = true,
+        ),
+      );
+      await fillRow(tester, row: 0, productName: '可乐', qty: '7');
+      await tester.tap(find.byKey(const Key('opening-save')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('opening-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: '真机那条 `Bad state` 不许再出现（它会变成「未捕获异常」）',
+      );
+      expect(done, isTrue, reason: '成功就该回宿主刷数字');
+      expect(
+        queries.stockByProduct()[p1],
+        7,
+        reason: 'P0 的本质 —— 填的数量必须落在库存上，否则用户看到的是 0',
+      );
+    });
+
+    testWidgets('出口直落（isQueued=false、error=null）算成功，不许报「没能记上」', (
+      WidgetTester tester,
+    ) async {
+      final _ScriptedSink sink = _ScriptedSink(
+        const DocumentSubmitResult(
+          finalDocNo: 'ST-1',
+          isQueued: false,
+          totalCents: 0,
+        ),
+      );
+
+      bool done = false;
+      await tester.pumpWidget(
+        page(
+          isFirstTime: true,
+          documentSink: sink,
+          onDone: () => done = true,
+        ),
+      );
+      await fillRow(tester, row: 0, productName: '可乐', qty: '3');
+      await tester.tap(find.byKey(const Key('opening-save')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('opening-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(sink.calls, 1, reason: '能装的出口就该走它（手机队列是这条路）');
+      expect(
+        done,
+        isTrue,
+        reason: '老写法把 isQueued==false 当失败 ⇒ 明明记上了却说没记上，用户会再录一遍',
+      );
+      expect(find.text('已记入库存：1 件商品'), findsOneWidget);
+    });
+  });
+}
+
+/// 只实现盘点提交的**假出口**（其余方法在本文件不会被调用）。
+class _ScriptedSink implements DocumentSink {
+  _ScriptedSink(this.result);
+
+  final DocumentSubmitResult result;
+  int calls = 0;
+
+  @override
+  bool get canCreateProducts => true;
+
+  @override
+  bool get canSubmitStocktake => true;
+
+  @override
+  DocumentSubmitResult submitSale(SaleDraft draft, {int? now}) =>
+      throw UnimplementedError();
+
+  @override
+  DocumentSubmitResult submitPurchase(PurchaseDraft draft, {int? now}) =>
+      throw UnimplementedError();
+
+  @override
+  DocumentSubmitResult submitDelivery(DeliveryDraft draft, {int? now}) =>
+      throw UnimplementedError();
+
+  @override
+  DocumentSubmitResult submitStocktake(StocktakeDraft draft, {int? now}) {
+    calls++;
+    return result;
+  }
 }

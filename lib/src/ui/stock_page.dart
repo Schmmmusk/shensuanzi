@@ -642,8 +642,13 @@ class _StockPageState extends State<StockPage> {
     // - 手机壳：清点单走单据队列，**必须有 `documentSink`**（否则只写镜像、到不了电脑）；
     // - 桌面：走 `StocktakeService` 直接落库，本来不需要 sink ⇒ 看 `canWrite`。
     // 从前只判手机壳，桌面在只读态下会漏掉这条写入口。
+    // ⚠️ 手机壳要的是「这个出口**能提交盘点单**」，不是「sink 非空」：
+    // 宿主出口（`ServiceSink`）可能没装 `StocktakeService`，见
+    // `DocumentSink.canSubmitStocktake`（2026-11-17 真实用户 P0）。
     final bool canStocktake =
-        widget.canWrite && (!widget.mobileShell || widget.documentSink != null);
+        widget.canWrite &&
+        (!widget.mobileShell ||
+            (widget.documentSink?.canSubmitStocktake ?? false));
 
     // §AD 遗漏 2：期初录入入口（就地打开，完成后 setState 刷新数字）
     if (_showOpening) {

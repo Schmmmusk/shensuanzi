@@ -127,8 +127,9 @@ String productCandidateSubtitle(Product product, {required bool forPurchase}) {
 ///
 /// 1. **不查库**：`products` 由页面在打开时取一次传进来（`list(active: null)` 之外
 ///    的筛选都在内存里做）。每次按键查一次库就是商品页那个 2.7 秒的老路。
-/// 2. **中文输入法组合期不更新候选**：拼音还没上屏时重建候选会打断 IME
-///    （`value.composing.isValid` 时直接返回空）。
+/// 2. ~~中文输入法组合期不更新候选~~ ⇒ **2026-11-17 撤回**：那条是给「按键查库」
+///    的写法防 IME 崩溃，本组件是内存匹配；实测 Windows 输入法会把整段输入长期
+///    标成「组合中」，保留它会让**首次输入永远不弹候选**（见 `optionsBuilder` 注释）。
 /// 3. **回车两种语义**：浮层开着 ⇒ `RawAutocomplete` 自己吃掉回车去选中；
 ///    浮层关着 ⇒ 走 `onSubmitted`（跳下一格，保留原来的录入节奏）。
 class ProductNameAutocomplete extends StatefulWidget {
@@ -211,8 +212,15 @@ class _ProductNameAutocompleteState extends State<ProductNameAutocomplete> {
       focusNode: widget.focusNode,
       displayStringForOption: (Product product) => product.name,
       optionsBuilder: (TextEditingValue value) {
-        // 组合期（拼音未上屏）不更新候选 —— 见类注释第 2 条
-        if (value.composing.isValid) return const <Product>[];
+        // 2026-11-17（真实用户）：原来这里 `if (value.composing.isValid) return [];`
+        // 依据是 2026-10-25 那条裁定「拼音未上屏时触发**全表搜索**会把输入法搞崩」——
+        // 但那条说的是**每次按键查库**，而本组件是「进页取一次、内存里筛」
+        // （类注释第 1 条），根本不查库。
+        //
+        // 代价在真机上暴露了：Windows 输入法会把整段输入长期标成「组合中」，
+        // 于是**第一次输入商品名永远不弹候选**，只有删掉一个字符（产生一次
+        // 非组合编辑）才恢复。⇒ 组合期照常算；拼音对不上中文名时结果本来就是空，
+        // 不会「糊一屏」。
         return rankProductMatches(value.text, widget.products);
       },
       onSelected: (Product product) {

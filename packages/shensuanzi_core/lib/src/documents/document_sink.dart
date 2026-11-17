@@ -150,6 +150,18 @@ abstract class DocumentSink {
   /// 「填了名字却存不进去」的假承诺（纪律 17：描述不存在的功能 = 撒谎）。
   bool get canCreateProducts => false;
 
+  /// 这个出口**能不能**提交盘点单（期初录入 / 重新清点）。
+  ///
+  /// | 出口 | 值 | 为什么 |
+  /// |---|---|---|
+  /// | 客户端 `QueueSink` | `true`（默认） | 清点单入队，差额由主机算（§CV·七十八） |
+  /// | 主机 [ServiceSink] | **看有没有装 `StocktakeService`** | 桌面期初页本来**直连** `StocktakeService.create`，宿主可以不装 |
+  ///
+  /// ⚠️ 调用方必须按它分支，**不许**用「sink 非空」代替 —— 2026-11-17 真实用户 P0：
+  /// 桌面壳把没装盘点服务的 `ServiceSink` 传进了期初页，页面见 sink 非空就走了它，
+  /// `submitStocktake` 抛 `Bad state`，「重新清点」填的数量**一条都没落库**。
+  bool get canSubmitStocktake => true;
+
   DocumentSubmitResult submitSale(SaleDraft draft, {int? now});
 
   DocumentSubmitResult submitPurchase(PurchaseDraft draft, {int? now});
@@ -191,6 +203,11 @@ class ServiceSink implements DocumentSink {
   /// 主机出口能在同一事务里建商品（见 [DocumentSink.canCreateProducts]）。
   @override
   bool get canCreateProducts => true;
+
+  /// 装了 `StocktakeService` 才说自己能提交盘点单 —— 见
+  /// [DocumentSink.canSubmitStocktake]（桌面壳默认**不装**：期初页直连服务）。
+  @override
+  bool get canSubmitStocktake => _stocktakes != null;
 
   @override
   DocumentSubmitResult submitSale(SaleDraft draft, {int? now}) {
@@ -327,6 +344,11 @@ class QueueSink implements DocumentSink {
   /// 放开了只会让用户在手机上填了名字、推给主机后被拒，白填一遍。
   @override
   bool get canCreateProducts => false;
+
+  /// 客户端**能**提交盘点单：把「实际数量」打进一条 stocktake 入队，
+  /// 差额由主机算（§CV·七十八）—— 本类零规则，正是队列该干的事。
+  @override
+  bool get canSubmitStocktake => true;
 
   final SyncQueueDao _queue;
 

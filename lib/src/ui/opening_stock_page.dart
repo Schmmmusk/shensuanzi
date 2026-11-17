@@ -234,25 +234,50 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
     });
 
     final StocktakeDraft draft = _draft();
-    // 手机：走队列出口（差额由主机算）—— 桌面 / 未装配：原路径零变化
-    if (widget.documentSink != null) {
-      final DocumentSubmitResult submitted = widget.documentSink!
-          .submitStocktake(draft);
-      if (!mounted) return;
-      if (!submitted.isQueued) {
-        final Object? error = submitted.error;
+    // 手机：走队列出口（差额由主机算）—— 桌面 / 未装配：原路径零变化。
+    //
+    // ⚠️ 判据是**「这个出口能不能提交盘点单」**，不是「sink 非空」。
+    // 2026-11-17 真实用户 P0：桌面壳的 `ServiceSink` 没装盘点服务，页面见非空就走它
+    // ⇒ `Bad state: 这个出口没有装配盘点服务` ⇒ 填的数量一条都没落库，还弹了
+    // 「未捕获异常」。能力位见 `DocumentSink.canSubmitStocktake`。
+    final DocumentSink? sink = widget.documentSink;
+    if (sink != null && sink.canSubmitStocktake) {
+      final DocumentSubmitResult submitted;
+      try {
+        submitted = sink.submitStocktake(draft);
+      } catch (error, stack) {
+        // 出口自己炸了也不许把页面卡在 _busy、更不许抛到 zone（那会变成「未捕获异常」）
+        widget.onStorageFailure?.call(error, stack);
+        if (!mounted) return;
         setState(() {
           _busy = false;
-          _topError = error == null
-              ? '没能记上，你填的内容都还在，改好后重试。'
-              : (error as DraftInvalidException).summary;
+          _topError =
+              '保存失败：$error\n你填的内容都还在，'
+              '改好后重新点「$_pageTitle」再试。';
         });
         return;
       }
+      if (!mounted) return;
+      final Object? error = submitted.error;
+      if (error != null) {
+        setState(() {
+          _busy = false;
+          _topError = error is DraftInvalidException
+              ? error.summary
+              : '没能记上：$error\n你填的内容都还在，改好后重试。';
+        });
+        return;
+      }
+      // ✅ 成功（入队 or 直落都算）—— 老写法把 `isQueued == false` 当失败，
+      // 宿主出口一旦接上就会「明明记上了却报没记上」。
       showSnack(
         context,
         SnackBar(
-          content: Text('已记录 ${draft.filledCount} 件商品，等同步后电脑上的库存会按实际数量校正'),
+          content: Text(
+            submitted.isQueued
+                ? '已记录 ${draft.filledCount} 件商品，等同步后电脑上的库存会按实际数量校正'
+                : '已记入库存：${draft.filledCount} 件商品',
+          ),
           duration: const Duration(seconds: 3),
         ),
       );
