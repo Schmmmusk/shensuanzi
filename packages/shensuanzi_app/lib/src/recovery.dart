@@ -448,9 +448,10 @@ class RecoveryRestoreResult {
   const RecoveryRestoreResult.ok({
     required this.candidatePath,
     required this.archivedPath,
-  }) : message = null;
+  }) : message = null,
+       checked = null;
 
-  const RecoveryRestoreResult.failure(this.message)
+  const RecoveryRestoreResult.failure(this.message, {this.checked})
     : candidatePath = null,
       archivedPath = null;
 
@@ -461,6 +462,17 @@ class RecoveryRestoreResult {
   final String? archivedPath;
 
   final String? message;
+
+  /// 失败时那一份的**体检结论**（2026-11-18 用户反馈）。
+  ///
+  /// 为什么带回来：清单先行之后，清单里每一份起初都是「还没检查」。
+  /// 用户点了坏的那一份、被拦下来，如果这一行还写着「还没检查」，
+  /// 他只能靠上方报错去猜是哪一份 —— 而且下一份是什么状态仍然要再点一次才知道。
+  /// 体检本来就在 [restoreFromCandidate] 里做过了（`_restoreSync` 第 ① 步），
+  /// 所以把结论带回来给界面回写，**不额外体检第二次**。
+  ///
+  /// `null` = 没做过体检（例如文件在点按前就被删了）。
+  final RecoveryCandidate? checked;
 
   bool get ok => candidatePath != null;
 }
@@ -567,7 +579,12 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
   // ⚠️ **真正的活全在工作 isolate 里同步跑**（体检 + 改名 + 复制 500 MB + 校验）。
   // 2026-11-17 真机（P0）：这段原本在 UI isolate 上，用户点「找回数据」后
   // **整个界面卡死、只能强杀**，日志里一行都没有（写日志也被同一个线程堵住了）。
-  final ({String? candidatePath, String? archivedPath, String? problem})
+  final ({
+    String? candidatePath,
+    String? archivedPath,
+    String? problem,
+    RecoveryCandidate? checked,
+  })
   outcome = await Isolate.run(
     () => _restoreSync(
       candidatePath: candidatePath,
@@ -577,7 +594,10 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
     ),
   );
   if (outcome.problem != null) {
-    return RecoveryRestoreResult.failure(outcome.problem);
+    return RecoveryRestoreResult.failure(
+      outcome.problem!,
+      checked: outcome.checked,
+    );
   }
   return RecoveryRestoreResult.ok(
     candidatePath: outcome.candidatePath,
@@ -589,8 +609,12 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
 ///
 /// 为什么单独一个函数：`Isolate.run` 的闭包只能捕获**可发送**的值 ——
 /// `File` / `Database` / `now` 闭包都不行。所以这里只收字符串与整数，
-/// 返回一个具名记录（三个 `String?`，同样可发送）。
-({String? candidatePath, String? archivedPath, String? problem}) _restoreSync({
+/// 返回一个具名记录（三个 `String?` + 体检结论，同样可发送）。
+///
+/// `checked` 只在**体检没过**时才带回来（接回成功时对话框就关了，没人看它）。
+({String? candidatePath, String? archivedPath, String? problem,
+  RecoveryCandidate? checked})
+_restoreSync({
   required String candidatePath,
   required String databasePath,
   required int currentSchemaVersion,
@@ -605,7 +629,12 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
   );
   final RecoveryCandidate check = _inspect(ref, currentSchemaVersion);
   if (!check.usable) {
-    return (candidatePath: null, archivedPath: null, problem: '这份备份现在不能用了：${check.note ?? '体检没通过'}');
+    return (
+      candidatePath: null,
+      archivedPath: null,
+      problem: '这份备份现在不能用了：${check.note ?? '体检没通过'}',
+      checked: check,
+    );
   }
 
   final String archived = '$databasePath.broken-$stamp';
@@ -624,9 +653,16 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
       } on FileSystemException catch (error) {
         // 改不动（被占用 / 权限）⇒ 立刻退回，别继续往下走
         _rollbackArchive(databasePath, archived, moved);
-        return (candidatePath: null, archivedPath: null, problem: '原来的数据文件正被别的程序占用，改不了名'
-          '（${error.osError?.message ?? '请关掉占用它的程序'}）。'
-          '数据没有动过。');
+        return (
+          candidatePath: null,
+          archivedPath: null,
+          problem: '原来的数据文件正被别的程序占用，改不了名'
+              '（${error.osError?.message ?? '请关掉占用它的程序'}）。'
+              '数据没有动过。',
+          // 这一份**体检是过的**（问题出在现库改不动名），所以不回写状态：
+          // 界面若把它标成「不可用」就冤了 —— 换台机器/关掉占用它的程序还能用。
+          checked: null,
+        );
       }
     }
   }
@@ -641,7 +677,12 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
   } on FileSystemException catch (error) {
     _deleteQuietly(staging);
     _rollbackArchive(databasePath, archived, moved);
-    return (candidatePath: null, archivedPath: null, problem: '复制备份时出错（${error.osError?.message ?? error.message}）。数据没有动过。');
+    return (
+      candidatePath: null,
+      archivedPath: null,
+      problem: '复制备份时出错（${error.osError?.message ?? error.message}）。数据没有动过。',
+      checked: null,
+    );
   }
 
   // ④ 校验新库
@@ -649,13 +690,19 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
   if (problem != null) {
     _deleteQuietly(databasePath);
     _rollbackArchive(databasePath, archived, moved);
-    return (candidatePath: null, archivedPath: null, problem: '接回来之后检查不通过：$problem。数据没有动过。');
+    return (
+      candidatePath: null,
+      archivedPath: null,
+      problem: '接回来之后检查不通过：$problem。数据没有动过。',
+      checked: null,
+    );
   }
 
   return (
     candidatePath: candidatePath,
     archivedPath: hadDatabase ? archived : null,
     problem: null,
+    checked: null,
   );
 }
 

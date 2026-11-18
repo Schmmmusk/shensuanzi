@@ -16,6 +16,9 @@
 // 2. **不可用的也列出来，并说清为什么**：用户看到「那份 10 月 20 日的坏了」比
 //    只看到「没找到可用的备份」有用得多 —— 后者会让他以为文件都没了。
 // 3. **接回要二次确认，并把后果说全**：「当前的数据文件会改名保存，不会删除」。
+// 4. **「不可用」只留给体检得出的结论**（2026-11-18 用户反馈）：清单先行之后，
+//    别人被接回期间这一行只是暂时不能点，写「请等待体检完成」—— 写「不可用」
+//    会让人以为整堆备份都坏了。
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
@@ -81,6 +84,10 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
 
   /// 正在接回（禁用所有按钮，避免连点）
   bool _restoring = false;
+
+  /// 正在接回的那一份（`_restoring` 时才有值）—— 用来把「这一份」与
+  /// 「其余还没轮到体检的那些」在界面上分开说（2026-11-18 用户反馈）。
+  String? _restoringPath;
 
   /// 接回失败的原因（留在对话框里，不弹 SnackBar —— 这个页面没有 Scaffold 之外的容器）
   String? _error;
@@ -158,6 +165,7 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
 
     setState(() {
       _restoring = true;
+      _restoringPath = candidate.path;
       _error = null;
     });
     // 2026-11-17 真机：接回把 500 MB 的库同步拷在 UI 线程上跑 ⇒ 整个界面卡死、
@@ -184,7 +192,19 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
     }
     setState(() {
       _restoring = false;
+      _restoringPath = null;
       _error = result.message;
+      // 体检结论回写那一行（2026-11-18 用户反馈）：点了坏的那份被拦下之后，
+      // 这一行若还写着「还没检查」，用户就得靠上方报错去猜是哪一份。
+      // `checked == null` = 没体检过（文件在点按前就没了 / 现库占用），
+      // 那种情况**不许**改状态 —— 结论不是「这份坏了」。
+      final RecoveryCandidate? checked = result.checked;
+      if (checked != null) {
+        final int index = _candidates.indexWhere(
+          (RecoveryCandidate c) => c.path == checked.path,
+        );
+        if (index >= 0) _candidates[index] = checked;
+      }
     });
   }
 
@@ -317,65 +337,101 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
     final bool canUse =
         (candidate.usable || candidate.state == RecoveryState.unchecked) &&
         !_restoring;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    _sourceChip(theme, candidate.source),
-                    const SizedBox(width: 8),
-                    Text(
-                      formatRecoveryTime(candidate.time),
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      formatRecoverySize(candidate.bytes),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.hintColor,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _describeContent(candidate),
-                  style: theme.textTheme.bodySmall,
-                ),
-                if (candidate.note != null)
-                  Text(
-                    candidate.note!,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.error,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          if (canUse)
-            FilledButton.tonal(
-              key: ValueKey<String>('recovery-use-${candidate.fileName}'),
-              onPressed: () => _restore(candidate),
-              child: const Text('用这一份'),
-            )
-          else
+
+    // 「不可用」只留给**体检过、结论是不能用**的那几行（坏了 / 版本太新 / 读不到）。
+    // 正在接回另一份时，其余行的按钮要禁掉；没体检过的那些若也写「不可用」，
+    // 用户会以为这一堆备份全坏了（2026-11-18 用户反馈）。
+    final bool isCurrent = _restoring && candidate.path == _restoringPath;
+    final bool waitingTurn =
+        _restoring && !isCurrent && candidate.state == RecoveryState.unchecked;
+
+    // 行内容：来源 + 时间 + 大小（同一行放不下就折行）、说明、原因。
+    //
+    // ⚠️ 这里原本是 `Row` + 两个 `SizedBox(width: 8)`。在 371 px 宽的窗口上实测
+    // （2026-11-18）：「2026-11-16 09:00」这个**不可断行**的词有 228 px，
+    // 而整行只剩 ~175 px ⇒ 它直接溢出到对话框外面（`RenderFlex` 没报错，
+    // 因为整行被 `ListView` 裁掉了，字是「缺一块」而不是「变红」）。
+    // 换成 `Wrap`：放不下就把「大小」挪到下一行，一行永远只处理一个不可断行的词。
+    final Widget info = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Wrap(
+          spacing: 8,
+          runSpacing: 2,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            _sourceChip(theme, candidate.source),
             Text(
-              '不可用',
-              key: ValueKey<String>('recovery-unusable-${candidate.fileName}'),
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.disabledColor,
+              formatRecoveryTime(candidate.time),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
               ),
             ),
-        ],
+            Text(
+              formatRecoverySize(candidate.bytes),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.hintColor,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(_describeContent(candidate), style: theme.textTheme.bodySmall),
+        if (candidate.note != null)
+          Text(
+            candidate.note!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
+          ),
+      ],
+    );
+
+    final Widget action = canUse
+        ? FilledButton.tonal(
+            key: ValueKey<String>('recovery-use-${candidate.fileName}'),
+            onPressed: () => _restore(candidate),
+            child: const Text('用这一份'),
+          )
+        : Text(
+            isCurrent
+                ? '正在体检…'
+                : waitingTurn
+                ? '请等待体检完成'
+                : '不可用',
+            key: ValueKey<String>(
+              'recovery-row-status-${candidate.fileName}',
+            ),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.disabledColor,
+            ),
+          );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      // 窄到放不下「说明 + 按钮」并排时，按钮挪到下一行、右对齐。
+      // 断点取 300：并排时说明列只剩 `宽 - 68`，而时间文本本身就要 228 px。
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          if (constraints.maxWidth < 300) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                info,
+                const SizedBox(height: 6),
+                Align(alignment: Alignment.centerRight, child: action),
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(child: info),
+              const SizedBox(width: 12),
+              action,
+            ],
+          );
+        },
       ),
     );
   }
@@ -404,6 +460,13 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
     if (candidate.state == RecoveryState.unchecked) {
       // ⚠️ 不能说「读不出里面的内容」—— 那是「检查过、读不出」的结论，
       // 这两件事对用户的含义完全相反（前者是坏文件，后者是还没看）。
+      //
+      // 正在接回另一份时这一行没有按钮可点，所以不能叫用户去点（纪律 17）。
+      if (_restoring) {
+        return candidate.path == _restoringPath
+            ? '正在体检这一份…'
+            : '还没检查 —— 等这一份接完再点别的';
+      }
       return '还没检查 —— 点「用这一份」会先体检这一份，通过才接回';
     }
     final int? count = candidate.documentCount;

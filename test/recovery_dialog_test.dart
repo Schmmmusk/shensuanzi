@@ -161,5 +161,101 @@ void main() {
       findsWidgets,
       reason: '失败后列表要留在原地，让用户换一份，而不是把对话框清空',
     );
+    // 2026-11-18 用户反馈：体检结论要回写到那一行 —— 否则它还写着「还没检查」，
+    // 用户只能靠上方报错去猜是哪一份坏。
+    expect(
+      find.text('不可用'),
+      findsOneWidget,
+      reason: '被拦下的那一份必须当场标成不可用（它不是「还没检查」了）',
+    );
+    expect(
+      find.textContaining('点「用这一份」会先体检'),
+      findsOneWidget,
+      reason: '另一份第 2 份仍然没体检过 —— 不能跟着一起标死',
+    );
+  });
+
+  testWidgets('接回一份期间，其余未体检的行写「请等待体检完成」，不写「不可用」', (
+    WidgetTester tester,
+  ) async {
+    goodBackup(DateTime(2026, 11, 16, 9));
+    goodBackup(DateTime(2026, 11, 17, 9));
+
+    await tester.pumpWidget(host());
+    await tester.tap(find.byKey(const Key('open')));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.text('用这一份').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('recovery-confirm-restore')));
+    // 只走假时钟：接回在工作 isolate 里，这里还停在「正在接回」那一刻
+    await tester.pump();
+
+    expect(
+      find.textContaining('正在体检并接回'),
+      findsOneWidget,
+      reason: '前提：此刻确实处于「接回中」',
+    );
+    expect(
+      find.text('不可用'),
+      findsNothing,
+      reason: '其余备份只是还没轮到体检，标「不可用」会让用户以为它们坏了',
+    );
+    expect(find.text('请等待体检完成'), findsOneWidget);
+    expect(
+      find.text('正在体检…'),
+      findsOneWidget,
+      reason: '正在接回的那一份要说清是它，不能与「等待」的那些混成一句',
+    );
+
+    // 收尾：让这次接回真的跑完（否则对话框挂着，后面的用例会受影响）
+    for (int i = 0; i < 80; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 25)),
+      );
+      await tester.pump();
+      if (find.text('数据体检与恢复').evaluate().isEmpty) break;
+    }
+  });
+
+  testWidgets('极窄窗口（371 px，真机截图那档）：行内文字不越出列表视口', (
+    WidgetTester tester,
+  ) async {
+    // 用户 2026-11-18 截图里的窗口是 371 px 宽。这个对话框内容写死 `width: 620`，
+    // 会被父约束压到 ~243 px；而「2026-11-16 09:00」这个**不可断行**的词就要 228 px。
+    //
+    // ⚠️ 这类越界 `RenderFlex` **不报错**（整行被 `ListView` 裁掉，字是缺一块），
+    // 所以不能用 `takeException()` 判 —— 实测把它改成 90 px 宽也照样「通过」。
+    // 判据只能是**几何**：每一处文字的右边缘都要在对话框里面。
+    tester.view.physicalSize = const Size(371, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    goodBackup(DateTime(2026, 11, 16, 9));
+    brokenBackup(DateTime(2026, 11, 18, 9));
+
+    await tester.pumpWidget(host());
+    await tester.tap(find.byKey(const Key('open')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('数据体检与恢复'), findsOneWidget);
+    // ⚠️ `find.byType(AlertDialog)` 拿到的是**整屏**（0..371），拿它当边界等于没判。
+    // 真正会被裁掉的是列表视口：文字必须完整落在 ListView 里。
+    final Rect viewport = tester.getRect(find.byType(ListView));
+    for (final Finder finder in <Finder>[
+      find.textContaining('2026-11-16').first, // 行首那行：时间
+      find.textContaining('2026-11-18').first,
+      find.textContaining('还没检查').first, // 说明
+      find.text('用这一份').first, // 按钮
+    ]) {
+      final Rect rect = tester.getRect(finder);
+      expect(
+        rect.right,
+        lessThanOrEqualTo(viewport.right),
+        reason: '在 371 px 宽的窗口里越出了列表右边缘（${rect.right} > ${viewport.right}）',
+      );
+    }
   });
 }
