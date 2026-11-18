@@ -571,4 +571,48 @@ void main() {
       reason: '必须说真实总数 —— 停在 200 会让用户以为后 50 个账户没了',
     );
   });
+  testWidgets('TEMP 窄窗复现（343）', (WidgetTester tester) async {
+    service.create(
+      AccountDraft(
+        name: '店内现金',
+        type: AccountType.cash,
+        initialBalance: '100000',
+      ),
+      now: 1700000000000,
+    );
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    for (final double w in <double>[343, 300, 264, 240, 220, 180]) {
+      await tester.binding.setSurfaceSize(Size(w, 1080));
+      await tester.pumpWidget(page());
+      await tester.pumpAndSettle();
+      final Object? ex = tester.takeException();
+      if (ex != null && w == 180) debugDumpRenderTree();
+    }
+  });
+
+  // ------------------------------------------------------------ 窄窗护栏（2026-11-18 用户截图）
+  //
+  // 现场：343 px 宽的窗口 ⇒ 内容区 264（343 − 导航 76 − 分割线 3）。
+  // 账户行、往来方汇总行、商品行、库存榜都在这一档顶出过黄黑条纹。
+  testWidgets('窄窗护栏（内容区 264）：长金额不会被挤出卡片', (WidgetTester tester) async {
+    service.create(
+      AccountDraft(
+        name: '店内现金',
+        type: AccountType.cash,
+        initialBalance: '100000',
+      ),
+      now: 1700000000000,
+    );
+    await tester.binding.setSurfaceSize(const Size(264, 1080));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '内容是「¥ 100,000.00」那一档长金额（金额原来与名字并排，顶出 9.8 px）',
+    );
+  });
 }

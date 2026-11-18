@@ -179,6 +179,10 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
       candidatePath: candidate.path,
       databasePath: widget.databasePath,
       currentSchemaVersion: widget.currentSchemaVersion,
+      // 来源与时间**由这里给**（评审 P2）：体检结论回写到行上时要靠它们，
+      // 让数据层自己猜就会把「手动备份」显示成「自动备份」、时间变「时间不明」。
+      source: candidate.source,
+      time: candidate.time,
     );
     widget.log?.write(
       result.ok

@@ -529,16 +529,18 @@ class _StockPageState extends State<StockPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Row(
+          // ⚠️ 2026-11-18 用户截图：这里原来是
+          // `Row[Icon, 6, Expanded(标题), Text('最多 ¥…')]`。`Expanded` 在
+          // **宽度不受限**的测量里会把另外两个塌成最小宽，于是整个按钮只有
+          // 90 px 宽、文字竖排、还被顶出黄黑条纹（截图 4，椭圆形按钮）。
+          // 换成 `Wrap`：每个片段自己占一行，宽度再窄也只是变高，不会溢出。
+          Wrap(
+            spacing: 6,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: <Widget>[
               const Icon(Icons.expand_more, size: 18),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  '压货最多的 $count 个商品',
-                  style: theme.textTheme.bodyMedium,
-                ),
-              ),
+              Text('压货最多的 $count 个商品', style: theme.textTheme.bodyMedium),
               Text(
                 '最多 ${_yuan(first.valueCents)}',
                 style: theme.textTheme.bodySmall,
@@ -1185,11 +1187,16 @@ class _StockRow extends StatelessWidget {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: <Widget>[
-                              Text(
-                                '成本（均价）',
-                                style: TextStyle(
-                                  height: 1.6,
-                                  color: theme.textTheme.bodySmall?.color,
+                              // ⚠️ `Flexible`（2026-11-18）：极窄窗口（内容区 160）
+                              // 时这个 Wrap 子项只剩 88 px，而没有弹性的 Text 拿的是
+                              // 无界宽 ⇒ 顶出去 14 px。给它弹性，放不下就折两行。
+                              Flexible(
+                                child: Text(
+                                  '成本（均价）',
+                                  style: TextStyle(
+                                    height: 1.6,
+                                    color: theme.textTheme.bodySmall?.color,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 2),

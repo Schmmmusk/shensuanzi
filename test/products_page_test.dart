@@ -311,6 +311,22 @@ void main() {
       reason: '带按钮的 SnackBar 默认 persist=true（SDK 的 M3 行为）⇒ 必须显式 persist:false',
     );
   });
+
+  testWidgets('窄窗护栏（内容区 264）：工具条与商品行不再顶出去', (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(264, 1080));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    // ⚠️ 必须带上导出按钮：不传 `exports` 时工具条只有一个按钮，
+    // 那个宽度下怎么摆都不会溢出 —— 用例就白写了（2026-11-18 实测）。
+    await tester.pumpWidget(page(exports: _FakeExport()));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '搜索框 + 导出 + 新增商品原来挤在一行（溢出 144 px）；商品行同理',
+    );
+  });
 }
 
 /// 只数「查了几次库」的服务（钉住「查询不在 build 里」）。
@@ -330,4 +346,14 @@ class _CountingService extends ProductService {
     queries++;
     return super.count(query: query, active: active);
   }
+}
+
+/// 只记账、不写盘的导出桩（§AF：widget 测试不真写文件）
+class _FakeExport implements ExportSink {
+  @override
+  Future<ExportOutcome> write(
+    ExportTable table, {
+    String? extra,
+    DateTime? from,
+  }) async => const ExportSuccess(path: r'C://tmp//out.csv', rowCount: 0);
 }

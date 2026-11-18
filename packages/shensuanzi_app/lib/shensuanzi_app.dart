@@ -119,6 +119,7 @@ export 'src/recovery.dart'
         brokenStamp,
         listRecoveryCandidates,
         restoreFromCandidate,
+        restoreFailureText,
         scanRecoveryCandidates;
 export 'src/backup.dart'
     show

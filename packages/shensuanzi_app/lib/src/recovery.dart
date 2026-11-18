@@ -463,7 +463,7 @@ class RecoveryRestoreResult {
 
   final String? message;
 
-  /// 失败时那一份的**体检结论**（2026-11-18 用户反馈）。
+  /// 失败时那一份的**体检结论**（2026-11-18 用户反馈 + 同日评审 P2 修正）。
   ///
   /// 为什么带回来：清单先行之后，清单里每一份起初都是「还没检查」。
   /// 用户点了坏的那一份、被拦下来，如果这一行还写着「还没检查」，
@@ -471,7 +471,16 @@ class RecoveryRestoreResult {
   /// 体检本来就在 [restoreFromCandidate] 里做过了（`_restoreSync` 第 ① 步），
   /// 所以把结论带回来给界面回写，**不额外体检第二次**。
   ///
-  /// `null` = 没做过体检（例如文件在点按前就被删了）。
+  /// ## 三种情况分清楚（评审 P2，2026-11-18）
+  ///
+  /// | 情况 | `checked` | 界面该怎么写 |
+  /// |---|---|---|
+  /// | 文件在点按前就没了（**没体检**） | `null` | 保持「还没检查」/「读不到」 |
+  /// | 体检**不合格** | 非空、`usable == false` | 「不可用」+ 原因 |
+  /// | 体检**合格**、后续改名/复制/校验失败 | 非空、`usable == true` | 还它按钮（用户可以重试） |
+  ///
+  /// 早先的实现只在「体检没过」时带回，第三类也给了 `null` —— 结果是
+  /// **体检明明通过了，列表还写「还没检查」**，用户会以为这份也不能用。
   final RecoveryCandidate? checked;
 
   bool get ok => candidatePath != null;
@@ -479,17 +488,47 @@ class RecoveryRestoreResult {
 
 /// 「留档 + 重新开一本空的」里**留档**这一步的结果。
 class ArchiveResult {
-  const ArchiveResult.ok(this.archivedPath) : problem = null;
+  const ArchiveResult.ok(this.archivedPath) : problem = null, residual = const <String>[];
 
-  const ArchiveResult.failure(this.problem) : archivedPath = null;
+  const ArchiveResult.failure(this.problem, {this.residual = const <String>[]})
+    : archivedPath = null;
 
   /// 坏文件被改名到了哪里（`null` = 原来就没有库文件，没什么可留）
   final String? archivedPath;
 
-  /// 失败原因（人话，可直接显示）
+  /// 失败原因（人话，可直接显示；已含残留路径的说明）
   final String? problem;
 
+  /// 回滚**没做成**的残留路径（非空 ⇒ 「数据没有动过」不成立）
+  final List<String> residual;
+
   bool get ok => problem == null;
+}
+
+/// **回滚的报告**：`residual` 非空 ⇒ 有文件没放回原位。
+///
+/// 评审 P1（2026-11-18）：从前 `_rollbackArchive` / `_deleteQuietly` **吞掉失败**，
+/// 而失败文案照样说「数据没有动过」—— 那句话在回滚失败时是假的。
+/// 现在回滚**逐项**返回结果，只有 `residual` 为空才允许说那句话。
+class _Cleanup {
+  const _Cleanup(this.residual);
+
+  /// 没能放回原位的路径（用户要手工处理的那些）
+  final List<String> residual;
+
+  bool get clean => residual.isEmpty;
+}
+
+/// 失败文案：**只有在真的没留下东西时**才说「数据没有动过」。
+///
+/// 公开（而不是私有）是为了能单独测这两个分支 —— 它在 isolate 里被调用，
+/// 从外面很难构造出「回滚也失败」的现场（Windows 上没有干净的办法
+/// 让 `renameSync` 只失败一次）。判据见 `recovery_test.dart`。
+String restoreFailureText(String lead, List<String> residual) {
+  if (residual.isEmpty) return '$lead。数据没有动过。';
+  return '$lead。**有文件没能放回原位** —— 下面这些请先别删、别改名，'
+      '按列出的位置找回来（它们还在硬盘上，一个都没丢）：\n'
+      '${residual.map((String p) => '· $p').join('\n')}';
 }
 
 /// **留档**：把打不开的库（`.db` + `-wal` + `-shm`）改名成
@@ -513,7 +552,8 @@ class ArchiveResult {
 /// [restoreFromCandidate] 第 ② 步同源。
 ///
 /// ⚠️ **任何一步失败都回滚**（把已挪走的改回原名），并返回人话原因 ——
-/// 那时界面要说的是「数据没有动过」，这句话必须是真的。
+/// 那时界面要说的是「数据没有动过」，这句话必须是真的 ⇒ 回滚结果逐项带回来，
+/// 有残留就**不这么说**（评审 P1，2026-11-18）。
 ArchiveResult archiveBrokenDatabase({
   required String databasePath,
   DateTime Function()? now,
@@ -529,10 +569,14 @@ ArchiveResult archiveBrokenDatabase({
         source.renameSync('$archived$sidecar');
         moved.add(sidecar);
       } on FileSystemException catch (error) {
-        _rollbackArchive(databasePath, archived, moved);
+        final _Cleanup cleanup = _rollbackArchive(databasePath, archived, moved);
         return ArchiveResult.failure(
-          '原来的数据文件正被别的程序占用，改不了名'
-          '（${error.osError?.message ?? '请关掉占用它的程序'}）。数据没有动过。',
+          restoreFailureText(
+            '原来的数据文件正被别的程序占用，改不了名'
+            '（${error.osError?.message ?? '请关掉占用它的程序'}）',
+            cleanup.residual,
+          ),
+          residual: cleanup.residual,
         );
       }
     }
@@ -562,11 +606,22 @@ String brokenStamp(DateTime stamp) =>
 /// 2. 现库（`.db` + `-wal` + `-shm`）**改名**成 `<db>.broken-<时间>`，不删。
 /// 3. 候选复制成 `<db>.restoring`，再 rename 成 `<db>`（避免复制一半被当成库）。
 /// 4. 校验新库能开、`quick_check` 通过、版本不高于当前。
-/// 5. 任何一步失败 ⇒ **回滚**：删掉半成品、把 `.broken-*` 改回原名。
+/// 5. 任何一步失败 ⇒ **回滚**：删掉半成品、把 `.broken-*` 改回原名；
+///    回滚本身的失败**不再吞**，逐项带回（[RecoveryRestoreResult.checked] 与文案）。
+///
+/// ## ⚠️ [source] / [time] 必须由调用方传（评审 P2，2026-11-18）
+///
+/// 从前这里在 isolate 里自造 `_CandidateRef(source: autoBackup, time: null)`，
+/// 于是体检结论回写到界面时，**手动备份会显示成「自动备份」、时间变成「时间不明」**
+/// —— 用户刚选的那一份，元数据被「修复」代码改错了。
+/// 现在这两个值由**知道真相的人**（对话框，它手里就是那份候选）传进来；
+/// 时间走 `int?`（毫秒）而不是 `DateTime`，只为了让跨 isolate 的入参保持纯值类型。
 Future<RecoveryRestoreResult> restoreFromCandidate({
   required String candidatePath,
   required String databasePath,
   required int currentSchemaVersion,
+  required RecoverySource source,
+  required DateTime? time,
   DateTime Function()? now,
 }) async {
   if (!File(candidatePath).existsSync()) {
@@ -575,6 +630,7 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
 
   // 时间戳在**这边**算：闭包进不了 isolate。
   final String stamp = brokenStamp((now ?? DateTime.now)());
+  final int? timeMs = time?.millisecondsSinceEpoch;
 
   // ⚠️ **真正的活全在工作 isolate 里同步跑**（体检 + 改名 + 复制 500 MB + 校验）。
   // 2026-11-17 真机（P0）：这段原本在 UI isolate 上，用户点「找回数据」后
@@ -591,6 +647,8 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
       databasePath: databasePath,
       currentSchemaVersion: currentSchemaVersion,
       stamp: stamp,
+      source: source,
+      timeMs: timeMs,
     ),
   );
   if (outcome.problem != null) {
@@ -608,10 +666,11 @@ Future<RecoveryRestoreResult> restoreFromCandidate({
 /// [restoreFromCandidate] 的**同步实体**（只在工作 isolate 里跑）。
 ///
 /// 为什么单独一个函数：`Isolate.run` 的闭包只能捕获**可发送**的值 ——
-/// `File` / `Database` / `now` 闭包都不行。所以这里只收字符串与整数，
+/// `File` / `Database` / `now` 闭包都不行。所以这里只收字符串、整数、枚举，
 /// 返回一个具名记录（三个 `String?` + 体检结论，同样可发送）。
 ///
-/// `checked` 只在**体检没过**时才带回来（接回成功时对话框就关了，没人看它）。
+/// `checked`：**体检做过就带回来**（合格也带）—— 界面靠它决定这一行还能不能再点。
+/// 只有「文件在体检前就没了」那一种情况没有体检结论。
 ({String? candidatePath, String? archivedPath, String? problem,
   RecoveryCandidate? checked})
 _restoreSync({
@@ -619,13 +678,17 @@ _restoreSync({
   required String databasePath,
   required int currentSchemaVersion,
   required String stamp,
+  required RecoverySource source,
+  required int? timeMs,
 }) {
   // ① 再体检一次（候选自己也得是好的 —— 拿坏的盖掉能用的，是最坏的结果）
   final _CandidateRef ref = _CandidateRef(
     path: candidatePath,
     fileName: p.basename(candidatePath),
-    source: RecoverySource.autoBackup,
-    time: null,
+    // 来源与时间**照抄调用方**（评审 P2）：这两个值只影响「显示得对不对」，
+    // 一旦在这里凭猜，界面就会把用户刚选的那份描述错。
+    source: source,
+    time: timeMs == null ? null : DateTime.fromMillisecondsSinceEpoch(timeMs),
   );
   final RecoveryCandidate check = _inspect(ref, currentSchemaVersion);
   if (!check.usable) {
@@ -645,23 +708,25 @@ _restoreSync({
   final List<String> moved = <String>[];
   if (hadDatabase) {
     for (final String sidecar in <String>['', '-wal', '-shm']) {
-      final File source = File('$databasePath$sidecar');
-      if (!source.existsSync()) continue;
+      final File sourceFile = File('$databasePath$sidecar');
+      if (!sourceFile.existsSync()) continue;
       try {
-        source.renameSync('$archived$sidecar');
+        sourceFile.renameSync('$archived$sidecar');
         moved.add(sidecar);
       } on FileSystemException catch (error) {
         // 改不动（被占用 / 权限）⇒ 立刻退回，别继续往下走
-        _rollbackArchive(databasePath, archived, moved);
+        final _Cleanup cleanup = _rollbackArchive(databasePath, archived, moved);
         return (
           candidatePath: null,
           archivedPath: null,
-          problem: '原来的数据文件正被别的程序占用，改不了名'
-              '（${error.osError?.message ?? '请关掉占用它的程序'}）。'
-              '数据没有动过。',
-          // 这一份**体检是过的**（问题出在现库改不动名），所以不回写状态：
-          // 界面若把它标成「不可用」就冤了 —— 换台机器/关掉占用它的程序还能用。
-          checked: null,
+          problem: restoreFailureText(
+            '原来的数据文件正被别的程序占用，改不了名'
+            '（${error.osError?.message ?? '请关掉占用它的程序'}）',
+            cleanup.residual,
+          ),
+          // 这一份**体检是过的**（问题出在现库改不动名）⇒ 带回 ok 结论，
+          // 界面还它的按钮，用户关掉占用它的程序就能重试（评审 P2）。
+          checked: check,
         );
       }
     }
@@ -675,26 +740,37 @@ _restoreSync({
     File(candidatePath).copySync(staging);
     stagingFile.renameSync(databasePath);
   } on FileSystemException catch (error) {
-    _deleteQuietly(staging);
-    _rollbackArchive(databasePath, archived, moved);
+    final _Cleanup cleanup = _rollbackArchive(databasePath, archived, moved);
+    final List<String> residual = <String>[
+      if (!_deleteIfPresent(staging)) staging,
+      ...cleanup.residual,
+    ];
     return (
       candidatePath: null,
       archivedPath: null,
-      problem: '复制备份时出错（${error.osError?.message ?? error.message}）。数据没有动过。',
-      checked: null,
+      problem: restoreFailureText(
+        '复制备份时出错（${error.osError?.message ?? error.message}）',
+        residual,
+      ),
+      checked: check,
     );
   }
 
   // ④ 校验新库
   final String? problem = _verifyRestored(databasePath, currentSchemaVersion);
   if (problem != null) {
-    _deleteQuietly(databasePath);
-    _rollbackArchive(databasePath, archived, moved);
+    // ⚠️ 顺序不能反：先把刚复制进来的半成品删掉，原库才腾得出名字改名回来。
+    final bool removed = _deleteIfPresent(databasePath);
+    final _Cleanup cleanup = _rollbackArchive(databasePath, archived, moved);
+    final List<String> residual = <String>[
+      if (!removed) databasePath,
+      ...cleanup.residual,
+    ];
     return (
       candidatePath: null,
       archivedPath: null,
-      problem: '接回来之后检查不通过：$problem。数据没有动过。',
-      checked: null,
+      problem: restoreFailureText('接回来之后检查不通过：$problem', residual),
+      checked: check,
     );
   }
 
@@ -729,30 +805,44 @@ String? _verifyRestored(String databasePath, int currentSchemaVersion) {
   }
 }
 
-/// 把改名走的现库（含 `-wal` / `-shm`）改回原名。
-void _rollbackArchive(
+/// 把改名走的现库（含 `-wal` / `-shm`）改回原名，**逐项报告**结果。
+///
+/// 评审 P1（2026-11-18）：从前这里 `catch` 掉一切，回滚失败也没人知道，
+/// 而失败文案照样说「数据没有动过」。现在：改不回去的路径进 [_Cleanup.residual]，
+/// 由 [restoreFailureText] 决定还能不能说那句话。
+_Cleanup _rollbackArchive(
   String databasePath,
   String archived,
   List<String> moved,
 ) {
+  final List<String> residual = <String>[];
   for (final String sidecar in moved) {
     final File file = File('$archived$sidecar');
-    if (!file.existsSync()) continue;
+    if (!file.existsSync()) {
+      // 挪走过的东西不见了 —— 也算残留（它不是「已经放回原位」）
+      residual.add('$archived$sidecar');
+      continue;
+    }
     try {
       file.renameSync('$databasePath$sidecar');
     } on FileSystemException {
-      // 回滚也失败：留给用户手工处理，界面上会报「数据没有动过」——
-      // 严格说这句此时不成立，所以下面用 `.broken-*` 的路径提示他。
+      residual.add('$archived$sidecar');
     }
   }
+  return _Cleanup(residual);
 }
 
-void _deleteQuietly(String path) {
+/// 删一个中间态文件；返回 `false` = **没删掉**（由调用方记进残留）。
+///
+/// 这些中间态是 `<db>.restoring` 与校验失败的 `<db>`：
+/// 留在原地不会误当数据用（`Db.open` 会自己报错），但**它会占住名字**，
+/// 导致原库改不回去 —— 所以删失败必须让用户知道（评审 P1）。
+bool _deleteIfPresent(String path) {
   try {
     final File file = File(path);
     if (file.existsSync()) file.deleteSync();
+    return true;
   } on FileSystemException {
-    // 删不掉就算了：它是 `<db>.restoring` / `<db>` 的中间态，
-    // 下次启动会被 `Db.open` 覆盖或报错，不会误当数据用。
+    return false;
   }
 }

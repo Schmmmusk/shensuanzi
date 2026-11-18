@@ -217,51 +217,77 @@ class _ProductsPageState extends State<ProductsPage> {
       children: <Widget>[
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Expanded(
-                child: TextField(
-                  controller: _search,
-                  onChanged: (_) => _applyFilters(() {}),
-                  decoration: InputDecoration(
-                    labelText: '搜商品',
-                    hintText: '商品名 / 编码 / 条码',
-                    prefixIcon: const Icon(Icons.search),
-                    // 2026-10-21：加「清空」—— 报告 §2.5「清空搜索全仓只有单据页有」
-                    suffixIcon: _search.text.isEmpty
-                        ? null
-                        : IconButton(
-                            key: const Key('products-clear-search'),
-                            tooltip: '清空',
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _search.clear();
-                              _applyFilters(() {});
-                            },
-                          ),
-                    border: const OutlineInputBorder(),
-                  ),
+          // 2026-11-18 用户截图（343 px 窗口）：这一行原来是
+          // `Row[Expanded(搜索框), 16, 导出, 新增商品]` —— 两个按钮**不参与收缩**，
+          // 内容区 232 px 时它们的固有宽加起来就超了，右边那条被顶出去
+          // （截图：新建商品被切掉 + 黄黑条纹）。
+          // 现在按宽度分两排：窄了搜索框独占一行，两个按钮用 `Wrap` 跟着摆。
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final Widget search = TextField(
+                controller: _search,
+                onChanged: (_) => _applyFilters(() {}),
+                decoration: InputDecoration(
+                  labelText: '搜商品',
+                  hintText: '商品名 / 编码 / 条码',
+                  prefixIcon: const Icon(Icons.search),
+                  // 2026-10-21：加「清空」—— 报告 §2.5「清空搜索全仓只有单据页有」
+                  suffixIcon: _search.text.isEmpty
+                      ? null
+                      : IconButton(
+                          key: const Key('products-clear-search'),
+                          tooltip: '清空',
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _search.clear();
+                            _applyFilters(() {});
+                          },
+                        ),
+                  border: const OutlineInputBorder(),
                 ),
-              ),
-              const SizedBox(width: 16),
-              if (widget.exports != null)
-                ExportButton(
-                  key: const Key('export-products'),
-                  // AF-2：按钮文案说清导的是**全部商品（含停用）** ——
-                  // 刻意**不看搜索框**，否则用户以为导的是搜出来的那几条
-                  label: '导出全部商品',
-                  export: () => widget.exports!.write(
-                    productExportTable(widget.service!.listForExport()),
+              );
+              final List<Widget> actions = <Widget>[
+                if (widget.exports != null)
+                  ExportButton(
+                    key: const Key('export-products'),
+                    // AF-2：按钮文案说清导的是**全部商品（含停用）**
+                    // 刻意**不看搜索框**，否则用户以为导的是搜出来的那几条
+                    label: '导出全部商品',
+                    export: () => widget.exports!.write(
+                      productExportTable(widget.service!.listForExport()),
+                    ),
                   ),
+                // 常驻可见的文字按钮（不是图标按钮）
+                FilledButton.icon(
+                  onPressed: widget.canWrite ? _create : null,
+                  icon: const Icon(Icons.add),
+                  label: const Text('新增商品'),
                 ),
-              // 常驻可见的文字按钮（不是图标按钮）
-              FilledButton.icon(
-                onPressed: widget.canWrite ? _create : null,
-                icon: const Icon(Icons.add),
-                label: const Text('新增商品'),
-              ),
-            ],
+              ];
+              if (isNarrowOf(context, constraints.maxWidth, base: 420)) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    search,
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.end,
+                      children: actions,
+                    ),
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(child: search),
+                  const SizedBox(width: 16),
+                  ...actions,
+                ],
+              );
+            },
           ),
         ),
         Padding(
@@ -276,8 +302,11 @@ class _ProductsPageState extends State<ProductsPage> {
                     onChanged: (bool? value) =>
                         _applyFilters(() => _showInactive = value ?? false),
                   ),
-                  // 文字标签必须在（中老年用户不看纯图标）
-                  const Text('显示已停用的商品'),
+                  // 文字标签必须在（中老年用户不看纯图标）。
+                  // ⚠️ 必须 `Expanded`：`Row` 里非弹性子节点拿的是无界宽 ⇒
+                  // 242 px 内容区时「显示已停用的商品」直接顶出去（2026-11-18 截图）。
+                  // 包进 `Expanded` 才有有界宽，放不下就折成两行。
+                  const Expanded(child: Text('显示已停用的商品')),
                 ],
               ),
               // 计数行：**真实总数**，且被 `limit: 200` 截断时说清「只展示了多少」
@@ -353,68 +382,108 @@ class _ProductRow extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    Flexible(
-                      child: Text(
-                        product.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleMedium,
+      // 2026-11-18 用户截图（343 px 窗口，内容区 232）：原来是**一行到底**
+      // `[名字(Expanded), 售价列, 进价列, 编辑, 停用]`，后四者都不参与收缩，
+      // 固有宽合计 ≈ 376 px ⇒ 溢出 144 px（截图里「售价」被挤到右边、名字只剩一个怪字符）。
+      // 现在窄了改成两段：名字一段，金额与按钮用 `Wrap` 跟在下面（放不下第二行再折）。
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final Widget info = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Flexible(
+                    child: Text(
+                      product.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium,
+                    ),
+                  ),
+                  if (!product.isActive) ...<Widget>[
+                    const SizedBox(width: 8),
+                    Text(
+                      '（已停用）',
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.textTheme.bodySmall?.color,
                       ),
                     ),
-                    if (!product.isActive) ...<Widget>[
-                      const SizedBox(width: 8),
-                      Text(
-                        '（已停用）',
-                        style: TextStyle(
-                          height: 1.6,
-                          color: theme.textTheme.bodySmall?.color,
-                        ),
-                      ),
-                    ],
                   ],
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  height: 1.6,
+                  color: theme.textTheme.bodySmall?.color,
                 ),
+              ),
+              // 乐观行必须可分辨（`data_model.md §4.4` 第 3 条）：
+              // 「我有的」与「主机确认的」一眼可分 —— 否则乐观写就是一句谎话
+              if (isPending) ...<Widget>[
                 const SizedBox(height: 2),
                 Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    height: 1.6,
-                    color: theme.textTheme.bodySmall?.color,
-                  ),
+                  '待同步',
+                  key: Key('pending-product-${product.id}'),
+                  style: TextStyle(height: 1.6, color: theme.hintColor),
                 ),
-                // 乐观行必须可分辨（`data_model.md §4.4` 第 3 条）：
-                // 「我有的」与「主机确认的」一眼可分 —— 否则乐观写就是一句谎话
-                if (isPending) ...<Widget>[
-                  const SizedBox(height: 2),
-                  Text(
-                    '待同步',
-                    key: Key('pending-product-${product.id}'),
-                    style: TextStyle(height: 1.6, color: theme.hintColor),
-                  ),
-                ],
               ],
-            ),
-          ),
-          const SizedBox(width: 16),
-          _priceColumn(context, theme, '售价', product.sellPrice),
-          const SizedBox(width: 16),
-          _priceColumn(context, theme, '进价', product.costPrice),
-          const SizedBox(width: 24),
-          TextButton(onPressed: () => onEdit(product), child: const Text('编辑')),
-          TextButton(
+            ],
+          );
+          final Widget sell = _priceColumn(
+            context,
+            theme,
+            '售价',
+            product.sellPrice,
+          );
+          final Widget cost = _priceColumn(
+            context,
+            theme,
+            '进价',
+            product.costPrice,
+          );
+          final Widget edit = TextButton(
+            onPressed: () => onEdit(product),
+            child: const Text('编辑'),
+          );
+          final Widget toggle = TextButton(
             onPressed: () => onToggleActive(product),
             child: Text(product.isActive ? '停用' : '恢复'),
-          ),
-        ],
+          );
+          if (isNarrowOf(context, constraints.maxWidth, base: 560)) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                info,
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 16,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  alignment: WrapAlignment.end,
+                  children: <Widget>[sell, cost, edit, toggle],
+                ),
+              ],
+            );
+          }
+          return Row(
+            children: <Widget>[
+              Expanded(child: info),
+              const SizedBox(width: 16),
+              sell,
+              const SizedBox(width: 16),
+              cost,
+              const SizedBox(width: 24),
+              edit,
+              toggle,
+            ],
+          );
+        },
       ),
     );
   }

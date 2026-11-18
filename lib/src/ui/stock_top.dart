@@ -164,6 +164,7 @@ class StockTopCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Expanded(
               child: Text(
@@ -174,12 +175,18 @@ class StockTopCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Text(
-              '¥${Money.formatGrouped(row.valueCents)}',
-              style: const TextStyle(
-                height: 1.5,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
+            // ⚠️ `Flexible` + 右对齐（2026-11-18）：固定宽度的金额在 88 px 的
+            // 极窄卡里比整行还宽，`Row` 直接顶出去。给了弹性以后它能在
+            // 真放不下时折成两行，而不是画黄黑条纹。
+            Flexible(
+              child: Text(
+                '¥${Money.formatGrouped(row.valueCents)}',
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                  height: 1.5,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ],

@@ -1319,4 +1319,15 @@ void main() {
       );
     });
   });
+
+  testWidgets('窄窗护栏（内容区 160）：压货榜摘要不变成竖排椭圆', (WidgetTester tester) async {
+    buy(3);
+    await tester.binding.setSurfaceSize(const Size(160, 1080));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+  });
 }

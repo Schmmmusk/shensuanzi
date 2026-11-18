@@ -422,15 +422,18 @@ class _AccountRow extends StatelessWidget {
                 ],
               );
             }
+            // ⚠️ 2026-11-18 用户截图（343 px 窗口）：窄分支原来是
+            // `Row[Expanded(info), amount]`，而金额是 `Row` 的**非弹性子节点**
+            // ⇒ 它拿的是无界宽，长金额（实测 194 px）一点都不会换行，
+            // 于是名字被挤成一字一行、金额还顶出去 9.8 px（黄黑条纹）。
+            // 现在窄分支**三行**：名字/类型 · 金额 · 按钮。
+            // 金额进了 `Column` 就有**有界宽**，真到极窄会按空格断成两行，不再溢出。
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    Expanded(child: info),
-                    amount,
-                  ],
-                ),
+                info,
+                const SizedBox(height: 2),
+                Align(alignment: Alignment.centerRight, child: amount),
                 Align(
                   alignment: Alignment.centerRight,
                   child: Wrap(children: actions),

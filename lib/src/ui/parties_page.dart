@@ -214,12 +214,20 @@ class _PartiesPageState extends State<PartiesPage> {
                             () => _showInactiveWithoutBalance = value ?? false,
                           ),
                         ),
-                        // 措辞按 `docs/reply.md` 2026-10-18 的建议
-                        const Text('显示全部（含无欠款的停用档）'),
+                        // 措辞按 `docs/reply.md` 2026-10-18 的建议。
+                        // ⚠️ `Expanded` 不能省：`Row` 的非弹性子节点拿无界宽，
+                        // 232 px 内容区时这行标签会顶出去（2026-11-18 截图）。
+                        const Expanded(child: Text('显示全部（含无欠款的停用档）')),
                       ],
                     ),
                     const SizedBox(height: 8),
                     // 遗漏 3：总应收 / 总应付 —— 一打开就能看到全貌
+                    //
+                    // ⚠️ 2026-11-18 用户截图（343 px 窗口）：原来是
+                    // `Row[EXPANDED 应收, Expanded 应付]`，两半各约 100 px，而
+                    // 「总应收 ¥390.00」要 110 px ⇒ 金额被折成「¥390.」+「00」
+                    // 两行（截图里能看见）。金额是**不可断行的整体**，
+                    // 所以窄了就把两条改成上下两行，各占整宽。
                     Card(
                       color: theme.colorScheme.surfaceContainerHighest,
                       child: Padding(
@@ -227,28 +235,49 @@ class _PartiesPageState extends State<PartiesPage> {
                           horizontal: 16,
                           vertical: 10,
                         ),
-                        child: Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: Text(
-                                '总应收 ¥${Money.formatGrouped(totalReceivable)}',
-                                style: TextStyle(
+                        child: LayoutBuilder(
+                          builder:
+                              (
+                                BuildContext context,
+                                BoxConstraints constraints,
+                              ) {
+                                final String receivable =
+                                    '总应收 ¥${Money.formatGrouped(totalReceivable)}';
+                                final String payable =
+                                    '总应付 ¥${Money.formatGrouped(totalPayable)}';
+                                final TextStyle style = TextStyle(
                                   height: 1.6,
                                   fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                '总应付 ¥${Money.formatGrouped(totalPayable)}',
-                                textAlign: TextAlign.right,
-                                style: TextStyle(
-                                  height: 1.6,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
+                                );
+                                if (isNarrowOf(
+                                  context,
+                                  constraints.maxWidth,
+                                  base: 360,
+                                )) {
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: <Widget>[
+                                      Text(receivable, style: style),
+                                      Text(payable, style: style),
+                                    ],
+                                  );
+                                }
+                                return Row(
+                                  children: <Widget>[
+                                    Expanded(
+                                      child: Text(receivable, style: style),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        payable,
+                                        textAlign: TextAlign.right,
+                                        style: style,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
                         ),
                       ),
                     ),

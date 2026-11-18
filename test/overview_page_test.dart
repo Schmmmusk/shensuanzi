@@ -1023,9 +1023,7 @@ void main() {
       });
     });
 
-    testWidgets('窄窗口 + 特大字号：本月 / 上月同期两行都**不许溢出**，金额完整可见', (
-      tester,
-    ) async {
+    testWidgets('窄窗口 + 特大字号：本月 / 上月同期两行都**不许溢出**，金额完整可见', (tester) async {
       // 2026-11-17 真机日志（用户报）：`month_compare.dart:127` 的 Row
       // 「A RenderFlex overflowed by 17 pixels on the right」，
       // 截图上 ¥190.00 / ¥7,930.00 右侧被黄黑条切掉 —— 金额看不全。
@@ -1090,7 +1088,8 @@ void main() {
       }
     });
 
-    testWidgets('月度对比：**上月条不能与轨道同色**（真机截图发现的）', (tester) async {      // 2026-10-31 真机：¥973 对 ¥140，两条看起来一样长 ——
+    testWidgets('月度对比：**上月条不能与轨道同色**（真机截图发现的）', (tester) async {
+      // 2026-10-31 真机：¥973 对 ¥140，两条看起来一样长 ——
       // 因为上月条用了 `dividerColor`，那正是 `RatioBar` 的轨道色，
       // 填充和轨道同色，条长等于看不见。
       final int d = businessDayOf(
@@ -1661,5 +1660,21 @@ void main() {
       expect(find.byKey(const Key('low-stock-restock-a')), findsOneWidget);
       expect(find.byKey(const Key('low-stock-guide')), findsNothing);
     });
+  });
+
+  testWidgets('窄窗护栏（内容区 232）：「要开工？」的按钮不再被压成 20 px', (
+    WidgetTester tester,
+  ) async {
+    // 2026-11-18 用户日志：`OutlinedButton-[<'overview-go-sale'>]` 的外层约束
+    // 只有 20 px 宽 ⇒ 按钮内的 `Row`（图标 + 文字）溢出 2 px。
+    // 卡片再窄也不该把按钮压成一条 —— 这四个按钮必须能换行。
+    await tester.binding.setSurfaceSize(const Size(232, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(page(onNavigate: (_) {}, onPriceLookup: () {}));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('overview-go-sale')), findsOneWidget);
   });
 }

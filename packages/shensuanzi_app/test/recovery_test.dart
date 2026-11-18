@@ -269,6 +269,8 @@ void main() {
         candidatePath: backup,
         databasePath: databasePath,
         currentSchemaVersion: Schema.version,
+        source: RecoverySource.manualBackup,
+        time: DateTime(2026, 10, 27, 9, 5),
         now: () => DateTime(2026, 10, 29, 15, 30, 5),
       );
       expect(result.ok, isTrue, reason: result.message);
@@ -317,6 +319,8 @@ void main() {
         candidatePath: backup,
         databasePath: databasePath,
         currentSchemaVersion: Schema.version,
+        source: RecoverySource.manualBackup,
+        time: DateTime(2026, 10, 27, 9, 5),
       );
       expect(result.ok, isTrue, reason: result.message);
 
@@ -339,6 +343,8 @@ void main() {
         candidatePath: backup,
         databasePath: databasePath,
         currentSchemaVersion: Schema.version,
+        source: RecoverySource.manualBackup,
+        time: DateTime(2026, 10, 27, 9, 5),
       );
       expect(result.ok, isTrue, reason: result.message);
       expect(result.archivedPath, isNull);
@@ -358,6 +364,8 @@ void main() {
         candidatePath: backup,
         databasePath: databasePath,
         currentSchemaVersion: Schema.version,
+        source: RecoverySource.manualBackup,
+        time: DateTime(2026, 10, 27, 9, 5),
       );
       expect(result.ok, isFalse);
       expect(result.message, isNotNull);
@@ -381,6 +389,8 @@ void main() {
         candidatePath: backup,
         databasePath: databasePath,
         currentSchemaVersion: Schema.version,
+        source: RecoverySource.manualBackup,
+        time: DateTime(2026, 10, 27, 9, 5),
       );
       expect(result.ok, isFalse);
       expect(result.message, contains('已经不在了'));
@@ -499,6 +509,8 @@ void main() {
       candidatePath: candidate,
       databasePath: databasePath,
       currentSchemaVersion: Schema.version,
+      source: RecoverySource.manualBackup,
+      time: DateTime(2026, 10, 27, 9, 5),
     );
     timer.cancel();
 
@@ -508,5 +520,91 @@ void main() {
       greaterThan(0),
       reason: '同步实现跑在 UI isolate 上 ⇒ 复制期间一个滴答都跑不了（真机 = 整窗卡死）',
     );
+  });
+
+  // ------------------------------------------------------------ 2026-11-18（评审 P1 / P2）
+  //
+  // P1：回滚与「删半成品」从前吞掉失败，而文案照旧说「数据没有动过」——
+  //     那块半成品还占着名字，原库根本改不回去。
+  // P2：体检结论回写时，来源被写成「自动备份」、时间被置空；
+  //     而且「体检通过、后续失败」也给了 null ⇒ 界面说「还没检查」。
+  group('失败收尾（评审 P1 / P2）', () {
+    test('文案：只有真的没留下东西，才允许说「数据没有动过」', () {
+      expect(
+        restoreFailureText('出错了', const <String>[]),
+        contains('数据没有动过'),
+      );
+      final String dirty = restoreFailureText('出错了', <String>[
+        'C:/数据/shensuanzi.db.broken-20261118-200000',
+        'C:/数据/shensuanzi.db.restoring',
+      ]);
+      expect(
+        dirty,
+        isNot(contains('数据没有动过')),
+        reason: '这句话必须是**真的** —— 有文件没放回原位就不能说',
+      );
+      expect(dirty, contains('shensuanzi.db.broken-20261118-200000'));
+      expect(dirty, contains('shensuanzi.db.restoring'));
+    });
+
+    test('体检通过、复制失败 ⇒ 原库完好、残留如实列出、结论带回（含来源与时间）', () async {
+      makeDb(databasePath, docs: 5);
+      final String backup = makeBackup(time: DateTime(2026, 10, 27, 9, 5));
+
+      // 让「删掉旧的半成品」失败：用一个打开的句柄压在 `<db>.restoring` 上。
+      // Windows 上 Dart 的文件句柄不带 FILE_SHARE_DELETE ⇒ `deleteSync` 抛
+      // sharing violation，于是半成品删不掉、原库也改不回名字。
+      final RandomAccessFile locked = File(
+        '$databasePath.restoring',
+      ).openSync(mode: FileMode.write);
+      addTearDown(locked.closeSync);
+
+      final RecoveryRestoreResult result = await restoreFromCandidate(
+        candidatePath: backup,
+        databasePath: databasePath,
+        currentSchemaVersion: Schema.version,
+        // 手动备份 + 明确的时间：回写时必须**照抄**这两项（评审 P2）
+        source: RecoverySource.manualBackup,
+        time: DateTime(2026, 10, 27, 9, 5),
+      );
+
+      expect(result.ok, isFalse);
+      expect(
+        result.message,
+        isNot(contains('数据没有动过')),
+        reason: '半成品 `<db>.restoring` 还占着名字 —— 说「没有动过」就是撒谎（P1）',
+      );
+      expect(result.message, contains('.restoring'), reason: '要告诉用户残留的是哪个文件');
+
+      // 原库回到原位、一个字节没少（回滚成功的那部分必须真的成功）
+      final Db db = Db.open(databasePath);
+      final int docs =
+          db.raw
+                  .select(
+                    'SELECT COUNT(*) FROM documents WHERE ref_doc_id IS NULL',
+                  )
+                  .first
+                  .values
+                  .first!
+              as int;
+      db.close();
+      expect(docs, 5);
+      expect(
+        dataDir.listSync().where(
+          (FileSystemEntity e) => p.basename(e.path).contains('broken'),
+        ),
+        isEmpty,
+        reason: '原库已经改回原名，`.broken-*` 不该留下',
+      );
+
+      // P2：体检是过的 ⇒ 结论带回、且**元数据照抄调用方**
+      expect(result.checked, isNotNull, reason: '做过体检就要带回结论，界面才能还它按钮');
+      expect(result.checked!.usable, isTrue);
+      expect(result.checked!.source, RecoverySource.manualBackup);
+      expect(
+        result.checked!.time,
+        DateTime(2026, 10, 27, 9, 5),
+      );
+    }, skip: Platform.isWindows ? null : 'Windows 才锁得住文件（Linux 允许删已打开的文件）');
   });
 }

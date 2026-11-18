@@ -219,6 +219,54 @@ void main() {
     }
   });
 
+  testWidgets('体检通过、接回失败 ⇒ 那一行还回「用这一份」，并显示真实内容', (
+    WidgetTester tester,
+  ) async {
+    // 2026-11-18 评审 P2-b：体检通过、后续复制失败时，**不该**把这一行留在「还没检查」——
+    // 用户会以为这份备份也有问题，从而白扔掉一份好备份。
+    goodBackup(DateTime(2026, 11, 16, 9));
+    goodBackup(DateTime(2026, 11, 17, 9));
+
+    // 压住半成品：Windows 上打开的句柄不带 FILE_SHARE_DELETE ⇒ 复制那一步必然失败
+    final RandomAccessFile locked = File(
+      p.join(dataDir.path, 'shensuanzi.db.restoring'),
+    ).openSync(mode: FileMode.write);
+    addTearDown(locked.closeSync);
+
+    await tester.pumpWidget(host());
+    await tester.tap(find.byKey(const Key('open')));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.text('用这一份').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('recovery-confirm-restore')));
+    for (int i = 0; i < 80; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 25)),
+      );
+      await tester.pump();
+      if (find.byKey(const Key('recovery-error')).evaluate().isNotEmpty) {
+        break;
+      }
+    }
+
+    expect(find.byKey(const Key('recovery-error')), findsOneWidget);
+    expect(
+      find.text('用这一份'),
+      findsNWidgets(2),
+      reason: '这一份体检是**过的**（问题出在磁盘），不该被标成不可用 —— 还它按钮让用户重试',
+    );
+    expect(find.text('不可用'), findsNothing);
+    expect(
+      find.textContaining('张单据'),
+      findsOneWidget,
+      reason: '体检结论要回写：这一行该显示「1 张单据 …」而不是「还没检查」',
+    );
+  },
+      // 只有 Windows 锁得住文件（Linux 允许删已打开的文件，造不出「删不掉」）
+      skip: !Platform.isWindows);
+
   testWidgets('极窄窗口（371 px，真机截图那档）：行内文字不越出列表视口', (
     WidgetTester tester,
   ) async {

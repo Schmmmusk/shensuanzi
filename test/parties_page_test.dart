@@ -808,4 +808,20 @@ void main() {
       reason: '往来方页显示口径不分页 —— 计数必须是真实总数',
     );
   });
+
+  testWidgets('窄窗护栏（内容区 264）：汇总行与「显示全部」不再顶出去', (WidgetTester tester) async {
+    final Party owing = createCustomer('甲客户');
+    creditSale(owing, 100);
+    await tester.binding.setSurfaceSize(const Size(264, 1080));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '总应收 / 总应付原来各占半宽，金额被折成「¥390.」+「00」',
+    );
+  });
 }
