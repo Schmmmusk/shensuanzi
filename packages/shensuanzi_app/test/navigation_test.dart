@@ -265,12 +265,14 @@ void main() {
     });
   });
 
-  // 2026-11-18：用户提「窄屏下分割线提高对比度」。实测结论是**颜色已够、缺的是粗细**
-  //（`dividerColor` = #73777F，对 #FAFAFA 4.30:1，高于 WCAG 非文字 3:1）。
-  // 这里钉住「仅图标态才加粗」，免得哪天顺手改成常态 2 px（那会让宽屏也变粗）。
+  // 2026-11-18：用户两次反馈「窄屏下分割线看不出来」。
+  // 第一次只加粗（1→2）**没用** —— 从截图取像素才发现真正画出来的是
+  // `outlineVariant`（#C2C7CF，对 #FAFAFA 只有 1.63:1），太淡而不是太细。
+  // 现在：仅图标态 **3 px + `outline`**（4.30:1）。对比度闸门在
+  // `test/nav_divider_test.dart`（它拿渲染出来的 widget 算，不看常量）。
   group('分割线粗细（仅图标态加粗）', () {
-    test('仅图标 ⇒ 2；正常 ⇒ 1', () {
-      expect(AppNavigation.dividerThickness(iconOnly: true), 2);
+    test('仅图标 ⇒ 3；正常 ⇒ 1', () {
+      expect(AppNavigation.dividerThickness(iconOnly: true), 3);
       expect(AppNavigation.dividerThickness(iconOnly: false), 1);
     });
 

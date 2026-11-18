@@ -21,6 +21,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
 import 'scaled.dart';
 import 'traced_page.dart';
+import 'nav_divider.dart';
 
 import 'nav_icons.dart';
 import 'overview_page.dart';
@@ -664,15 +665,9 @@ class _AppShellState extends State<AppShell> {
             scale: math.max(uiScaleOf(context), widget.uiScale.factor),
             availableWidth: constraints.maxWidth,
           );
-          // 仅图标态把分割线加粗到 2（2026-11-18）：那条线颜色已经够
-          //（#73777F / 4.30:1），缺的是**粗细** —— 1 逻辑像素在 100% 缩放 + 1.25 DPI
-          // 时就是 1 个设备像素。
-          // ⚠️ `width` 必须一起改：`VerticalDivider` 是
-          // `SizedBox(width) → Center → Container(width: thickness)`，
-          // 只给 `thickness: 2` 会被夹回 1 px（判据在 `AppNavigation.dividerThickness`）。
-          final double divider = AppNavigation.dividerThickness(
-            iconOnly: nav.iconOnly,
-          );
+          // 仅图标态把分割线**加深 + 加粗**（2026-11-18 用户第二次反馈）。
+          // 粗细/颜色/`width` 三件事都由 `NavDivider` 一起给 —— 判据写在
+          // `nav_divider.dart` 头注释（含两次实测的像素与对比度）。
           return Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
@@ -682,7 +677,7 @@ class _AppShellState extends State<AppShell> {
                 width: nav.width,
                 iconOnly: nav.iconOnly,
               ),
-              VerticalDivider(width: divider, thickness: divider),
+              NavDivider(iconOnly: nav.iconOnly),
               Expanded(child: _content()),
             ],
           );

@@ -21652,3 +21652,67 @@ application-local installation location.」** —— 随包那份运行库不随
 
 - 备份堆积（3.37 GiB）：用户仍定「先只改对话框」。
 - 冷库页面成本（overview 3189 ms / stock 2676 ms / documents 2146 ms）：已量到、无裁定。
+
+### 一百零七、2026-11-18 **分割线第二次修：不是「还不够粗」，是「颜色错了」+ 冷库成本提案**
+
+> 用户原话：「最新编译版本在窄屏下左右屏分割线依然不够明显，请再提高些」（附 343 px 窗口截图）。
+
+#### ① 上一轮的判据是错的 —— 截图取像素才发现
+
+上一轮（§一百零五·③）从代码注释里读到「`dividerColor` = #73777F，对 #FAFAFA 4.30:1」，
+于是判定「颜色够、只是太细」，只把 1 px 改成 2 px。用户第二次反馈后，我把截图逐像素解码：
+
+| 取色点 | 实测 RGB | 六位色 |
+|---|---|---|
+| 导航列背景 | (250, 250, 250) | #FAFAFA |
+| **分割线（x = 77,78 两列）** | **(194, 199, 207)** | **#C2C7CF** |
+| 内容区底色 | (242, 243, 249) | #F2F3F9 |
+
+**画出来的是 `outlineVariant`（#C2C7CF），不是 `outline`（#73777F）** —— M3 里
+`VerticalDivider` 默认吃 `outlineVariant`。它与 #FAFAFA 的对比度只有 **1.63 : 1**，
+远低于 WCAG 1.4.11 对非文字 UI 的 3 : 1。**加粗当然没用**：色没变，粗细不是病根。
+
+教训：**别信注释里的颜色，去截图上取像素。** 一行注释能骗人，像素不会。
+
+#### ② 这一轮的改法：颜色为主、粗细为辅
+
+| 时点 | 粗细 | 颜色 | 对 #FAFAFA |
+|---|---|---|---|
+| 最初 | 1 | #C2C7CF（`outlineVariant`） | 1.63 : 1 |
+| 上一轮 | 2 | 同上 | 1.63 : 1 |
+| **现在（仅图标态）** | **3** | **#73777F（`outline`）** | **4.30 : 1** |
+| 宽屏常态 | 1 | 主题默认 | 不动（列宽 220 px 本来就有边界感） |
+
+结构上把「`width` + `thickness` + `color`」三件事**合成一个 widget**：
+新增 `lib/src/ui/nav_divider.dart` 的 `NavDivider(iconOnly:)`，`app_shell.dart` 只传
+「是不是仅图标态」。理由：这三件事分在两个文件里迟早漂 —— 上一轮正好踩了第一条
+（只改 `thickness` 会被 `SizedBox(width)` 夹回去）。
+
+#### ③ 闸门：拿**渲染出来的 widget** 算对比度，不看常量
+
+`test/nav_divider_test.dart` 3 条：
+1. 仅图标态：`VerticalDivider.color` 必须**非空**且等于 `colorScheme.outline`，
+   **且它与 `scaffoldBackgroundColor` 的 WCAG 对比度 ≥ 3.0**；
+2. 「旧口径确实看不见」：`outlineVariant` 对背景 **< 3.0**（把判据钉住，不是把结论钉住）；
+3. 宽屏：1 px + `color == null`（防「顺手把常态也加深」）。
+
+**灵敏度**：`NavDivider` 的 `color:` 改回不传 ⇒ ① 红（`Expected: not null / Actual: <null>`），已回滚。
+
+#### ④ 冷库页面成本：提案已出（不占台账编号）
+
+`docs/proposals/冷库页面成本-方案.md`。核心结论：**慢盘上 93% 的时间是冷读**
+（VM 3189 ms = 225 ms SQL + 2964 ms 冷读），所以压 SQL 帮不了慢盘；
+能帮的是「别把首帧压在这一次读上」。本次现量补了分解：
+`overview_load` p95 **224.8 ms**（`in_transit` 83 / `account_balances` 64 /
+`stock_merged` 58 / `party_balances` 28×2 / `gross_margin` 16）。
+三个候选：甲 骨架先行（建议做）、乙 isolate 查询（等甲反馈）、丙 物化日汇总表（建议不做）。
+**等裁定**。
+
+#### ⑤ 门禁（本机亲跑）
+
+| 门禁 | 结果 |
+|---|---|
+| `flutter analyze` | **0 issues** |
+| root `flutter test` | **606**（1 条按平台跳过；+3） |
+| app `dart test` | **543**（导航那条只改期望值，条数不变） |
+| host / core | 未改，未复跑 |
