@@ -948,10 +948,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
                       ),
                       KeyedSubtree(key: _headerKey, child: _headerRow(theme)),
                       const Divider(height: 24),
-                      KeyedSubtree(
-                        key: _linesKey,
-                        child: _linesSection(theme),
-                      ),
+                      KeyedSubtree(key: _linesKey, child: _linesSection(theme)),
                       _totalBar(theme),
                       const Divider(height: 24),
                       // ⚠️ 这里**没有** `_paymentSection` —— 送货单不收钱（§AP）
@@ -1165,23 +1162,24 @@ class _DeliveryPageState extends State<DeliveryPage> {
   /// 合计：**大字 + 右对齐 + 千分位**（用户最关心的数字）
   Widget _totalBar(ThemeData theme) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(
+    // #52（2026-10-15 外测 M13）：**窄屏 + 大金额不裁切**。
+    // ⚠️ 2026-11-18 更正：原来这里写「Expanded + 右对齐 ⇒ 放不下自动换行」——
+    // **那是错的**：金额是一个不可断行的词，`Expanded` 只会把它压到溢出
+    //（108 宽 + 2 倍字号实测溢出 8.3 px，与销售页同款）。
+    // 现在改 `Wrap`（三页同构，纪律 18 一次改齐）：放得下 spaceBetween 与旧视觉一致，
+    // 放不下让金额落第二行。
+    child: Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: 2,
       children: <Widget>[
         Text('合计', style: theme.textTheme.titleMedium),
-        const SizedBox(width: 12),
-        // #52（2026-10-15 外测 M13）：**窄屏 + 大金额不裁切** —— 原来是
-        // `Row[Text, Spacer, Text]`：金额那格没有弹性，360 宽 + 2.0 字号下
-        // 「¥ 19,999,980.00」被裁到不可读（外测截图实测）。改「Expanded +
-        // 右对齐」：放得下视觉同旧，放不下自动换行 —— 与 sale / purchase
-        // 的 `_totalBar` 同款（三页同构，纪律 18）。
-        Expanded(
-          child: Text(
-            '¥ ${Money.formatGrouped(_draft.totalCents)}',
-            textAlign: TextAlign.right,
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
-            ),
+        Text(
+          '¥ ${Money.formatGrouped(_draft.totalCents)}',
+          textAlign: TextAlign.right,
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
           ),
         ),
       ],

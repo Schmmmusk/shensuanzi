@@ -134,7 +134,15 @@ void main() {
     bool fullReturn = false,
     ReturnService? serviceOverride,
     void Function(Object error, StackTrace stack)? onStorageFailure,
+    double textScale = 1.0,
   }) => MaterialApp(
+    // 极窄护栏用：缩放走 `textScaler`（与真实「界面大小 = 超大」同一条路）
+    builder: (BuildContext context, Widget? child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: child!,
+    ),
     // ⚠️ 不能拿 ReturnPage 当 home（唯一路由）：保存成功后会 pop 回上一页，
     // pop 完没有底层 Scaffold ⇒ SnackBar 无处安放、找不到「退货单」（§BI·二·补 6）。
     // 垫一个「单据页」占位，与真实 App 的「详情页 → 退货页」结构一致。
@@ -562,6 +570,28 @@ void main() {
       isNull,
       reason: '退货页在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
     );
+  });
+
+  // ------------------------------------------------------------ 极窄窗口护栏（2026-11-18）
+  //
+  // 与销售页 `F18-4` 同款。退货页只有两块（退货明细 / 退款），但
+  // 「可退 36 瓶 / 已退 0 瓶」这类**一长串不可断行的数**在 108 宽 + 2 倍字号下最容易炸。
+  group('极窄窗口（内容区 108）+ 超大字号', () {
+    testWidgets('整页不许有 RenderFlex 溢出', (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(108, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(page(sell3Boxes(), textScale: 2.0));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull, reason: '108 宽 + 2 倍字号');
+
+      final Finder list = find.byType(Scrollable).first;
+      for (int i = 0; i < 12; i++) {
+        await tester.drag(list, const Offset(0, -260));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: '滚到第 $i 屏时溢出');
+      }
+    });
   });
 }
 

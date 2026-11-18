@@ -566,10 +566,7 @@ class _PairingDialogState extends State<_PairingDialog> {
                 Text(
                   snapshot.staleAddressHint!,
                   key: const Key('host-qr-address-stale'),
-                  style: TextStyle(
-                    height: 1.6,
-                    color: theme.colorScheme.error,
-                  ),
+                  style: TextStyle(height: 1.6, color: theme.colorScheme.error),
                 ),
                 const SizedBox(height: 12),
               ],
@@ -641,6 +638,13 @@ class _PairingDialogState extends State<_PairingDialog> {
                     key: Key('host-address-option-${option.address}'),
                     option: option,
                     selected: option.address == snapshot.address,
+                    // 排在第一个的是 `LocalIp.rank` 的首选（真网卡 + 私有网段）——
+                    // 标「推荐」让用户在多个地址里知道该先试哪个（提案 62 §四）。
+                    recommended:
+                        option.address == snapshot.addressOptions.first.address,
+                    // 虚拟 / 隧道网卡：标一句「手机多半连不上」，省掉用户一个个试
+                    //（同一类坑：`natpierce` 排在 WLAN 之前那次，§AT·六）。
+                    virtualNic: option.looksVirtual,
                     onTap: _switching == null
                         ? () => _switch(option.address)
                         : null,
@@ -978,11 +982,19 @@ class _AddressChoice extends StatelessWidget {
     super.key,
     required this.option,
     required this.selected,
+    this.recommended = false,
+    this.virtualNic = false,
     this.onTap,
   });
 
   final NetAddressOption option;
   final bool selected;
+
+  /// `LocalIp.rank` 的首选（列表第一项）—— 给一个「推荐」标签
+  final bool recommended;
+
+  /// 虚拟 / 隧道网卡 —— 多一句「手机多半连不上」
+  final bool virtualNic;
 
   /// `null` = 暂时不可点（正在重启服务，2026-11-16 第二刀）。
   /// 不用 `IgnorePointer`：`InkWell` 传 `null` 本身就不响应，且能给出灰化的观感。
@@ -1009,7 +1021,53 @@ class _AddressChoice extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(option.label, style: const TextStyle(height: 1.6)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        Flexible(
+                          child: Text(
+                            option.label,
+                            style: const TextStyle(height: 1.6),
+                          ),
+                        ),
+                        if (recommended) ...<Widget>[
+                          const SizedBox(width: 6),
+                          Container(
+                            key: const Key('host-address-recommended'),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '推荐',
+                              style: TextStyle(
+                                fontSize: 11,
+                                height: 1.4,
+                                color: theme.colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (virtualNic)
+                      Text(
+                        '虚拟网卡 —— 手机多半连不上，连不上就换一个',
+                        key: const Key('host-address-virtual-hint'),
+                        style: TextStyle(
+                          height: 1.5,
+                          fontSize: 12,
+                          color: theme.hintColor,
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ],
           ),

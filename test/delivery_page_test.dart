@@ -104,7 +104,15 @@ void main() {
     StockDelta? stockDelta,
     bool mobileShell = false,
     DraftsStore? drafts,
+    double textScale = 1.0,
   }) => MaterialApp(
+    // 极窄护栏用：缩放走 `textScaler`（与真实「界面大小 = 超大」同一条路）
+    builder: (BuildContext context, Widget? child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: child!,
+    ),
     home: Scaffold(
       body: DeliveryPage(
         service: service,
@@ -798,5 +806,27 @@ void main() {
       isFalse,
       reason: 'F2：保存后的残留不是草稿，不许写',
     );
+  });
+
+  // ------------------------------------------------------------ 极窄窗口护栏（2026-11-18）
+  //
+  // 与销售页 `F18-4` 同款。送货页**没有收款区**（不收钱），所以它的行数比销售页少，
+  // 但「标签 + 不可断行数」的形状一样存在（合计、数量、单位价格）。
+  group('极窄窗口（内容区 108）+ 超大字号', () {
+    testWidgets('整页不许有 RenderFlex 溢出', (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(108, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(page(textScale: 2.0));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull, reason: '108 宽 + 2 倍字号');
+
+      final Finder list = find.byType(Scrollable).first;
+      for (int i = 0; i < 12; i++) {
+        await tester.drag(list, const Offset(0, -260));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: '滚到第 $i 屏时溢出');
+      }
+    });
   });
 }

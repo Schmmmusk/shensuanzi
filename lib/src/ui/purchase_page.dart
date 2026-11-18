@@ -1031,10 +1031,7 @@ class _PurchasePageState extends State<PurchasePage> {
                       ),
                       KeyedSubtree(key: _headerKey, child: _headerRow(theme)),
                       const Divider(height: 24),
-                      KeyedSubtree(
-                        key: _linesKey,
-                        child: _linesSection(theme),
-                      ),
+                      KeyedSubtree(key: _linesKey, child: _linesSection(theme)),
                       _totalBar(theme),
                       const Divider(height: 24),
                       KeyedSubtree(
@@ -1244,18 +1241,22 @@ class _PurchasePageState extends State<PurchasePage> {
   /// 合计：**大字 + 右对齐 + 千分位**（用户最关心的数字）
   Widget _totalBar(ThemeData theme) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(
+    // 2026-11-18（极窄护栏）：`Row` + `Expanded` 救不了「金额是不可断行的词」
+    // —— 108 宽 + 2 倍字号下溢出 8.3 px（销售页同款，纪律 18 一次改齐三页）。
+    // 改 `Wrap`：放得下时 spaceBetween 与旧视觉一致（标签靠左、金额贴右），
+    // 放不下就让金额落第二行。
+    child: Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: 2,
       children: <Widget>[
         Text('合计', style: theme.textTheme.titleMedium),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            '¥ ${Money.formatGrouped(_draft.totalCents)}',
-            textAlign: TextAlign.right,
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
-            ),
+        Text(
+          '¥ ${Money.formatGrouped(_draft.totalCents)}',
+          textAlign: TextAlign.right,
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
           ),
         ),
       ],
@@ -1265,9 +1266,14 @@ class _PurchasePageState extends State<PurchasePage> {
   Widget _paymentSection(ThemeData theme) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: <Widget>[
-      Row(
+      // 2026-11-18：`Wrap`（溢出 4.2 px）—— 「本次付款」+「全款」按钮在 108 宽里
+      // 放不下，按钮的固有最小宽不肯缩。放不下就换行。
+      Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        runSpacing: 4,
         children: <Widget>[
-          Expanded(child: Text('本次付款', style: theme.textTheme.titleMedium)),
+          Text('本次付款', style: theme.textTheme.titleMedium),
           TextButton(
             // 没有账户时「全款」只会造出一条解不开的错（账户下拉是空的），
             // 禁用而不是让它点 —— 报错必须「能照做」才能出现。

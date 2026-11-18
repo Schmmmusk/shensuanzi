@@ -81,7 +81,14 @@ void main() {
     }
   });
 
-  Widget page({DraftsStore? drafts}) => MaterialApp(
+  Widget page({DraftsStore? drafts, double textScale = 1.0}) => MaterialApp(
+    // 极窄护栏用：缩放走 `textScaler`（与真实「界面大小 = 超大」同一条路）
+    builder: (BuildContext context, Widget? child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: child!,
+    ),
     home: Scaffold(
       body: PurchasePage(
         service: service,
@@ -660,5 +667,34 @@ void main() {
       isFalse,
       reason: 'F2：保存后的残留不是草稿，不许写',
     );
+  });
+
+  // ------------------------------------------------------------ 极窄窗口护栏（2026-11-18）
+  //
+  // 与销售页 `F18-4` 同款：真机上用户能把窗口拖到内容区只剩 **108** 逻辑宽，
+  // 叠上「界面大小 = 超大」时，一行里「不可压缩的标签 + 不可断行的数」就会溢出。
+  // 销售页那次一次撞出三处；**三页是同构代码**，所以三页都要有这条护栏
+  //（纪律 18：同款模式要 grep 全仓，不是只改报告里那页）。
+  group('极窄窗口（内容区 108）+ 超大字号', () {
+    testWidgets('整页不许有 RenderFlex 溢出', (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(108, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(page(textScale: 2.0));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: '108 宽 + 2 倍字号：任何一处溢出都会在真机上变成红黄条',
+      );
+
+      // 惰性构建的部分要滚到才 layout —— 逐屏检查，别只看首屏
+      final Finder list = find.byType(Scrollable).first;
+      for (int i = 0; i < 12; i++) {
+        await tester.drag(list, const Offset(0, -260));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: '滚到第 $i 屏时溢出');
+      }
+    });
   });
 }

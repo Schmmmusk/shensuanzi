@@ -90,6 +90,25 @@ class AppNavigation {
   /// 时是一列带省略号的窄条 —— 「有总比没有强」的极端兜底，不是设计形态。
   static const double iconOnlyWidth = 60;
 
+  /// 导航列右侧那条**分割线**的粗细（逻辑像素）—— 仅图标态加粗到 2。
+  ///
+  /// ## 为什么加粗（2026-11-18；用户提「窄屏下提高对比度」，实测后改的口径）
+  ///
+  /// 先量了颜色：现在这条线取 `ThemeData.dividerColor` = **#73777F**（等于
+  /// `outline`，不是浅色的 `outlineVariant`），对背景 #FAFAFA 的对比度
+  /// **4.30 : 1** —— 已高于 WCAG 1.4.11 对非文字 UI 的 3:1。**不是「太淡」，是「太细」**：
+  /// 1 逻辑像素，在 100% 缩放 + 1.25 DPI 的机器上正好 1 个设备像素。
+  ///
+  /// 顺带量过「给导航列铺底色」：`surfaceContainerLow` 1.06:1、`High` 1.17:1 ——
+  /// 这套配色下看不出「一列」，加深又会和选中项浅蓝底打架 ⇒ 不做。
+  ///
+  /// ## ⚠️ 只能加粗到这个程度，不能更宽
+  ///
+  /// `VerticalDivider` 的实现是 `SizedBox(width) → Center → Container(width: thickness)`，
+  /// **`width` 不一起放开，`thickness: 2` 会被父级夹回 1 px**。所以调用方
+  /// （`app_shell.dart`）必须把 `width` 与 `thickness` 都设成这个值。
+  static double dividerThickness({required bool iconOnly}) => iconOnly ? 2 : 1;
+
   /// 每一项的高度。按 `docs/ui_principles.md` §二：点击区 ≥ 44，表格行 48 —— 取 48
   static const double itemHeight = 48;
 

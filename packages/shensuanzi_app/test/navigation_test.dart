@@ -264,4 +264,32 @@ void main() {
       }
     });
   });
+
+  // 2026-11-18：用户提「窄屏下分割线提高对比度」。实测结论是**颜色已够、缺的是粗细**
+  //（`dividerColor` = #73777F，对 #FAFAFA 4.30:1，高于 WCAG 非文字 3:1）。
+  // 这里钉住「仅图标态才加粗」，免得哪天顺手改成常态 2 px（那会让宽屏也变粗）。
+  group('分割线粗细（仅图标态加粗）', () {
+    test('仅图标 ⇒ 2；正常 ⇒ 1', () {
+      expect(AppNavigation.dividerThickness(iconOnly: true), 2);
+      expect(AppNavigation.dividerThickness(iconOnly: false), 1);
+    });
+
+    test('仅图标态只会在窄窗口出现（护栏：别把常态也加粗了）', () {
+      final ({double width, bool iconOnly}) narrow = AppNavigation.navLayout(
+        scale: 2.0,
+        availableWidth: 100,
+      );
+      final ({double width, bool iconOnly}) wide = AppNavigation.navLayout(
+        scale: 2.0,
+        availableWidth: 1400,
+      );
+      expect(narrow.iconOnly, isTrue);
+      expect(wide.iconOnly, isFalse);
+      expect(
+        AppNavigation.dividerThickness(iconOnly: wide.iconOnly),
+        1,
+        reason: '宽屏仍是 1 px —— 加粗只为「仅图标时那一条线太细看不出列边界」',
+      );
+    });
+  });
 }

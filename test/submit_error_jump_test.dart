@@ -163,8 +163,10 @@ void main() {
         final String source = _source(entry.key);
 
         expect(
+          // 允许「`onJump: _jumpTo,`」或「`onJump: _jumpTo)`」两种收尾：
+          // `dart format` 会把短调用收成一行，尾逗号随之消失（2026-11-18 踩到）。
           RegExp(r'SubmitErrorSummary\(\s*items:\s*_submitErrorItems\(\),'
-                  r'\s*onJump:\s*_jumpTo,')
+                  r'\s*onJump:\s*_jumpTo[,)]')
               .hasMatch(source),
           isTrue,
           reason: '摘要卡必须接上 items + onJump —— 否则按钮不出现或点了没反应',

@@ -21463,3 +21463,94 @@ application-local installation location.」** —— 随包那份运行库不随
 - **备份堆积（3.37 GiB）** 不处理：30 天策略只管自动备份，手动备份不会自动清。
   要做也得单独立项，且**不能自动删**（恢复类操作不可逆）。
 - 未做「按需体检其他份」的批量按钮（甲里没有这个概念，用户逐份点即可）。
+
+### 一百零五、2026-11-18 **首启 14 秒结案 + 三页极窄护栏 + 分割线加粗 + 62 §四 两项**
+
+用户给了冷启日志，并同意「按建议顺序」做三件：
+极窄护栏 → 分割线 → 提案 62 §四。
+
+#### ① 首启 14 秒：**结案（不可复现，当前 631 ms）**
+
+```
+[2026-11-18T18:44:14.007333] [启动] 启动完成 到数据就绪 preMain=560ms elapsed=71ms db=498.2MB
+```
+
+| 段 | 数值 | 含义 |
+|---|---|---|
+| `preMain` | **560 ms** | `CreateProcess` → `main()`（加载 34 MB exe/DLL + 引擎初始化） |
+| `elapsed` | **71 ms** | `main()` → 数据就绪（含开库 42–85 ms 量级） |
+| **合计** | **631 ms** | 用户双击到数据就绪 |
+
+⇒ 同一台 VM、同一份 498 MB 库，**14 秒已经不能复现**。三次证据（11-11 进程内 43–87 ms、
+今天 `preMain` 560 ms）把「Dart 侧」「开库」「引擎初始化」逐一排除。
+**结论：那是一次性事件**（首次运行：杀软首扫 34 MB 未签名文件树 + 冷盘），不是稳态缺陷。
+⇒ **不改任何代码**；`preMain` 日志常驻，下次若再出现「很慢」，先看这一行。
+
+#### ② 三页极窄护栏（采购 / 送货 / 退货）—— 又抓出 4 处溢出
+
+按销售页 `F18-4` 同款加了三页用例（108×900 + 2× 字号 + 滚 12 屏），
+**先跑先红**，一次抓出四行：
+
+| 页 | 位置 | 溢出 | 修法 |
+|---|---|---|---|
+| 采购 | `_totalBar`（合计 + 金额） | 8.3 px | `Wrap(spaceBetween)` |
+| 采购 | 「本次付款 + 全款」 | 4.2 px | `Wrap(spaceBetween)` |
+| 送货 | `_totalBar` | 8.3 px | `Wrap(spaceBetween)` |
+| 退货 | 退款账户 `DropdownButton` | **20 px** | `LayoutBuilder`：窄了上下叠（`isNarrowOf(base: 300)`），宽了仍并排 |
+
+**顺带更正一句错注释**（纪律 17）：送货页 `_totalBar` 上原写「Expanded + 右对齐 ⇒
+放不下自动换行」—— **错的**：金额是不可断行的词，`Expanded` 只会把它压到溢出。
+
+**同构机械保证也同步改了**（`page_isomorphism_test` 的 #52 那条）：
+它原来钉「三页必须 `Expanded(`」，而 `Expanded` 正是这轮要换掉的东西。
+改成「`Wrap(` 或 `Expanded(` 都接受，`Spacer(` 一律拒绝」，并写明「这条 pin 的是当前实现、
+换布局时三页一起改」。**灵敏度**：把采购页改回无弹性的 `Row` ⇒ 该 pin 红。
+
+**另外一个「机械保证被格式打败」的坑**：`dart format` 把退货页的
+`SubmitErrorSummary(\n  items: …, onJump: …,\n)` 收成了一行，尾逗号随之消失；
+而 `submit_error_jump_test` 的正则写死了 `onJump://s*_jumpTo,`（要求尾逗号）
+⇒ **四页护栏里退货页那条变红**。修法：正则收尾放宽成 `[,)]`（逗号或右括号）。
+教训：**机械保证如果钉的是「格式细节」而不是「结构特征」，格式化工具随时能把它打红**。
+
+#### ③ 窄态导航分割线：加粗（不是提亮）
+
+实测结论不变：`dividerColor` = **#73777F**，对 #FAFAFA **4.30:1**（已高于 WCAG 非文字 3:1）
+⇒ **不是太淡，是太细**（1 逻辑像素）。
+新增 `AppNavigation.dividerThickness({required bool iconOnly}) => iconOnly ? 2 : 1`，
+`app_shell` 把 `width` 与 `thickness` **一起**设成它
+（⚠️ 只改 `thickness` 会被 `SizedBox(width)` 夹回 1 px —— 判据写在函数注释里）。
+
+测试：`navigation_test` +2（两档取值；宽屏仍 1，防「顺手把常态也加粗」）。
+
+#### ④ 提案 62 §四：地址列表标「推荐」+ 虚拟网卡提示
+
+| 层 | 改动 |
+|---|---|
+| host | `LocalIp.isVirtualName(name)`（复用 `virtualMarkers`，大小写不敏感）+ `NetAddressOption.looksVirtual` |
+| ui | 地址列表首项加「推荐」标签（`host-address-recommended`）；虚拟网卡那行加「虚拟网卡 —— 手机多半连不上，连不上就换一个」（`host-address-virtual-hint`） |
+
+⚠️ **与提案的偏差**：62 §四 原写「**不改** `local_ip.dart`」—— 这次加了一个**纯判定**
+（`isVirtualName` / `looksVirtual`），**选择与排序逻辑一行没动**（仍由 `rank` 决定）。
+加它的理由：提示必须与排序用同一张黑名单，否则两处名单会漂。
+
+测试：host `local_ip_name_test` **+3**（6 个虚拟/隧道名认得出；4 个真网卡不误判；
+`looksVirtual` 同源）；root `host_service_section_test` **+1**（推荐只出现在首项、
+虚拟提示只挂在 WSL 那行）。
+**灵敏度**：把 `recommended` / `virtualNic` 都置 false ⇒ 该用例红（0 个 `host-address-recommended`）。
+
+#### ⑤ 门禁（本机亲跑）
+
+| 门禁 | 结果 |
+|---|---|
+| `flutter analyze` | **0 issues** |
+| app `dart test` | **543 / 543**（+2） |
+| host `dart test` | **245**（1 条按平台跳过；+3） |
+| root `flutter test` | **601**（1 条按平台跳过；+4） |
+
+**反向灵敏度（本轮共 4 条）**：送货 `Wrap`→`Row` ⇒ 284 px 红；退货去掉断点 ⇒ 20 px 红；
+同构 pin 退回无弹性布局 ⇒ 红；推荐/虚拟提示置 false ⇒ 红。均已回滚。
+
+#### ⑥ 仍未做
+
+- 备份堆积（3.37 GiB）：用户仍定「先只改对话框」，且 30 天策略只管自动备份。
+- 冷库页面成本（overview 3189 ms 等）：已量到、无裁定。

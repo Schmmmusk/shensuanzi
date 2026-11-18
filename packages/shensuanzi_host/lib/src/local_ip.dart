@@ -31,6 +31,13 @@ class NetAddressOption {
   /// 给人看的一行（配对对话框里列出来，让用户认出哪个是自己家的 WiFi）
   String get label => '$address（$name）';
 
+  /// 这块网卡**看起来是虚拟 / 隧道**（按名字判断，黑名单见 [LocalIp.virtualMarkers]）。
+  ///
+  /// 用途：设置页的地址列表给这一类加一句「手机多半连不上，连不上就换一个」
+  ///（提案 62 §四，2026-11-18）。它只是**提示**，不影响排序 —— 排序仍由
+  /// [LocalIp.rank] 的正向规则决定（真网卡优先），这里不重复一遍判断。
+  bool get looksVirtual => LocalIp.isVirtualName(name);
+
   @override
   String toString() => label;
 }
@@ -100,6 +107,17 @@ class LocalIp {
   /// ⚠️ **这是黑名单，天生补不全**（2026-10-25 D 批）：用户装什么穿透工具
   /// 我们就得知道什么名字。所以真正的保障是 [realMarkers] 的正向规则，
   /// 这里只负责把「已知的坑」垫到最低优先级。
+  /// 名字是不是虚拟 / 隧道网卡（大小写不敏感的子串匹配）。
+  ///
+  /// ⚠️ 与 [virtualMarkers] 同源 —— 加名字只改那张表，别再抄一份。
+  static bool isVirtualName(String name) {
+    final String lower = name.toLowerCase();
+    for (final String marker in virtualMarkers) {
+      if (lower.contains(marker)) return true;
+    }
+    return false;
+  }
+
   static const List<String> virtualMarkers = <String>[
     'virtual',
     'vmware',

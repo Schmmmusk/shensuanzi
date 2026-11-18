@@ -255,6 +255,70 @@ void main() {
     await tester.runAsync(() => multi.stop());
   });
 
+  // 2026-11-18（提案 62 §四）：地址列表要标「推荐」+ 虚拟网卡提示。
+  //
+  // 判据来自实测：`LocalIp.rank` 把真网卡 + 私有网段排在前面 ⇒ 第一项就是首选；
+  // 而 `vEthernet (WSL)` / VMware 这类地址「看着正常、手机连不上」，
+  // 用户在一个个试的时候需要一句解释（同类坑：`natpierce` 排在 WLAN 之前那次）。
+  testWidgets('地址列表：首项标「推荐」，虚拟网卡带一句「手机多半连不上」', (WidgetTester tester) async {
+    final HostServiceController multi = HostServiceController(
+      db: db,
+      identities: HostIdentityStore.inMemory(),
+      ports: const PortRange(start: 17980, end: 17984),
+      detectLocalIp: () async => '10.102.43.94',
+      resolveBindAddress: (String _) => InternetAddress.loopbackIPv4,
+      detectAddresses: () async => const <NetAddressOption>[
+        NetAddressOption(name: 'WLAN', address: '10.102.43.94'),
+        NetAddressOption(name: 'vEthernet (WSL)', address: '172.24.16.1'),
+      ],
+    );
+    addTearDown(multi.stop);
+    await tester.runAsync(() => multi.start());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: HostServicePanel(controller: multi),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-service-show-qr')));
+    await tester.pumpAndSettle();
+
+    Finder inDialog(Finder f) =>
+        find.descendant(of: find.byType(AlertDialog), matching: f);
+
+    expect(
+      inDialog(find.byKey(const Key('host-address-recommended'))),
+      findsOneWidget,
+      reason: '只给首选标「推荐」，不然等于没推荐',
+    );
+    // 「推荐」必须落在 WLAN 那一行（不是 WSL 那行）
+    expect(
+      find.ancestor(
+        of: find.text('推荐'),
+        matching: find.byKey(const Key('host-address-option-10.102.43.94')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      inDialog(find.byKey(const Key('host-address-virtual-hint'))),
+      findsOneWidget,
+      reason: '虚拟网卡要解释「为什么连不上」，否则用户只会一个个瞎试',
+    );
+    expect(
+      find.ancestor(
+        of: find.byKey(const Key('host-address-virtual-hint')),
+        matching: find.byKey(const Key('host-address-option-172.24.16.1')),
+      ),
+      findsOneWidget,
+      reason: '提示只能挂在虚拟那块网卡上',
+    );
+  });
+
   testWidgets('提案 64：换了 WiFi ⇒ 面板上就说「地址变了」，二维码对话框也带同一句', (
     WidgetTester tester,
   ) async {
@@ -293,11 +357,7 @@ void main() {
     final Finder staleLine = find.byKey(
       const Key('host-service-address-stale'),
     );
-    expect(
-      staleLine,
-      findsOneWidget,
-      reason: '这是「手机现在根本连不上」的原因，必须主动说出来',
-    );
+    expect(staleLine, findsOneWidget, reason: '这是「手机现在根本连不上」的原因，必须主动说出来');
     final String hint = tester.widget<Text>(staleLine).data!;
     expect(hint, contains('192.168.1.7'), reason: '要说清服务还听在哪个已经不存在的地址');
     expect(hint, contains('192.168.0.20'), reason: '要给出现在该用哪个');

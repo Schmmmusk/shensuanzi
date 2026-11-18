@@ -14,6 +14,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
+import 'scaled.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'submit_error_summary.dart';
@@ -415,10 +416,7 @@ class _ReturnPageState extends State<ReturnPage> {
               const SizedBox(height: 16),
               // §CV·八十 批 1 ③：由纯 Text 换成统一摘要（带条数）
               // 提案 60（乙）：可跳的区块只有两块（明细 / 退款）
-              SubmitErrorSummary(
-                items: _submitErrorItems(),
-                onJump: _jumpTo,
-              ),
+              SubmitErrorSummary(items: _submitErrorItems(), onJump: _jumpTo),
               KeyedSubtree(
                 key: _linesKey,
                 child: Column(
@@ -670,64 +668,79 @@ class _ReturnPageState extends State<ReturnPage> {
             ),
           )
         else
-          Row(
-            children: <Widget>[
-              Expanded(
-                flex: 3,
-                child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: '退款账户',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
-                  child: DropdownButton<Account>(
-                    value: _refundAccount,
-                    isDense: true,
-                    isExpanded: true,
-                    underline: const SizedBox.shrink(),
-                    hint: const Text('不退钱（挂账冲减）'),
-                    items: <DropdownMenuItem<Account>>[
-                      for (final Account account in accounts)
-                        DropdownMenuItem<Account>(
-                          value: account,
-                          child: Text(
-                            account.name,
-                            style: const TextStyle(height: 1.6),
-                          ),
+          LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              // 2026-11-18（极窄护栏）：`Row[Expanded(3), Expanded(2)]` 在 108 宽 +
+              // 2 倍字号下，`DropdownButton` 自己的内部 Row 只剩 4 px ⇒ 溢出 20 px
+              //（`return_page.dart:683`）。窄了就上下叠，宽了仍并排。
+              // 断点 300 是「账户下拉 + 金额输入各占一行也放得下」的经验值；
+              // `isNarrowOf` 会按字号放大 ⇒ 2 倍字号时阈值自动变 600。
+              final Widget accountField = InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: '退款账户',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                ),
+                child: DropdownButton<Account>(
+                  value: _refundAccount,
+                  isDense: true,
+                  isExpanded: true,
+                  underline: const SizedBox.shrink(),
+                  hint: const Text('不退钱（挂账冲减）'),
+                  items: <DropdownMenuItem<Account>>[
+                    for (final Account account in accounts)
+                      DropdownMenuItem<Account>(
+                        value: account,
+                        child: Text(
+                          account.name,
+                          style: const TextStyle(height: 1.6),
                         ),
-                    ],
-                    // 保存期间锁输入（#N-i 裁定甲）：DropdownButton 没有
-                    // `enabled` 参数，同 purchase_page:1615 的写法用
-                    // `onChanged: null` 禁用。
-                    onChanged: _saving
-                        ? null
-                        : (Account? account) =>
-                              setState(() => _refundAccount = account),
-                  ),
+                      ),
+                  ],
+                  // 保存期间锁输入（#N-i 裁定甲）：DropdownButton 没有
+                  // `enabled` 参数，同 purchase_page:1615 的写法用
+                  // `onChanged: null` 禁用。
+                  onChanged: _saving
+                      ? null
+                      : (Account? account) =>
+                            setState(() => _refundAccount = account),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                flex: 2,
-                child: TextField(
-                  key: const Key('return-refund-amount'),
-                  controller: _refundAmount,
-                  enabled: !_saving,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  onChanged: (String text) => setState(
-                    () => _refundAmountTouched = text.trim().isNotEmpty,
-                  ),
-                  decoration: const InputDecoration(
-                    labelText: '退款金额（元）',
-                    helperText: '不填 = 挂账；自动按退货金额合计填入',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
+              );
+              final Widget amountField = TextField(
+                key: const Key('return-refund-amount'),
+                controller: _refundAmount,
+                enabled: !_saving,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
                 ),
-              ),
-            ],
+                onChanged: (String text) => setState(
+                  () => _refundAmountTouched = text.trim().isNotEmpty,
+                ),
+                decoration: const InputDecoration(
+                  labelText: '退款金额（元）',
+                  helperText: '不填 = 挂账；自动按退货金额合计填入',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                ),
+              );
+              if (isNarrowOf(context, constraints.maxWidth, base: 300)) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    accountField,
+                    const SizedBox(height: 8),
+                    amountField,
+                  ],
+                );
+              }
+              return Row(
+                children: <Widget>[
+                  Expanded(flex: 3, child: accountField),
+                  const SizedBox(width: 8),
+                  Expanded(flex: 2, child: amountField),
+                ],
+              );
+            },
           ),
       ],
     );
