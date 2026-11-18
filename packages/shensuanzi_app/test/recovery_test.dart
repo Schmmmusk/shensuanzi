@@ -187,6 +187,74 @@ void main() {
     });
   });
 
+  // ============================================================ 清单先行（2026-11-18）
+  //
+  // 用户裁定甲：先列目录、再按需体检。
+  // 起因是 7 份 498 MB 的备份在那台虚拟机上要 17 分钟才出全（`quick_check`
+  // 要整库逐页读，实测 150 s/份）。
+  group('清单先行（不打开库）', () {
+    test('全部列出来，按时间倒序，state 一律 unchecked', () {
+      makeDb(databasePath, docs: 2);
+      final String older = makeBackup(time: DateTime(2026, 11, 15, 9));
+      final String newer = makeBackup(time: DateTime(2026, 11, 17, 9), manual: true);
+
+      final List<RecoveryCandidate> listed = listRecoveryCandidates(
+        dataDirectory: dataDir.path,
+        backupDirectory: backupDir.path,
+      );
+
+      expect(listed, hasLength(2));
+      expect(listed.first.path, newer, reason: '时间倒序：最近那份排最前');
+      expect(listed.last.path, older);
+      for (final RecoveryCandidate c in listed) {
+        expect(c.state, RecoveryState.unchecked);
+        expect(c.usable, isFalse, reason: '未体检不许被当成「可用」');
+        expect(c.bytes, File(c.path).lengthSync(), reason: '大小要能直接显示');
+      }
+    });
+
+    test('**不打开**库：不是数据库的文件照样列出（体检才会说它坏）', () async {
+      makeDb(databasePath, docs: 1);
+      // 名字符合备份规则，内容是垃圾 —— 体检必然 unreadable
+      final String garbage = p.join(
+        backupDir.path,
+        BackupFileName(
+          manual: true,
+          schemaVersion: 6,
+          time: DateTime(2026, 11, 16, 10),
+        ).fileName,
+      );
+      File(garbage).writeAsBytesSync(<int>[1, 2, 3, 4, 5, 6, 7, 8]);
+
+      final List<RecoveryCandidate> listed = listRecoveryCandidates(
+        dataDirectory: dataDir.path,
+        backupDirectory: backupDir.path,
+      );
+      expect(
+        listed.single.state,
+        RecoveryState.unchecked,
+        reason: '清单阶段若去打开它，就会提前变成 unreadable —— 那正是这轮要去掉的等待',
+      );
+
+      // 对照：真体检时它确实被判为不可读（说明上面不是「假通过」）
+      final List<RecoveryCandidate> scanned = await scan();
+      expect(scanned.single.state, RecoveryState.unreadable);
+    });
+
+    test('清单里也能看见 `.before-vN`（来源标对）', () {
+      makeDb(databasePath, docs: 1);
+      File(p.join(dataDir.path, 'shensuanzi.db.before-v7'))
+          .writeAsBytesSync(File(databasePath).readAsBytesSync());
+
+      final List<RecoveryCandidate> listed = listRecoveryCandidates(
+        dataDirectory: dataDir.path,
+        backupDirectory: backupDir.path,
+      );
+      expect(listed.single.source, RecoverySource.beforeMigration);
+      expect(listed.single.state, RecoveryState.unchecked);
+    });
+  });
+
   // ============================================================ 接回
   group('接回', () {
     test('接回后：新库能开、数据在、旧库改名留存**且仍可读**', () async {

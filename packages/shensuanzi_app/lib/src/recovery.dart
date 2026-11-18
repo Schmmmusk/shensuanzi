@@ -45,6 +45,15 @@ enum RecoverySource {
 
 /// 体检结论。
 enum RecoveryState {
+  /// 只从目录里读到了文件名 / 大小 / 时间，**还没体检**（2026-11-18 新增）。
+  ///
+  /// 为什么要有它：体检的成本几乎全在 `PRAGMA quick_check`（整库逐页读）。
+  /// 真机实测：498 MB 的备份在本机 NVMe 上 **0.8 s/份**，在那台虚拟机上
+  /// **约 150 s/份** ⇒ 7 份要 17 分钟，而用户真正要的只是「最近那份」。
+  /// 所以清单先出（列目录 < 0.1 ms），**点哪份才体检哪份**。
+  /// 安全性不降：接回前 `_restoreSync` 里还有一次完整体检（`// ① 再体检一次`）。
+  unchecked,
+
   /// 能打开、`quick_check` 通过、版本不高于当前 —— **可以接回**
   ok,
 
@@ -100,6 +109,55 @@ class RecoveryCandidate {
 
   bool get usable => state == RecoveryState.ok;
 }
+/// 只**列目录**、不打开任何库 —— 「清单先行」（2026-11-18 用户裁定甲）。
+///
+/// | 做法 | 498 MB × 7 份的耗时 |
+/// |---|---|
+/// | 现在的 `scanRecoveryCandidates`（逐份 `quick_check`） | 本机 0.8 s/份；真机 VM 约 150 s/份 ⇒ **17 分钟** |
+/// | 本函数（只 `listSync` + `lengthSync`） | **毫秒级** |
+///
+/// 信任边界不变：接回时 [restoreFromCandidate] 内部会再体检一次，坏文件照样接不进去。
+/// 返回的候选 `state` 一律是 [RecoveryState.unchecked]；读不到长度的标 unreadable（文件已被删）。
+List<RecoveryCandidate> listRecoveryCandidates({
+  required String dataDirectory,
+  required String backupDirectory,
+}) {
+  final List<RecoveryCandidate> out = <RecoveryCandidate>[];
+  for (final _CandidateRef ref in _collectCandidateRefs(
+    dataDirectory: dataDirectory,
+    backupDirectory: backupDirectory,
+  )) {
+    int bytes;
+    try {
+      bytes = File(ref.path).lengthSync();
+    } on FileSystemException catch (error) {
+      out.add(
+        RecoveryCandidate(
+          path: ref.path,
+          fileName: ref.fileName,
+          source: ref.source,
+          state: RecoveryState.unreadable,
+          bytes: 0,
+          time: ref.time,
+          note: '读不到这个文件（${error.osError?.message ?? '可能已被删除'}）',
+        ),
+      );
+      continue;
+    }
+    out.add(
+      RecoveryCandidate(
+        path: ref.path,
+        fileName: ref.fileName,
+        source: ref.source,
+        state: RecoveryState.unchecked,
+        bytes: bytes,
+        time: ref.time,
+      ),
+    );
+  }
+  return out;
+}
+
 
 /// 体检：把 [dataDirectory] 与 [backupDirectory] 里所有能当退路的文件列出来。
 ///

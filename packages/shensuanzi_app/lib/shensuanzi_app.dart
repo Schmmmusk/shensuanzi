@@ -117,6 +117,7 @@ export 'src/recovery.dart'
         RecoveryState,
         archiveBrokenDatabase,
         brokenStamp,
+        listRecoveryCandidates,
         restoreFromCandidate,
         scanRecoveryCandidates;
 export 'src/backup.dart'

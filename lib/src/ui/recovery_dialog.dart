@@ -73,11 +73,11 @@ class _RecoveryDialog extends StatefulWidget {
 }
 
 class _RecoveryDialogState extends State<_RecoveryDialog> {
-  /// 已经体检完的候选（流式追加）
+  /// 候选清单（**清单先行**：只有文件名 / 大小 / 时间，还没体检）
   final List<RecoveryCandidate> _candidates = <RecoveryCandidate>[];
 
-  /// 还在检查（流没结束）
-  bool _scanning = true;
+  /// 还在列目录（只有一瞬；列完就 false）
+  bool _listing = true;
 
   /// 正在接回（禁用所有按钮，避免连点）
   bool _restoring = false;
@@ -88,35 +88,43 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
   @override
   void initState() {
     super.initState();
-    _scan();
+    _list();
   }
 
-  Future<void> _scan() async {
+  /// 列目录（**不体检**）—— 见 `listRecoveryCandidates` 的说明。
+  ///
+  /// ⚠️ 2026-11-18 用户裁定甲：原来是「逐份 `quick_check` 完再显示」，
+  /// 7 份 498 MB 的备份在那台虚拟机上要 17 分钟才出全。现在清单立刻出，
+  /// **点哪份才体检哪份**；接回前 `_restoreSync` 里还会完整体检一次，
+  /// 所以坏文件照样接不进去（安全性没降，只是把等待挪到用户已经决定之后）。
+  Future<void> _list() async {
     try {
-      await for (final RecoveryCandidate candidate in scanRecoveryCandidates(
+      final List<RecoveryCandidate> listed = listRecoveryCandidates(
         dataDirectory: widget.dataDirectory,
         backupDirectory: widget.backupDirectory,
-        currentSchemaVersion: widget.currentSchemaVersion,
-      )) {
-        if (!mounted) return;
-        setState(() => _candidates.add(candidate));
-      }
+      );
+      if (!mounted) return;
+      setState(() {
+        _candidates
+          ..clear()
+          ..addAll(listed);
+      });
     } catch (error, stack) {
-      // 体检本身失败（比如备份目录读不了）—— 说清是哪一步，别静默。
+      // 列目录失败（备份目录读不了）—— 说清是哪一步，别静默。
       //
-      // N-f 站点 4（2026-11-05 裁定甲）：原来这里拼 `$error`（英文 + 绝对路径）。
-      // 现在原文进日志、界面给人话；**没传 log 时不提日志**（裁定 ③）。
-      widget.log?.crash(error, stack, label: '数据体检失败');
+      // N-f 站点 4（2026-11-05 裁定甲）：原文进日志、界面给人话；
+      // **没传 log 时不提日志**（裁定 ③）。
+      widget.log?.crash(error, stack, label: '列出备份失败');
       if (!mounted) return;
       setState(() {
         _error = unexpectedFailureAdvice(
           error,
           logged: widget.log != null,
-          lead: '检查备份时出错。',
+          lead: '找备份时出错。',
         );
       });
     } finally {
-      if (mounted) setState(() => _scanning = false);
+      if (mounted) setState(() => _listing = false);
     }
   }
 
@@ -220,7 +228,7 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
             ],
             Flexible(child: _buildList(theme, usable)),
             const SizedBox(height: 8),
-            if (_scanning)
+            if (_listing)
               Row(
                 children: <Widget>[
                   const SizedBox(
@@ -230,9 +238,29 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    '正在检查…（已查 ${_candidates.length} 份）',
-                    key: const Key('recovery-scanning'),
+                    '正在找备份…',
+                    key: const Key('recovery-listing'),
                     style: theme.textTheme.bodySmall,
+                  ),
+                ],
+              )
+            else if (_restoring)
+              Row(
+                children: <Widget>[
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      // 真机上这两步合计可能要几分钟（体检整库 + 复制整库），
+                      // 先说清「在做什么、别关软件」，比一个转圈有用。
+                      '正在体检并接回这份备份…（可能要几分钟，先别关软件）',
+                      key: const Key('recovery-restoring'),
+                      style: theme.textTheme.bodySmall,
+                    ),
                   ),
                 ],
               )
@@ -257,7 +285,7 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
 
   Widget _buildList(ThemeData theme, List<RecoveryCandidate> usable) {
     if (_candidates.isEmpty) {
-      if (_scanning) {
+      if (_listing) {
         return const SizedBox(height: 80);
       }
       return Padding(
@@ -285,7 +313,10 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
   }
 
   Widget _row(ThemeData theme, RecoveryCandidate candidate) {
-    final bool canUse = candidate.usable && !_restoring;
+    // 未体检的也能点：点了先体检这一份、通过才接回（2026-11-18 裁定甲）。
+    final bool canUse =
+        (candidate.usable || candidate.state == RecoveryState.unchecked) &&
+        !_restoring;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -370,6 +401,11 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
 
   /// 「1234 张单据，最后一单 2026-10-27」—— 用户判断选哪份靠这一行
   String _describeContent(RecoveryCandidate candidate) {
+    if (candidate.state == RecoveryState.unchecked) {
+      // ⚠️ 不能说「读不出里面的内容」—— 那是「检查过、读不出」的结论，
+      // 这两件事对用户的含义完全相反（前者是坏文件，后者是还没看）。
+      return '还没检查 —— 点「用这一份」会先体检这一份，通过才接回';
+    }
     final int? count = candidate.documentCount;
     if (count == null) return '读不出里面的内容（可能不是本软件的数据文件）';
     if (count == 0) return '里面没有单据（空账）';
@@ -381,9 +417,14 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
 
   /// 二次确认里那句话（要能让用户一眼认出「我选的是哪一份」）
   String _describe(RecoveryCandidate candidate) {
+    // ⚠️ 未体检时**不要**把「还没检查」拼进来：用户已经点了「用这一份」，
+    // 再说一遍「还没检查」像是没响应。体检就在确认之后、复制之前（`_restoreSync`）。
+    final String content = candidate.state == RecoveryState.unchecked
+        ? ''
+        : '，${_describeContent(candidate)}';
     return '${formatRecoveryTime(candidate.time)} 的那份'
-        '（${_sourceLabel(candidate.source)}，${formatRecoverySize(candidate.bytes)}，'
-        '${_describeContent(candidate)}）';
+        '（${_sourceLabel(candidate.source)}，${formatRecoverySize(candidate.bytes)}'
+        '$content）';
   }
 
   String _sourceLabel(RecoverySource source) => switch (source) {
@@ -395,6 +436,13 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
   String _summary(List<RecoveryCandidate> usable) {
     final int total = _candidates.length;
     if (total == 0) return '';
+    final int unchecked = _candidates
+        .where((RecoveryCandidate c) => c.state == RecoveryState.unchecked)
+        .length;
+    if (unchecked > 0) {
+      // 清单先行：没体检是**常态**，不是「不能用」。
+      return '共 $total 份（$unchecked 份还没检查）。点哪一份就先体检哪一份。';
+    }
     if (usable.isEmpty) {
       return '共 $total 份，但都不能用。';
     }

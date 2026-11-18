@@ -387,10 +387,14 @@ void main() {
     }
 
     expect(find.text('数据体检与恢复'), findsOneWidget);
+    // ⚠️ 断言改过（2026-11-18 用户裁定甲「清单先行，点谁查谁」）：
+    // 原来这里断言「1 张单据」—— 那要求清单阶段就体检完；而 7 份 498 MB
+    // 在那台虚拟机上要 17 分钟。现在清单只给来源 / 时间 / 大小，
+    // **单据数要等点了才体检出来**，所以改钉「未检查」这句 + 来源。
     expect(
-      find.textContaining('1 张单据'),
-      findsOneWidget,
-      reason: '要能看出这份里有多少东西 —— 用户靠这一行判断选哪份',
+      find.textContaining('还没检查'),
+      findsWidgets, // 行内一句 + 汇总一句，都是同一件事，不锁条数
+      reason: '清单先行：清单阶段不体检，要如实说「还没检查」而不是假装知道内容',
     );
     expect(find.textContaining('自动备份'), findsWidgets);
 
