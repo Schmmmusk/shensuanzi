@@ -253,8 +253,7 @@ void main() {
       }
     });
 
-    test('返回拦截（#51）：三页同款 —— 手机确认放弃退出、桌面吞掉系统返回', () {
-      // 三页是逐字复制的（M09 的教训：只改 sale 漏了 delivery/delivery 漏了
+    test('返回拦截（#51）：三页同款 —— 手机确认放弃退出、桌面吞掉系统返回', () {      // 三页是逐字复制的（M09 的教训：只改 sale 漏了 delivery/delivery 漏了
       // purchase）⇒ 返回拦截的三个特征串必须**三页都在**。改法若有意变化，
       // 三页同步改（本测试继续过）；只改一页 ⇒ 这里红。
       const List<String> pins = <String>[
@@ -279,5 +278,80 @@ void main() {
         }
       }
     });
+
+  // ------------------------------------------------------------ 提交错误摘要（2026-11-19）
+  //
+  // 来源：2026-11-17 提案 60 给**四页**加了「校验失败 → 点一下跳到出错字段」。
+  // 四页各自接线（`SubmitErrorSummary` + `_submitErrorItems()` + `_jumpTo`），
+  // 漏一页的表现是**点了没反应**（不报错、不红字）—— 比崩了更难发现。
+  group('提交错误摘要（四页）', () {
+    const List<String> pages = <String>[
+      'sale_page',
+      'purchase_page',
+      'delivery_page',
+      'return_page',
+    ];
+
+    test('四页都接了：摘要控件 / 生成器 / 跳转回调 / 跳转实现', () {
+      for (final String page in pages) {
+        final String source = normalize(pageSource(page));
+        for (final String pin in <String>[
+          'SubmitErrorSummary(',
+          '_submitErrorItems()',
+          'onJump: _jumpTo',
+          'Future<void> _jumpTo(SubmitSection section)',
+        ]) {
+          expect(
+            source,
+            contains(pin),
+            reason:
+                '$page 缺「$pin」—— 那一页的错误摘要点上去不会跳'
+                '（静默失效：不报错、不红字，只有用户点不动）',
+          );
+        }
+      }
+    });
+
+    test('报出来的每一段，都必须在**同一页**的 `_jumpTo` 里被处理', () {
+      // 判据比「有没有 onJump」更近一步：**报的段 ⊆ 能跳的段**。
+      // 少一个 case 的表现同样是「点了没反应」，而它不会让任何 UI 测试红。
+      final RegExp sectionRef = RegExp(r'SubmitSection\.(\w+)');
+      for (final String page in pages) {
+        final String source = pageSource(page);
+        final String? produced = blockOf(
+          source,
+          'List<SubmitErrorItem> _submitErrorItems()',
+        );
+        final String? handled = blockOf(
+          source,
+          'Future<void> _jumpTo(SubmitSection section)',
+        );
+        expect(produced, isNotNull, reason: '前提：$page 找不到 `_submitErrorItems()`');
+        expect(handled, isNotNull, reason: '前提：$page 找不到 `_jumpTo(...)`');
+        if (produced == null || handled == null) continue;
+
+        final Set<String> made = sectionRef
+            .allMatches(produced)
+            .map((RegExpMatch m) => m.group(1)!)
+            .toSet();
+        final Set<String> canJump = sectionRef
+            .allMatches(handled)
+            .map((RegExpMatch m) => m.group(1)!)
+            .toSet();
+        expect(
+          made,
+          isNotEmpty,
+          reason: '$page 的 `_submitErrorItems()` 里找不到任何 `SubmitSection.` —— 钳子失效',
+        );
+        expect(
+          made.difference(canJump),
+          isEmpty,
+          reason:
+              '$page 报出了 ${made.difference(canJump).join(' / ')} 段，'
+              '但 `_jumpTo` 里没有对应分支 —— 用户点上去不会跳',
+        );
+      }
+    });
+  });
   });
 }

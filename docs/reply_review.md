@@ -21852,3 +21852,106 @@ application-local installation location.」** —— 随包那份运行库不随
 | `flutter analyze` | **0 issues** |
 | root `flutter test` | **613**（1 条按平台跳过；+6） |
 | app / host / core | 本轮未改，未复跑 |
+
+### 一百一十、2026-11-19 **清未阻塞项：冷读工具（Q4）+ 设置页刷新 + #45 两条 pin + #55 取证；文档漂移修正**
+
+> 用户：「同意按你建议的下一步做，然后清理掉剩下没有阻塞的事项。文档漂移的地方可以直接改」
+> ⇒ 做 §七 冷缓存测量（Q4）、#40 余项、#45、#55，并修 `navigation.dart` 的过时注释。
+
+#### ① 文档漂移：`navigation.dart` 说「没有仅图标渲染」
+
+原文（第 88–90 行）说 `_NavColumn` **没有**「仅图标」的渲染实现、真退到 60 是一列省略号。
+但 `app_shell.dart:850` 早有 `if (iconOnly)` 分支（居中图标 + `Tooltip`）。
+按纪律 17 改成实话，并写清「2026-11-14 起成立、此前那句作废」。全仓再 grep 无同款残留。
+
+#### ② Q4 冷读测量：`perf_bench.py --cold` 已落地
+
+新模式：每条查询**只跑一次**，逐条记 **耗时** + **逻辑读字节**（Windows `GetProcessIoCounters`）
++ 估算页数；跑完印「怎么判断这批耗时是不是冷的」（与热态基线比，差一个数量级才算冷）。
+
+⚠️ **两个口径坑，都是实测撞出来的**：
+1. `GetCurrentProcess()` 返回 `(HANDLE)-1` 伪句柄 —— 不显式 `c_void_p(-1)` 的话 ctypes 传的是
+   `0x00000000FFFFFFFF`，`GetProcessIoCounters` 直接返回 0（失败），读入列全是「—」。
+2. `ReadTransferCount` **把命中缓存的读也算进去**（实测：同一文件连读两次、两次都记满）
+   ⇒ 那一列是**逻辑读 = 碰了多少页**，不是「从盘上搬了多少」。好处是**与缓存无关、可复现**
+   （同一份库两次跑：84.67 / 84.65 MB）；**只有耗时受缓存影响**。
+   我第一版把「合计占库 59%」写成「✅ 可以当冷读基线」，是按错口径下的结论，已改掉。
+
+**已量到的（本机，热态耗时 + 逻辑读；详见提案 §7.2）**：
+
+| 查询 | 逻辑读 | 页数 | 备注 |
+|---|---|---|---|
+| `in_transit` | **84.7 MB** | 21,675 | 概览缺货榜 + 库存页第二大 |
+| `account_balances` | **60.9 MB** | 15,578 | 只要 4 行，扫了 6 千万字节 |
+| `doc_search_count` | 79.6 MB | 20,378 | 四路 LIKE 全表扫（单据页专项） |
+| `stock_merged` | 21.2 MB | 5,431 | |
+| `list_documents` | 18.0 MB | 4,601 | |
+| `party_balances` | 14.9 MB | 3,825 | 概览要跑两趟 |
+| `gross_margin` | 13.4 MB | 3,440 | |
+| `today_summary` / `products_active` | 0.01 / 0.04 MB | 3 / 10 | 参照组 |
+
+**这条数据改写了丙案的结论**：日汇总能把「日营收 / 日毛利」这类 13–21 MB 的碰页量压到
+**<1 MB** ⇒ 丙确实能减少冷读（此前那句「按页付费所以没收益」作废）；
+但**救不了** `in_transit`（84.7 MB）与 `account_balances`（60.9 MB）—— 它们要的是「当前时点」。
+仍未量的只有**虚拟机冷态耗时**（需在 VM 重启后跑一条命令）。
+
+#### ③ #40 余项：设置页「立即刷新数据」
+
+- `app_shell` 新增 `_refreshNow()`：`remoteVersion++`。与自动回调 `_onHostDataApplied` 的唯一差别
+  是**不看 `immersive`** —— 自动回调落开单页不动是为了不打断算账，手动刷新是用户主动要的。
+- `appShellPage` / `SettingsPage` 各加一个可选 `onRefreshNow`；手机壳不传 ⇒ 整块不显示
+  （点了没反应的按钮比不显示更糟）。
+- ⚠️ **偏差：不做「定时刷新」**。原 #40 说「定时刷新 / 手动刷新按钮」两件，只做了后者：
+  主机落库已有回调兜底，而每 N 分钟轮询要在 26 万单的库上付一次 ~225 ms 的 SQL
+  （提案 §1.2 实测），还会在用户算账时重绘。判定「用不上且有害」，**登记不做**而不是悄悄跳过。
+
+#### ④ #55 更新窗口漏单：**只取证，未修**（要动同步协议，等裁定）
+
+主机侧证据用例已入仓（`sync_server_test.dart`，**skip 状态**，去掉 skip 即红）：
+
+> 3 张单先后更新，`limit=2` ⇒ 每轮窗口都取「最新 2 条」，最旧那条连拉 **5 轮**也补不回来。
+
+现有用例收尾那句「下一次同步窗口会覆盖它」**是错的** —— 窗口每轮都重新按 `updated_at` 取最新，
+只要店里持续有 ≥ limit 张单在动，队尾那条永远差一位。`doc_window_truncated` 只让客户端
+「推迟清队列」，不给「从哪儿继续」。
+
+三条修法（**都要先裁定**，因为会动 `docs/sync_protocol.md` 的响应形状）：
+
+| 案 | 做法 | 代价 |
+|---|---|---|
+| 甲 | 响应加 `doc_window_oldest`（本轮窗口里最旧那条的 `updated_at`），客户端在 `docWindowTruncated` 期间用它当下一轮下界，回填到不截断为止 | 协议加一个只读字段；`http_server_test` 里那条「响应体只允许这几个键」的 pin 要同步改 |
+| 乙 | 客户端自己从收到的行里取 `min(updated_at)` 当回填下界 | **不改协议**，但主分页的行混在同一数组里 ⇒ 取到的 `min` 可能来自主分页（更旧的单），会把窗口拉得过宽、每轮多扫一大片 |
+| 丙 | 窗口预算与主分页解耦（`room = limit - pageDocs.length` 改成独立 `limit`）+ 窗口查询单独放大 N 倍 | 改动最小，但**只是把概率降低**，不能根治 |
+
+我倾向**甲**，但按纪律 12/20 不擅自改协议。
+
+#### ⑤ #45 三页同构：补两条 pin（第四页带上退货）
+
+`page_isomorphism_test` 原有 8 条（`quantityValue` / `baseQuantityValue` / `negativeStock` /
+`baseQuantityValue` 使用点 / 库存提示块 / 采购豁免 / `_totalBar` Wrap / 返回拦截三串）。
+本次补的两条都盯**「点了没反应」这类静默失效**：
+
+1. **四页都接了提交错误摘要**：`SubmitErrorSummary(` + `_submitErrorItems()` + `onJump: _jumpTo` +
+   `Future<void> _jumpTo(SubmitSection section)` 四个特征串逐页断言（漏一页 ⇒ 那一页点不动）。
+2. **报的段 ⊆ 能跳的段**：用正则从 `_submitErrorItems()` 与 `_jumpTo(...)` 里各取
+   `SubmitSection.<x>` 集合，断言前者是后者的子集 —— 少一个 `case` 也不会让任何 UI 测试红。
+
+**灵敏度**：删掉 `sale_page` 的 `case SubmitSection.remark` ⇒ ②红（`Set:['remark']`）；
+退货页去掉 `onJump: _jumpTo` ⇒ ①红。均已回滚。
+
+#### ⑥ 门禁（本机亲跑）
+
+| 门禁 | 结果 |
+|---|---|
+| `flutter analyze` | **0 issues** |
+| root `flutter test` | **616**（1 条按平台跳过；+3） |
+| app `dart test` | **545**（不变） |
+| host `dart test` | **245**（2 条跳过：1 平台 + 1 本次登记的 #55 证据） |
+| core | 未改，未复跑 |
+
+#### ⑦ 仍未做
+
+- **#55 三条修法等裁定**（证据已在仓里，skip 着）。
+- **虚拟机冷态耗时**：需你在 VM 重启后跑
+  `python tool\perf_bench.py --db ... --cold`（脚本已能自检「这批是不是冷的」）。
+- 冷库提案 Q1–Q3 仍待裁。

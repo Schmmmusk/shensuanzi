@@ -76,6 +76,7 @@ import argparse
 
 import machine_info as machine_info_module
 import csv
+import ctypes
 import json
 import os
 import platform
@@ -1200,6 +1201,154 @@ def explain(conn: sqlite3.Connection, sql: str, params: Sequence[Any]) -> List[s
     return out2
 
 
+# ------------------------------------------------------------- 冷读（first-touch）
+#
+# ## 为什么需要单独一个模式（2026-11-19，台账 §一百一十）
+#
+# 热缓存的 p95 回答的是「这条 SQL 算多久」，回答不了「冷盘上要读多少」。
+# `docs/proposals/冷库页面成本-方案.md` §七 要的正是后者：
+# 同一台机器、同一份库、同一个 commit，**冷启动后第一次**跑一遍，逐条记
+# 「耗时 + 这个进程实际从盘上读了多少字节」。有了读入字节才能判断
+# 「换成日汇总表能少读多少页」这种问题，而不是拿两个不同来源的数相减。
+
+
+class _IoCounters(ctypes.Structure):
+    """`IO_COUNTERS`（Windows）。字段顺序照 `winnt.h`，一个都不能少。"""
+
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_ulonglong),
+        ("WriteOperationCount", ctypes.c_ulonglong),
+        ("OtherOperationCount", ctypes.c_ulonglong),
+        ("ReadTransferCount", ctypes.c_ulonglong),
+        ("WriteTransferCount", ctypes.c_ulonglong),
+        ("OtherTransferCount", ctypes.c_ulonglong),
+    ]
+
+
+def process_read_bytes() -> Optional[int]:
+    """本进程**累计**从存储读了多少字节（`GetProcessIoCounters`）。
+
+    返回 `None` = 平台/权限不支持（脚本仍能跑，只是没有读入列）。
+    非 Windows 上可看 `/proc/<pid>/io` 的 `read_bytes`，本脚本不代劳。
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        kernel32 = ctypes.windll.kernel32
+        counters = _IoCounters()
+        # ⚠️ `GetCurrentProcess()` 是返回值 `(HANDLE)-1` 的**伪句柄**：
+        # 不显式给 `c_void_p` 的话，ctypes 会把 -1 当 32 位有符号数传成
+        # `0x00000000FFFFFFFF` —— 那不是伪句柄，调用会返回 0（失败），
+        # 于是读入列全是「—」。2026-11-19 实测踩过一次。
+        ok = kernel32.GetProcessIoCounters(
+            ctypes.c_void_p(-1), ctypes.byref(counters)
+        )
+        if not ok:
+            return None
+        return int(counters.ReadTransferCount)
+    except (AttributeError, OSError):
+        return None
+
+
+def _cold_row(conn: sqlite3.Connection, sql: Any, params: Sequence[Any]):
+    """跑**一次**，返回 `(ms, 读入字节数或 None, 行数, 错误)`。"""
+    before = process_read_bytes()
+    t0 = time.perf_counter()
+    rows = 0
+    error: Optional[str] = None
+    try:
+        if callable(sql):
+            rows = sql(conn)
+        else:
+            rows = len(conn.execute(sql, params).fetchall())
+    except sqlite3.Error as exc:
+        error = str(exc)
+    ms = (time.perf_counter() - t0) * 1000.0
+    after = process_read_bytes()
+    read = None if before is None or after is None else max(0, after - before)
+    return ms, read, rows, error
+
+
+def run_cold(
+    conn: sqlite3.Connection,
+    selected: Sequence[Tuple[str, str, Any]],
+    db_path: str,
+    limit: int,
+    window_ms: int,
+) -> int:
+    """冷读模式：每条查询**只跑一次**，记录耗时与实际读入字节。"""
+    size = file_mb(db_path)
+    has_io = process_read_bytes() is not None
+    print("冷读模式 —— 每条查询只跑一次（顺序固定，先测的吃冷读）")
+    print("  库        %s（%.1f MB）" % (db_path, size))
+    print("")
+    if has_io:
+        # ⚠️ 口径（2026-11-19 实测后改的口径）：Windows 的 ReadTransferCount
+        # **把「命中文件缓存」的读也算进去**（实测：同一文件连读两次，两次都记满）。
+        # 所以这一列是**逻辑读** = 这条查询碰了多少页，**不是**从盘上搬了多少。
+        # 它的好处正是「与缓存无关、可复现」—— 同一份库同一 commit 跑两次几乎一样；
+        # 而**耗时**才受缓存影响。
+        print("  口径      逻辑读（含缓存命中）= 查询碰了多少页，可复现；")
+        print("            耗时受缓存影响 ⇒ 只有「重启后第一件事」跑出来的耗时才是冷读耗时")
+    else:
+        print("  ⚠️ 这台机器读不到进程 I/O 计数（非 Windows），只有耗时列")
+    print("")
+    header = "%-16s %10s %12s %10s %8s" % ("查询", "耗时(ms)", "逻辑读(MiB)", "估算页(4K)", "行数")
+    print(header)
+    print("-" * len(header))
+
+    total_read = 0
+    measured: List[Tuple[str, float, Optional[int]]] = []
+    for key, label, factory in selected:
+        sql, params = factory(limit, window_ms)
+        ms, read, rows, error = _cold_row(conn, sql, params)
+        if error:
+            print("%-16s %10s %12s %10s %8s" % (key, "—", "—", "—", "报错"))
+            print("    ⚠️ %s" % error)
+            continue
+        if read is None:
+            print("%-16s %10.1f %12s %10s %8d" % (key, ms, "—", "—", rows))
+        else:
+            total_read += read
+            print(
+                "%-16s %10.1f %12.2f %10d %8d"
+                % (key, ms, read / 1048576.0, read // 4096, rows)
+            )
+        measured.append((key, ms, read))
+
+    print("")
+    if has_io and size > 0:
+        print(
+            "合计逻辑读 %.1f MB（约 %d 页；库的 %.0f%%）"
+            % (total_read / 1048576.0, total_read // 4096, (total_read / 1048576.0) / size * 100)
+        )
+        print(
+            "   —— 这个合计可以超过库大小：同一条查询内重复读同一页会重复计数，"
+            "换库/换 commit 之间**不宜直接比**。"
+        )
+    if measured:
+        top = sorted(measured, key=lambda r: r[1], reverse=True)[:5]
+        print("最慢五条：" + "，".join("%s %.1f ms" % (k, v) for k, v, _ in top))
+        if has_io:
+            heavy = sorted(
+                [r for r in measured if r[2] is not None],
+                key=lambda r: r[2] or 0,
+                reverse=True,
+            )[:5]
+            print(
+                "碰页最多的五条："
+                + "，".join("%s %.1f MB" % (k, (b or 0) / 1048576.0) for k, _, b in heavy)
+            )
+    print("")
+    print("怎么判断「这批耗时是不是冷的」：拿它跟热态基线比 ——")
+    print("  python tool/perf_bench.py --db <同一个库> --no-gate")
+    print("差一个数量级 ⇒ 那次确实是冷读；差不了多少 ⇒ 缓存是热的，重跑（先重启机器）。")
+    print("")
+    print("口径：单进程、固定顺序、每条一次。**顺序对耗时和碰页数都有影响**，")
+    print("      所以跨机器比较时必须用同一个顺序；比较的是「同一条查询在两种磁盘上的差」。")
+    return 0
+
+
 # --------------------------------------------------------------------------- 输出
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1226,6 +1375,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--window-days", type=int, default=7, help="pull 窗口天数（默认 %(default)s）"
     )
     how.add_argument("--only", default=None, help="只跑这些（逗号分隔的键，见 --list）")
+    how.add_argument(
+        "--cold",
+        action="store_true",
+        help="冷读模式：每条查询只跑一次，并记录本进程**实际从盘上读了多少字节**"
+        "（Windows）。⚠️ 必须在**冷启动后第一件事**跑，否则读到的是缓存；"
+        "跑完会自己判断「这批数字到底是不是冷的」",
+    )
     how.add_argument("--list", action="store_true", help="列出所有查询键后退出")
     how.add_argument("--explain", action="store_true", help="额外打印 EXPLAIN QUERY PLAN")
     how.add_argument(
@@ -1317,6 +1473,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     window_ms = max(1, args.window_days) * 86400000
     conn = open_readonly(db_path)
+
+    # 冷读模式先走：**在 `PRAGMA user_version` / `table_counts` 之前** ——
+    # 那两条（尤其 9 张表的 COUNT(*)）会把页读进缓存，冷读就测不出来了。
+    if args.cold:
+        try:
+            return run_cold(conn, selected, db_path, args.limit, window_ms)
+        finally:
+            conn.close()
+
     try:
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
         counts = table_counts(conn)

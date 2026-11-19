@@ -59,6 +59,7 @@ void main() {
     HostServiceController? hostService,
     VoidCallback? onChangeBackupLocation,
     void Function(Object error, StackTrace stack)? onConfigSaveFailure,
+    VoidCallback? onRefreshNow,
   }) => MaterialApp(
     home: Scaffold(
       body: SettingsPage(
@@ -71,6 +72,7 @@ void main() {
         onBackupNow: onBackupNow,
         hostService: hostService,
         onChangeBackupLocation: onChangeBackupLocation,
+        onRefreshNow: onRefreshNow,
         onChanged: (AppConfig config) {
           current = config;
           onChanged(config);
@@ -520,5 +522,29 @@ void main() {
       isNull,
       reason: '设置页在 2.0 档下溢出（附录 B 点名的结构：固定宽度 / 固定断点 / 顶部 Row）',
     );
+  });
+
+  // ------------------------------------------------------------ #40 余项（2026-11-19）
+  //
+  // 「手动刷新」：用户发现数字不对时要有出口，不能让他自己猜「切页会刷新」。
+  // 依赖注入 `null` ⇒ **整块不显示**（点了没反应的按钮比不显示更糟）。
+  testWidgets('立即刷新数据：点了就回调；没有能力时整块不显示', (WidgetTester tester) async {
+    int refreshed = 0;
+    await tester.pumpWidget(page((_) {}, onRefreshNow: () => refreshed++));
+    await tester.pumpAndSettle();
+
+    final Finder button = find.byKey(const Key('setting-refresh-now'));
+    expect(button, findsOneWidget);
+    // 设置页比 800×600 的测试屏长 —— 先滚到看得见的位置再点（否则 tap 落空）
+    await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
+    await tester.tap(button);
+    await tester.pump();
+    expect(refreshed, 1, reason: '按钮必须真的叫宿主刷新，不能只是画个样子');
+
+    // 壳不支持（手机壳 / 单跑）⇒ 不显示
+    await tester.pumpWidget(page((_) {}));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('setting-refresh-now')), findsNothing);
   });
 }

@@ -2075,6 +2075,64 @@ void main() {
         reason: '窗口取满一页 ⇒ 还有更新没带上 ⇒ 客户端不许清队列',
       );
     });
+
+    // #55（2026-11-19 登记，**未修，等裁定**）：上面那条用例的收尾写的是
+    // 「最旧的那条本轮让位（**下一次同步窗口会覆盖它**）」—— 这句话不成立。
+    //
+    // 窗口每一轮都是「按 updated_at 取**最新** limit 条」：
+    // 只要店里持续有 ≥ limit 张单在动，最旧的那条就**永远排在第 limit+1 位**，
+    // 补不进来。`doc_window_truncated` 只让客户端「推迟清队列」，
+    // 并不给任何「从哪儿继续」的信息 —— 漏掉的状态变化（收款 / 签收）就此永久丢失，
+    // 手机一直显示旧欠款态 ⇒ 用户重复催款 / 重复收款（与 P0-3 同源但更深）。
+    //
+    // ⚠️ 本条现在是 **skip**：修法要动同步协议（给窗口回一个「本轮最旧那条」的下界，
+    // 客户端据此回填），属于 `docs/sync_protocol.md` 层面的变更 ——
+    // 按项目纪律先裁定再动手，因此只留证据，不让门禁变红。
+    test('（待裁定 #55）窗口里被让位的那条，后续多轮仍然补不回来', () {
+      final String p = syncProduct(code: 'P955');
+      final String party = syncParty();
+      syncPurchase(p, party, 1, 100);
+      syncPurchase(p, party, 1, 200);
+      syncPurchase(p, party, 1, 300);
+
+      final SyncPullResult first = server.pull();
+      final List<Map<String, Object?>> docs = first.entities['documents']!;
+      final List<String> ids = <String>[
+        for (final Map<String, Object?> d in docs) d['id']! as String,
+      ];
+      final int base = docs.first['updated_at']! as int;
+      for (int i = 0; i < ids.length; i++) {
+        db.raw.execute(
+          'UPDATE documents SET updated_at = ? WHERE id = ?',
+          <Object?>[base + 1000 * (i + 1), ids[i]],
+        );
+      }
+
+      // 连拉 5 轮：每轮都「从 0 开窗」（= 保守地假设客户端仍覆盖整段离线期）
+      final Set<String> seen = <String>{};
+      for (int round = 0; round < 5; round++) {
+        final SyncPullResult page = server.pull(
+          stockSince: first.nextCursors[SyncCursorKeys.stock]!,
+          moneySince: first.nextCursors[SyncCursorKeys.money]!,
+          partySince: first.nextCursors[SyncCursorKeys.party]!,
+          settleSince: first.nextCursors[SyncCursorKeys.settle]!,
+          docSince: first.nextCursors[SyncCursorKeys.doc]!,
+          productsSince: first.nextCursors[SyncCursorKeys.products]!,
+          partiesSince: first.nextCursors[SyncCursorKeys.parties]!,
+          accountsSince: first.nextCursors[SyncCursorKeys.accounts]!,
+          docUpdatedSince: 0,
+          limit: 2,
+        );
+        for (final Map<String, Object?> d in page.entities['documents']!) {
+          seen.add(d['id']! as String);
+        }
+      }
+      expect(
+        seen,
+        contains(ids[0]),
+        reason: '#55：最旧那条在 5 轮之后仍然没来过 —— 窗口没有「接着上次」的信息',
+      );
+    }, skip: '待裁定（#55）：修它要动 sync_protocol（窗口回一个下界游标）或客户端回填');
   });
 
   // ============================================================ JSON 契约

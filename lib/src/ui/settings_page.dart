@@ -56,6 +56,7 @@ class SettingsPage extends StatefulWidget {
     this.mobileSync,
     this.onScanPair,
     this.onSyncNow,
+    this.onRefreshNow,
     this.onConfigSaveFailure,
     required this.onChanged,
   });
@@ -116,6 +117,12 @@ class SettingsPage extends StatefulWidget {
 
   /// 「立即同步」（宿主：遮罩 + syncNow + 完成后重建页面 —— 裁定 ⑦）
   final Future<void> Function()? onSyncNow;
+
+  /// **手动刷新数据**（#40 余项，2026-11-19）：让壳把「会缓存」的页面重查一遍。
+  ///
+  /// `null` = 当前壳没有这个能力（手机壳 / 测试单跑）⇒ 整块不显示 ——
+  /// 显示一个点了没反应的按钮比不显示更糟。
+  final VoidCallback? onRefreshNow;
 
   /// **配置写盘失败**时把原始异常交给宿主记日志（N-f 站点 9，2026-11-05 裁定甲）。
   /// `null` = 不记（测试）⇒ 界面**不许**提「日志」（裁定 ③：不许指路到
@@ -585,6 +592,42 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ],
               ),
+
+              // ---- 数据刷新（#40 余项，2026-11-19）----
+              //
+              // 为什么要有「手动刷新」：多数刷新是自动的（主机落库 → 壳递增
+              // `remoteVersion` → 缓存页面自己重查）。但用户遇到「数字看着不对」
+              // 时**没有出口** —— 只能自己发现「切到别的页再切回来就会变」。
+              // 一个按钮比让他猜便宜得多。
+              //
+              // **刻意不做「定时刷新」**（原 #40 的另一半）：主机的落库有回调
+              // 兜着，而每 N 分钟轮询要在 26 万单的库上付一次 ~225 ms 的 SQL
+              //（`docs/proposals/冷库页面成本-方案.md` §1.2 实测），还会在用户
+              // 低头算账时重绘。判定「用不上且有害」，登记在台账，不悄悄跳过。
+              if (widget.onRefreshNow != null)
+                _Section(
+                  title: '数据刷新',
+                  children: <Widget>[
+                    Text(
+                      '手机推上来的数据、别处改过的账，一般会自动刷新。\n'
+                      '如果数字看着不对，点一下这里重新读一遍 —— 不会改筛选，也不会跳页。',
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        key: const Key('setting-refresh-now'),
+                        onPressed: widget.onRefreshNow,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('立即刷新数据'),
+                      ),
+                    ),
+                  ],
+                ),
 
               // ---- 多设备同步（§AH · AH-A 落地；原 §AG-6「开发中」占位在此退场）----
               //

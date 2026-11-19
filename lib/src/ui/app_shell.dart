@@ -347,6 +347,9 @@ Widget appShellPage(
   // ③ 查价（2026-10-24，§CV·一百零四）：两壳各给各的「打开方式」
   //（桌面/手机都是 push 一个整屏路由，但 context 在各自的壳里）。
   VoidCallback? onPriceLookup,
+  // #40 余项（2026-11-19）：设置页「立即刷新数据」。`null` = 这个壳没有该能力
+  //（手机壳不传）⇒ 设置页整块不显示，而不是给一个点了没反应的按钮。
+  VoidCallback? onRefreshNow,
 }) {
   final Widget page;
   // #46（2026-10-14 外测 M01）：**手机不给「立即备份」** —— 执行既有裁定
@@ -538,6 +541,8 @@ Widget appShellPage(
       mobileSync: shell.mobileSync,
       onScanPair: shell.onScanPair,
       onSyncNow: shell.onSyncNow,
+      // #40 余项：手动刷新（手机壳不传 ⇒ 不显示）
+      onRefreshNow: onRefreshNow,
     );
   } else if (destination.id == 'help') {
     // AE-6：恢复步骤要带**用户真实的两个文件夹**，否则他照做不下去
@@ -642,6 +647,16 @@ class _AppShellState extends State<AppShell> {
     setState(() => _remoteVersion++);
   }
 
+  /// **手动刷新**（#40 余项，2026-11-19）：用户在设置页点了「立即刷新数据」。
+  ///
+  /// 与 [_onHostDataApplied] 的差别只有一条 —— **不看 `immersive`**：
+  /// 那条是自动回调，落在开单页不动是为了不打断算账；这条是用户主动要的，
+  /// 拒绝他明确要求的刷新没有道理（他既然点，就是发现了不对）。
+  void _refreshNow() {
+    if (!mounted) return;
+    setState(() => _remoteVersion++);
+  }
+
   void _select(NavDestination destination) {
     if (destination.id == _current.id) return;
     setState(() => _current = destination);
@@ -696,6 +711,8 @@ class _AppShellState extends State<AppShell> {
       current,
       // 主机落库了就变 ⇒ 会缓存的页面（单据/商品/概览）自己重查
       remoteVersion: _remoteVersion,
+      // #40 余项：设置页的「立即刷新数据」
+      onRefreshNow: _refreshNow,
       // #32：桌面 = 切左侧导航
       onNavigate: (String id) {
         final NavDestination? d = AppNavigation.byId(id);
