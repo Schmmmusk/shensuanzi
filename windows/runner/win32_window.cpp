@@ -37,6 +37,27 @@ int Scale(int source, double scale_factor) {
   return static_cast<int>(source * scale_factor);
 }
 
+namespace {
+
+// **最小窗口尺寸**（逻辑像素；运行时按窗口 DPI 折算成物理像素）。
+//
+// ## 为什么要有下限（2026-11-20 用户裁定：宽 480）
+//
+// 内容区窄到某个程度以下时，**每一页**都开始局部溢出 —— 设置页的「修改 / 打开」
+// 在「超大界面 + 极窄窗口」下溢出 4 px 就是最后一根稻草。逐页补兜底没有尽头：
+// 每补一页多一套布局分支，而收益只在「用户把窗口拖成一条缝」时才出现。
+//
+// 参考 LocalSend 的做法：低于阈值时它换布局、并且不让再缩。我们**不换布局**，
+// 只加下限 —— 480 逻辑像素下内容区仍有 480 − 60（仅图标导航） − 3（分割线）= 417，
+// 现有各页的窄档（264 那批护栏）都在这之上。
+constexpr int kMinWindowWidth = 480;
+
+// 高度也给一个不荒谬的下限（Win32 默认允许压到几乎不可见）。
+// 取 360：1024×768 这类老屏上仍能放下，窗口标题栏 + 一屏卡片不至于只剩一条。
+constexpr int kMinWindowHeight = 360;
+
+}  // namespace
+
 // Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
 // This API is only needed for PerMonitor V1 awareness mode.
 void EnableFullDpiSupportIfAvailable(HWND hwnd) {
@@ -197,6 +218,24 @@ Win32Window::MessageHandler(HWND hwnd,
 
       return 0;
     }
+    case WM_GETMINMAXINFO: {
+      // 拖拽边框时窗口能缩到多小 —— 由这里回答（2026-11-20 用户裁定 480）。
+      //
+      // ⚠️ **必须先让 DefWindowProc 填一遍**：同一个结构体里还有
+      // `ptMaxPosition` / `ptMaxSize` / `ptMaxTrackSize`，那是「最大化时铺满哪块」
+      // 的答案。自己直接 return 0 而不填，等于把最大化尺寸留成 0 ——
+      // 点最大化会缩成一个点。这里只**覆盖**最小尺寸两个字段，其余保持系统给的。
+      const LRESULT result = DefWindowProc(hwnd, message, wparam, lparam);
+      auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+      // 逻辑像素 → 物理像素必须按**当前窗口 DPI** 折算：100% 缩放时 1:1，
+      // 150% 时 720 物理像素，否则「480」在缩放机器上会缩水成 320。
+      const UINT dpi = GetDpiForWindow(hwnd);
+      const double scale = (dpi == 0) ? 1.0 : (dpi / 96.0);
+      info->ptMinTrackSize.x = Scale(kMinWindowWidth, scale);
+      info->ptMinTrackSize.y = Scale(kMinWindowHeight, scale);
+      return result;
+    }
+
     case WM_SIZE: {
       RECT rect = GetClientArea();
       if (child_content_ != nullptr) {
