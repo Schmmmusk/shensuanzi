@@ -43,6 +43,7 @@ void main() {
     PendingMarks? pendingMarks,
     void Function(String destinationId)? onNavigate,
     VoidCallback? onPriceLookup,
+    String? dbPath,
   }) => MaterialApp(
     home: Scaffold(
       body: OverviewPage(
@@ -61,6 +62,7 @@ void main() {
         pendingMarks: pendingMarks,
         onNavigate: onNavigate,
         onPriceLookup: onPriceLookup,
+        dbPath: dbPath,
       ),
     ),
   );
@@ -1676,5 +1678,86 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('overview-go-sale')), findsOneWidget);
+  });
+  // ------------------------------------------------------------ 乙（2026-11-20）
+  //
+  // 有库路径 ⇒ 查询进**工作 isolate**（只读连接 + 单只读事务）：
+  // 首帧只出「正在统计…」，算完再填数字。两个判据分开钉：
+  // ① 第一帧就有载入态（不是空白、也不是「还没有数据」）；
+  // ② 数字最终出现、载入态消失。
+  testWidgets('乙：有库路径 ⇒ 先出「正在统计…」，算完再填数字', (WidgetTester tester) async {
+    final QueryDao queries = await seedBiz(
+      todayMs: DateTime.now().millisecondsSinceEpoch,
+    );
+
+    await tester.pumpWidget(
+      page(queries: queries, onNavigate: (_) {}, dbPath: db.path),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('overview-loading')),
+      findsOneWidget,
+      reason: '首帧必须是载入态 —— 慢盘上这一步以前是「一帧卡住 7 秒」',
+    );
+    expect(
+      find.byKey(const Key('overview-card-entries')),
+      findsNothing,
+      reason: '还没算完就不许摆经营卡（数字闪一下又变，比晚到更难看）',
+    );
+
+    // isolate 跑在真实线程上：用 runAsync 给它真实时间
+    for (
+      int i = 0;
+      i < 300 &&
+          find.byKey(const Key('overview-loading')).evaluate().isNotEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+
+    expect(find.byKey(const Key('overview-loading')), findsNothing);
+    expect(
+      find.byKey(const Key('overview-card-entries')),
+      findsOneWidget,
+      reason: '算完必须真的把结果填进来',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('乙：库路径打不开 ⇒ 出错误条与「重试」，不是一直转圈', (WidgetTester tester) async {
+    final QueryDao queries = await seedBiz(
+      todayMs: DateTime.now().millisecondsSinceEpoch,
+    );
+
+    await tester.pumpWidget(
+      page(
+        queries: queries,
+        // 故意的坏路径：只读连接打开会抛
+        dbPath: p.join(box.path, 'not-there.db'),
+      ),
+    );
+    for (
+      int i = 0;
+      i < 300 &&
+          find.byKey(const Key('overview-load-error')).evaluate().isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+
+    expect(
+      find.byKey(const Key('overview-load-error')),
+      findsOneWidget,
+      reason: '「查挂了」和「还在算」必须长得不一样（混在一起比不加载更糟）',
+    );
+    expect(find.byKey(const Key('overview-loading')), findsNothing);
+    expect(find.byKey(const Key('overview-reload')), findsOneWidget);
   });
 }

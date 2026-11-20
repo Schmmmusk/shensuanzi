@@ -152,6 +152,30 @@ class Db {
     }
   }
 
+  /// **只读快照连接**（2026-11-20，乙：工作 isolate 专用）。
+  ///
+  /// 与 [open] 的差别是三条，每条都不能省：
+  ///
+  /// 1. **不设 WAL** —— `journal_mode` 是写操作，读连接不许碰；
+  /// 2. **不跑迁移** —— `_migrate` 会改表；一个「读」连接把库改了，是最坏的意外；
+  /// 3. **`query_only = ON`** —— 兜底的一道闸：万一哪条代码路径拼出 INSERT，
+  ///    SQLite 直接拒绝，而不是悄悄写进去。
+  ///
+  /// ⚠️ **前提**：库当前必须已被主连接打开过（WAL 模式下 `-shm` 存在，
+  /// 只读连接才挂得上去）。调用方是「主库已在跑」的页面，天然满足；
+  /// 内存库（`path == null`）没有文件，**不能**走这里。
+  static Db openReadOnly(String path) {
+    final Database db = sqlite3.open(path, mode: OpenMode.readOnly);
+    try {
+      db.execute('PRAGMA busy_timeout = 5000');
+      db.execute('PRAGMA query_only = ON');
+      return Db._(db, foreignKeys: false, path: path);
+    } catch (_) {
+      db.dispose();
+      rethrow;
+    }
+  }
+
   /// 内存数据库 —— 测试默认使用它。
   ///
   /// 内存库不支持 WAL（`journal_mode` 会保持 `memory`），故不设置。

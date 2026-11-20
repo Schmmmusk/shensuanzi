@@ -2485,6 +2485,8 @@ class _ShensuanziAppState extends State<ShensuanziApp>
 
     final AppShell shell = AppShell(
       dataDirectory: location.directory,
+      // 乙（2026-11-20）：三页的查询挪进工作 isolate，需要按路径另开只读连接
+      databasePath: location.databasePath,
       // 2026-10-22：用户指定的备份位置优先；否则跟随数据目录
       backupDirectory: _config.backupDirectory ?? location.backupDirectory,
       // 库打开成功后用真实数据格式版本；没打开时没有备份，回退标记版本

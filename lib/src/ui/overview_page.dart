@@ -14,7 +14,9 @@
 ///   「我的操作被接受了」；服务侧的单飞是兜底，不是替代。
 library;
 
+import 'dart:async' show unawaited;
 import 'dart:io' show Process;
+import 'dart:isolate' show Isolate;
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
@@ -31,8 +33,8 @@ import 'stock_top.dart';
 import 'paint_first.dart';
 
 /// 概览页一次算好的全部数字（`_OverviewPageState._load` 产出、缓存复用）。
-class _OverviewData {
-  const _OverviewData({
+class OverviewData {
+  const OverviewData({
     required this.today,
     required this.receivables,
     required this.payables,
@@ -69,6 +71,137 @@ class _OverviewData {
 const Color _noticeColor = Color(0xFFB45309);
 const Color _noticeBackground = Color(0xFFFFF7ED);
 
+/// 工作 isolate 的返回值：**只含纯数据**（core 的模型 + [OverviewData]）。
+typedef OverviewSnapshot = ({OverviewData? data, ShortageSummary lowStock});
+
+/// 在**工作 isolate** 里算概览的全部数字（2026-11-20，乙）。
+///
+/// ## 三条硬要求（评审 2026-11-20 §1，全部落在这里）
+///
+/// 1. **只读连接**（`Db.openReadOnly`）：不设 WAL、不跑迁移、`query_only = ON`
+///    —— 一个「读」把库改了是最坏的事故；
+/// 2. **单只读事务**：五张卡读同一个快照，否则「今日营收」与「应收」可能差一单；
+/// 3. **用完即关**：连接不跨 isolate 传，也不留在工作 isolate 里。
+///
+/// ## 为什么收 `dbPath` 而不是 `QueryDao`
+///
+/// 连接（`Database`）不能跨 isolate。所以只能**按路径在新 isolate 里另开一条只读连接**
+/// —— 这也是 `Db.openReadOnly` 存在的原因。
+///
+/// ⚠️ 前提：库已由主连接打开过（WAL 的 `-shm` 在），见 `Db.openReadOnly` 的注释。
+Future<OverviewSnapshot> loadOverviewSnapshot({
+  required String dbPath,
+  required int chartDays,
+  required bool wantLowStock,
+  required bool wantDelta,
+  int? nowMs,
+}) => Isolate.run(
+  () => _loadOverviewSync(
+    dbPath: dbPath,
+    chartDays: chartDays,
+    wantLowStock: wantLowStock,
+    wantDelta: wantDelta,
+    nowMs: nowMs ?? DateTime.now().millisecondsSinceEpoch,
+  ),
+);
+
+/// [loadOverviewSnapshot] 的同步实体（只在工作 isolate 里跑）。
+OverviewSnapshot _loadOverviewSync({
+  required String dbPath,
+  required int chartDays,
+  required bool wantLowStock,
+  required bool wantDelta,
+  required int nowMs,
+}) {
+  final Db db = Db.openReadOnly(dbPath);
+  try {
+    final QueryDao queries = QueryDao(db);
+    final ProductService? products = wantLowStock ? ProductService(db) : null;
+    // 手机的「未同步」影响与库存页同源（`StockDelta` 读 `sync_queue`，只读没问题）
+    final StockDelta? delta = wantDelta
+        ? StockDelta(db: db, queue: SyncQueueDao(db))
+        : null;
+    return db.readTransaction(() {
+      // 两榜共用这一次扫描（裁定甲-a）
+      final StockOverview stocks = queries.stockOverview();
+      return (
+        data: _buildOverview(
+          q: queries,
+          stocks: stocks,
+          chartDays: chartDays,
+          nowMs: nowMs,
+        ),
+        lowStock: _buildLowStock(
+          q: queries,
+          stocks: stocks,
+          products: products,
+          unsynced: delta?.unsyncedDelta() ?? const <String, int>{},
+        ),
+      );
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/// 经营区要的数字。**空库 ⇒ `null`**（整块经营区不显示）。
+///
+/// 抽成顶层纯函数是为了「同步兜底」与「isolate」**用同一份实现** ——
+/// 两处各写一遍，迟早一处改了另一处没改（纪律 18 的老坑）。
+OverviewData? _buildOverview({
+  required QueryDao q,
+  required StockOverview stocks,
+  required int chartDays,
+  required int nowMs,
+}) {
+  if (!q.hasAnyDocument()) return null;
+
+  // 业务日按**本地日**算 —— 与 `documents.business_day` 同一口径。
+  // `nowMs` 由调用方给：isolate 与 UI 各算一次 `DateTime.now()` 会跨秒。
+  final int toDay = businessDayOf(nowMs);
+  final int fromDay = toDay - (chartDays - 1);
+  final DateTime now = DateTime.fromMillisecondsSinceEpoch(nowMs);
+  final DateTime dayStart = DateTime(now.year, now.month, now.day);
+
+  // 月度对比的「上月同期」可能比 30 天更早（今天 31 日 ⇒ 要回到上月初），
+  // 所以**一次查够两个窗口**，比查两次省一趟扫表。
+  final MonthCompareWindow window = monthCompareWindow(toDay);
+  final List<RevenueDay> wide = q.dailyRevenue(
+    fromDay: window.priorFrom < fromDay ? window.priorFrom : fromDay,
+    toDay: toDay,
+  );
+
+  return OverviewData(
+    today: q.todaySummary(dayStart),
+    receivables: q.receivablesSummary(),
+    payables: q.payablesSummary(),
+    stockTop: stocks.top,
+    revenueRows: wide,
+    marginRows: q.dailyGrossMargin(fromDay: fromDay, toDay: toDay),
+    monthCompare: buildMonthCompare(rows: wide, window: window),
+    fromDay: fromDay,
+    toDay: toDay,
+  );
+}
+
+/// 缺货榜（提案 61）。最贵的 `stockAggregates` 已由 [StockOverview] 一并算出，
+/// 这里只补「在途」与「未同步」。
+ShortageSummary _buildLowStock({
+  required QueryDao q,
+  required StockOverview stocks,
+  required ProductService? products,
+  required Map<String, int> unsynced,
+}) {
+  if (products == null) return ShortageSummary.none;
+  // ⚠️ `listForExport`（不分页）而不是 `findAll()`（默认 limit 200）
+  return computeShortage(
+    products: products.listForExport(active: true),
+    agg: stocks.agg,
+    inTransit: q.inTransitByProduct(),
+    unsynced: unsynced,
+  );
+}
+
 class OverviewPage extends StatefulWidget {
   const OverviewPage({
     super.key,
@@ -89,10 +222,19 @@ class OverviewPage extends StatefulWidget {
     this.onNavigate,
     this.onPriceLookup,
     this.monthComparePercent = false,
+    this.dbPath,
   });
 
   /// 数据目录（用户选的，数据库就放在这里）
   final String dataDirectory;
+
+  /// **库文件路径**（2026-11-20，乙）：给了它 ⇒ 查询进**工作 isolate**，
+  /// 用只读连接 + 单只读事务算完再回来；`null` ⇒ 退回同步查询
+  /// （内存库 / 测试单跑 / 库没开）。
+  ///
+  /// 为什么用路径而不是直接传 `Db`：连接不能跨 isolate。判据与
+  /// `Db.openReadOnly` 的注释同源。
+  final String? dbPath;
 
   /// 备份目录（数据目录的**兄弟目录**，见 `docs/data_directory.md` §八）
   final String backupDirectory;
@@ -180,7 +322,7 @@ class _OverviewPageState extends State<OverviewPage> {
   /// 现在的时机：进入概览（`initState`）算一次；`queries` 换了（换库/重连）
   /// 重算。离开再回来会重建 State ⇒ 自动刷新 —— 壳用的是「按 destination
   /// 现建页面」，不是 `IndexedStack`（`app_shell.dart` 的 `appShellPage`）。
-  _OverviewData? _data;
+  OverviewData? _data;
 
   /// 缺货榜（提案 61）。**不进 `_load()`**：那张榜不依赖任何单据
   /// （判据是商品档案 + 库存流水 + 安全库存），而 `_load()` 在
@@ -189,10 +331,27 @@ class _OverviewPageState extends State<OverviewPage> {
   /// （那恰好是决策 4 引导卡要照顾的人）。
   ShortageSummary _lowStock = ShortageSummary.none;
 
+  /// 载入中（乙，2026-11-20）：只有「进了 isolate 还没回来」这一种情况为真。
+  ///
+  /// 它是**三态之一**，另两态是「算完但空库」（`_data == null && !_pending` ⇒ 引导卡）
+  /// 与「失败」（`_loadError != null`）。三态必须分开画 —— 混在一起就会
+  /// 「查挂了」和「还在算」长得一样（比不加载更糟）。
+  bool _pending = false;
+
+  /// isolate 里抛出来的错误；`null` = 没出错。
+  Object? _loadError;
+
+  /// **过期结果守卫**：每次发起 `++`，回写前比对。
+  ///
+  /// 换库 / 重连 / 镜像切换会让 `queries` 变，旧那一趟可能还在跑 ——
+  /// 它回来时版本号已经对不上，直接丢弃（否则新库的数字被旧库的覆盖）。
+  int _generation = 0;
+
   @override
   void initState() {
     super.initState();
-    _reload();
+    // `notify: false` —— initState 里不需要 setState（还没有可重建的帧）
+    _reload(notify: false);
   }
 
   /// 一次把「经营区」与「缺货榜」都算好。
@@ -210,31 +369,90 @@ class _OverviewPageState extends State<OverviewPage> {
   /// `_load()` 在 `hasAnyDocument() == false` 时整块返回 `null`，而缺货榜不依赖任何单据
   /// （判据是商品档案 + 库存流水 + 安全库存）。挂进去的话，「刚装上软件、建了商品、
   /// 设了安全库存」的店永远看不到它 —— 那恰好是决策 4 引导卡要照顾的人。
-  void _reload() {
+  ///
+  /// ## 乙（2026-11-20）：有库路径就进**工作 isolate**
+  ///
+  /// 冷盘实测：这一页一次碰 **157.92 MB**，慢盘上首帧 **7,077 ms**（提案 §7.7）。
+  /// 同步跑在 UI isolate 上，那 7 秒里鼠标点不动、切页也不响应。
+  /// 所以：`widget.dbPath != null` ⇒ 丢进 isolate（只读连接 + 单只读事务），
+  /// 本帧只置「载入中」；`null`（内存库 / 测试单跑）⇒ 保持原来的同步路径。
+  void _reload({bool notify = true}) {
     final QueryDao? q = widget.queries;
+    // 每次发起都 ++ —— 回写前比对，换库 / 重连之后**旧结果不许覆盖新状态**
+    final int generation = ++_generation;
+
+    void apply(VoidCallback body) {
+      if (notify && mounted) {
+        setState(body);
+      } else {
+        body();
+      }
+    }
+
     if (q == null) {
-      _data = null;
-      _lowStock = ShortageSummary.none;
+      apply(() {
+        _data = null;
+        _lowStock = ShortageSummary.none;
+        _pending = false;
+        _loadError = null;
+      });
       return;
     }
-    // 两榜共用这一次扫描（裁定甲-a）。⚠️ 空库也要算：缺货榜/引导卡与单据无关。
-    final StockOverview stocks = q.stockOverview();
-    _data = _load(q, stocks);
-    _lowStock = _loadLowStock(q, stocks);
+
+    final String? path = widget.dbPath;
+    if (path == null) {
+      // 同步兜底（与乙之前逐字同形）：内存库没有文件，只读连接无从谈起
+      final StockOverview stocks = q.stockOverview();
+      final int nowMs = DateTime.now().millisecondsSinceEpoch;
+      apply(() {
+        _data = _buildOverview(
+          q: q,
+          stocks: stocks,
+          chartDays: _chartDays,
+          nowMs: nowMs,
+        );
+        _lowStock = _buildLowStock(
+          q: q,
+          stocks: stocks,
+          products: widget.products,
+          unsynced: widget.stockDelta?.unsyncedDelta() ?? const <String, int>{},
+        );
+        _pending = false;
+        _loadError = null;
+      });
+      return;
+    }
+
+    apply(() {
+      _pending = true;
+      _loadError = null;
+    });
+    // 不 await：算完自己 setState；异常在内部转成错误态
+    unawaited(_loadInIsolate(generation, path));
   }
 
-  /// 缺货榜（提案 61）。数据源里最贵的那一条（`stockAggregates`）已由
-  /// [stockOverview] 一并算出，这里只补「在途」与「未同步」。
-  ShortageSummary _loadLowStock(QueryDao q, StockOverview stocks) {
-    final ProductService? products = widget.products;
-    if (products == null) return ShortageSummary.none;
-    // ⚠️ `listForExport`（不分页）而不是 `findAll()`（默认 limit 200）
-    return computeShortage(
-      products: products.listForExport(active: true),
-      agg: stocks.agg,
-      inTransit: q.inTransitByProduct(),
-      unsynced: widget.stockDelta?.unsyncedDelta() ?? const <String, int>{},
-    );
+  /// 工作 isolate 那一趟的收尾：**先比版本号，再回写**。
+  Future<void> _loadInIsolate(int generation, String dbPath) async {
+    try {
+      final OverviewSnapshot snapshot = await loadOverviewSnapshot(
+        dbPath: dbPath,
+        chartDays: _chartDays,
+        wantLowStock: widget.products != null,
+        wantDelta: widget.stockDelta != null,
+      );
+      if (!mounted || generation != _generation) return; // 过期结果：丢掉
+      setState(() {
+        _data = snapshot.data;
+        _lowStock = snapshot.lowStock;
+        _pending = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _pending = false;
+        _loadError = error;
+      });
+    }
   }
 
   @override
@@ -246,45 +464,11 @@ class _OverviewPageState extends State<OverviewPage> {
     if (oldWidget.queries != widget.queries ||
         oldWidget.remoteVersion != widget.remoteVersion ||
         oldWidget.products != widget.products ||
-        oldWidget.stockDelta != widget.stockDelta) {
+        oldWidget.stockDelta != widget.stockDelta ||
+        // 乙：换库时路径也会变 —— 不跟着重算就会拿旧库的数字冒充新库
+        oldWidget.dbPath != widget.dbPath) {
       _reload();
     }
-  }
-
-  /// 一次把概览要的数字都算出来。
-  ///
-  /// 空库（`hasAnyDocument() == false`）⇒ `null`：整块经营区不显示。
-  _OverviewData? _load(QueryDao q, StockOverview stocks) {
-    if (!q.hasAnyDocument()) return null;
-
-    // 业务日按**本地日**算 —— 与 `documents.business_day` 同一口径
-    final int toDay = businessDayOf(DateTime.now().millisecondsSinceEpoch);
-    final int fromDay = toDay - (_chartDays - 1);
-
-    // 月度对比的「上月同期」可能比 30 天更早（今天 31 日 ⇒ 要回到上月初），
-    // 所以**一次查够两个窗口**，比查两次省一趟扫表。
-    final MonthCompareWindow window = monthCompareWindow(toDay);
-    final List<RevenueDay> wide = q.dailyRevenue(
-      fromDay: window.priorFrom < fromDay ? window.priorFrom : fromDay,
-      toDay: toDay,
-    );
-
-    return _OverviewData(
-      today: q.todaySummary(_dayStart()),
-      receivables: q.receivablesSummary(),
-      payables: q.payablesSummary(),
-      // 压货榜与缺货榜**同一次扫描**（裁定甲-a，见 `_reload`）
-      stockTop: stocks.top,
-      // 传的是**宽数据**（含上月同期，月度对比要用）——
-      // 营收卡自己按 `fromDay..toDay` 裁，这样「平均每个有生意的日子」
-      // 不会把上月的天算进去，也不依赖调用方记得裁。
-      revenueRows: wide,
-      // 毛利只查 30 天窗口（毛利卡没有「上月同期」需求 ⇒ 跟着宽窗口查是白扫表）
-      marginRows: q.dailyGrossMargin(fromDay: fromDay, toDay: toDay),
-      monthCompare: buildMonthCompare(rows: wide, window: window),
-      fromDay: fromDay,
-      toDay: toDay,
-    );
   }
 
   /// 遗漏 11：**视觉反馈优先于逻辑防护** —— 先禁用按钮，再谈并发。
@@ -315,7 +499,7 @@ class _OverviewPageState extends State<OverviewPage> {
     final String? reminder = widget.backupReminder;
 
     // 数据在 `_load()` 里算过一次并缓存 —— 这里**不再查库**
-    final _OverviewData? data = _data;
+    final OverviewData? data = _data;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -468,6 +652,84 @@ class _OverviewPageState extends State<OverviewPage> {
         // 概览页先回答「数据在哪、能不能用、从哪开始」，经营数字是**第二眼**的东西。
         // ⚠️ 必须带顶部间距：手机壳这里是 `Column` 竖排三卡，
         // 紧贴上一段文字会看起来「卡片边缘叠在一起」（用户 2026-10-20 报的现象）。
+        // ---- 载入中 / 失败（乙，2026-11-20）----
+        //
+        // 三态必须分开画：**载入中**（一行字，不做 shimmer —— 中老年用户会把
+        // 灰格子当成「加载失败的空格子」）、**失败**（错误条 + 重试）、
+        // **算完但是空库**（走下面的引导卡）。
+        if (_pending) ...<Widget>[
+          const SizedBox(height: 20),
+          Card(
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: <Widget>[
+                  // ⚠️ **不能用 `CircularProgressIndicator`**（2026-11-20）：
+                  // 它是无限动画 ⇒ `pumpAndSettle` 永远等不到静止，整包测试里
+                  // 凡是走到概览页的用例全部超时（实测 16 条）。裁定也是「一行字」，
+                  // 静态图标 + 文字既能表达「在等」，又不会让界面看起来在抽搐。
+                  Icon(
+                    Icons.hourglass_empty,
+                    size: 18,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '正在统计…（这台电脑读盘慢的话会等几秒，界面不用管它）',
+                      key: const Key('overview-loading'),
+                      style: const TextStyle(height: 1.6),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        if (_loadError != null && !_pending) ...<Widget>[
+          const SizedBox(height: 20),
+          Card(
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Icon(
+                        Icons.error_outline,
+                        size: 20,
+                        color: theme.colorScheme.error,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '统计失败：${_loadError.toString().split('\n').first}',
+                          key: const Key('overview-load-error'),
+                          style: const TextStyle(height: 1.6),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      key: const Key('overview-reload'),
+                      onPressed: _reload,
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: const Text('重试'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        // 经营卡只在**算完且非空库**时出现（载入中不摆，避免数字闪一下又变）
         if (data != null) ...<Widget>[
           const SizedBox(height: 20),
           _businessCards(theme, data),
@@ -479,14 +741,14 @@ class _OverviewPageState extends State<OverviewPage> {
           _charts(theme, data),
         ],
         // 2026-10-22（§CV·八十三 批 2 第 12 条）：**空库也要有入口**
-        if (widget.onNavigate != null && data == null) ...<Widget>[
+        if (widget.onNavigate != null && data == null && !_pending) ...<Widget>[
           const SizedBox(height: 12),
           _entriesCard(theme),
         ],
         // 提案 61 决策 4：**空库也要能看见缺货榜 / 引导卡**。
         // 这一条不依赖任何单据 —— 刚建了商品、设了安全库存还没开过单的店，
         // 正是「该补货」和「去设安全库存」这两句话最该出现的时候。
-        if (data == null && _lowStock.isVisible) ...<Widget>[
+        if (data == null && !_pending && _lowStock.isVisible) ...<Widget>[
           const SizedBox(height: 12),
           _lowStockCard(),
         ],
@@ -586,7 +848,7 @@ class _OverviewPageState extends State<OverviewPage> {
   /// **#32**：经营速览三卡。桌面横排（各 1/3，裁定⑥）；手机紧凑竖排
   ///（padding 收窄 + 入口一行图标）。卡片**不可点**（裁定⑦：先做静态，
   /// 带筛选跳转超范围）。金额 `formatGrouped`（界面带千分位，裁定⑧）。
-  Widget _businessCards(ThemeData theme, _OverviewData data) {
+  Widget _businessCards(ThemeData theme, OverviewData data) {
     // F13（2026-10-25 复跑）：从前「要留心」只看应收 —— 欠着供应商的钱一个字都不说，
     // 边界上还会显示「目前没有要留心的事」。应付（我欠人）与应收同权重，且**排在前面**：
     // 要还出去的钱比要收进来的更急。
@@ -745,7 +1007,7 @@ class _OverviewPageState extends State<OverviewPage> {
   ///
   /// 两张卡之间**必须显式留间距**：两边的 `Card` 都是 `margin: EdgeInsets.zero`，
   /// 紧贴会看起来像「叠在一起」（用户 2026-10-20 报过）。
-  Widget _charts(ThemeData theme, _OverviewData data) {
+  Widget _charts(ThemeData theme, OverviewData data) {
     final bool hasBalance =
         data.receivables.totalCents > 0 || data.payables.totalCents > 0;
     return Column(
@@ -863,11 +1125,4 @@ class _OverviewPageState extends State<OverviewPage> {
       ),
     ),
   );
-
-  /// 本地时间零点（裁定③：UI 层算；测试传固定值 ⇒ core 可复现）。
-  /// 多时区同步是登记在案的将来待办（个体户单机单时区，暂不考虑）。
-  static DateTime _dayStart() {
-    final DateTime now = DateTime.now();
-    return DateTime(now.year, now.month, now.day);
-  }
 }

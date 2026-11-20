@@ -42,6 +42,7 @@ class AppShell extends StatefulWidget {
   const AppShell({
     super.key,
     required this.dataDirectory,
+    this.databasePath,
     required this.backupDirectory,
     required this.schemaVersion,
     required this.databaseReady,
@@ -98,6 +99,11 @@ class AppShell extends StatefulWidget {
   final String dataDirectory;
   final String backupDirectory;
   final int schemaVersion;
+
+  /// **库文件完整路径**（2026-11-20，乙）：给了它，概览 / 库存 / 单据三页的
+  /// 查询进**工作 isolate**（只读连接 + 单只读事务），首帧不再被冷读卡住。
+  /// `null` = 不给（手机壳 / 测试）⇒ 各页退回同步查询，行为与从前一致。
+  final String? databasePath;
 
   /// 「这套壳正在读的那张库」是否可用。
   ///
@@ -364,6 +370,8 @@ Widget appShellPage(
   if (destination.id == 'overview') {
     page = OverviewPage(
       remoteVersion: remoteVersion,
+      // 乙：有路径就进工作 isolate
+      dbPath: shell.databasePath,
       shopName: shell.shopName,
       monthComparePercent: shell.monthComparePercent,
       dataDirectory: shell.dataDirectory,
