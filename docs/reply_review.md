@@ -22006,3 +22006,74 @@ application-local installation location.」** —— 随包那份运行库不随
 ```
 python perf_bench.py --db "C:/Users/yzx/神算子数据/shensuanzi.db" --cold --only overview_load,in_transit,account_balances,gross_margin
 ```
+
+### 一百一十二、2026-11-20 **in_transit 84 MB 的来源查清了：不是扫表，是 14,283 次随机探页**
+
+> 用户补跑了「只跑概览四条」的冷读与 `in_transit` 的 `EXPLAIN`。
+> 结论对我们上一轮的判断是**部分否定**：`in_transit` 不是「最便宜能修的那个」。
+
+#### ① 补跑的冷读（顺序：in_transit → account → margin → overview_load）
+
+| 查询 | 耗时 | 逻辑读 | ms/页 | 说明 |
+|---|---|---|---|---|
+| `in_transit` | 4635.8 ms | 84.44 MB | 0.215 | 真冷（排第一） |
+| `account_balances` | 772.3 ms | 60.72 MB | 0.050 | 半热 |
+| `gross_margin` | 250.3 ms | 14.27 MB | 0.069 | 半热 |
+| `overview_load` | **2478.9 ms** | 157.89 MB | 0.061 | 三条兄弟刚跑过，共享页已热 |
+
+⚠️ `overview_load` 从 228 ms 涨到 2479 ms（同一台机器），**只因为这次的「前面」少了 22 条查询**
+—— 再次证明「碰页量可复现、耗时不」。它自己的真冷数仍未单独量（见 ④）。
+
+#### ② `EXPLAIN` 与页量拆分：它**没有**在扫表
+
+```
+SEARCH d USING INDEX idx_documents_type_status (doc_type=? AND status=?)
+SEARCH dl USING INDEX idx_lines_document (document_id=?)
+USE TEMP B-TREE FOR GROUP BY
+```
+
+拆分实测（同一份库）：
+
+| 片段 | 逻辑读 | 页数 |
+|---|---|---|
+| 只取在途单的 id（`documents` 侧） | 0.47 MB | **120** |
+| 按 id 取明细（`document_lines` 侧） | **84.65 MB** | **21,670** |
+| 改写成 `IN (子查询)` | 84.66 MB | 21,672（**一样**） |
+| 顺带对照：`stock_ledger` 全表顺序扫 | 21.16 MB | 5,416 |
+
+**数据事实**：在途送货单 **14,283 张**、明细 **33,716 行**。
+21,670 页 ÷ 33,716 行 ≈ **0.64 页/行** —— 这不是扫描，是**每张在途单一次随机探页**
+（14,283 次 × 索引页 + 表页）。所以「顺序读 21 MB 的 stock_ledger」反而比「随机摸 14,283 张单」便宜。
+
+#### ③ 覆盖索引只值 29%（在副本上实测，不动原库）
+
+`CREATE INDEX idx_lines_doc_prod_qty ON document_lines(document_id, product_id, quantity)`
+⇒ 计划变成 `SEARCH dl USING COVERING INDEX`，而页量：
+
+| 写法 | 逻辑读 | 页数 | 相对现状 |
+|---|---|---|---|
+| 现状 | 84.65 MB | 21,670 | —— |
+| **+ 覆盖索引** | **59.80 MB** | **15,309** | **−29%** |
+
+天花板就在那儿：覆盖索引省掉的是「表页」，剩下 **≈14,283 页 = 每张在途单一个索引页**。
+**要再降一个数量级，只能把「在途数量」做成派生小表**（300 行、顺序读），
+那要 schema v9 + 三个状态迁移点维护 —— 与丙（日汇总）**同一级风险**。
+
+#### ④ 结论修正（推翻上一轮那句「最便宜能修」）
+
+| 说法 | 上一轮 | 现在（有实测） |
+|---|---|---|
+| `in_transit` 是最大单点 | ✅ 84.4 MB | ✅ 仍然成立 |
+| 「最便宜能修，加个索引就行」 | ❌ 我猜的 | **错**：覆盖索引只 −29%，到 MB 级要派生表（schema v9） |
+| 排期建议 | 立为下一批首选 | **让位于乙（isolate）**：真机上它 84 MB / 1.66 GB/s ≈ 50 ms，不构成用户可感问题；慢盘上它是「冻结」的一部分，而冻结由乙统一解决 |
+
+⇒ **in_transit 专项不单独立项**，并入将来的「派生/汇总层」一次性评估（与丙同批）。
+覆盖索引可作为**顺手项**（建索引 0.5 s、+30 MB 库），但别指望它治本。
+
+#### ⑤ 还没量的一条
+
+`overview_load` 自己的真冷数（上表那 2479 ms 仍是半热）。要它就得**冷启动后第一条**跑：
+
+```
+python perf_bench.py --db "C:/Users/yzx/神算子数据/shensuanzi.db" --cold --only overview_load
+```
