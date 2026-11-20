@@ -571,25 +571,6 @@ void main() {
       reason: '必须说真实总数 —— 停在 200 会让用户以为后 50 个账户没了',
     );
   });
-  testWidgets('TEMP 窄窗复现（343）', (WidgetTester tester) async {
-    service.create(
-      AccountDraft(
-        name: '店内现金',
-        type: AccountType.cash,
-        initialBalance: '100000',
-      ),
-      now: 1700000000000,
-    );
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    for (final double w in <double>[343, 300, 264, 240, 220, 180]) {
-      await tester.binding.setSurfaceSize(Size(w, 1080));
-      await tester.pumpWidget(page());
-      await tester.pumpAndSettle();
-      final Object? ex = tester.takeException();
-      if (ex != null && w == 180) debugDumpRenderTree();
-    }
-  });
-
   // ------------------------------------------------------------ 窄窗护栏（2026-11-18 用户截图）
   //
   // 现场：343 px 宽的窗口 ⇒ 内容区 264（343 − 导航 76 − 分割线 3）。
