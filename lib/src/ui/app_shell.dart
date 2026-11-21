@@ -475,6 +475,8 @@ Widget appShellPage(
         shell.engine == null || shell.products == null || shell.queries == null
         ? _PendingPage(destination: destination)
         : StockPage(
+            // 乙：库存页的聚合（账面 + 在途）进工作 isolate
+            dbPath: shell.databasePath,
             engine: shell.engine!,
             products: shell.products!,
             queries: shell.queries!,
@@ -518,6 +520,8 @@ Widget appShellPage(
         ? _PendingPage(destination: destination)
         : DocumentsPage(
             remoteVersion: remoteVersion,
+            // 乙：首屏查询（列表 + 计数）进工作 isolate
+            dbPath: shell.databasePath,
             dao: shell.documents!,
             exports: shell.exports,
             settlements: shell.settlements,

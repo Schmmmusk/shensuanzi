@@ -35,6 +35,7 @@
 library;
 
 import 'dart:async';
+import 'dart:isolate' show Isolate;
 
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
@@ -58,6 +59,57 @@ import 'card_rows_sliver.dart';
 // 的 `effectiveInStoreOf`（2026-11-13 提案 61 决策 61-⑦ 下沉）。
 // ⚠️ 本文件**不许**再写一份 —— 机械保证：`test/in_store_single_source_test.dart`。
 
+/// 库存页一次聚合的结果（工作 isolate 的返回值，纯数据）。
+///
+/// 与概览页同款（台账 §一百一十五）：`agg` / `inTransit` 都是 core 的纯数据对象，
+/// 可以跨 isolate 传；耗时字段顺带带回来，好让 `page-cost.jsonl` 的埋点在
+/// 「同步」与「isolate」两条路径上是同一口径。
+typedef StockAggregates = ({
+  StockTopSummary top,
+  Map<String, StockAgg> agg,
+  Map<String, int> inTransit,
+  int aggMicros,
+  int transitMicros,
+});
+
+/// 在**工作 isolate** 里跑库存页的聚合（只读连接 + 单只读事务）。
+///
+/// 为什么值得单独一趟：`inTransitByProduct` 在在途 14,283 张单时是
+/// **21,670 次随机探页 / 84.65 MB**（台账 §一百一十二），冷盘实测 4.6–7.7 s。
+/// 同步跑在 UI isolate 上，这段时间整窗点不动。
+Future<StockAggregates> loadStockAggregates({
+  required String dbPath,
+  required bool trace,
+}) => Isolate.run(() => loadStockAggregatesSync(dbPath: dbPath, trace: trace));
+
+/// [loadStockAggregates] 的同步实体（也直接给「没有库路径」的兜底路径用）。
+StockAggregates loadStockAggregatesSync({
+  required String dbPath,
+  required bool trace,
+}) {
+  final Db db = Db.openReadOnly(dbPath);
+  try {
+    final QueryDao queries = QueryDao(db);
+    // **一个只读事务**：账面 / 成本 / 在途读的是同一个快照
+    return db.readTransaction(() {
+      Stopwatch? watch = trace ? (Stopwatch()..start()) : null;
+      final StockOverview overview = queries.stockOverview();
+      final int aggMicros = watch?.elapsedMicroseconds ?? 0;
+      watch = trace ? (Stopwatch()..start()) : null;
+      final Map<String, int> inTransit = queries.inTransitByProduct();
+      return (
+        top: overview.top,
+        agg: overview.agg,
+        inTransit: inTransit,
+        aggMicros: aggMicros,
+        transitMicros: watch?.elapsedMicroseconds ?? 0,
+      );
+    });
+  } finally {
+    db.close();
+  }
+}
+
 /// 库存查询页。
 class StockPage extends StatefulWidget {
   const StockPage({
@@ -77,7 +129,12 @@ class StockPage extends StatefulWidget {
     this.documentSink,
     this.canWrite = true,
     this.canCreateProducts = false,
+    this.dbPath,
   });
+
+  /// **库文件路径**（2026-11-20，乙）：给了它 ⇒ 聚合进**工作 isolate**；
+  /// `null` ⇒ 同步跑（内存库 / 测试单跑）。
+  final String? dbPath;
 
   /// 规则引擎（期初录入「重新清点」入口用 —— RULE-009 经 `StocktakeService`）
   final RuleEngine engine;
@@ -228,11 +285,91 @@ class _StockPageState extends State<StockPage> {
   late Map<String, int> _inTransit;
   late bool _hasAnyLedger;
 
+  /// 载入中（乙）。`late` 字段在它下面还没赋值 ⇒ `build` 必须**先短路**，
+  /// 否则一读就炸。
+  bool _pending = false;
+
+  /// isolate 抛出来的错误（`null` = 没出错）。
+  Object? _loadError;
+
+  /// 过期结果守卫（与概览页同款）。
+  int _generation = 0;
+
   /// 重算账面 / 成本 / 是否进过货 / 在途（**同步**，与 `stockTop` 同口径）。
   ///
   /// `initState` 调一次；四个「数据可能变了」的刷新点各调一次。
   /// **不进 `build`** —— 那是 2026-11-11 裁定「乙」要解决的事（见字段注释）。
-  void _loadAggregates() {
+  /// 重算账面 / 成本 / 是否进过货 / 在途（**入口**）。
+  ///
+  /// 有库路径 ⇒ 进工作 isolate（2026-11-20 乙）：`inTransitByProduct` 在在途
+  /// 1.4 万张单时是 21,670 次随机探页，冷盘 4.6–7.7 s，同步跑会把整窗按住。
+  /// 没有路径（内存库 / 单跑测试）⇒ 走 [_loadAggregatesSync]，与乙之前一致。
+  void _loadAggregates({bool notify = true}) {
+    final String? path = widget.dbPath;
+    if (path == null) {
+      _loadAggregatesSync();
+      return;
+    }
+    final int generation = ++_generation;
+    void mark() {
+      _pending = true;
+      _loadError = null;
+    }
+
+    if (notify && mounted) {
+      setState(mark);
+    } else {
+      mark();
+    }
+    unawaited(_loadAggregatesInIsolate(generation, path));
+  }
+
+  /// 把一份聚合结果装进 State（同步 / isolate 两条路径共用）。
+  void _applyAggregates(StockAggregates snapshot) {
+    _stockTop = snapshot.top;
+    final Map<String, StockAgg> agg = snapshot.agg;
+    _agg = agg;
+    _book = <String, int>{
+      for (final MapEntry<String, StockAgg> e in agg.entries)
+        e.key: e.value.quantity,
+    };
+    _cost = <String, int>{
+      for (final MapEntry<String, StockAgg> e in agg.entries)
+        e.key: e.value.cost,
+    };
+    _inbound = <String>{
+      for (final MapEntry<String, StockAgg> e in agg.entries)
+        if (e.value.hasInbound) e.key,
+    };
+    _inTransit = snapshot.inTransit;
+    _hasAnyLedger = agg.isNotEmpty;
+  }
+
+  /// isolate 那一趟的收尾：**先比版本号再回写**（换库 / 重连后的旧结果丢弃）。
+  Future<void> _loadAggregatesInIsolate(int generation, String path) async {
+    try {
+      final StockAggregates snapshot = await loadStockAggregates(
+        dbPath: path,
+        trace: kPageCostTrace,
+      );
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _applyAggregates(snapshot);
+        // 埋点口径与同步路径一致（否则 page-cost.jsonl 两条路径的数字不可比）
+        _pageCost?.aggregates(snapshot.aggMicros);
+        _pageCost?.inTransit(snapshot.transitMicros);
+        _pending = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _pending = false;
+        _loadError = error;
+      });
+    }
+  }
+
+  void _loadAggregatesSync() {
     // RULE-006：没有余额表，账面只能每次从流水算。
     // 4c-2（2026-10-24，§5.2 #3）：账面 / 成本 / 是否进过货 **一次扫完**
     // （从前是三次全表聚合：30 万行 × 3）。
@@ -280,7 +417,7 @@ class _StockPageState extends State<StockPage> {
             file: PageCostTrace.fileFor(widget.queries.db.path),
           )
         : null;
-    _loadAggregates();
+    _loadAggregates(notify: false);
   }
 
   /// **父级重建时重算**（切页回来 / 壳层刷新）。
@@ -305,6 +442,7 @@ class _StockPageState extends State<StockPage> {
   @override
   void didUpdateWidget(StockPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 乙：换库时路径也变 —— 不重算就会拿旧库的数字冒充新库
     _loadAggregates();
   }
 
@@ -619,12 +757,66 @@ class _StockPageState extends State<StockPage> {
     if (mounted) setState(_loadAggregates);
   }
 
+  /// 聚合的两种非正常态：**载入中** / **失败**。
+  ///
+  /// ⚠️ **不许用 `CircularProgressIndicator`** —— 无限动画会让 `pumpAndSettle`
+  /// 永远等不到静止（概览页那次实测整包 16 条用例超时，台账 §一百一十五）。
+  Widget _aggregatesStatus(ThemeData theme, {required bool loading}) {
+    final Object? error = _loadError;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              loading ? Icons.hourglass_empty : Icons.error_outline,
+              size: 22,
+              color: loading
+                  ? theme.textTheme.bodySmall?.color
+                  : theme.colorScheme.error,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              loading
+                  ? '正在统计库存…（读盘慢的话会等几秒，界面不用管它）'
+                  : '统计失败：${error.toString().split('\n').first}',
+              key: Key(loading ? 'stock-loading' : 'stock-load-error'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(height: 1.6),
+            ),
+            if (!loading) ...<Widget>[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: const Key('stock-reload'),
+                onPressed: _loadAggregates,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('重试'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
 
     // 临时埋点（甲）：数「一次进入重建了几次」。必须在任何聚合之前记。
     _pageCost?.build();
+
+    // ---- 载入中 / 失败（乙，2026-11-20）----
+    // ⚠️ 必须在**读任何 `late` 字段之前**短路：`_book` / `_cost` 在 isolate
+    // 回来之前根本没赋值，碰一下就抛 `LateInitializationError`。
+    // `_showOpening` 时例外 —— 那是用户已经打开的期初页，不能被一次重算顶掉。
+    if (!_showOpening && _pending) {
+      return _aggregatesStatus(theme, loading: true);
+    }
+    if (!_showOpening && _loadError != null) {
+      return _aggregatesStatus(theme, loading: false);
+    }
 
     // 账面 / 成本 / 是否进过货 / 在途 **都在 `initState` 算过了**
     // （2026-11-11 裁定「乙」，依据见字段注释：build p99 100–378 ms 的卡帧源）。

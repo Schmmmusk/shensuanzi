@@ -17,6 +17,7 @@
 library;
 
 import 'dart:async';
+import 'dart:isolate' show Isolate;
 
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
@@ -42,10 +43,85 @@ enum _TimeRange {
 }
 
 /// 单据列表页。
+/// 单据页一次查询的结果（工作 isolate 的返回值，纯数据）。
+typedef DocumentsSnapshot = ({int total, List<DocumentSummary> rows});
+
+/// 在**工作 isolate** 里查单据列表 + 总数（只读连接 + 单只读事务）。
+///
+/// 为什么要挪：冷盘实测 `list_documents` 485 ms + `doc_count` 377 ms（台账 §一百一十三），
+/// 而且这两个数在 26 万单的库上是**每次切进页面**都要付的。同步跑会把整窗按住。
+Future<DocumentsSnapshot> loadDocumentsSnapshot({
+  required String dbPath,
+  required Set<DocType> types,
+  required Set<DocumentStatusView> statusViews,
+  required int? sinceMillis,
+  required int? untilMillis,
+  required bool includeDerived,
+  required bool rootsOnly,
+  required String? query,
+  required int limit,
+}) => Isolate.run(
+  () => loadDocumentsSnapshotSync(
+    dbPath: dbPath,
+    types: types,
+    statusViews: statusViews,
+    sinceMillis: sinceMillis,
+    untilMillis: untilMillis,
+    includeDerived: includeDerived,
+    rootsOnly: rootsOnly,
+    query: query,
+    limit: limit,
+  ),
+);
+
+/// [loadDocumentsSnapshot] 的同步实体（也直接给「没有库路径」的兜底路径用）。
+DocumentsSnapshot loadDocumentsSnapshotSync({
+  required String dbPath,
+  required Set<DocType> types,
+  required Set<DocumentStatusView> statusViews,
+  required int? sinceMillis,
+  required int? untilMillis,
+  required bool includeDerived,
+  required bool rootsOnly,
+  required String? query,
+  required int limit,
+}) {
+  final Db db = Db.openReadOnly(dbPath);
+  try {
+    final DocumentDao dao = DocumentDao(db);
+    // **一个只读事务**：计数与列表读的是同一个快照（否则「共 N 条」与实际行数对不上）
+    return db.readTransaction(() {
+      final int total = dao.countDocuments(
+        types: types,
+        statusViews: statusViews,
+        sinceMillis: sinceMillis,
+        untilMillis: untilMillis,
+        includeDerived: includeDerived,
+        query: query,
+        rootsOnly: rootsOnly,
+      );
+      final List<DocumentSummary> rows = dao.listDocuments(
+        types: types,
+        statusViews: statusViews,
+        sinceMillis: sinceMillis,
+        untilMillis: untilMillis,
+        limit: limit,
+        includeDerived: includeDerived,
+        rootsOnly: rootsOnly,
+        query: query,
+      );
+      return (total: total, rows: rows);
+    });
+  } finally {
+    db.close();
+  }
+}
+
 class DocumentsPage extends StatefulWidget {
   const DocumentsPage({
     super.key,
     required this.dao,
+    this.dbPath,
     this.remoteVersion = 0,
     this.exports,
     this.settlements,
@@ -62,6 +138,14 @@ class DocumentsPage extends StatefulWidget {
   final int remoteVersion;
 
   final DocumentDao dao;
+
+  /// **库文件路径**（2026-11-20，乙）：给了它 ⇒ 首屏查询进工作 isolate；
+  /// `null` ⇒ 同步（内存库 / 单跑测试）。
+  ///
+  /// ⚠️ 只有**首屏 / 宿主落库后的重查**走 isolate；改筛选与搜索仍是同步的
+  /// （`_applyFilters`）—— 那是交互路径，必须与筛选状态在同一个 `setState`
+  /// 里落地，异步化会让「新筛选 + 旧结果」闪一帧。
+  final String? dbPath;
 
   /// 导出服务（`null` = 不显示导出按钮，与其他可选服务同款判定）
   final ExportSink? exports;
@@ -118,6 +202,15 @@ class _DocumentsPageState extends State<DocumentsPage> {
   int _total = 0;
   List<DocumentSummary> _rows = const <DocumentSummary>[];
 
+  /// 首屏载入中（乙）。`true` 时 `_rows` 还是空的，别把它画成「没有单据」。
+  bool _loading = false;
+
+  /// isolate 抛出来的错误。
+  Object? _loadError;
+
+  /// 过期结果守卫（换库 / 重连 / 用户改筛选都会 ++）。
+  int _generation = 0;
+
   /// 查一次并写进缓存（**不** setState —— 由调用方决定要不要刷）。
   void _loadInto() {
     final String query = _query.trim();
@@ -148,6 +241,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
   void _applyFilters(VoidCallback mutate) {
     setState(() {
       mutate();
+      // 乙：还在跑的 isolate 已经带了旧筛选 ⇒ 作废它，别让旧结果盖掉新筛选
+      _generation++;
+      _loading = false;
+      _loadError = null;
       _loadInto();
     });
   }
@@ -156,15 +253,68 @@ class _DocumentsPageState extends State<DocumentsPage> {
   void initState() {
     super.initState();
     // 首屏：build 之前查一次（不在 build 里查）
-    _loadInto();
+    _loadFirstScreen();
+  }
+
+  /// 首屏 / 换库后的重查：**有库路径就进工作 isolate**。
+  void _loadFirstScreen({bool notify = false}) {
+    final String? path = widget.dbPath;
+    final int generation = ++_generation;
+    if (path == null) {
+      _loadInto();
+      return;
+    }
+    void mark() {
+      _loading = true;
+      _loadError = null;
+    }
+
+    if (notify && mounted) {
+      setState(mark);
+    } else {
+      mark();
+    }
+    unawaited(_loadFirstScreenInIsolate(generation, path));
+  }
+
+  /// isolate 那一趟的收尾：**先比版本号再回写**。
+  Future<void> _loadFirstScreenInIsolate(int generation, String path) async {
+    final String query = _query.trim();
+    try {
+      final DocumentsSnapshot snapshot = await loadDocumentsSnapshot(
+        dbPath: path,
+        // ⚠️ 传**副本**：活着的集合之后会被 `_applyFilters` 改
+        types: Set<DocType>.of(_types),
+        statusViews: Set<DocumentStatusView>.of(_statusViews),
+        sinceMillis: _sinceMillis,
+        untilMillis: _untilMillis,
+        includeDerived: _includeDerived,
+        rootsOnly: !_includeDerived,
+        query: query.isEmpty ? null : query,
+        limit: 200,
+      );
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _total = snapshot.total;
+        _rows = snapshot.rows;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _loading = false;
+        _loadError = error;
+      });
+    }
   }
 
   @override
   void didUpdateWidget(DocumentsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     // 主机落库了 ⇒ 重查（**不**重置筛选、不跳回顶部：用户可能正看着某一张）
-    if (oldWidget.remoteVersion != widget.remoteVersion) {
-      setState(_loadInto);
+    if (oldWidget.remoteVersion != widget.remoteVersion ||
+        oldWidget.dbPath != widget.dbPath) {
+      _loadFirstScreen(notify: true);
     }
   }
 
@@ -322,9 +472,57 @@ class _DocumentsPageState extends State<DocumentsPage> {
     if (mounted) _applyFilters(() {});
   }
 
+  /// 首屏的两种非正常态：**载入中** / **失败**。
+  ///
+  /// ⚠️ **不许用 `CircularProgressIndicator`**：无限动画会让 `pumpAndSettle`
+  /// 永远等不到静止（台账 §一百一十五，概览页那次实测整包 16 条超时）。
+  Widget _firstScreenStatus(ThemeData theme, {required bool loading}) {
+    final Object? error = _loadError;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              loading ? Icons.hourglass_empty : Icons.error_outline,
+              size: 22,
+              color: loading
+                  ? theme.textTheme.bodySmall?.color
+                  : theme.colorScheme.error,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              loading
+                  ? '正在读单据…（读盘慢的话会等几秒，界面不用管它）'
+                  : '读单据失败：${error.toString().split('\n').first}',
+              key: Key(loading ? 'documents-loading' : 'documents-load-error'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(height: 1.6),
+            ),
+            if (!loading) ...<Widget>[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: const Key('documents-reload'),
+                onPressed: () => _loadFirstScreen(notify: true),
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('重试'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    // ---- 首屏载入中 / 失败（乙，2026-11-20）----
+    // 整页短路：筛选条依赖 `_rows` 算出来的东西（计数、时间说明），
+    // 半截渲染会露出「共 0 条」这种假数字。
+    if (_loading) return _firstScreenStatus(theme, loading: true);
+    if (_loadError != null) return _firstScreenStatus(theme, loading: false);
     // ⚠️ 时间起点**只算一次**：列表与导出必须用同一个值，
     // 否则「列表显示 30 天、导出却从 30 天前那一秒算起」这类缝隙就出来了
     final int? since = _sinceMillis;

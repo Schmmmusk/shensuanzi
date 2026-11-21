@@ -156,6 +156,7 @@ void main() {
     ExportSink? exports,
     bool withSettlement = false,
     int remoteVersion = 0,
+    String? dbPath,
   }) => MaterialApp(
     home: Scaffold(
       body: DocumentsPage(
@@ -166,6 +167,7 @@ void main() {
         // 需要测「点行进详情」时显式传 true（与其他可选服务同款判定）
         settlements: withSettlement ? settlements : null,
         products: withSettlement ? ProductService(db) : null,
+        dbPath: dbPath,
       ),
     ),
   );
@@ -1087,6 +1089,56 @@ void main() {
       // 搜索框里的词还在（没有被重置）
       expect(find.text('采购'), findsWidgets, reason: '重查不许把用户正在用的筛选清掉');
     });
+  });
+
+  // ------------------------------------------------------------ 乙（2026-11-20）
+  //
+  // 有库路径 ⇒ 首屏查询（列表 + 计数）进工作 isolate。
+  // 冷盘实测这两条 485 + 377 ms（台账 §一百一十三），同步跑会把整窗按住。
+  testWidgets('乙：有库路径 ⇒ 先出载入态，算完出列表与「共 N 条」', (WidgetTester tester) async {
+    await tester.pumpWidget(page(dbPath: db.path));
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('documents-loading')),
+      findsOneWidget,
+      reason: '首帧必须是载入态 —— 此时 `_rows` 还是空的，不能画成「没有单据」',
+    );
+
+    for (
+      int i = 0;
+      i < 300 &&
+          find.byKey(const Key('documents-loading')).evaluate().isNotEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+
+    expect(find.byKey(const Key('documents-loading')), findsNothing);
+    expect(find.byKey(const Key('documents-load-error')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('乙：库路径打不开 ⇒ 错误条 + 重试，不是一直转圈', (WidgetTester tester) async {
+    await tester.pumpWidget(page(dbPath: p.join(box.path, 'not-there.db')));
+    for (
+      int i = 0;
+      i < 300 &&
+          find.byKey(const Key('documents-load-error')).evaluate().isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+
+    expect(find.byKey(const Key('documents-load-error')), findsOneWidget);
+    expect(find.byKey(const Key('documents-loading')), findsNothing);
+    expect(find.byKey(const Key('documents-reload')), findsOneWidget);
   });
 }
 

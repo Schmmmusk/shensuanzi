@@ -155,6 +155,7 @@ void main() {
     DocumentSink? documentSink,
     bool canCreateProducts = false,
     bool mobileShell = false,
+    String? dbPath,
   }) => MaterialApp(
     home: Scaffold(
       body: StockPage(
@@ -175,6 +176,7 @@ void main() {
         documentSink: documentSink,
         canCreateProducts: canCreateProducts,
         mobileShell: mobileShell,
+        dbPath: dbPath,
       ),
     ),
   );
@@ -1329,5 +1331,55 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
+  });
+  // ------------------------------------------------------------ 乙（2026-11-20）
+  //
+  // 有库路径 ⇒ 聚合进工作 isolate：首帧出「正在统计库存…」，算完再出列表。
+  // `inTransitByProduct` 在在途 1.4 万张单时是 21,670 次随机探页（台账 §一百一十二），
+  // 同步跑会把整窗按住 —— 这两条钉的是「不再按住」。
+  testWidgets('乙：有库路径 ⇒ 先出载入态，算完出列表', (WidgetTester tester) async {
+    buy(3);
+    await tester.pumpWidget(page(dbPath: db.path));
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('stock-loading')),
+      findsOneWidget,
+      reason: '首帧必须是载入态（`late` 字段还没赋值，也不能去读）',
+    );
+
+    for (
+      int i = 0;
+      i < 300 && find.byKey(const Key('stock-loading')).evaluate().isNotEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+
+    expect(find.byKey(const Key('stock-loading')), findsNothing);
+    expect(find.text('红富士苹果'), findsWidgets, reason: '算完必须真的把商品装进来');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('乙：库路径打不开 ⇒ 错误条 + 重试，不是一直转圈', (WidgetTester tester) async {
+    buy(3);
+    await tester.pumpWidget(page(dbPath: p.join(box.path, 'not-there.db')));
+    for (
+      int i = 0;
+      i < 300 && find.byKey(const Key('stock-load-error')).evaluate().isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+
+    expect(find.byKey(const Key('stock-load-error')), findsOneWidget);
+    expect(find.byKey(const Key('stock-loading')), findsNothing);
+    expect(find.byKey(const Key('stock-reload')), findsOneWidget);
   });
 }

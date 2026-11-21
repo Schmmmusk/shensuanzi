@@ -176,6 +176,17 @@ void main() {
 
       await tester.tap(find.text('库存'));
       await tester.pumpAndSettle();
+      // 乙（2026-11-20）：库存页的聚合已挪进工作 isolate ⇒ 等它回来再断言，
+      // 否则抓到的是载入态（那时候工具栏还没画出来）
+      for (int i = 0;
+          i < 200 &&
+              find.byKey(const Key('stock-loading')).evaluate().isNotEmpty;
+          i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
 
       expect(find.text('重新清点'), findsNothing);
       expect(find.text('录入现有货物'), findsNothing);
