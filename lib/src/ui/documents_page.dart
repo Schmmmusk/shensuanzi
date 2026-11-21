@@ -26,6 +26,7 @@ import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 import 'document_detail_page.dart';
 import 'export_button.dart';
+import 'snapshot_cache.dart';
 import 'list_scaffold.dart';
 import 'card_rows_sliver.dart';
 
@@ -211,6 +212,30 @@ class _DocumentsPageState extends State<DocumentsPage> {
   /// 过期结果守卫（换库 / 重连 / 用户改筛选都会 ++）。
   int _generation = 0;
 
+  /// 是否已经有一份可画的快照（甲：上次的结果；`_rows` 可能合法为空，所以不用它判空）。
+  bool _hasSnapshot = false;
+
+  /// 命中了上次的快照、正在后台重算（甲，2026-11-21）—— 必须说出来。
+  bool _refreshing = false;
+
+  /// 快照键 = **库路径 + 完整筛选签名**（评审写死的边界）。
+  ///
+  /// 为什么不能只用库路径：切页会把 State 扔掉、筛选回默认；若拿一份「别的筛选」
+  /// 的快照来画，用户会看到「筛选是默认、行却是上次那个筛选的结果」——
+  /// 那比多等 0.3 s 糟得多。
+  String? get _snapshotKey {
+    final String? path = widget.dbPath;
+    if (path == null) return null;
+    final List<String> types = _types.map((DocType t) => t.name).toList()
+      ..sort();
+    final List<String> views = _statusViews
+        .map((DocumentStatusView v) => v.name)
+        .toList()
+      ..sort();
+    return 'documents:$path|${types.join(',')}|${views.join(',')}'
+        '|${_range.name}|${_customRange ?? ''}|$_query';
+  }
+
   /// 查一次并写进缓存（**不** setState —— 由调用方决定要不要刷）。
   void _loadInto() {
     final String query = _query.trim();
@@ -244,16 +269,31 @@ class _DocumentsPageState extends State<DocumentsPage> {
       // 乙：还在跑的 isolate 已经带了旧筛选 ⇒ 作废它，别让旧结果盖掉新筛选
       _generation++;
       _loading = false;
+      _refreshing = false;
       _loadError = null;
       _loadInto();
+      _hasSnapshot = true;
     });
   }
 
   @override
   void initState() {
     super.initState();
+    // 甲（2026-11-21）：先把上次同一筛选下的结果画出来，**但仍然会重算**
+    _restoreSnapshot();
     // 首屏：build 之前查一次（不在 build 里查）
     _loadFirstScreen();
+  }
+
+  /// 甲：命中同筛选的快照就先画（见 [_snapshotKey] 的注释）。
+  void _restoreSnapshot() {
+    final String? key = _snapshotKey;
+    if (key == null) return;
+    final DocumentsSnapshot? cached = snapshotOf<DocumentsSnapshot>(key);
+    if (cached == null) return;
+    _total = cached.total;
+    _rows = cached.rows;
+    _hasSnapshot = true;
   }
 
   /// 首屏 / 换库后的重查：**有库路径就进工作 isolate**。
@@ -264,8 +304,10 @@ class _DocumentsPageState extends State<DocumentsPage> {
       _loadInto();
       return;
     }
+    // 有快照 ⇒ 不出载入态（表格已经在屏幕上了），只在计数行后缀「正在刷新…」
     void mark() {
-      _loading = true;
+      _loading = !_hasSnapshot;
+      _refreshing = _hasSnapshot;
       _loadError = null;
     }
 
@@ -294,15 +336,20 @@ class _DocumentsPageState extends State<DocumentsPage> {
         limit: 200,
       );
       if (!mounted || generation != _generation) return;
+      final String? key = _snapshotKey;
+      if (key != null) rememberSnapshot(key, snapshot);
       setState(() {
         _total = snapshot.total;
         _rows = snapshot.rows;
         _loading = false;
+        _refreshing = false;
+        _hasSnapshot = true;
       });
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
         _loading = false;
+        _refreshing = false;
         _loadError = error;
       });
     }
@@ -340,8 +387,12 @@ class _DocumentsPageState extends State<DocumentsPage> {
   /// `listDocuments` 有 `limit: 200` —— 原来页面没有任何提示，
   /// 用户对着账会说「我这个月就 200 单」。现在把真实数说出来。
   String _countText(int total, int shown) {
-    if (shown < total) return '只显示 $shown 条 / 共 $total 条';
-    return '共 $total 条';
+    final String base = shown < total
+        ? '只显示 $shown 条 / 共 $total 条'
+        : '共 $total 条';
+    // 甲（2026-11-21）：先用上次的结果画、后台正在重算 —— 必须说出来，
+    // 否则用户以为这就是最终数字。
+    return _refreshing ? '$base · 正在刷新…' : base;
   }
 
   /// **清空全部筛选**（用户裁定 ③ 的闭环）：搜索文字 + 三排筛选 + 自动切范围，一次清完。

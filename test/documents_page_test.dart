@@ -1140,6 +1140,46 @@ void main() {
     expect(find.byKey(const Key('documents-loading')), findsNothing);
     expect(find.byKey(const Key('documents-reload')), findsOneWidget);
   });
+
+  // ------------------------------------------------------------ 甲（2026-11-21）
+  testWidgets('甲：切走再切回来，首帧用上次的结果 + 计数行后缀「正在刷新…」', (WidgetTester tester) async {
+    Future<void> waitForLoad() async {
+      for (
+        int i = 0;
+        i < 300 &&
+            find.byKey(const Key('documents-loading')).evaluate().isNotEmpty;
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+    }
+
+    await tester.pumpWidget(page(dbPath: db.path));
+    await waitForLoad();
+    expect(find.byKey(const Key('documents-loading')), findsNothing);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: SizedBox.shrink())),
+    );
+    await tester.pump();
+
+    await tester.pumpWidget(page(dbPath: db.path));
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('documents-loading')),
+      findsNothing,
+      reason: '同一筛选下的快照可以直接画，不必再等一趟 isolate',
+    );
+    expect(
+      find.textContaining('正在刷新'),
+      findsOneWidget,
+      reason: '必须明说「这几个数是上次的、还在算」',
+    );
+  });
 }
 
 /// 只数「查了几次库」的 DAO —— 钉住「查询不在 build 里」这条结构。

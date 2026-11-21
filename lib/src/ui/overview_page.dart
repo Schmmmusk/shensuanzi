@@ -28,6 +28,7 @@ import 'month_compare.dart';
 import 'notice.dart';
 import 'revenue_chart.dart';
 import 'scaled.dart';
+import 'snapshot_cache.dart';
 import 'shortage.dart';
 import 'stock_top.dart';
 import 'paint_first.dart';
@@ -341,6 +342,12 @@ class _OverviewPageState extends State<OverviewPage> {
   /// isolate 里抛出来的错误；`null` = 没出错。
   Object? _loadError;
 
+  /// **正在刷新**（甲，2026-11-21）：命中了上次的快照、正在后台重算。
+  ///
+  /// 与 [_pending] 互斥：有快照 ⇒ 出数字 + 这一行小字；没快照 ⇒ 出载入态。
+  /// 必须显示（评审要求）：否则用户看到的是「旧数字」，却不知道它还会变。
+  bool _refreshing = false;
+
   /// **过期结果守卫**：每次发起 `++`，回写前比对。
   ///
   /// 换库 / 重连 / 镜像切换会让 `queries` 变，旧那一趟可能还在跑 ——
@@ -350,8 +357,24 @@ class _OverviewPageState extends State<OverviewPage> {
   @override
   void initState() {
     super.initState();
+    _restoreSnapshot();
     // `notify: false` —— initState 里不需要 setState（还没有可重建的帧）
     _reload(notify: false);
+  }
+
+  /// 甲（2026-11-21）：先把上次算好的画面画出来，**但仍然会重算**。
+  ///
+  /// 边界与理由见 `snapshot_cache.dart` 头注释（评审三条：仍重算 / 提示刷新 /
+  /// 单据页按筛选同键）。
+  void _restoreSnapshot() {
+    final String? path = widget.dbPath;
+    if (path == null) return;
+    final OverviewSnapshot? cached = snapshotOf<OverviewSnapshot>(
+      'overview:$path',
+    );
+    if (cached == null) return;
+    _data = cached.data;
+    _lowStock = cached.lowStock;
   }
 
   /// 一次把「经营区」与「缺货榜」都算好。
@@ -418,13 +441,17 @@ class _OverviewPageState extends State<OverviewPage> {
           unsynced: widget.stockDelta?.unsyncedDelta() ?? const <String, int>{},
         );
         _pending = false;
+        _refreshing = false;
         _loadError = null;
       });
       return;
     }
 
+    // 有上次的快照 ⇒ 不出载入态（数字已经在屏幕上了），只出一行「正在刷新…」
+    final bool hasSnapshot = _data != null;
     apply(() {
-      _pending = true;
+      _pending = !hasSnapshot;
+      _refreshing = hasSnapshot;
       _loadError = null;
     });
     // 不 await：算完自己 setState；异常在内部转成错误态
@@ -441,15 +468,19 @@ class _OverviewPageState extends State<OverviewPage> {
         wantDelta: widget.stockDelta != null,
       );
       if (!mounted || generation != _generation) return; // 过期结果：丢掉
+      // 记下这次的结果，供下一次切回来时先画（甲）
+      rememberSnapshot('overview:$dbPath', snapshot);
       setState(() {
         _data = snapshot.data;
         _lowStock = snapshot.lowStock;
         _pending = false;
+        _refreshing = false;
       });
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
         _pending = false;
+        _refreshing = false;
         _loadError = error;
       });
     }
@@ -657,6 +688,27 @@ class _OverviewPageState extends State<OverviewPage> {
         // 三态必须分开画：**载入中**（一行字，不做 shimmer —— 中老年用户会把
         // 灰格子当成「加载失败的空格子」）、**失败**（错误条 + 重试）、
         // **算完但是空库**（走下面的引导卡）。
+        if (_refreshing) ...<Widget>[
+          const SizedBox(height: 20),
+          Row(
+            children: <Widget>[
+              Icon(
+                Icons.sync,
+                size: 16,
+                color: theme.textTheme.bodySmall?.color,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '正在刷新…（先显示上次的数字，算完会更新）',
+                key: const Key('overview-refreshing'),
+                style: TextStyle(
+                  height: 1.6,
+                  color: theme.textTheme.bodySmall?.color,
+                ),
+              ),
+            ],
+          ),
+        ],
         if (_pending) ...<Widget>[
           const SizedBox(height: 20),
           Card(

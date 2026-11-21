@@ -48,6 +48,7 @@ import 'list_scaffold.dart';
 import 'low_stock_card.dart';
 import 'opening_stock_page.dart';
 import 'scaled.dart';
+import 'snapshot_cache.dart';
 import 'shortage.dart';
 import 'stock_top.dart';
 import 'product_form_dialog.dart';
@@ -292,6 +293,17 @@ class _StockPageState extends State<StockPage> {
   /// isolate 抛出来的错误（`null` = 没出错）。
   Object? _loadError;
 
+  /// 是否已经有一份可画的聚合（甲：上次的快照，或本次算完）。
+  ///
+  /// `late` 字段没法「判空」，所以单独记一个布尔 —— 它决定首帧画
+  /// 载入态（没有）还是画数字 + 「正在刷新…」（有）。
+  bool _hasAggregates = false;
+
+  /// 命中了上次的快照、正在后台重算（甲，2026-11-21）。
+  ///
+  /// **必须显示**：否则用户看到的是旧数字却不知道它还会变（评审要求）。
+  bool _refreshing = false;
+
   /// 过期结果守卫（与概览页同款）。
   int _generation = 0;
 
@@ -311,8 +323,10 @@ class _StockPageState extends State<StockPage> {
       return;
     }
     final int generation = ++_generation;
+    // 已有快照 ⇒ 不出载入态（数字早就在屏幕上了），只出一行「正在刷新…」
     void mark() {
-      _pending = true;
+      _pending = !_hasAggregates;
+      _refreshing = _hasAggregates;
       _loadError = null;
     }
 
@@ -343,6 +357,7 @@ class _StockPageState extends State<StockPage> {
     };
     _inTransit = snapshot.inTransit;
     _hasAnyLedger = agg.isNotEmpty;
+    _hasAggregates = true;
   }
 
   /// isolate 那一趟的收尾：**先比版本号再回写**（换库 / 重连后的旧结果丢弃）。
@@ -353,8 +368,10 @@ class _StockPageState extends State<StockPage> {
         trace: kPageCostTrace,
       );
       if (!mounted || generation != _generation) return;
+      rememberSnapshot('stock:$path', snapshot);
       setState(() {
         _applyAggregates(snapshot);
+        _refreshing = false;
         // 埋点口径与同步路径一致（否则 page-cost.jsonl 两条路径的数字不可比）
         _pageCost?.aggregates(snapshot.aggMicros);
         _pageCost?.inTransit(snapshot.transitMicros);
@@ -370,6 +387,7 @@ class _StockPageState extends State<StockPage> {
   }
 
   void _loadAggregatesSync() {
+    _refreshing = false;
     // RULE-006：没有余额表，账面只能每次从流水算。
     // 4c-2（2026-10-24，§5.2 #3）：账面 / 成本 / 是否进过货 **一次扫完**
     // （从前是三次全表聚合：30 万行 × 3）。
@@ -417,7 +435,17 @@ class _StockPageState extends State<StockPage> {
             file: PageCostTrace.fileFor(widget.queries.db.path),
           )
         : null;
+    _restoreSnapshot();
     _loadAggregates(notify: false);
+  }
+
+  /// 甲（2026-11-21）：先把上次的快照画出来，**但仍然会重算**。
+  void _restoreSnapshot() {
+    final String? path = widget.dbPath;
+    if (path == null) return;
+    final StockAggregates? cached = snapshotOf<StockAggregates>('stock:$path');
+    if (cached == null) return;
+    _applyAggregates(cached);
   }
 
   /// **父级重建时重算**（切页回来 / 壳层刷新）。
@@ -1009,6 +1037,20 @@ class _StockPageState extends State<StockPage> {
                           ),
                       ],
                     ),
+
+                    // 甲（2026-11-21）：命中上次快照时明说「还会变」
+                    if (_refreshing)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          '正在刷新…（先显示上次的数字，算完会更新）',
+                          key: const Key('stock-refreshing'),
+                          style: TextStyle(
+                            height: 1.6,
+                            color: theme.textTheme.bodySmall?.color,
+                          ),
+                        ),
+                      ),
 
                     // 两张榜（提案 61 §四 决策 3 甲）：**缺货榜在前、压货榜在后**，
                     // 宽屏并排、窄屏（或大字号）上下叠。缺货要行动，压货只是知晓 ——

@@ -1760,4 +1760,64 @@ void main() {
     expect(find.byKey(const Key('overview-loading')), findsNothing);
     expect(find.byKey(const Key('overview-reload')), findsOneWidget);
   });
+
+  // ------------------------------------------------------------ 甲（2026-11-21）
+  //
+  // 壳是「切页即现建 widget」（没有 IndexedStack）⇒ 切回来 State 重建、重新查库。
+  // 甲案：**先用上次的快照把画面画出来**，同时后台照旧重算。
+  // 两条判据：① 首帧不许再出载入态；② 必须明说还在刷新。
+  testWidgets('甲：切走再切回来，首帧直接用上次的快照', (WidgetTester tester) async {
+    final QueryDao queries = await seedBiz(
+      todayMs: DateTime.now().millisecondsSinceEpoch,
+    );
+
+    Future<void> waitForLoad() async {
+      for (
+        int i = 0;
+        i < 300 &&
+            find.byKey(const Key('overview-loading')).evaluate().isNotEmpty;
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+    }
+
+    // 第一次进入：等到算完（这时快照被记下）
+    await tester.pumpWidget(
+      page(queries: queries, onNavigate: (_) {}, dbPath: db.path),
+    );
+    await waitForLoad();
+    expect(find.byKey(const Key('overview-card-entries')), findsOneWidget);
+
+    // 切走 —— 换一个页面等于旧 State 被 dispose
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: SizedBox.shrink())),
+    );
+    await tester.pump();
+
+    // 切回来：**首帧**就该是上次的画面
+    await tester.pumpWidget(
+      page(queries: queries, onNavigate: (_) {}, dbPath: db.path),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('overview-loading')),
+      findsNothing,
+      reason: '有快照就不许再出载入态 —— 那正是用户看到的那 0.3 s 闪烁',
+    );
+    expect(
+      find.byKey(const Key('overview-card-entries')),
+      findsOneWidget,
+      reason: '首帧必须已经有上次的数字',
+    );
+    expect(
+      find.byKey(const Key('overview-refreshing')),
+      findsOneWidget,
+      reason: '必须告诉用户「还在算」，否则他会把旧数字当最终结果',
+    );
+  });
 }
