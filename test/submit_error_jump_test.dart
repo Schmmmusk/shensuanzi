@@ -41,12 +41,14 @@ String _source(String name) {
 void main() {
   // ---------------------------------------------------------------- 组件行为
   group('SubmitErrorSummary（可点摘要）', () {
-    Widget host(List<SubmitErrorItem> items, {void Function(SubmitSection)? onJump}) =>
-        MaterialApp(
-          home: Scaffold(
-            body: SubmitErrorSummary(items: items, onJump: onJump),
-          ),
-        );
+    Widget host(
+      List<SubmitErrorItem> items, {
+      void Function(SubmitSection)? onJump,
+    }) => MaterialApp(
+      home: Scaffold(
+        body: SubmitErrorSummary(items: items, onJump: onJump),
+      ),
+    );
 
     testWidgets('每条错误都照原样列出来（文案不变）', (WidgetTester tester) async {
       await tester.pumpWidget(
@@ -65,19 +67,13 @@ void main() {
       WidgetTester tester,
     ) async {
       await tester.pumpWidget(
-        host(
-          const <SubmitErrorItem>[
-            SubmitErrorItem('请选择客户', section: SubmitSection.header),
-            SubmitErrorItem('第 2 行数量不能为 0'),
-          ],
-          onJump: (_) {},
-        ),
+        host(const <SubmitErrorItem>[
+          SubmitErrorItem('请选择客户', section: SubmitSection.header),
+          SubmitErrorItem('第 2 行数量不能为 0'),
+        ], onJump: (_) {}),
       );
 
-      expect(
-        find.byKey(const Key('submit-error-jump-header')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const Key('submit-error-jump-header')), findsOneWidget);
       expect(
         find.byKey(const Key('submit-error-jump-lines')),
         findsNothing,
@@ -87,14 +83,11 @@ void main() {
 
     testWidgets('同一块错三处 ⇒ 只给一个按钮（不堆一排）', (WidgetTester tester) async {
       await tester.pumpWidget(
-        host(
-          const <SubmitErrorItem>[
-            SubmitErrorItem('请选择客户', section: SubmitSection.header),
-            SubmitErrorItem('日期不能晚于今天', section: SubmitSection.header),
-            SubmitErrorItem('备注太长了', section: SubmitSection.remark),
-          ],
-          onJump: (_) {},
-        ),
+        host(const <SubmitErrorItem>[
+          SubmitErrorItem('请选择客户', section: SubmitSection.header),
+          SubmitErrorItem('日期不能晚于今天', section: SubmitSection.header),
+          SubmitErrorItem('备注太长了', section: SubmitSection.remark),
+        ], onJump: (_) {}),
       );
 
       expect(find.byKey(const Key('submit-error-jump-header')), findsOneWidget);
@@ -105,12 +98,9 @@ void main() {
     testWidgets('按钮点了报的是那个区块（页面据此滚过去）', (WidgetTester tester) async {
       final List<SubmitSection> jumped = <SubmitSection>[];
       await tester.pumpWidget(
-        host(
-          const <SubmitErrorItem>[
-            SubmitErrorItem('明细里有个数为 0', section: SubmitSection.lines),
-          ],
-          onJump: jumped.add,
-        ),
+        host(const <SubmitErrorItem>[
+          SubmitErrorItem('明细里有个数为 0', section: SubmitSection.lines),
+        ], onJump: jumped.add),
       );
 
       await tester.tap(find.byKey(const Key('submit-error-jump-lines')));
@@ -133,12 +123,9 @@ void main() {
       WidgetTester tester,
     ) async {
       await tester.pumpWidget(
-        host(
-          const <SubmitErrorItem>[
-            SubmitErrorItem('请选择客户', section: SubmitSection.header),
-          ],
-          onJump: (_) {},
-        ),
+        host(const <SubmitErrorItem>[
+          SubmitErrorItem('请选择客户', section: SubmitSection.header),
+        ], onJump: (_) {}),
       );
 
       final Size size = tester.getSize(
@@ -165,9 +152,10 @@ void main() {
         expect(
           // 允许「`onJump: _jumpTo,`」或「`onJump: _jumpTo)`」两种收尾：
           // `dart format` 会把短调用收成一行，尾逗号随之消失（2026-11-18 踩到）。
-          RegExp(r'SubmitErrorSummary\(\s*items:\s*_submitErrorItems\(\),'
-                  r'\s*onJump:\s*_jumpTo[,)]')
-              .hasMatch(source),
+          RegExp(
+            r'SubmitErrorSummary\(\s*items:\s*_submitErrorItems\(\),'
+            r'\s*onJump:\s*_jumpTo[,)]',
+          ).hasMatch(source),
           isTrue,
           reason: '摘要卡必须接上 items + onJump —— 否则按钮不出现或点了没反应',
         );
@@ -178,9 +166,9 @@ void main() {
           reason: '还有旧的 `_submitErrorMessages()` = 半迁移（有人只改了一半）',
         );
 
-        final int declared = RegExp(r'final GlobalKey _\w+Key = GlobalKey\(\);')
-            .allMatches(source)
-            .length;
+        final int declared = RegExp(
+          r'final GlobalKey _\w+Key = GlobalKey\(\);',
+        ).allMatches(source).length;
         final int attached = RegExp(r'key: _\w+Key,').allMatches(source).length;
 
         expect(declared, entry.value, reason: '声明了 $declared 个区块 key');
@@ -190,11 +178,63 @@ void main() {
           reason: '挂到布局上的只有 $attached 个 —— 声明了不挂等于没接',
         );
 
-        final int jumps = RegExp(r'Future<void> _jumpTo\(SubmitSection')
-            .allMatches(source)
-            .length;
+        final int jumps = RegExp(
+          r'Future<void> _jumpTo\(SubmitSection',
+        ).allMatches(source).length;
         expect(jumps, 1, reason: '每页恰有一个跳转实现（复制粘贴不该多出来）');
       });
     }
+  });
+
+  // ------------------------------------------------------------ 字体兜底（2026-11-22 真机）
+  //
+  // 用户截图：「跳到退货明细」的字形与同页其它文字明显不同。
+  // 根因：`OutlinedButton.styleFrom(textStyle: TextStyle(fontWeight: w600))` ——
+  // `ButtonStyle.textStyle` 是**替换**按钮排版，一个只写 fontWeigh 的 TextStyle
+  // 会把主题的 `fontFamily` / `fontFamilyFallback` 一起抹掉 ⇒ 中文掉回系统兜底字体。
+  testWidgets('「跳到…」按钮继承主题字体（不掉回系统兜底字体）', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        // 给一个**只可能来自主题**的族名：渲染继承到它，才说明没被替换掉
+        theme: ThemeData(fontFamily: 'TestOnlyFamily'),
+        home: Scaffold(
+          body: SubmitErrorSummary(
+            items: <SubmitErrorItem>[
+              const SubmitErrorItem(
+                '超过可退数量：最多可退 4 个',
+                section: SubmitSection.lines,
+                sectionLabel: '退货明细',
+              ),
+            ],
+            onJump: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    final Finder jump = find.text('跳到退货明细');
+    expect(jump, findsOneWidget);
+    final BuildContext ctx = tester.element(jump);
+    expect(
+      DefaultTextStyle.of(ctx).style.fontFamily,
+      'TestOnlyFamily',
+      reason:
+          '按钮的文案必须继承主题字体 —— 换成裸 TextStyle 就会掉回兜底字体，'
+          '同一页两种字形（用户 2026-11-22 截图报的现象）',
+    );
+    // 字重仍然要有（原来的意图是「跳转按钮稍微重一点」）。
+    // ⚠️ 断言的是 **label 自己的 `Text.style`**，不是 `DefaultTextStyle` ——
+    // 后者是"外层给什么"，`Text.style` 才是"这一行要加什么"，两者在手势层合成。
+    final Text label = tester.widget<Text>(jump);
+    expect(
+      label.style?.fontWeight,
+      FontWeight.w600,
+      reason: '去掉 textStyle 不等于放弃字重 —— 字重改挂到 label 的 Text 上',
+    );
+    expect(
+      label.style?.fontFamily,
+      isNull,
+      reason: 'label 不该自带字体族（那是继承的事）；自带就又变成"替换"了',
+    );
   });
 }

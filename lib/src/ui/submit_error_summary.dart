@@ -165,10 +165,19 @@ class SubmitErrorSummary extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 14),
                       foregroundColor: error,
                       side: BorderSide(color: error.withValues(alpha: 0.6)),
-                      textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                      // ⚠️ **不许在这里给 `textStyle`**（2026-11-22 真机）：
+                      // `ButtonStyle.textStyle` 是**替换**按钮的排版样式，一个只有
+                      // `fontWeight` 的 `TextStyle` 会把 `fontFamily` 一起抹掉 ——
+                      // 中文于是掉回系统兜底字体，同一个页面上「跳到退货明细」的字形
+                      // 与别处明显不同（用户截图报的就是它）。
+                      // 字重放到 label 上：`Text` 是**合并**进 `DefaultTextStyle`，
+                      // 字体族会跟着主题走。
                     ),
                     onPressed: () => onJump!(jump.section),
-                    child: Text('跳到${jump.label}'),
+                    child: Text(
+                      '跳到${jump.label}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
               ],
             ),
