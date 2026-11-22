@@ -22388,3 +22388,66 @@ python perf_bench.py --db "C:/Users/yzx/神算子数据/shensuanzi.db" --cold --
 
 门禁数字取自今天亲跑：root 623 / core 874 / app 545 / host 245 / analyze 0 /
 `flutter build windows` 通过（22.8 s，版本资源已含 0.8.0）。
+
+### 一百二十、2026-11-22 **界面精修调研（0.8.x）：9 节要点逐条落到代码，分四批**
+
+> 用户给了 `docs/reply.md` 的 9 节要点 + 11 张截图（`docs/界面精修前截图/`）。
+> 产出 `docs/proposals/界面精修-0.8.x-调研与分批方案.md`。**未动代码。**
+
+**逐条核对结论：现象全部成立，没有一条是误解。** 三条已定位到「一行」级的根因：
+
+| 现象 | 根因（代码位置） |
+|---|---|
+| 库存页「导出库存」在中间、「重新清点」在右边 | `stock_page.dart` 头部是 `Wrap(spaceBetween)` + **三个**子项（标题 / 导出 / 清点）⇒ 中间那个被 spaceBetween 摆到正中间 |
+| 流水页导出按钮看着居中 | `flow_page_scaffold.dart` 表头 `Wrap` 里标题与按钮**相邻**，父级居中 |
+| 商品行分隔线几乎看不见 | 默认 `Divider`（`outlineVariant`）约 **1.2–1.3:1**，与之前导航分割线 1.63 同类 |
+
+**必须先用工具量的两条**（纪律 20）：① 36 个 `showDialog` 在 1.75/2.0 倍字号下的溢出清单；
+② 单据行要显示「商品与数量」得新增一次批量明细查询，先量 200 单的耗时。
+
+**结构性工程只有三件**：宽屏上限（壳级 `_content()` 一处容器）、开单页按纸单重排（会推翻
+`page_isomorphism_test` 的部分 pin）、设置页拆二级页（约 20 个 `Key` 不能改名）。
+
+分批：**0 先量 → A 小改（7 项）→ B 需要取舍（5 项）→ C 结构工程（2 项）**；
+另有 2 项（核销单套娃、流水图表悬停）等单独裁定。方案里给了 **7 个待裁定问题**与我的建议。
+
+### 一百二十一、2026-11-22 **追加三处真机问题：字体兜底已修，另两条并入方案（Q8/Q9）**
+
+> 用户报：① 确认退货弹窗在超大缩放下"撑破"；② 不能再退却仍能一路操作到保存；
+> ③ 「跳到退货明细」字形与别处不同。
+
+#### ① 第 3 条：**已修**（字体被"替换"而不是"合并"）
+
+`submit_error_summary.dart` 的跳转按钮给了
+`styleFrom(textStyle: TextStyle(fontWeight: FontWeight.w600))`。
+`ButtonStyle.textStyle` 是**替换**按钮排版 —— 只写 `fontWeight` 的 `TextStyle`
+把主题的 `fontFamily` / `fontFamilyFallback` 一并抹掉 ⇒ 中文掉回系统兜底字体。
+改法：字重挂到 label 的 `Text`（`Text.style` 是**合并**）。全仓同款 grep 只有这一处。
+
+护栏：`submit_error_jump_test` 新用例把主题设成 `fontFamily: 'TestOnlyFamily'`，
+断言 label 的 `DefaultTextStyle.of(ctx).style.fontFamily` 仍是它。
+**灵敏度已验证**：加回 `textStyle` ⇒ `Actual: <null>` 红。
+
+#### ② 第 1 条：弹窗内边距不随缩放 —— 36 个 `showDialog` 的结构性问题
+
+`AlertDialog` 的 `titlePadding` / `contentPadding` / `actionsPadding` 是固定像素，
+文字按 `textScaler` 放大 ⇒ 2.0 倍时 48 px 的字配 24 px 边距，看着就是"贴边撑破"。
+方案：共用 `AppDialog`（`scaledOf` 内边距 + `Wrap` 按钮区），**先换四个提交页的确认弹窗**，
+其余按批 0 清单推进（不一次换 36 处，回归面太大）。→ **Q9**
+
+#### ③ 第 2 条：退货"源头堵死"是行为变更，列三档等裁定
+
+已核现状：入口不查配额、数量/金额都不钳制、保存按钮永远可点（错误等按下去才汇总）。
+
+| 档 | 做法 | 代价 |
+|---|---|---|
+| ① | 配额为 0 ⇒ 详情页「退货」置灰 + 一行说明 | 每单算一次配额 |
+| ② | 输入超上限 ⇒ 自动钳到上限 + 一句「已按 4 个填」 | 用户可能没注意被改数 |
+| ③ | 保存按钮置灰 + 写明原因 | 与本仓「不给入口胜过画灰」的口径相反 |
+
+**建议 ①+②，③ 不做**。⚠️ 选 ①② 之后 `return_page_test` 里「故意填超 → 断言出摘要」
+那几条路径会失效，**必须重写而不是删**（纪律 12：不许为了让测试变绿改生产代码的镜像操作）。
+→ **Q8**
+
+门禁：`flutter analyze` 0；`submit_error_jump_test` 11 条、`return_page_test`、
+`page_isomorphism_test` 全绿。
