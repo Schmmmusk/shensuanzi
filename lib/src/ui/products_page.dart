@@ -332,14 +332,20 @@ class _ProductsPageState extends State<ProductsPage> {
             ],
           ),
         ),
-        const Divider(height: 1),
+        // 分隔线改用 `outline`（#73777F，对 #FAFAFA **4.30 : 1**）：
+        // 默认的 `outlineVariant` 只有 1.63 : 1，弱视用户等于看不见（用户 2026-11-22 截图）。
+        // 与导航分割线同一取色（`nav_divider.dart` 有同一张对比度表）。
+        Divider(height: 1, color: theme.colorScheme.outline),
         Expanded(
           child: rows.isEmpty
               ? _Empty(query: _search.text.trim())
               : ListView.separated(
                   itemCount: rows.length,
                   separatorBuilder: (BuildContext context, int index) =>
-                      const Divider(height: 1),
+                      Divider(
+                        height: 1,
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
                   itemBuilder: (BuildContext context, int index) => _ProductRow(
                     product: rows[index],
                     isPending: pending.contains(rows[index].id),

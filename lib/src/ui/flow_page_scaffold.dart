@@ -101,30 +101,39 @@ class FlowPageScaffold extends StatelessWidget {
                 // 与列表同款左内边距 16，表头与行左对齐
                 padding: EdgeInsets.fromLTRB(narrow ? 12 : 16, 10, 12, 2),
                 // Wrap：超大字号下标题与按钮自动换行，不挤成竖排（§BH·六 B1c·补）
-                child: Wrap(
-                  alignment: headerTitle == null
-                      ? WrapAlignment.end
-                      : WrapAlignment.spaceBetween,
-                  spacing: 8,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: <Widget>[
-                    // 与另外 5 个导出页表头同款：Text 直接进 Wrap（`Flexible`
-                    // 是 Flex 的 ParentDataWidget，放进 Wrap 会报
-                    // Incorrect use of ParentDataWidget）。Wrap 会给子件
-                    // 松约束，长标题自己折行，不会挤爆。
-                    if (headerTitle != null)
-                      Text(headerTitle!, style: theme.textTheme.titleLarge),
-                    if (hasExport)
-                      ExportButton(
-                        key: exportKey,
-                        label: exportLabel,
-                        export: () => exports!.write(
-                          buildExportTable!(),
-                          extra: exportExtra,
+                //
+                // ⚠️ **必须给满宽**（2026-11-22 用户截图）：`Wrap` 在**松约束**下会
+                // shrink-wrap 到内容宽度，而外层 `Column` 是默认的居中 ⇒ 整块被居中、
+                // `spaceBetween` 没有余量可分配，于是「导出流水」落在页面中间偏右，
+                // 看起来像"按钮居中"。给 `double.infinity` 之后 spaceBetween 才真的
+                // 把标题与按钮推到两端。
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Wrap(
+                    alignment: headerTitle == null
+                        ? WrapAlignment.end
+                        : WrapAlignment.spaceBetween,
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: <Widget>[
+                      // 与另外 5 个导出页表头同款：Text 直接进 Wrap（`Flexible`
+                      // 是 Flex 的 ParentDataWidget，放进 Wrap 会报
+                      // Incorrect use of ParentDataWidget）。Wrap 会给子件
+                      // 松约束，长标题自己折行，不会挤爆。
+                      if (headerTitle != null)
+                        Text(headerTitle!, style: theme.textTheme.titleLarge),
+                      if (hasExport)
+                        ExportButton(
+                          key: exportKey,
+                          label: exportLabel,
+                          export: () => exports!.write(
+                            buildExportTable!(),
+                            extra: exportExtra,
+                          ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             Expanded(
@@ -134,10 +143,7 @@ class FlowPageScaffold extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 24),
                         child: Text(
                           emptyText,
-                          style: TextStyle(
-                            height: 1.8,
-                            color: theme.hintColor,
-                          ),
+                          style: TextStyle(height: 1.8, color: theme.hintColor),
                         ),
                       ),
                     )

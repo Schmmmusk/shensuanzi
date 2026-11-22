@@ -319,6 +319,15 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                       const SizedBox(height: 16),
                       _returnsSection(theme),
                     ],
+                    // 2026-11-22（用户）：**动作按钮（退货 / 签收 / 收款）提到
+                    // 「核销去向」之前**。从前它们排在核销块**之后** ——
+                    // 核销单多的时候，想退货得先滚过一整串"历史"才找得到按钮。
+                    // 位置选在「退货记录之后、核销之前」：退货记录与明细都是
+                    // **这张单自己的内容**（F8 的顺序不动），动作按钮紧接其后，
+                    // 核销去向作为"这笔钱后来怎么了"收在末尾。
+                    const SizedBox(height: 16),
+                    _actionRow(theme, summary),
+
                     // 核销去向：**有内容就上移**（#26 批 3 收尾）。
                     // 列表把「只核销了这一张单」的收付款单折进了主单行，
                     // 所以这一块是那些单的**唯一入口** —— 压到页面底部
@@ -327,8 +336,6 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                       const SizedBox(height: 16),
                       _linksSection(theme, summary),
                     ],
-                    const SizedBox(height: 16),
-                    _actionRow(theme, summary),
                     const SizedBox(height: 20),
                     // 空态留在底部：没有核销时不该在首屏占一块「还没有被核销过」
                     if (_links.isEmpty) _linksSection(theme, summary),
@@ -346,11 +353,14 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
+        // 2026-11-22（用户）：「单据号打头阵，最重要的客户名、开单时间却被排到后面」。
+        // 单号是**机器认的**东西（对账 / 复制时才用），客户名才是人找单时先扫的。
+        // 现在的顺序：**对方（大）→ 业务日期 → 单号（小）→ 录入时刻**。
         Row(
           children: <Widget>[
             Expanded(
               child: Text(
-                doc.docNo,
+                _partyLabel,
                 style: const TextStyle(
                   height: 1.6,
                   fontWeight: FontWeight.w700,
@@ -364,19 +374,36 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
         // §BG 方案甲：`occurred_at` 是**业务日期**（天粒度，可补录改日期），
         // 套带时分的格式会印出误导性的「00:00」（真机踩过）⇒ 只显示到日；
         // 真实录入时刻在 `created_at`（各司其职），另起一行小字。
-        Text(
-          '$_partyLabel · ${formatDate(doc.occurredAt)}',
-          style: TextStyle(
-            height: 1.6,
-            color: theme.textTheme.bodySmall?.color,
-          ),
-        ),
-        Text(
-          '录入于 ${formatDateTime(doc.createdAt)}',
-          style: TextStyle(
-            height: 1.6,
-            color: theme.textTheme.bodySmall?.color,
-          ),
+        Text(formatDate(doc.occurredAt), style: const TextStyle(height: 1.6)),
+        // 单号与录入时刻**并在一行**：① 头部仍是三行（不把下面的内容往下挤，
+        // 既有用例点「退货记录」那一行时不会滚出视口）；② 单号必须是**独立的
+        // `Text(doc.docNo)`** —— 既有用例按精确文本找它，拼成「单号 XS…」会落空。
+        //
+        // ⚠️ 2026-11-22 用户：**同一行里别再出现"两个版本的时间"**
+        //（上一版是 `2026-11-05` 与 `录入于 2026-11-05 18:21` 并排，同一日期写两遍、
+        // 一遍带时分一遍不带）。现在：业务日期那行负责"哪一天"，这里只补**时分**；
+        // 只有**补录**（录入天 ≠ 业务天）时才把录入日期带上 —— 那时它是必需信息。
+        Row(
+          children: <Widget>[
+            Text(
+              doc.docNo,
+              style: TextStyle(
+                height: 1.6,
+                color: theme.textTheme.bodySmall?.color,
+              ),
+            ),
+            Expanded(
+              child: Text(
+                '　·　${_recordedAtText(doc)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  height: 1.6,
+                  color: theme.textTheme.bodySmall?.color,
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -444,6 +471,17 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                 '已退货',
                 '−¥${Money.formatGrouped(summary.returnedCents)}',
               ),
+            // 2026-11-22（用户）：退过货的单，金额卡里三行算不平 ——
+            // 「金额 ¥10 / 已收 ¥10 / 已退货 −¥5 / 多收 ¥5 / 已结清」，
+            // 用户得自己做减法才知道"实际应该只收 5"。这里把净额**写出来**。
+            // ⚠️ 只**新增**一行，不改既有行的文案与顺序（既有断言仍成立）。
+            if (!isMoneyDoc && summary.returnedCents != 0)
+              _kv(
+                theme,
+                isReturnDoc ? '净退金额' : '实际应${_moneyVerb(doc)}',
+                '¥${Money.formatGrouped((doc.totalAmount - summary.returnedCents).clamp(0, doc.totalAmount))}',
+                big: true,
+              ),
             // §审查 BUG-05：已作废的单不显示「未收」——避免对着废单收款的诱导
             if (!isMoneyDoc && !isCancelled)
               if (fullyReturned)
@@ -458,7 +496,14 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                         '¥${Money.formatGrouped(pendingRefund)}',
                       )
                     : _kv(theme, '', '已全部退清')
-              else if (unsettled != 0)
+              // 2026-11-22 用户：**退货后已经结清的单，不要再显示「多收」** ——
+              // 用户看到「多收 ¥5.00」第一反应是"我是不是多收了钱"，
+              // 而真相是"退过 5 元、这 5 元本来就该退给他/冲抵"。
+              // 「实际应收 ¥5.00」那行已经把账说平了，多收是它的**算术后果**，
+              // 不是一条独立事实 ⇒ 已结清时整行不显示。
+              // （未结清且多收的那种仍要显示：那是「还欠客户钱」，是要去处理的事。）
+              else if (unsettled != 0 &&
+                  !(unsettled < 0 && doc.status == DocStatus.settled))
                 // 3a（2026-10-24，业务审查 §3.4 / 用户裁定）：负未收是**真实信号**
                 // —— 退得比收得多 ⇒ 我们欠客户钱。显示「多收 ¥X」（正数），
                 // 而不是把数字夹成 0 或显示「未收 ¥-30」（后者会被读成错账）。
@@ -490,6 +535,22 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
         ),
       ),
     );
+  }
+
+  /// 头部第三行「录入于 …」的文案。
+  ///
+  /// **同一天 ⇒ 只给时分**（`18:21 录入`）：业务日期那行已经把"哪天"说过了，
+  /// 再印一遍日期就是「同一组件两个版本」（用户 2026-11-22 截图指出）。
+  /// **跨天（补录）⇒ 给完整日期时分** —— 那时两行说的不是同一天，信息不能省。
+  String _recordedAtText(Document doc) {
+    final bool sameDay =
+        formatDate(doc.occurredAt) == formatDate(doc.createdAt);
+    if (!sameDay) return '录入于 ${formatDateTime(doc.createdAt)}';
+    final DateTime t = DateTime.fromMillisecondsSinceEpoch(doc.createdAt);
+    final String hhmm =
+        '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}';
+    return '$hhmm 录入';
   }
 
   /// 「已收 / 未收」用词按方向（销售类 = 收，采购类 = 付）

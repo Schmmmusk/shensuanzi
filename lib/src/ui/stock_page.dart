@@ -991,50 +991,63 @@ class _StockPageState extends State<StockPage> {
                       children: <Widget>[
                         // §AD 遗漏 2：入口按钮（文案按首次 / 再次区分）
                         Text('库存', style: theme.textTheme.titleLarge),
-                        if (widget.exports != null)
-                          ExportButton(
-                            key: const Key('export-stock'),
-                            // AF-2：说清导的是「有流水或有库存」的那批
-                            label: '导出库存',
-                            export: () => widget.exports!.write(
-                              stockExportTable(
-                                // AF-12：**含停用** —— 停用但有库存的商品也要能对账
-                                //（页面上看不到它们，但导出的账里不能少）
-                                products: widget.products.listForExport(),
-                                book: book,
-                                inTransit: inTransit,
-                                cost: cost,
+                        // ⚠️ 动作按钮必须**收成一组**再进 spaceBetween（2026-11-22）：
+                        // 从前三个子项（标题 / 导出 / 清点）直接铺在 spaceBetween 里，
+                        // spaceBetween 会把**中间那个**摆到工作区正中 ——
+                        // 用户截图里「导出库存」在中间、「重新清点」在最右就是这么来的。
+                        // 现在：标题左、这一组整体靠右，两者之间才是真正的空白。
+                        Wrap(
+                          alignment: WrapAlignment.end,
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: <Widget>[
+                            if (widget.exports != null)
+                              ExportButton(
+                                key: const Key('export-stock'),
+                                // AF-2：说清导的是「有流水或有库存」的那批
+                                label: '导出库存',
+                                export: () => widget.exports!.write(
+                                  stockExportTable(
+                                    // AF-12：**含停用** —— 停用但有库存的商品也要能对账
+                                    //（页面上看不到它们，但导出的账里不能少）
+                                    products: widget.products.listForExport(),
+                                    book: book,
+                                    inTransit: inTransit,
+                                    cost: cost,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                        if (canStocktake)
-                          TextButton.icon(
-                            key: const Key('stock-open-entry'),
-                            // 2026-10-20（§CV·七十八）：手机端**也能清点** —— 清点单走
-                            // 单据通道入队，差额由主机算（客户端零规则）。原引导删除。
-                            //
-                            // 2026-10-31：只读降级时**整个入口不显示**（见 `canStocktake`）
-                            onPressed: () =>
-                                setState(() => _showOpening = true),
-                            icon: const Icon(
-                              Icons.inventory_2_outlined,
-                              size: 18,
-                            ),
-                            label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
-                          ),
-                        // #27 批 2（2026-10-17 裁定乙）：库存页的「新建商品」= **补充
-                        // 快速建档入口**（手机壳专属；桌面建档在「商品」页，期初在同页
-                        // 「录入现有货物」）。手机壳 ⇒ 对话框带「当前库存」字段（#31
-                        // stocktake 通路）。桌面不显示 ⇒ 不存在「桌面带库存走什么通路」。
-                        if (widget.mobileShell &&
-                            widget.canCreateProducts &&
-                            widget.masterDataSink != null)
-                          OutlinedButton.icon(
-                            key: const Key('stock-create-product'),
-                            onPressed: () => _createProduct(context),
-                            icon: const Icon(Icons.add, size: 18),
-                            label: const Text('新建商品'),
-                          ),
+                            if (canStocktake)
+                              TextButton.icon(
+                                key: const Key('stock-open-entry'),
+                                // 2026-10-20（§CV·七十八）：手机端**也能清点** —— 清点单走
+                                // 单据通道入队，差额由主机算（客户端零规则）。原引导删除。
+                                //
+                                // 2026-10-31：只读降级时**整个入口不显示**（见 `canStocktake`）
+                                onPressed: () =>
+                                    setState(() => _showOpening = true),
+                                icon: const Icon(
+                                  Icons.inventory_2_outlined,
+                                  size: 18,
+                                ),
+                                label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
+                              ),
+                            // #27 批 2（2026-10-17 裁定乙）：库存页的「新建商品」= **补充
+                            // 快速建档入口**（手机壳专属；桌面建档在「商品」页，期初在同页
+                            // 「录入现有货物」）。手机壳 ⇒ 对话框带「当前库存」字段（#31
+                            // stocktake 通路）。桌面不显示 ⇒ 不存在「桌面带库存走什么通路」。
+                            if (widget.mobileShell &&
+                                widget.canCreateProducts &&
+                                widget.masterDataSink != null)
+                              OutlinedButton.icon(
+                                key: const Key('stock-create-product'),
+                                onPressed: () => _createProduct(context),
+                                icon: const Icon(Icons.add, size: 18),
+                                label: const Text('新建商品'),
+                              ),
+                          ],
+                        ),
                       ],
                     ),
 

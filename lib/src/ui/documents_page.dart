@@ -228,10 +228,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
     if (path == null) return null;
     final List<String> types = _types.map((DocType t) => t.name).toList()
       ..sort();
-    final List<String> views = _statusViews
-        .map((DocumentStatusView v) => v.name)
-        .toList()
-      ..sort();
+    final List<String> views =
+        _statusViews.map((DocumentStatusView v) => v.name).toList()..sort();
     return 'documents:$path|${types.join(',')}|${views.join(',')}'
         '|${_range.name}|${_customRange ?? ''}|$_query';
   }
@@ -523,6 +521,20 @@ class _DocumentsPageState extends State<DocumentsPage> {
     if (mounted) _applyFilters(() {});
   }
 
+  /// 筛选行的左侧说明（「时间：」「类型：」「状态：」）。
+  ///
+  /// 用 `Text` 而不是 chip：它不是可点的东西 —— 做成 chip 会被误当筛选项点。
+  /// 放 `Wrap` 里（不占固定宽度）⇒ 窄窗时它会自己占一行，不会把 chips 挤窄。
+  Widget _filterLabel(ThemeData theme, String text) => Padding(
+    padding: const EdgeInsets.only(right: 2),
+    child: Text(
+      '$text：',
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+    ),
+  );
+
   /// 首屏的两种非正常态：**载入中** / **失败**。
   ///
   /// ⚠️ **不许用 `CircularProgressIndicator`**：无限动画会让 `pumpAndSettle`
@@ -703,7 +715,11 @@ class _DocumentsPageState extends State<DocumentsPage> {
                     // 时间范围 chips（SC-3 + §审查 2026-10-05 的「自定义」）
                     Wrap(
                       spacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: <Widget>[
+                        // 2026-11-22（用户）：三排筛选只有按钮、没有一句话说明，
+                        // 新用户不知道「今天/本周」与「采购入库/店内销售」分别管什么。
+                        _filterLabel(theme, '时间'),
                         for (final _TimeRange range in _TimeRange.values)
                           ChoiceChip(
                             key: Key('doc-range-${range.name}'),
@@ -741,7 +757,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                     // 补上送货与两种退货；可同时选多个）
                     Wrap(
                       spacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: <Widget>[
+                        _filterLabel(theme, '类型'),
                         for (final DocType type in _typeChoices)
                           FilterChip(
                             key: Key('doc-type-${type.wire}'),
@@ -762,7 +780,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
                     // 退货冲减 > 0，与详情页的「未收」同一个口径。
                     Wrap(
                       spacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: <Widget>[
+                        _filterLabel(theme, '状态'),
                         for (final DocumentStatusView view
                             in DocumentStatusView.values)
                           FilterChip(
@@ -909,8 +929,11 @@ class _DocumentRow extends StatelessWidget {
     final List<String> trailParts = <String>[
       if (!isReturnDoc && !isMoneyDoc && entry.returnedCount > 0)
         '已退 ${entry.returnedCount} 次 ¥${Money.formatGrouped(returnedCents)}',
+      // 用户 2026-11-22：「已收 1 笔」不写金额，得点进详情才知道收了多少 ——
+      // 而右边就写着「未收 ¥10.00」，左边缺一半信息。金额取 `paid_amount`
+      // （缓存列，与流水同源刷新），不额外查库。
       if (!isReturnDoc && !isMoneyDoc && entry.settlementCount > 0)
-        '$paidVerb ${entry.settlementCount} 笔',
+        '$paidVerb ${entry.settlementCount} 笔 ¥${Money.formatGrouped(doc.paidAmount)}',
     ];
 
     return InkWell(
@@ -999,8 +1022,12 @@ class _DocumentRow extends StatelessWidget {
                 if (showUnsettled)
                   Text(
                     '$unsettledVerb ¥${Money.formatGrouped(unsettled)}',
+                    // 2026-11-22：与左侧「已收 1 笔 ¥30.00」对称 —— 两个数都是
+                    // 用户真正要扫的，字重必须一致地加重（原来只有颜色没有字重，
+                    // 在同一行里显得比左边的金额弱）。
                     style: const TextStyle(
                       height: 1.6,
+                      fontWeight: FontWeight.w700,
                       color: AppColors.warningOrange,
                     ),
                   ),
