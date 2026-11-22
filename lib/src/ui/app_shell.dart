@@ -705,10 +705,39 @@ class _AppShellState extends State<AppShell> {
                 iconOnly: nav.iconOnly,
               ),
               NavDivider(iconOnly: nav.iconOnly),
-              Expanded(child: _content()),
+              Expanded(child: _readingWidth(constraints.maxWidth, _content())),
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// **宽屏阅读宽度上限**（2026-11-22，批 1.1）。
+  ///
+  /// ## 为什么
+  ///
+  /// 21:9 / 32:9 上内容铺满整条工作区：一段话横跨 1200+ px，
+  /// 眼睛要从左扫到右、鼠标也要横着跑（用户原话）。
+  ///
+  /// ## 规则（用户给定 + 一条绝对上限）
+  ///
+  /// - 工作区 **< 720**（逻辑像素）⇒ **完全不干预** —— 窄屏每一像素都该给内容；
+  /// - 工作区 **≥ 720** ⇒ 内容最宽 = `min(工作区 × 70%, 1080)`，**居中**。
+  ///
+  /// 那个 1080 是 Q1 裁定加的：纯 70% 在 32:9（约 2560 工作区）上仍有 1792，
+  /// 一眼还是扫不过来。
+  ///
+  /// ⚠️ 只包**桌面壳的工作区**：弹窗 / 抽屉是独立路由，天然不受影响；
+  /// 手机壳没有宽屏问题，不套这一层。
+  Widget _readingWidth(double available, Widget child) {
+    if (available < 720) return child;
+    final double maxWidth = math.min(available * 0.7, 1080);
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        child: child,
       ),
     );
   }
