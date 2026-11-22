@@ -489,7 +489,14 @@ void main() {
       reason: '原单本身不该有面包屑',
     );
 
-    await tester.tap(find.byKey(const Key('return-row-th-f4')));
+    // 2026-11-22（用户授权改本用例）：「退货记录」这一块在详情页里已经不是
+    // 紧跟金额卡 —— 动作按钮（退货/签收/收款）提到了它前面，于是这行掉到
+    // 800×600 视口之外。**先滚到它再点**：用例要验的是「点进关联单有没有面包屑」，
+    // 不是「它恰好落在首屏」。不滚就点会静默落空（`tap` 只 warn）。
+    final Finder returnRow = find.byKey(const Key('return-row-th-f4'));
+    await tester.ensureVisible(returnRow);
+    await tester.pumpAndSettle();
+    await tester.tap(returnRow);
     await tester.pumpAndSettle();
 
     expect(

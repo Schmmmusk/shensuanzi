@@ -310,6 +310,12 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                             summary.document.docType != DocType.stocktake,
                       ),
                     ],
+                    // 2026-11-22（用户二次裁定）：**动作按钮提到「退货记录」之前**
+                    // —— 想退货/签收/收款时，视线先要落到"我能做什么"，
+                    // 而不是先滚过一串"发生过什么"。位置在明细之后（F8 要的
+                    // 「先看这张单卖了什么」不动）。
+                    const SizedBox(height: 16),
+                    _actionRow(theme, summary),
                     // §审查 2026-10-05：退过货才显示（没退过的单不该多一块空白）
                     //
                     // ⚠️ **位置在 2026-10-18 上移到这里**（#26 批 3 甲案的**强制补偿项**）：
@@ -319,15 +325,6 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                       const SizedBox(height: 16),
                       _returnsSection(theme),
                     ],
-                    // 2026-11-22（用户）：**动作按钮（退货 / 签收 / 收款）提到
-                    // 「核销去向」之前**。从前它们排在核销块**之后** ——
-                    // 核销单多的时候，想退货得先滚过一整串"历史"才找得到按钮。
-                    // 位置选在「退货记录之后、核销之前」：退货记录与明细都是
-                    // **这张单自己的内容**（F8 的顺序不动），动作按钮紧接其后，
-                    // 核销去向作为"这笔钱后来怎么了"收在末尾。
-                    const SizedBox(height: 16),
-                    _actionRow(theme, summary),
-
                     // 核销去向：**有内容就上移**（#26 批 3 收尾）。
                     // 列表把「只核销了这一张单」的收付款单折进了主单行，
                     // 所以这一块是那些单的**唯一入口** —— 压到页面底部
