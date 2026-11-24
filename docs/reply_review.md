@@ -22813,3 +22813,53 @@ python perf_bench.py --db "C:/Users/yzx/神算子数据/shensuanzi.db" --cold --
 #### ⑤ 门禁
 
 `flutter analyze` **0** · root `flutter test` **628**（1 条按平台跳过；+1）。
+
+---
+
+## 已知问题台账（跨批次跟踪）
+
+> 用户裁定（2026-11-24）：**动核心层的批次里必须优先解决**。
+> 级别按影响面：P0 = 数据错 / 丢数据；P1 = 记错但可补救 / 信息缺失；P2 = 观感。
+
+### P1-1 · 盘点单丢失「录入原文单位」（2026-11-24 登记，**待核心层批次修复**）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | 盘点时按「箱」录入（2 箱），单据详情只显示「48 瓶」；`document_lines.entry_quantity` / `entry_unit` 为空 |
+| 根因 | `StocktakeLineDraft` 只有 `quantity`（最小单位），`StocktakeService` / `RuleEngine` 的盘点路径**不写** `entry_quantity` / `entry_unit`；开单三页写了（草稿里有 `entryUnit`） |
+| 影响 | **数据不错**（库存与金额都对，`quantity` 就是 48 瓶）；错的是**可追溯性** —— 用户回看单据时看不到自己当时填的是「2 箱」，对不上自己的记忆/纸质单 |
+| 为什么本轮没修 | 用户硬纪律：本轮**只许动 `lib/src/ui/`**，纯 Dart 业务逻辑只读。修它必须改 core 的草稿 + 服务，属于核心层批次 |
+| 修法（预估 0.5–1 天） | ① `StocktakeLineDraft` 加 `entryQuantity` / `entryUnit`（默认空）；② `StocktakeService` / `RuleEngine._stocktake` 落库时写入这两列（与开单三页同款）；③ 草稿校验补「entryUnit 必须合法」；④ 回归：`stocktake` 相关 dart test + 单据详情显示原文。**注意 schema 已是 v8、两列早存在**，不需要迁移 |
+| 验收判据 | 按箱盘点 2 箱 ⇒ 详情页显示「2 箱（= 48 瓶）」；库里 `entry_quantity=2`、`entry_unit='箱'` |
+
+### 一百三十、2026-11-24 **宽屏上限：改到页面层（第一页 = 概览）**
+
+> 用户裁定：先做宽屏上限；共享组件抽离（`line_row.dart`）留作后续独立批次。
+
+#### ① 为什么必须在页面层（复查 11-22 的失败版）
+
+壳层 `ConstrainedBox` 缩窄的是**滚动视口** ⇒ ① 滚轮在留白上失效；② 标题被一起缩到中间。
+正确形态：**滚动体全宽 + 居中靠视口内的横向内边距**。新增 `lib/src/ui/page_width.dart`：
+
+| 可用宽 | inset |
+|---|---|
+| ≤ 1080 + 2×base | `base`（16 / 20，保持原样） |
+| > 1080 + 2×base | `(可用宽 − 1080) / 2` |
+
+#### ② 概览页已接线（一页一交）
+
+`ListView` 外包 `LayoutBuilder`，`padding` 用 `pageContentInset(...)`。
+**其他页未动** —— 按既定节奏一页一交，每页配几何断言（见 §③）。
+
+#### ③ 两条**几何断言**（不靠看截图）
+
+| 用例 | 判据 |
+|---|---|
+| 宽屏 1916 | ListView 宽 = **1916**（视口全宽 ⇒ 滚轮处处有效）；第一张卡宽 ≤ **1081**；左右留白差 ≤ 1.5 px |
+| 窄屏 800 | 第一张卡 left = **16**（不为了 1080 浪费边距） |
+
+**灵敏度已验证**：把 inset 写成常量 16 ⇒ `Actual: <1884.0>`，红。
+
+#### ④ 门禁
+
+`flutter analyze` **0** · root `flutter test` **630**（1 条按平台跳过；+2）。

@@ -28,6 +28,7 @@ import 'month_compare.dart';
 import 'notice.dart';
 import 'revenue_chart.dart';
 import 'scaled.dart';
+import 'page_width.dart';
 import 'snapshot_cache.dart';
 import 'shortage.dart';
 import 'stock_top.dart';
@@ -532,279 +533,295 @@ class _OverviewPageState extends State<OverviewPage> {
     // 数据在 `_load()` 里算过一次并缓存 —— 这里**不再查库**
     final OverviewData? data = _data;
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: <Widget>[
-        // ---- 数据安全橙卡（AE-3：用户不会主动查，所以要主动呈现）----
-        if (reminder != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: Card(
+    // 2026-11-24（批 B·1）：宽屏内容上限 1080，**居中靠视口内的内边距**。
+    // 滚动体仍是全宽 ⇒ 鼠标滚轮在左右留白上也有效（壳层 `ConstrainedBox`
+    // 那一版就是死在这里，见 `page_width.dart` 头注释）。
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double inset = pageContentInset(constraints.maxWidth, base: 16);
+        return ListView(
+          padding: EdgeInsets.fromLTRB(inset, 16, inset, 16),
+          children: <Widget>[
+            // ---- 数据安全橙卡（AE-3：用户不会主动查，所以要主动呈现）----
+            if (reminder != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Card(
+                  margin: EdgeInsets.zero,
+                  color: _noticeBackground,
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        const Icon(
+                          Icons.warning_amber_rounded,
+                          size: 22,
+                          color: _noticeColor,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(
+                                reminder,
+                                style: const TextStyle(height: 1.6),
+                              ),
+                              const SizedBox(height: 10),
+                              if (widget.onBackupNow != null)
+                                FilledButton.icon(
+                                  key: const Key('overview-backup-now'),
+                                  onPressed: _busy ? null : _backupNow,
+                                  icon: const Icon(Icons.save_alt, size: 18),
+                                  label: Text(_busy ? '备份中…' : '立即备份'),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+            if (widget.shopName != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  widget.shopName!,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            Card(
               margin: EdgeInsets.zero,
-              color: _noticeBackground,
               child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(
+                padding: const EdgeInsets.all(16),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    const Icon(
-                      Icons.warning_amber_rounded,
-                      size: 22,
-                      color: _noticeColor,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(reminder, style: const TextStyle(height: 1.6)),
-                          const SizedBox(height: 10),
-                          if (widget.onBackupNow != null)
-                            FilledButton.icon(
-                              key: const Key('overview-backup-now'),
-                              onPressed: _busy ? null : _backupNow,
-                              icon: const Icon(Icons.save_alt, size: 18),
-                              label: Text(_busy ? '备份中…' : '立即备份'),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-        if (widget.shopName != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Text(
-              widget.shopName!,
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text('你的数据在', style: theme.textTheme.titleMedium),
-                const SizedBox(height: 8),
-                if (widget.locationNote != null)
-                  Text(
-                    widget.locationNote!,
-                    style: const TextStyle(height: 1.6),
-                  )
-                else ...<Widget>[
-                  SelectableText(
-                    widget.dataDirectory,
-                    style: const TextStyle(height: 1.6),
-                  ),
-                  const SizedBox(height: 4),
-                  // 2026-10-22（§CV·八十三 批 2 第 12 条）：**把「打开文件夹」
-                  // 搬到概览**。设置页早就有（`settings_page`），概览只给一条
-                  // 只读路径 —— 用户想看数据在哪，还得跑去设置里翻。
-                  // 手机端不显示（没有「文件管理器打开这个路径」的概念）。
-                  if (!widget.mobileShell)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        key: const Key('overview-open-folder'),
-                        onPressed: () => _openFolder(widget.dataDirectory),
-                        icon: const Icon(Icons.folder_open_outlined, size: 18),
-                        label: const Text('打开文件夹'),
-                      ),
-                    ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '备份会放在旁边：${widget.backupDirectory}',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  // `ui_principles.md` 要求的那句核心承诺 —— 页面上原先没有
-                  Text(
-                    '数据只在这台电脑上，不会上传到任何地方。',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                Row(
-                  children: <Widget>[
-                    Icon(
-                      widget.databaseReady
-                          ? Icons.check_circle_outline
-                          : Icons.error_outline,
-                      size: 20,
-                      color: widget.databaseReady
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.error,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        widget.databaseReady
-                            ? '数据文件已就绪（版本 ${widget.schemaVersion}）'
-                            : '数据文件打不开，请到设置里换一个位置',
+                    Text('你的数据在', style: theme.textTheme.titleMedium),
+                    const SizedBox(height: 8),
+                    if (widget.locationNote != null)
+                      Text(
+                        widget.locationNote!,
+                        style: const TextStyle(height: 1.6),
+                      )
+                    else ...<Widget>[
+                      SelectableText(
+                        widget.dataDirectory,
                         style: const TextStyle(height: 1.6),
                       ),
+                      const SizedBox(height: 4),
+                      // 2026-10-22（§CV·八十三 批 2 第 12 条）：**把「打开文件夹」
+                      // 搬到概览**。设置页早就有（`settings_page`），概览只给一条
+                      // 只读路径 —— 用户想看数据在哪，还得跑去设置里翻。
+                      // 手机端不显示（没有「文件管理器打开这个路径」的概念）。
+                      if (!widget.mobileShell)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            key: const Key('overview-open-folder'),
+                            onPressed: () => _openFolder(widget.dataDirectory),
+                            icon: const Icon(
+                              Icons.folder_open_outlined,
+                              size: 18,
+                            ),
+                            label: const Text('打开文件夹'),
+                          ),
+                        ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '备份会放在旁边：${widget.backupDirectory}',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      // `ui_principles.md` 要求的那句核心承诺 —— 页面上原先没有
+                      Text(
+                        '数据只在这台电脑上，不会上传到任何地方。',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Row(
+                      children: <Widget>[
+                        Icon(
+                          widget.databaseReady
+                              ? Icons.check_circle_outline
+                              : Icons.error_outline,
+                          size: 20,
+                          color: widget.databaseReady
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.error,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            widget.databaseReady
+                                ? '数据文件已就绪（版本 ${widget.schemaVersion}）'
+                                : '数据文件打不开，请到设置里换一个位置',
+                            style: const TextStyle(height: 1.6),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
-          ),
-        ),
-        const SizedBox(height: 24),
-        Text('从这里开始', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 8),
-        Text(
-          // M05（2026-10-08）：措辞随壳走 —— 桌面左侧列表 / 手机底部导航。
-          // 文案在 `shensuanzi_app` 的 `overviewNavHint`（纯 Dart，`dart test` 钉得住）
-          overviewNavHint(mobileShell: widget.mobileShell),
-          style: TextStyle(
-            height: 1.6,
-            color: theme.textTheme.bodySmall?.color,
-          ),
-        ),
-        // ---- #32 经营速览（空库 = hasAnyDocument()==false ⇒ 整块不显示，
-        //      不干扰首次开张引导；裁定⑤空库判据 = documents 为空）----
-        //
-        // 2026-10-20（用户建议）：**从页首挪到「从这里开始」下方** ——
-        // 概览页先回答「数据在哪、能不能用、从哪开始」，经营数字是**第二眼**的东西。
-        // ⚠️ 必须带顶部间距：手机壳这里是 `Column` 竖排三卡，
-        // 紧贴上一段文字会看起来「卡片边缘叠在一起」（用户 2026-10-20 报的现象）。
-        // ---- 载入中 / 失败（乙，2026-11-20）----
-        //
-        // 三态必须分开画：**载入中**（一行字，不做 shimmer —— 中老年用户会把
-        // 灰格子当成「加载失败的空格子」）、**失败**（错误条 + 重试）、
-        // **算完但是空库**（走下面的引导卡）。
-        if (_refreshing) ...<Widget>[
-          const SizedBox(height: 20),
-          Row(
-            children: <Widget>[
-              Icon(
-                Icons.sync,
-                size: 16,
+            const SizedBox(height: 24),
+            Text('从这里开始', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              // M05（2026-10-08）：措辞随壳走 —— 桌面左侧列表 / 手机底部导航。
+              // 文案在 `shensuanzi_app` 的 `overviewNavHint`（纯 Dart，`dart test` 钉得住）
+              overviewNavHint(mobileShell: widget.mobileShell),
+              style: TextStyle(
+                height: 1.6,
                 color: theme.textTheme.bodySmall?.color,
               ),
-              const SizedBox(width: 8),
-              Text(
-                '正在刷新…（先显示上次的数字，算完会更新）',
-                key: const Key('overview-refreshing'),
-                style: TextStyle(
-                  height: 1.6,
-                  color: theme.textTheme.bodySmall?.color,
-                ),
-              ),
-            ],
-          ),
-        ],
-        if (_pending) ...<Widget>[
-          const SizedBox(height: 20),
-          Card(
-            margin: EdgeInsets.zero,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
+            ),
+            // ---- #32 经营速览（空库 = hasAnyDocument()==false ⇒ 整块不显示，
+            //      不干扰首次开张引导；裁定⑤空库判据 = documents 为空）----
+            //
+            // 2026-10-20（用户建议）：**从页首挪到「从这里开始」下方** ——
+            // 概览页先回答「数据在哪、能不能用、从哪开始」，经营数字是**第二眼**的东西。
+            // ⚠️ 必须带顶部间距：手机壳这里是 `Column` 竖排三卡，
+            // 紧贴上一段文字会看起来「卡片边缘叠在一起」（用户 2026-10-20 报的现象）。
+            // ---- 载入中 / 失败（乙，2026-11-20）----
+            //
+            // 三态必须分开画：**载入中**（一行字，不做 shimmer —— 中老年用户会把
+            // 灰格子当成「加载失败的空格子」）、**失败**（错误条 + 重试）、
+            // **算完但是空库**（走下面的引导卡）。
+            if (_refreshing) ...<Widget>[
+              const SizedBox(height: 20),
+              Row(
                 children: <Widget>[
-                  // ⚠️ **不能用 `CircularProgressIndicator`**（2026-11-20）：
-                  // 它是无限动画 ⇒ `pumpAndSettle` 永远等不到静止，整包测试里
-                  // 凡是走到概览页的用例全部超时（实测 16 条）。裁定也是「一行字」，
-                  // 静态图标 + 文字既能表达「在等」，又不会让界面看起来在抽搐。
                   Icon(
-                    Icons.hourglass_empty,
-                    size: 18,
+                    Icons.sync,
+                    size: 16,
                     color: theme.textTheme.bodySmall?.color,
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '正在统计…（这台电脑读盘慢的话会等几秒，界面不用管它）',
-                      key: const Key('overview-loading'),
-                      style: const TextStyle(height: 1.6),
+                  const SizedBox(width: 8),
+                  Text(
+                    '正在刷新…（先显示上次的数字，算完会更新）',
+                    key: const Key('overview-refreshing'),
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
                     ),
                   ),
                 ],
               ),
-            ),
-          ),
-        ],
-        if (_loadError != null && !_pending) ...<Widget>[
-          const SizedBox(height: 20),
-          Card(
-            margin: EdgeInsets.zero,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            ],
+            if (_pending) ...<Widget>[
+              const SizedBox(height: 20),
+              Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
                     children: <Widget>[
+                      // ⚠️ **不能用 `CircularProgressIndicator`**（2026-11-20）：
+                      // 它是无限动画 ⇒ `pumpAndSettle` 永远等不到静止，整包测试里
+                      // 凡是走到概览页的用例全部超时（实测 16 条）。裁定也是「一行字」，
+                      // 静态图标 + 文字既能表达「在等」，又不会让界面看起来在抽搐。
                       Icon(
-                        Icons.error_outline,
-                        size: 20,
-                        color: theme.colorScheme.error,
+                        Icons.hourglass_empty,
+                        size: 18,
+                        color: theme.textTheme.bodySmall?.color,
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          '统计失败：${_loadError.toString().split('\n').first}',
-                          key: const Key('overview-load-error'),
+                          '正在统计…（这台电脑读盘慢的话会等几秒，界面不用管它）',
+                          key: const Key('overview-loading'),
                           style: const TextStyle(height: 1.6),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      key: const Key('overview-reload'),
-                      onPressed: _reload,
-                      icon: const Icon(Icons.refresh, size: 18),
-                      label: const Text('重试'),
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
-        ],
-        // 经营卡只在**算完且非空库**时出现（载入中不摆，避免数字闪一下又变）
-        if (data != null) ...<Widget>[
-          const SizedBox(height: 20),
-          _businessCards(theme, data),
-          // 图表放在经营卡**下面**（用户 2026-10-30：中老年看不出营收，
-          // 「真相在流水」里翻不出来）。间距必须显式给 —— `_bizCard` 是
-          // `margin: EdgeInsets.zero`，紧贴会看起来像「两张卡叠在一起」
-          // （用户 2026-10-20 报过的那个现象）。
-          const SizedBox(height: 12),
-          _charts(theme, data),
-        ],
-        // 2026-10-22（§CV·八十三 批 2 第 12 条）：**空库也要有入口**
-        if (widget.onNavigate != null && data == null && !_pending) ...<Widget>[
-          const SizedBox(height: 12),
-          _entriesCard(theme),
-        ],
-        // 提案 61 决策 4：**空库也要能看见缺货榜 / 引导卡**。
-        // 这一条不依赖任何单据 —— 刚建了商品、设了安全库存还没开过单的店，
-        // 正是「该补货」和「去设安全库存」这两句话最该出现的时候。
-        if (data == null && !_pending && _lowStock.isVisible) ...<Widget>[
-          const SizedBox(height: 12),
-          _lowStockCard(),
-        ],
-      ],
+            ],
+            if (_loadError != null && !_pending) ...<Widget>[
+              const SizedBox(height: 20),
+              Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Icon(
+                            Icons.error_outline,
+                            size: 20,
+                            color: theme.colorScheme.error,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '统计失败：${_loadError.toString().split('\n').first}',
+                              key: const Key('overview-load-error'),
+                              style: const TextStyle(height: 1.6),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: OutlinedButton.icon(
+                          key: const Key('overview-reload'),
+                          onPressed: _reload,
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('重试'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            // 经营卡只在**算完且非空库**时出现（载入中不摆，避免数字闪一下又变）
+            if (data != null) ...<Widget>[
+              const SizedBox(height: 20),
+              _businessCards(theme, data),
+              // 图表放在经营卡**下面**（用户 2026-10-30：中老年看不出营收，
+              // 「真相在流水」里翻不出来）。间距必须显式给 —— `_bizCard` 是
+              // `margin: EdgeInsets.zero`，紧贴会看起来像「两张卡叠在一起」
+              // （用户 2026-10-20 报过的那个现象）。
+              const SizedBox(height: 12),
+              _charts(theme, data),
+            ],
+            // 2026-10-22（§CV·八十三 批 2 第 12 条）：**空库也要有入口**
+            if (widget.onNavigate != null &&
+                data == null &&
+                !_pending) ...<Widget>[
+              const SizedBox(height: 12),
+              _entriesCard(theme),
+            ],
+            // 提案 61 决策 4：**空库也要能看见缺货榜 / 引导卡**。
+            // 这一条不依赖任何单据 —— 刚建了商品、设了安全库存还没开过单的店，
+            // 正是「该补货」和「去设安全库存」这两句话最该出现的时候。
+            if (data == null && !_pending && _lowStock.isVisible) ...<Widget>[
+              const SizedBox(height: 12),
+              _lowStockCard(),
+            ],
+          ],
+        );
+      },
     );
   }
 

@@ -1820,4 +1820,56 @@ void main() {
       reason: '必须告诉用户「还在算」，否则他会把旧数字当最终结果',
     );
   });
+
+  // ------------------------------------------------------------ 宽屏上限（2026-11-24 批 B·1）
+  //
+  // 用户 1916×790 实测：内容铺满整条工作区，视线要左右来回。
+  // 规则（Q1 裁定）：内容最宽 **1080** 居中，但**滚动视口必须全宽** ——
+  // 壳层 `ConstrainedBox` 那一版就是因为缩窄了视口，滚轮在留白上失效（已撤回）。
+  // 这两条都用几何断言钉住，不靠截图。
+  testWidgets('宽屏 1916：内容 1080 居中，滚动视口仍是全宽', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1916, 790);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final QueryDao queries = await seedBiz(
+      todayMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    await tester.pumpWidget(page(queries: queries, onNavigate: (_) {}));
+    await tester.pumpAndSettle();
+
+    final Rect list = tester.getRect(find.byType(ListView).first);
+    expect(
+      list.width,
+      closeTo(1916, 1),
+      reason: '滚动视口必须全宽 —— 缩窄它，滚轮在左右留白上就没反应了',
+    );
+
+    final Rect firstCard = tester.getRect(find.byType(Card).first);
+    expect(
+      firstCard.width,
+      lessThanOrEqualTo(1081),
+      reason: '内容最宽 1080（Q1：min(70%, 1080) 的绝对上限）',
+    );
+    expect(
+      firstCard.left,
+      closeTo(1916 - firstCard.right, 1.5),
+      reason: '左右留白必须相等（居中）',
+    );
+  });
+
+  testWidgets('窄屏 800：不干预（内容铺满，边距回到 16）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final QueryDao queries = await seedBiz(
+      todayMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    await tester.pumpWidget(page(queries: queries, onNavigate: (_) {}));
+    await tester.pumpAndSettle();
+
+    final Rect firstCard = tester.getRect(find.byType(Card).first);
+    expect(firstCard.left, closeTo(16, 1), reason: '窄屏不该出现"为了 1080 而浪费边距"');
+  });
 }
