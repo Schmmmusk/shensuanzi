@@ -64,23 +64,31 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// 把 `InputDecoration` 上的标签还原成纯文字（去掉红色星号）。
+  ///
+  /// 两种形态都要认：普通字段用 `labelText`，必填字段用 `label: Text.rich`
+  /// （星号是**红色且独立**的，不能再拼进 labelText —— 那样是黑的，等于没标）。
+  String? plainLabel(InputDecoration? d) {
+    String? raw = d?.labelText;
+    final Widget? labelWidget = d?.label;
+    if (raw == null && labelWidget is Text) {
+      raw = labelWidget.textSpan?.toPlainText() ?? labelWidget.data;
+    }
+    return raw?.replaceAll(' *', '').trim();
+  }
+
   /// 按 labelText / hintText 定位输入框 —— hint 是单位框唯一可辨别的锚点。
   /// ⚠️ 参数是**过滤条件**：`null` = 不限制，**不是**「要求该字段等于 null」
   /// （几乎每个框都有 label 和 hint，按「等于 null」匹配永远落空——
   /// 2026-09-30 四条测试同挂这一处的教训）。
-  Finder field({String? label, String? hint}) => find.byWidgetPredicate((
-    Widget w,
-  ) {
-    if (w is! TextField) return false;
-    final InputDecoration? d = w.decoration;
-    // 2026-11-24：必填字段的 label 带红色星号（`商品名称 *`），
-    // 定位时两种写法都认 —— 不为了星号把所有用例的锚点改一遍。
-    if (label != null && d?.labelText != label && d?.labelText != '$label *') {
-      return false;
-    }
-    if (hint != null && d?.hintText != hint) return false;
-    return true;
-  });
+  Finder field({String? label, String? hint}) =>
+      find.byWidgetPredicate((Widget w) {
+        if (w is! TextField) return false;
+        final InputDecoration? d = w.decoration;
+        if (label != null && plainLabel(d) != label) return false;
+        if (hint != null && d?.hintText != hint) return false;
+        return true;
+      });
 
   // ⚠️ 必须是局部 final 变量，**不能写 `get`**：getter 只能放在类 / 库顶层，
   // 写在 main() 里是语法错误（startup_test.dart 查找器一节的老坑，2026-09-29 又踩一次）
@@ -201,13 +209,20 @@ void main() {
     // 原意（「按箱建档后卖 1 个就出小数库存」）改由两件事承担：
     // ① 单位框**只读**、值只能来自「常用单位」/「更多单位」—— 用户打不进「箱」；
     // ② 包装区块的勾选框文案「启用包装换算（按箱进、按个卖）」把它说清楚了。
+    // 2026-11-24 评审（问题一）：这句回来了，但**必须指向「包装换算」**——
+    // 旧文案说「装箱关系写在『包装说明』里」会让人以为填备注就能按箱开单。
     expect(
       find.textContaining('单位填最小的售卖单位'),
-      findsNothing,
-      reason: '说明文字已删（用户 2026-11-24），不要偷偷加回来',
+      findsOneWidget,
+      reason: '说明挂在「一、基本资料」标题右侧（不额外占一行高度）',
+    );
+    expect(
+      find.textContaining('要按箱录入请用下面的「包装换算」'),
+      findsOneWidget,
+      reason: '评审问题一：必须指向「包装换算」，不是「包装说明」',
     );
     expect(find.text('包装说明（可选）'), findsOneWidget);
-    expect(find.textContaining('按箱进、按个卖'), findsOneWidget);
+    expect(find.text('包装换算（选填）'), findsOneWidget);
   });
 
   testWidgets('AI-5 端到端：带包装说明建档 → 库里 package_note 有值', (
@@ -460,7 +475,7 @@ void main() {
       expect(field(label: '1 包 = 多少（可选）'), findsNothing);
 
       // 折叠区在页面底部 —— **先滚到它再点**（`tap` 落空只 warn 不报错）
-      final Finder toggle = find.text('启用包装换算（按箱进、按个卖）');
+      final Finder toggle = find.text('包装换算（选填）');
       await tester.ensureVisible(toggle);
       await tester.pumpAndSettle();
       await tester.tap(toggle);
@@ -513,6 +528,33 @@ void main() {
       expect(unit.controller!.text, '箱', reason: '已配置的换算必须回填，不能被折叠藏起来');
       expect(size.controller!.text, '24');
     });
+  });
+
+  // ============================================================ 小屏验收（2026-11-24）
+  //
+  // `docs/reply.md` 要求：800×600 / 480×360 / 2 倍字号三档都要能过。
+  // 800×600 与 2.0 已由上面的 P3 组与大字号组覆盖；这里补**最小档 480×360**。
+  // 这一档必然要滚动（弹窗本身放不下），判据只有一条：**不许有 RenderFlex 溢出**
+  //（Flutter 的溢出在测试里是异常，不只是黄条）。
+  testWidgets('480×360：不溢出（允许滚动，不许越界）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(480, 360);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await openForm(tester);
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '480×360 是窗口最小尺寸（480×360）那一档，会滚但不许溢出',
+    );
+    // 展开包装换算后再验一次（展开才是最高的一档）
+    final Finder check = find.text('包装换算（选填）');
+    await tester.ensureVisible(check);
+    await tester.pumpAndSettle();
+    await tester.tap(check);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull, reason: '展开态是最高的一档');
   });
 }
 

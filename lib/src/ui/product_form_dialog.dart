@@ -412,6 +412,23 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _setUnit(picked);
   }
 
+  /// 包装换算那一行的说明（评审 2026-11-24 问题二：**别把「箱」写死**）。
+  ///
+  /// 一个槽位、两种消息：
+  /// - 没填全 ⇒ 说清它是干什么的；
+  /// - 填全 ⇒ 把它算出来的等式**读回来**（`1 箱 = 24 瓶 —— 开单时可以按「箱」录入。`）。
+  ///   填反了（24 箱 = 1 瓶）用户一眼就能看出来，不用等到开单时才发现。
+  String _packageSummary() {
+    final String unit = _packageUnit.text.trim();
+    final String size = _packageSize.text.trim();
+    if (unit.isEmpty || size.isEmpty) {
+      return '按箱、包等较大单位录入时，自动换算成最小单位。';
+    }
+    final String smallest = _unit.text.trim();
+    return '1 $unit = $size ${smallest.isEmpty ? '个' : smallest}'
+        ' —— 开单时可以按「$unit」录入。';
+  }
+
   /// 分段标题（一、二、三）—— 三段式重排的锚点。
   ///
   /// 为什么值得多花这两行高度：用户要能一眼看出「还有几段没填」。
@@ -420,8 +437,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     ThemeData theme,
     String text, {
     bool optional = false,
+    String? trailing,
   }) => Padding(
-    padding: const EdgeInsets.only(top: 2, bottom: 4),
+    padding: const EdgeInsets.only(top: 2, bottom: 2),
     child: Row(
       children: <Widget>[
         Text(
@@ -435,6 +453,25 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
             color: theme.textTheme.bodyMedium?.color,
           ),
         ),
+        // 右侧小字：把一句说明塞进**已经存在的一行**里 —— 不新增高度。
+        // （125% + 768 的高度预算是 0 余量，任何"再加一行"都要付账。）
+        if (trailing != null) ...<Widget>[
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              trailing,
+              textAlign: TextAlign.right,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.3,
+                color: theme.textTheme.bodySmall?.color,
+              ),
+            ),
+          ),
+        ] else
+          const Spacer(),
         if (optional) ...<Widget>[
           const SizedBox(width: 8),
           Container(
@@ -466,7 +503,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   /// 折叠区最贵的信息是「到底开没开」—— 复选框自己就带这个状态，
   /// 而折叠箭头+标题的组合会让人分不清"点了会展开"还是"点了会启用"。
   Widget _packageBlock(ThemeData theme) => Container(
-    padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+    padding: const EdgeInsets.fromLTRB(10, 8, 10, 2),
     decoration: BoxDecoration(
       border: Border.all(color: theme.dividerColor),
       borderRadius: BorderRadius.circular(4),
@@ -496,9 +533,19 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
           contentPadding: EdgeInsets.zero,
           dense: true,
           visualDensity: VisualDensity.compact,
-          // 副标题删掉（2026-11-24 高度预算）：勾选后能干什么，标题已经把
-          // 「按箱进、按个卖」说完；再挂两行解释，125% 下要多占 40 px。
-          title: const Text('启用包装换算（按箱进、按个卖）'),
+          title: const Text('包装换算（选填）'),
+          // 副标题**一个槽位、两种消息**（评审问题二）：
+          // 没填 ⇒ 说清它是干什么的；填全 ⇒ 直接把它换算出来的等式读回来，
+          // 用户一眼能发现自己把「1 箱 = 24 瓶」填反了。
+          subtitle: Text(
+            _packageSummary(),
+            key: const Key('product-package-summary'),
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.35,
+              color: theme.textTheme.bodySmall?.color,
+            ),
+          ),
         ),
         // 勾选后**平滑展开**两格（`AnimatedSize` 而不是直接跳出来 ——
         // 「凭空多出两行」会让用户以为点错了什么）
@@ -517,8 +564,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                         child: TextField(
                           controller: _packageUnit,
                           textInputAction: TextInputAction.next,
-                          onChanged: (_) =>
-                              _clearError(ProductField.packageUnit),
+                          onChanged: (_) => setState(
+                            () => _clearError(ProductField.packageUnit),
+                          ),
                           decoration: _decoration(
                             ProductField.packageUnit,
                             label: '包装单位（可选）',
@@ -532,8 +580,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                           controller: _packageSize,
                           keyboardType: const TextInputType.numberWithOptions(),
                           textInputAction: TextInputAction.next,
-                          onChanged: (_) =>
-                              _clearError(ProductField.packageSize),
+                          onChanged: (_) => setState(
+                            () => _clearError(ProductField.packageSize),
+                          ),
                           decoration: _decoration(
                             ProductField.packageSize,
                             label: '1 包 = 多少（可选）',
@@ -636,7 +685,16 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                     // 分区的目的不是"好看"，是让用户**知道还剩多少没填** ——
                     // 旧版一屏铺开，用户填完名称/单位/售价就以为完事了，
                     // 于是进价永远空着、毛利恒为 0（P3 的同一个病根）。
-                    _sectionHeader(theme, '一、基本资料'),
+                    _sectionHeader(
+                      theme,
+                      '一、基本资料',
+                      // 评审问题一：旧文案说「装箱关系写在『包装说明』里」——
+                      // 而真正启用按箱录入的是**包装换算**，包装说明只是备注。
+                      // 这句必须指向「包装换算」，否则用户填了备注就以为能按箱开单。
+                      trailing:
+                          '单位填最小的售卖单位，不是进货的箱子单位；'
+                          '要按箱录入请用下面的「包装换算」',
+                    ),
 
                     TextField(
                       controller: _name,
@@ -644,8 +702,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                       onChanged: (_) => _clearError(ProductField.name),
                       decoration: _decoration(
                         ProductField.name,
-                        // 必填标红星（`docs/ui_principles.md` §一：必填要显眼）
-                        label: '商品名称 *',
+                        required: true,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -673,7 +730,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                             onChanged: (_) => _clearError(ProductField.unit),
                             decoration: _decoration(
                               ProductField.unit,
-                              label: '单位 *',
+                              required: true,
                               hint: '例：桶、箱、捆、扎',
                               suffixIcon: IconButton(
                                 key: const Key('product-unit-pick'),
@@ -697,7 +754,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                                 _clearError(ProductField.sellPrice),
                             decoration: _decoration(
                               ProductField.sellPrice,
-                              label: '售价 *',
+                              required: true,
                               suffix: '元',
                             ),
                           ),
@@ -712,10 +769,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                             onChanged: _onBarcodeChanged,
                             decoration: _decoration(
                               ProductField.barcode,
-                              hint: '扫描或输入条码',
+                              // 评审 ③：图标不能让人以为"点一下开摄像头"。
+                              // 扫码枪就是键盘设备 ⇒ 用框内提示说清（不额外占高度）
+                              hint: '扫码枪扫或手填',
                               suffixIcon: IconButton(
                                 key: const Key('product-barcode-scan'),
-                                tooltip: '扫描条码',
+                                tooltip: '把光标放进条码框（扫码枪直接扫进来）',
                                 icon: const Icon(
                                   Icons.qr_code_scanner,
                                   size: 20,
@@ -811,7 +870,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                             decoration: _decoration(
                               ProductField.costPrice,
                               suffix: '元',
-                              helper: '不清楚可以先留空',
+                              helper: '不清楚可以先留空，之后可在商品页补充',
                             ),
                           ),
                         ),
@@ -914,8 +973,25 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     String? hint,
     String? label,
     Widget? suffixIcon,
+    bool required = false,
   }) => InputDecoration(
-    labelText: label ?? field.label,
+    // 必填星号必须是**红色且独立**（`docs/ui_principles.md`）——
+    // 拼进 `labelText` 的星号会跟正文同色，等于没标（用户 2026-11-24 评审 ②）。
+    labelText: required ? null : (label ?? field.label),
+    label: required
+        ? Text.rich(
+            TextSpan(
+              text: label ?? field.label,
+              children: const <InlineSpan>[
+                TextSpan(
+                  text: ' *',
+                  style: TextStyle(color: Color(0xFFB3261E)),
+                ),
+              ],
+            ),
+          )
+        : null,
+    floatingLabelBehavior: FloatingLabelBehavior.auto,
     suffixText: suffix,
     suffixIcon: suffixIcon,
     // 字段级错误直接挂在这一栏下面 —— 用户不用猜是哪一栏填错了
