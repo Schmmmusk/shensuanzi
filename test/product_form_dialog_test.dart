@@ -111,14 +111,26 @@ void main() {
     );
   });
 
-  testWidgets('AI-6：[其他 ▾] 点击后聚焦单位输入框（打字的显式入口）', (WidgetTester tester) async {
+  testWidgets('AI-6：单位框只读；「更多单位 ▾ → 其他（自己填）」放开键盘并聚焦', (
+    WidgetTester tester,
+  ) async {
     await openForm(tester);
 
-    expect(find.text('其他 ▾'), findsOneWidget);
-    await tester.tap(find.text('其他 ▾'));
-    await tester.pump();
+    // 2026-11-24（用户）：单位框**只读** —— 手打容易打出「箱」这种非最小单位，
+    // 值只由 chip / 下拉决定；要自由填必须显式选「其他（自己填）」。
+    expect(
+      tester.widget<TextField>(unitField).readOnly,
+      isTrue,
+      reason: '只读是默认态，防止手打「箱」',
+    );
+
+    await tester.tap(find.text('更多单位'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('其他（自己填）').last);
+    await tester.pumpAndSettle();
 
     final TextField unit = tester.widget<TextField>(unitField);
+    expect(unit.readOnly, isFalse, reason: '选了「其他」才该能打字');
     expect(
       unit.focusNode?.hasFocus,
       isTrue,
@@ -133,16 +145,18 @@ void main() {
     expect(
       chipCount,
       lessThanOrEqualTo(15),
-      reason: '14 个常用 + 1 个 [其他 ▾]。超过 15 个就不再是「常用」',
+      reason:
+          '2026-11-24：默认 7 个 chip + 「更多单位」下拉 + 一个 Chip 外层'
+          '（其余 7 个与「其他（自己填）」都在下拉里）',
     );
-    expect(find.text('其他 ▾'), findsOneWidget);
+    expect(find.text('更多单位'), findsOneWidget);
 
     // 2026-11-24：默认只摆 7 个（件·个·斤·公斤·瓶·包·袋）+「更多单位」，
     // 桶在展开后那一排里 —— 先展开再点。
     await tester.tap(find.text('更多单位'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('桶'));
-    await tester.pump();
+    await tester.tap(find.text('桶').last);
+    await tester.pumpAndSettle();
     expect(
       tester.widget<TextField>(unitField).controller!.text,
       '桶',
@@ -180,16 +194,20 @@ void main() {
   });
 
   // ============================================================ AI-5
-  testWidgets('AI-5：单位说明小字 + 包装说明输入框在场', (WidgetTester tester) async {
+  testWidgets('AI-5：包装说明输入框在场；单位语义由「只读 + 常用单位」承担', (WidgetTester tester) async {
     await openForm(tester);
 
+    // ⚠️ 2026-11-24（用户明确要求）：单位下方那段说明**已删除**（125% 缩放的高度预算）。
+    // 原意（「按箱建档后卖 1 个就出小数库存」）改由两件事承担：
+    // ① 单位框**只读**、值只能来自「常用单位」/「更多单位」—— 用户打不进「箱」；
+    // ② 包装区块的勾选框文案「启用包装换算（按箱进、按个卖）」把它说清楚了。
     expect(
       find.textContaining('单位填最小的售卖单位'),
-      findsOneWidget,
-      reason: '不教一次，按箱建档后卖 1 个就出小数库存',
+      findsNothing,
+      reason: '说明文字已删（用户 2026-11-24），不要偷偷加回来',
     );
-    expect(find.textContaining('按箱进的货，装箱关系写在下面的「包装说明」里'), findsOneWidget);
     expect(find.text('包装说明（可选）'), findsOneWidget);
+    expect(find.textContaining('按箱进、按个卖'), findsOneWidget);
   });
 
   testWidgets('AI-5 端到端：带包装说明建档 → 库里 package_note 有值', (
@@ -198,7 +216,9 @@ void main() {
     await openForm(tester);
 
     await tester.enterText(field(label: '商品名称'), '娃哈哈矿泉水');
-    await tester.enterText(unitField, '瓶');
+    // 2026-11-24：单位框**只读**，改用 chip 填（这也是真实用户路径）
+    await tester.tap(find.text('瓶').first);
+    await tester.pumpAndSettle();
     await tester.enterText(field(label: '售价'), '2.00');
     await tester.enterText(field(label: '包装说明（可选）'), '1 箱 = 48 瓶');
 
@@ -440,7 +460,7 @@ void main() {
       expect(field(label: '1 包 = 多少（可选）'), findsNothing);
 
       // 折叠区在页面底部 —— **先滚到它再点**（`tap` 落空只 warn 不报错）
-      final Finder toggle = find.text('启用包装换算');
+      final Finder toggle = find.text('启用包装换算（按箱进、按个卖）');
       await tester.ensureVisible(toggle);
       await tester.pumpAndSettle();
       await tester.tap(toggle);

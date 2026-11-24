@@ -173,12 +173,17 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   /// 否则用户会以为"这个商品没有配置包装"，而库里明明有。
   bool _packageOpen = false;
 
-  /// 常用单位是否展开「更多」（2026-11-24）。
+  /// 单位是否是「自己填」模式（2026-11-24）。
   ///
-  /// 默认只摆 7 个（用户示意截图里的那一排：件·个·斤·公斤·瓶·包·袋）+「更多单位」。
-  /// 14 个平铺会占两行、把「进价」挤出 800×600 首屏 —— 而进价决定毛利能不能算出来。
-  bool _showAllUnits = false;
+  /// 默认 `false` ⇒ 单位框**只读**，值只能由 chip / 下拉决定（防止手打「箱」这种
+  /// 非最小单位 —— 那是包装换算的活）。选「其他（自己填）」才放开键盘。
+  bool _unitCustom = false;
 
+  /// 下拉里「其他」这一项的哨兵值（与真实单位不可能撞）
+  static const String _customUnitValue = '\u0000custom';
+
+  /// 常用单位是否展开「更多」（旧字段，保留给 setState 兼容）。
+  ///
   @override
   void initState() {
     super.initState();
@@ -192,6 +197,10 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
           : draft.name,
     );
     _unit = TextEditingController(text: draft.unit);
+    // 已有商品的单位不在预设里 ⇒ 视为「自己填」，否则框是只读的、用户改不了
+    _unitCustom =
+        draft.unit.trim().isNotEmpty &&
+        !_commonUnits.contains(draft.unit.trim());
     _sellPrice = TextEditingController(text: draft.sellPrice);
     _costPrice = TextEditingController(text: draft.costPrice);
     _barcode = TextEditingController(text: draft.barcode);
@@ -360,6 +369,49 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   /// 这行字把「还有东西」变成可见事实，**点一下直接滚到底**（不用学着拖）。
   ///
   /// 只在 [_moreBelow] 为真时出现（见 `_syncMoreBelow`）。
+  /// 填单位（chip / 下拉共同的落点）。只读模式下这也是一次显式赋值。
+  void _setUnit(String unit) {
+    setState(() {
+      _unit.text = unit;
+      _unitCustom = false;
+    });
+    _clearError(ProductField.unit);
+  }
+
+  /// 点单位框（或右侧下拉箭头）：弹出单位菜单。
+  ///
+  /// 与「更多单位 ▾」是**同一份清单**（`_commonUnits` + 其他），
+  /// 两个入口不各写一份（否则必然漂移）。
+  Future<void> _pickUnit(BuildContext context) async {
+    final String? picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (BuildContext sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: <Widget>[
+            const ListTile(dense: true, title: Text('选择单位（填最小的售卖单位）')),
+            for (final String unit in _commonUnits)
+              ListTile(
+                title: Text(unit),
+                onTap: () => Navigator.of(sheetContext).pop(unit),
+              ),
+            ListTile(
+              title: const Text('其他（自己填）'),
+              onTap: () => Navigator.of(sheetContext).pop(_customUnitValue),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || picked == null) return;
+    if (picked == _customUnitValue) {
+      setState(() => _unitCustom = true);
+      _unitFocus.requestFocus();
+      return;
+    }
+    _setUnit(picked);
+  }
+
   /// 分段标题（一、二、三）—— 三段式重排的锚点。
   ///
   /// 为什么值得多花这两行高度：用户要能一眼看出「还有几段没填」。
@@ -369,13 +421,18 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     String text, {
     bool optional = false,
   }) => Padding(
-    padding: const EdgeInsets.only(top: 4, bottom: 8),
+    padding: const EdgeInsets.only(top: 2, bottom: 4),
     child: Row(
       children: <Widget>[
         Text(
           text,
-          style: theme.textTheme.titleSmall?.copyWith(
+          // 2026-11-24：`titleSmall` → 13px 粗体。125% 下 titleSmall 是 17.5px，
+          // 三段标题就吃掉 60+ px；分段靠顺序与缩进也读得出来，不必靠字号。
+          style: TextStyle(
+            fontSize: 13,
+            height: 1.3,
             fontWeight: FontWeight.w700,
+            color: theme.textTheme.bodyMedium?.color,
           ),
         ),
         if (optional) ...<Widget>[
@@ -400,68 +457,93 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     ),
   );
 
-  /// 「启用包装换算」折叠区（2026-11-24，`docs/reply.md` §二·3）。
+  /// 包装信息区块（2026-11-24 二次微调）。
   ///
-  /// 折叠的是**换算数据**（`packageUnit` + `packageSize`），不是备注 ——
-  /// 后者是另一栏（「包装说明」），两者语义不同，界面必须分开放。
+  /// 三件事收在**一个**带边框的块里：包装说明（备注）→ 勾选框 → 展开后的换算两格。
+  /// 用户要的是"知道这是一个整体"，而不是两个长得差不多的折叠区。
   ///
-  /// ⚠️ 编辑已配置过换算的商品时**必须已展开并回填**（`initState` 里定的
-  /// `_packageOpen`）—— 折叠掩盖既有数据 = 让用户以为没配过。
-  Widget _packageToggle(ThemeData theme) => Container(
-    key: const Key('product-package-toggle'),
+  /// ⚠️ 展开方式从 `ExpansionTile`（点整行）改成**显式 Checkbox**：
+  /// 折叠区最贵的信息是「到底开没开」—— 复选框自己就带这个状态，
+  /// 而折叠箭头+标题的组合会让人分不清"点了会展开"还是"点了会启用"。
+  Widget _packageBlock(ThemeData theme) => Container(
+    padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
     decoration: BoxDecoration(
       border: Border.all(color: theme.dividerColor),
       borderRadius: BorderRadius.circular(4),
     ),
-    child: ExpansionTile(
-      initiallyExpanded: _packageOpen,
-      onExpansionChanged: (bool open) => setState(() => _packageOpen = open),
-      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      // 去掉展开态/折叠态的描边（外层容器已经有边框，再叠一层会显脏）
-      shape: const Border(),
-      collapsedShape: const Border(),
-      title: const Text('启用包装换算'),
-      subtitle: Text(
-        '按箱、包等较大单位录入时，自动换算成最小单位。',
-        style: TextStyle(
-          fontSize: 13,
-          height: 1.5,
-          color: theme.textTheme.bodySmall?.color,
-        ),
-      ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Expanded(
-              child: TextField(
-                controller: _packageUnit,
-                textInputAction: TextInputAction.next,
-                onChanged: (_) => _clearError(ProductField.packageUnit),
-                decoration: _decoration(
-                  ProductField.packageUnit,
-                  label: '包装单位（可选）',
-                  hint: '例：箱',
+        // 「包装说明」= **纯备注**（不参与计算）；与「包装换算」是两件事 ——
+        // 旧界面把两者摆在一起，用户分不清哪个影响记账。
+        TextField(
+          controller: _packageNote,
+          textInputAction: TextInputAction.next,
+          onChanged: (_) => _clearError(ProductField.packageNote),
+          decoration: _decoration(
+            ProductField.packageNote,
+            label: '包装说明（可选）',
+            hint: '例：1 箱 = 48 瓶',
+            helper: '只是给人看的备注，不影响计算。',
+          ),
+        ),
+        const SizedBox(height: 4),
+        CheckboxListTile(
+          key: const Key('product-package-enable'),
+          value: _packageOpen,
+          onChanged: (bool? on) => setState(() => _packageOpen = on ?? false),
+          controlAffinity: ListTileControlAffinity.leading,
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          // 副标题删掉（2026-11-24 高度预算）：勾选后能干什么，标题已经把
+          // 「按箱进、按个卖」说完；再挂两行解释，125% 下要多占 40 px。
+          title: const Text('启用包装换算（按箱进、按个卖）'),
+        ),
+        // 勾选后**平滑展开**两格（`AnimatedSize` 而不是直接跳出来 ——
+        // 「凭空多出两行」会让用户以为点错了什么）
+        AnimatedSize(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          alignment: Alignment.topCenter,
+          child: !_packageOpen
+              ? const SizedBox(width: double.infinity)
+              : Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Expanded(
+                        child: TextField(
+                          controller: _packageUnit,
+                          textInputAction: TextInputAction.next,
+                          onChanged: (_) =>
+                              _clearError(ProductField.packageUnit),
+                          decoration: _decoration(
+                            ProductField.packageUnit,
+                            label: '包装单位（可选）',
+                            hint: '例：箱',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _packageSize,
+                          keyboardType: const TextInputType.numberWithOptions(),
+                          textInputAction: TextInputAction.next,
+                          onChanged: (_) =>
+                              _clearError(ProductField.packageSize),
+                          decoration: _decoration(
+                            ProductField.packageSize,
+                            label: '1 包 = 多少（可选）',
+                            hint: '例：48',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: _packageSize,
-                keyboardType: const TextInputType.numberWithOptions(),
-                textInputAction: TextInputAction.next,
-                onChanged: (_) => _clearError(ProductField.packageSize),
-                decoration: _decoration(
-                  ProductField.packageSize,
-                  label: '1 包 = 多少（可选）',
-                  hint: '例：48',
-                  helper: '两格都填，开单就能按「箱」录入',
-                ),
-              ),
-            ),
-          ],
         ),
       ],
     ),
@@ -521,9 +603,16 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _syncMoreBelow());
 
     return AlertDialog(
+      // 2026-11-24：默认 `titlePadding`/`contentPadding` 各 24 px 上下，
+      // 125% 下这两圈留白就是 60 px。压到 16 / 8 —— 视觉密度够用，
+      // 换来的是「展开包装换算后一屏放得下」。
+      titlePadding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
+      contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
       title: Text(isNew ? '新增商品' : '编辑商品'),
       content: SizedBox(
-        width: 560,
+        // 2026-11-24：560 → 700。125% 缩放下 560 宽会让「包装说明（可选）」这类
+        // 标签折行，每折一行就是 20+ px；加宽比压缩更省高度，且不牺牲可读性。
+        width: 700,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -561,25 +650,43 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                     ),
                     const SizedBox(height: 8),
 
+                    // 2026-11-24（125% + 768 高实测）：单位 / 售价 / **条码** 三栏并排。
+                    // 条码原本独占一行（420 px 宽只为放一个扫码框），把它并进来
+                    // 一次省掉整行高度 —— 这是"展开包装换算后仍能看见保存按钮"
+                    // 的关键一格（`docs/reply.md` 的交办目标）。
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
+                        // 单位：**只读**（用户：点击无反应或弹菜单）。它由下面的
+                        // 常用单位 chip / 「更多单位」下拉 / 「其他（自己填）」决定，
+                        // 手打容易打出「箱」这种非最小单位（那是包装换算的活）。
                         Expanded(
+                          flex: 3,
                           child: TextField(
                             controller: _unit,
                             focusNode: _unitFocus,
+                            readOnly: !_unitCustom,
+                            onTap: _unitCustom
+                                ? null
+                                : () => _pickUnit(context),
                             textInputAction: TextInputAction.next,
                             onChanged: (_) => _clearError(ProductField.unit),
                             decoration: _decoration(
                               ProductField.unit,
                               label: '单位 *',
                               hint: '例：桶、箱、捆、扎',
+                              suffixIcon: IconButton(
+                                key: const Key('product-unit-pick'),
+                                tooltip: '选择单位',
+                                icon: const Icon(Icons.arrow_drop_down),
+                                onPressed: () => _pickUnit(context),
+                              ),
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          flex: 2,
+                          flex: 3,
                           child: TextField(
                             controller: _sellPrice,
                             keyboardType: const TextInputType.numberWithOptions(
@@ -595,14 +702,37 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                             ),
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 4,
+                          child: TextField(
+                            controller: _barcode,
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) => _save(),
+                            onChanged: _onBarcodeChanged,
+                            decoration: _decoration(
+                              ProductField.barcode,
+                              hint: '扫描或输入条码',
+                              suffixIcon: IconButton(
+                                key: const Key('product-barcode-scan'),
+                                tooltip: '扫描条码',
+                                icon: const Icon(
+                                  Icons.qr_code_scanner,
+                                  size: 20,
+                                ),
+                                onPressed: () => _barcodeFocus.requestFocus(),
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 8),
 
-                    // 常用单位：点一下就填好；[其他 ▾] 聚焦输入框（可自由打字）。
-                    // 2026-11-24：改成**紧凑一行**（dense chip + 收起点击区留白）——
-                    // 旧版 14 个 chip 占掉三行，把「进价」挤出了首屏。
-                    // 点击区仍是 44 高（`Q5 点击区` 用例钉着），只是视觉更紧。
+                    // 常用单位：只摆前 7 个（用户示意的那一排），其余进「更多单位 ▾」——
+                    // 与「其他（自己填）」合并成**一个**下拉，少一个 chip 少一次犹豫。
+                    // ⚠️ 点击区仍是 44 高（`Q5` 用例钉着），省高度的做法是减数量，
+                    // 不是压可点面积（`visualDensity: compact` 会压到 40，实测红）。
                     Wrap(
                       spacing: 6,
                       runSpacing: 0,
@@ -616,48 +746,51 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                             color: theme.textTheme.bodySmall?.color,
                           ),
                         ),
-                        for (final String unit
-                            in _showAllUnits
-                                ? _commonUnits
-                                : _commonUnits.take(7))
+                        for (final String unit in _commonUnits.take(7))
                           ActionChip(
                             label: Text(unit),
                             labelStyle: const TextStyle(fontSize: 13),
-                            // ⚠️ **不许加 `visualDensity: compact`**：它会把点击区
-                            // 压到 40 高，`Q5 点击区 ≥ 44×44` 的用例当场红（实测）。
-                            // 省高度的正确做法是减**数量与字号**，不是减可点面积。
-                            onPressed: () {
-                              _unit.text = unit;
-                              _clearError(ProductField.unit);
-                            },
+                            onPressed: () => _setUnit(unit),
                           ),
-                        // 「更多单位」= 展开剩下的 7 个；再点收起。
-                        // 它与「其他 ▾」分工：这个展开**预设**，那个去**打字**。
-                        ActionChip(
-                          label: Text(_showAllUnits ? '收起 ▴' : '更多单位'),
-                          labelStyle: const TextStyle(fontSize: 13),
-                          onPressed: () =>
-                              setState(() => _showAllUnits = !_showAllUnits),
-                        ),
-                        ActionChip(
-                          label: const Text('其他 ▾'),
-                          labelStyle: const TextStyle(fontSize: 13),
-                          onPressed: () => _unitFocus.requestFocus(),
+                        // 更多单位 + 其他：合并成一个下拉
+                        PopupMenuButton<String>(
+                          key: const Key('product-unit-more'),
+                          tooltip: '更多单位',
+                          onSelected: (String value) {
+                            if (value == _customUnitValue) {
+                              setState(() => _unitCustom = true);
+                              _unitFocus.requestFocus();
+                            } else {
+                              _setUnit(value);
+                            }
+                          },
+                          itemBuilder: (BuildContext context) =>
+                              <PopupMenuEntry<String>>[
+                                for (final String unit in _commonUnits.skip(7))
+                                  PopupMenuItem<String>(
+                                    value: unit,
+                                    child: Text(unit),
+                                  ),
+                                const PopupMenuDivider(),
+                                const PopupMenuItem<String>(
+                                  value: _customUnitValue,
+                                  child: Text('其他（自己填）'),
+                                ),
+                              ],
+                          child: Chip(
+                            label: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                Text(
+                                  '更多单位',
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                                const Icon(Icons.arrow_drop_down, size: 18),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
-                    ),
-
-                    const SizedBox(height: 2),
-                    // 一句话说清「单位 = 最小售卖单位」（§AJ·AI-5）。
-                    // 2026-11-24：从旧版的三行长文压成一行紧凑小字（字号 12）。
-                    Text(
-                      '单位填最小的售卖单位（瓶 / 个 / 斤）；'
-                      '按箱进的货，装箱关系写在下面的「包装说明」里。',
-                      style: TextStyle(
-                        fontSize: 12,
-                        height: 1.45,
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
                     ),
 
                     // ================= 二、经营信息 =================
@@ -698,51 +831,11 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-
-                    // 条码：2026-11-24 从页尾**上移到这里**（reply.md：太靠后会被忽略）。
-                    // 扫码枪=键盘设备，回车即保存；右侧图标是「用摄像头/扫码枪」的显式入口
-                    //（点了聚焦输入框，扫码枪照样能打进来）。
-                    TextField(
-                      controller: _barcode,
-                      textInputAction: TextInputAction.done,
-                      onSubmitted: (_) => _save(),
-                      onChanged: _onBarcodeChanged,
-                      decoration: _decoration(
-                        ProductField.barcode,
-                        hint: '扫描或输入条码',
-                        // 有查重提示时让位（下面那块橙色提示负责说）——
-                        // 两行辅助文字挤在一起反而没人看
-                        helper: _barcodeNotice == null
-                            ? '没有条码可以留空；有条码建议现在录入。'
-                            : null,
-                        suffixIcon: IconButton(
-                          key: const Key('product-barcode-scan'),
-                          tooltip: '扫描条码',
-                          icon: const Icon(Icons.qr_code_scanner, size: 20),
-                          onPressed: () => _barcodeFocus.requestFocus(),
-                        ),
-                      ),
-                    ),
 
                     // ================= 三、包装信息（选填） =================
                     _sectionHeader(theme, '三、包装信息', optional: true),
 
-                    // 「包装说明」= **纯备注**（不参与计算）；与下面的「包装换算」
-                    // 是两件事 —— 旧界面把两者摆在一起，用户分不清哪个影响记账。
-                    TextField(
-                      controller: _packageNote,
-                      textInputAction: TextInputAction.next,
-                      onChanged: (_) => _clearError(ProductField.packageNote),
-                      decoration: _decoration(
-                        ProductField.packageNote,
-                        label: '包装说明（可选）',
-                        hint: '例：1 箱 = 48 瓶',
-                        helper: '只是给人看的备注，不影响计算。',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _packageToggle(theme),
+                    _packageBlock(theme),
 
                     // #31（2026-10-16 裁定甲）：可选「当前库存」—— 手机新建专用
                     //（`allowOpeningStock`；桌面期初有独立入口，编辑模式不显示 = 裁定③）。
@@ -829,6 +922,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     errorText: _errors[field],
     helperText: helper,
     helperMaxLines: 2,
+    // 2026-11-24：密集模式。125% 缩放下每格省约 10 px，五格就是 50 ——
+    // 这是"展开包装换算后仍一屏放得下"的主要来源之一。
+    isDense: true,
     hintText: hint,
     border: const OutlineInputBorder(),
   );
