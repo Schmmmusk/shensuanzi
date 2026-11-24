@@ -132,7 +132,11 @@ void main() {
     );
 
     await fillRow(tester, row: 0, productName: '可乐', qty: '3');
-    expect(find.textContaining('当前账面 10'), findsOneWidget);
+    // 2026-11-24 卡片化：账面 / 实际 / 差额 拆成三格，不再拼成「当前账面 10 · …」
+    expect(find.text('当前账面'), findsOneWidget);
+    expect(find.text('实际库存'), findsOneWidget);
+    expect(find.text('盘点结果'), findsOneWidget);
+    expect(find.textContaining('10'), findsWidgets, reason: '账面数量要能看见（大字那一格）');
     expect(find.textContaining('将减少 7'), findsOneWidget);
 
     await tester.enterText(find.byKey(const Key('opening-qty-0')), '15');
@@ -251,11 +255,7 @@ void main() {
 
       bool done = false;
       await tester.pumpWidget(
-        page(
-          isFirstTime: true,
-          documentSink: sink,
-          onDone: () => done = true,
-        ),
+        page(isFirstTime: true, documentSink: sink, onDone: () => done = true),
       );
       await fillRow(tester, row: 0, productName: '可乐', qty: '7');
       await tester.tap(find.byKey(const Key('opening-save')));
@@ -289,11 +289,7 @@ void main() {
 
       bool done = false;
       await tester.pumpWidget(
-        page(
-          isFirstTime: true,
-          documentSink: sink,
-          onDone: () => done = true,
-        ),
+        page(isFirstTime: true, documentSink: sink, onDone: () => done = true),
       );
       await fillRow(tester, row: 0, productName: '可乐', qty: '3');
       await tester.tap(find.byKey(const Key('opening-save')));
@@ -309,6 +305,64 @@ void main() {
       );
       expect(find.text('已记入库存：1 件商品'), findsOneWidget);
     });
+  });
+
+  // ============================================================ 多单位（2026-11-24）
+  //
+  // 用户裁定：盘点要能**按包装录入**（按箱进、按个卖的商品，盘点时数箱子比数瓶自然）。
+  // 但落库的 `document_lines.quantity` 必须仍是「最小单位实际数量」——
+  // 换算走 core 的 `toBaseQuantity`（与三份开单草稿同一个纯函数）。
+  testWidgets('多单位：按「箱」录入 ⇒ 换算成瓶、差额按瓶算、落库是瓶数', (WidgetTester tester) async {
+    final Product boxed = Product(
+      id: newId(),
+      code: 'P0003',
+      name: '可乐箱装',
+      unit: '瓶',
+      packageUnit: '箱',
+      packageSize: 24,
+      createdAt: t,
+      updatedAt: t,
+    );
+    ProductDao(db).insert(boxed);
+    seedBook(<String, int>{boxed.id: 24}); // 账面 24 瓶
+
+    await tester.pumpWidget(
+      page(isFirstTime: false, book: queries.stockByProduct(), onDone: () {}),
+    );
+
+    await tester.tap(find.byKey(const Key('opening-product-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('可乐箱装').last);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('opening-qty-0')), '2');
+    await tester.pumpAndSettle();
+    // 默认单位 = 最小单位（瓶）⇒ 2 瓶，比账面 24 少 22
+    expect(find.textContaining('将减少 22'), findsOneWidget);
+
+    // 切到「箱」⇒ 2 箱 = 48 瓶
+    await tester.tap(find.byKey(const Key('opening-unit-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('箱（= 24 瓶）').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('2 箱 = 48 瓶'),
+      findsOneWidget,
+      reason: '换算结果要读回来（填错一眼看得出）',
+    );
+    expect(find.textContaining('将增加 24'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('opening-save')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('opening-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(
+      queries.stockByProduct()[boxed.id],
+      48,
+      reason: '落库必须是**最小单位数量**（48 瓶），不是录入原文（2 箱）',
+    );
   });
 }
 

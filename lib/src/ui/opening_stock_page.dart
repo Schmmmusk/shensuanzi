@@ -78,6 +78,13 @@ class _RowCtl {
   Product? product;
   final TextEditingController quantity = TextEditingController();
 
+  /// **录入单位**（2026-11-24 多单位）：`null` = 按最小单位填；
+  /// 等于商品的 `packageUnit` 时按包装填（换算由 core 的 `toBaseQuantity` 做）。
+  ///
+  /// ⚠️ 只改 UI 状态，**不改 core**：落库的 `document_lines.quantity` 仍是
+  /// 「最小单位实际数量」这一条不变式（`data_model.md` §3.2）。
+  String? entryUnit;
+
   void dispose() => quantity.dispose();
 }
 
@@ -102,6 +109,24 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
     super.dispose();
   }
 
+  /// 该行换算后的**最小单位数量**（`null` = 没填 / 填了非法 / 没选商品）。
+  ///
+  /// 换算**不在这里自己算**：调 core 的纯函数 `toBaseQuantity`（三份开单草稿
+  /// 用的是同一个）——「UI 不懂业务」这条不破。
+  int? _baseQuantityOf(_RowCtl row) {
+    final Product? product = row.product;
+    if (product == null) return null;
+    final int? typed = int.tryParse(row.quantity.text.trim());
+    if (typed == null) return null;
+    return toBaseQuantity(
+      entryQuantity: typed,
+      entryUnit: row.entryUnit,
+      baseUnit: product.unit,
+      packageUnit: product.packageUnit,
+      packageSize: product.packageSize,
+    ).baseQuantityOrNull;
+  }
+
   StocktakeDraft _draft() => StocktakeDraft(
     // §审查 OBS-09①：备注要说清是「期初建账」还是「重新清点」——
     // 原来写死成「期初录入」，重新清点出来的单据也跟着这么写
@@ -111,7 +136,11 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
         StocktakeLineDraft(
           productId: row.product?.id ?? '',
           productName: row.product?.name ?? '',
-          quantity: row.quantity.text,
+          // 落库的永远是**最小单位数量**（按箱填的在这里就已经乘好了）
+          quantity: switch (_baseQuantityOf(row)) {
+            final int base => '$base',
+            null => '',
+          },
         ),
     ],
   );
@@ -143,6 +172,8 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
     if (picked == null || index >= _rows.length) return;
     setState(() {
       _rows[index].product = picked;
+      // 换了商品 ⇒ 录入单位必须归零：上一件的「箱」可能是这一件没配的包装单位
+      _rows[index].entryUnit = null;
       _lineErrors = const <int, String>{};
       _topError = null;
     });
@@ -392,143 +423,265 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
     );
   }
 
-  Widget _explanation(ThemeData theme) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: <Widget>[
-      Text(
-        '开店时店里已经有的货，在这里一次记入。'
-        '以后按采购 / 销售正常记，不用再管这一页。',
-        style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
-      ),
-      const SizedBox(height: 4),
-      Text(
-        '下面填的是「实际有多少」，不是新进了多少；'
-        '同一个商品再录一遍，就是把库存改成后来那个数。'
-        '卖光了就填 0。'
-        '期初成本按 0 记，库存金额会偏低；下次采购时进价会校准成本。',
-        style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
-      ),
-    ],
-  );
-
-  Widget _linesCard(ThemeData theme) => Card(
-    clipBehavior: Clip.antiAlias,
+  /// 顶部说明（2026-11-24：两段长文 → **一张常驻说明卡**，三句话说完）。
+  ///
+  /// 语义一条不少（用户裁定「原来的语义设计很好，不要推翻」）：
+  /// 实际数量 / 再录一遍是改写 / 0 合法 / 期初成本按 0。
+  Widget _explanation(ThemeData theme) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      borderRadius: BorderRadius.circular(8),
+    ),
     child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        for (int i = 0; i < _rows.length; i++) ...<Widget>[
-          if (i > 0) const Divider(height: 1),
-          _openingRow(theme, i),
-        ],
+        Text(
+          '请填写店里现在实际有多少',
+          style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '不是新进了多少。同一种商品再清点一次，会把库存改成这次填的数量；'
+          '卖光了填 0。期初成本按 0 记，之后正常采购会逐步校准。',
+          style: TextStyle(
+            height: 1.6,
+            color: theme.textTheme.bodySmall?.color,
+          ),
+        ),
       ],
     ),
   );
 
-  Widget _openingRow(ThemeData theme, int index) {
+  Widget _linesCard(ThemeData theme) => Column(
+    children: <Widget>[
+      for (int i = 0; i < _rows.length; i++) ...<Widget>[
+        _openingCard(theme, i),
+        const SizedBox(height: 12),
+      ],
+    ],
+  );
+
+  /// 一件商品一张卡片（2026-11-24 用户裁定：从"填一张表"变成"逐件核对"）。
+  ///
+  /// 卡片里必须**同时**有「当前账面 / 实际库存 / 盘点结果」——
+  /// 让用户不用自己拿计算器减一遍（`docs/reply.md` 一·建议）。
+  Widget _openingCard(ThemeData theme, int index) {
     final _RowCtl row = _rows[index];
     final Product? product = row.product;
+    final String unit = product?.unit ?? '';
+    final int book = product == null
+        ? 0
+        : (widget.bookQuantities[product.id] ?? 0);
+    final int? base = _baseQuantityOf(row);
+    final TextStyle labelStyle = TextStyle(
+      fontSize: 12,
+      height: 1.4,
+      color: theme.textTheme.bodySmall?.color,
+    );
+    final TextStyle bigStyle = const TextStyle(
+      fontSize: 18,
+      height: 1.3,
+      fontWeight: FontWeight.w700,
+    );
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              // 选商品：点开选择器（空查询显示全部商品 + 新建入口）。
-              // ⚠️ 刻意**不带 labelText**：label 与子级占位「选择商品」会叠画
-              // （真机 2026-09-28）；采购页同款写法已真机验证
-              Expanded(
-                child: InkWell(
-                  key: Key('opening-product-$index'),
-                  onTap: _busy ? null : () => _pickProduct(index),
-                  child: InputDecorator(
-                    isEmpty: product == null,
-                    decoration: InputDecoration(
-                      border: const OutlineInputBorder(),
-                      isDense: true,
-                      errorText: _lineErrors[index] != null && product == null
-                          ? _lineErrors[index]
-                          : null,
-                    ),
-                    child: Text(
-                      product?.name ?? '选择商品',
-                      style: TextStyle(
-                        height: 1.6,
-                        color: theme.colorScheme.onSurface,
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 8, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                // 选商品：点开选择器（空查询显示全部商品 + 新建入口）
+                Expanded(
+                  child: InkWell(
+                    key: Key('opening-product-$index'),
+                    onTap: _busy ? null : () => _pickProduct(index),
+                    child: InputDecorator(
+                      isEmpty: product == null,
+                      decoration: InputDecoration(
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                        errorText: _lineErrors[index] != null && product == null
+                            ? _lineErrors[index]
+                            : null,
+                      ),
+                      child: Text(
+                        product?.name ?? '选择商品',
+                        style: TextStyle(
+                          height: 1.6,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onSurface,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 110,
-                child: TextField(
-                  key: Key('opening-qty-$index'),
-                  controller: row.quantity,
-                  enabled: !_busy,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: <TextInputFormatter>[
-                    FilteringTextInputFormatter.digitsOnly,
-                  ],
-                  decoration: InputDecoration(
-                    // ⚠️ 用短标签「数量」：110px 放不下「实际有多少」会截断
-                    // （真机 2026-09-28）；语义由顶部说明 + 差额行承担
-                    labelText: '数量',
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    errorText: product != null ? _lineErrors[index] : null,
-                  ),
-                  onChanged: (_) => setState(() {}),
+                // 删除：**文字**，不是一个「×」（用户：别让中老年猜图标）
+                TextButton.icon(
+                  key: Key('opening-remove-$index'),
+                  onPressed: _busy ? null : () => _removeRow(index),
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('删除这一行'),
                 ),
+              ],
+            ),
+
+            if (product != null) ...<Widget>[
+              if (product.code.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(product.code, style: labelStyle),
+                ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 28,
+                runSpacing: 10,
+                crossAxisAlignment: WrapCrossAlignment.end,
+                children: <Widget>[
+                  // 当前账面（大字：它是"跟什么比"的基准）
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text('当前账面', style: labelStyle),
+                      Text(
+                        '$book ${unit.isEmpty ? '' : unit}',
+                        style: bigStyle,
+                      ),
+                    ],
+                  ),
+                  // 实际库存（输入 + 单位）
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text('实际库存', style: labelStyle),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          SizedBox(
+                            width: 96,
+                            child: TextField(
+                              key: Key('opening-qty-$index'),
+                              controller: row.quantity,
+                              enabled: !_busy,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: <TextInputFormatter>[
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
+                              style: bigStyle,
+                              decoration: const InputDecoration(
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              onChanged: (_) => setState(() {}),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          _unitPicker(theme, index, product),
+                        ],
+                      ),
+                    ],
+                  ),
+                  // 盘点结果（差额：正数黑、负数红、0 灰）
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text('盘点结果', style: labelStyle),
+                      Text(
+                        _deltaText(base, book, unit),
+                        key: Key('opening-delta-$index'),
+                        style: base == null
+                            ? labelStyle
+                            : bigStyle.copyWith(
+                                color: base < book
+                                    ? theme.colorScheme.error
+                                    : null,
+                              ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              const SizedBox(width: 4),
-              IconButton(
-                key: Key('opening-remove-$index'),
-                tooltip: '删掉这一行',
-                onPressed: _busy ? null : () => _removeRow(index),
-                icon: const Icon(Icons.close),
-              ),
+              // 按包装填时，把换算结果读回来（「2 箱 = 48 瓶」）——
+              // 填错一眼能看出，不用等到保存后看库存数
+              if (row.entryUnit != null &&
+                  row.entryUnit != product.unit &&
+                  base != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '${row.quantity.text.trim()} ${row.entryUnit} = $base ${product.unit}',
+                    key: Key('opening-converted-$index'),
+                    style: TextStyle(
+                      height: 1.5,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                ),
+              if (_lineErrors[index] != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _lineErrors[index]!,
+                    style: TextStyle(
+                      height: 1.5,
+                      color: theme.colorScheme.error,
+                    ),
+                  ),
+                ),
             ],
-          ),
-          if (product != null) _diffText(theme, index),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  /// 当前账面 + 实时差额（建议 1：差额是理解「实际数量」的唯一途径）
-  Widget _diffText(ThemeData theme, int index) {
-    final _RowCtl row = _rows[index];
-    final int? qty = int.tryParse(row.quantity.text.trim());
-    final int book = widget.bookQuantities[row.product!.id] ?? 0;
-    final TextStyle grey = TextStyle(
-      height: 1.6,
-      color: theme.textTheme.bodySmall?.color,
-    );
+  /// 盘点结果那一格的文案：`将增加 12 瓶` / `将减少 7 瓶` / `无变化` / `还没填`
+  String _deltaText(int? base, int book, String unit) {
+    if (base == null) return '还没填';
+    final int delta = base - book;
+    final String suffix = unit.isEmpty ? '' : ' $unit';
+    if (delta > 0) return '将增加 $delta$suffix';
+    if (delta < 0) return '将减少 ${-delta}$suffix';
+    return '无变化';
+  }
 
-    final Widget diff;
-    // B-3（④甲）：0 合法（卖光了）—— 也要显示差额，不能当「没填」
-    if (qty == null || qty < 0) {
-      diff = Text('当前账面 $book', style: grey);
-    } else {
-      final int delta = qty - book;
-      diff = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Text('当前账面 $book  ·  ', style: grey),
-          if (delta > 0) Text('将增加 $delta', style: TextStyle(height: 1.6)),
-          if (delta < 0)
-            Text(
-              '将减少 ${-delta}',
-              style: TextStyle(height: 1.6, color: theme.colorScheme.error),
-            ),
-          if (delta == 0) Text('无变化', style: grey),
-        ],
-      );
+  /// 录入单位（只有配置了包装换算的商品才给下拉）。
+  ///
+  /// 没配置时不摆下拉、只显示一个单位标签 —— 摆一个只有一项的下拉，
+  /// 用户会反复点它找"别的单位"。
+  Widget _unitPicker(ThemeData theme, int index, Product product) {
+    final String base = product.unit;
+    final String? pkg = product.packageUnit;
+    final int? size = product.packageSize;
+    final bool hasPackage =
+        pkg != null && pkg.isNotEmpty && size != null && size > 0;
+    if (!hasPackage) {
+      return Text(base, style: const TextStyle(height: 1.6));
     }
-    return Padding(padding: const EdgeInsets.only(top: 4), child: diff);
+    final _RowCtl row = _rows[index];
+    return DropdownButton<String>(
+      key: Key('opening-unit-$index'),
+      value: row.entryUnit ?? base,
+      isDense: true,
+      underline: const SizedBox.shrink(),
+      onChanged: _busy
+          ? null
+          : (String? value) => setState(() => row.entryUnit = value),
+      items: <DropdownMenuItem<String>>[
+        DropdownMenuItem<String>(value: base, child: Text(base)),
+        DropdownMenuItem<String>(
+          value: pkg,
+          child: Text('$pkg（= $size $base）'),
+        ),
+      ],
+    );
   }
 
   Widget _actions(ThemeData theme) => Row(
@@ -546,7 +699,7 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
         child: FilledButton(
           key: const Key('opening-save'),
           onPressed: _busy ? null : _save,
-          child: const Text('记入库存'),
+          child: const Text('核对并记入库存'),
         ),
       ),
     ],
