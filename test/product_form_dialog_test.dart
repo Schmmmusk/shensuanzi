@@ -68,14 +68,19 @@ void main() {
   /// ⚠️ 参数是**过滤条件**：`null` = 不限制，**不是**「要求该字段等于 null」
   /// （几乎每个框都有 label 和 hint，按「等于 null」匹配永远落空——
   /// 2026-09-30 四条测试同挂这一处的教训）。
-  Finder field({String? label, String? hint}) =>
-      find.byWidgetPredicate((Widget w) {
-        if (w is! TextField) return false;
-        final InputDecoration? d = w.decoration;
-        if (label != null && d?.labelText != label) return false;
-        if (hint != null && d?.hintText != hint) return false;
-        return true;
-      });
+  Finder field({String? label, String? hint}) => find.byWidgetPredicate((
+    Widget w,
+  ) {
+    if (w is! TextField) return false;
+    final InputDecoration? d = w.decoration;
+    // 2026-11-24：必填字段的 label 带红色星号（`商品名称 *`），
+    // 定位时两种写法都认 —— 不为了星号把所有用例的锚点改一遍。
+    if (label != null && d?.labelText != label && d?.labelText != '$label *') {
+      return false;
+    }
+    if (hint != null && d?.hintText != hint) return false;
+    return true;
+  });
 
   // ⚠️ 必须是局部 final 变量，**不能写 `get`**：getter 只能放在类 / 库顶层，
   // 写在 main() 里是语法错误（startup_test.dart 查找器一节的老坑，2026-09-29 又踩一次）
@@ -96,9 +101,12 @@ void main() {
 
     final TextField note = tester.widget<TextField>(field(label: '包装说明（可选）'));
     expect(note.decoration!.hintText, startsWith('例：'));
+    // 2026-11-24（`docs/reply.md` §二·3 的措辞）：从「只是备注，不影响记账」
+    // 改成「只是给人看的备注，不影响计算。」—— 与下面「启用包装换算」的副标题
+    // 区分得更清楚（旧文案容易被读成"这两栏是一回事"）。
     expect(
       note.decoration!.helperText,
-      '只是备注，不影响记账',
+      '只是给人看的备注，不影响计算。',
       reason: '纯备注的定位要说清，否则用户不敢填',
     );
   });
@@ -129,6 +137,10 @@ void main() {
     );
     expect(find.text('其他 ▾'), findsOneWidget);
 
+    // 2026-11-24：默认只摆 7 个（件·个·斤·公斤·瓶·包·袋）+「更多单位」，
+    // 桶在展开后那一排里 —— 先展开再点。
+    await tester.tap(find.text('更多单位'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('桶'));
     await tester.pump();
     expect(
@@ -380,10 +392,16 @@ void main() {
       final Rect viewportRect = tester.getRect(
         find.byType(SingleChildScrollView).first,
       );
+      // ⚠️ 2026-11-24 契约变更（三段式重排的代价，用户给的示意就是三段）：
+      // 旧布局要求「进价在 800×600 首屏」，现在「一、基本资料」占掉了首屏
+      // （名称 / 单位 / 售价 / 常用单位），进价落在「二、经营信息」的第一行，
+      // 需要一次滚动。**补偿手段**：分段序号（知道还有二、三段）+ 底部
+      // 「往下还有内容」提示（诚实，不点名）。
+      // 仍然要钉死的是：进价**存在**、只差一次滚动、且不在页面最底部。
       expect(
         costRect.bottom,
-        lessThanOrEqualTo(viewportRect.bottom + 1),
-        reason: 'P3：进价必须露在首屏 —— 它决定了毛利算不算得出来',
+        lessThanOrEqualTo(viewportRect.bottom + 120),
+        reason: 'P3（新契约）：进价离首屏底边不得超过约两行 —— 否则"要滚很久"',
       );
     });
 
@@ -406,6 +424,74 @@ void main() {
 
       expect(field(label: '条码'), findsOneWidget);
       expect(field(label: '安全库存'), findsOneWidget);
+    });
+  });
+
+  // ============================================================ 三段式（2026-11-24）
+  //
+  // `docs/reply.md` §二·3：包装**说明**（备注）与包装**换算**（数据）是两件事，
+  // 后者默认折叠；但「已配置过换算」的商品必须**一打开就展开并回填** ——
+  // 折叠掩盖既有数据 = 让用户以为没配过，于是重复配置或永远不敢改。
+  group('三段式：包装换算折叠', () {
+    testWidgets('默认折叠：两个换算输入框不出现；点开才出现', (WidgetTester tester) async {
+      await openForm(tester);
+
+      expect(field(label: '包装单位（可选）'), findsNothing);
+      expect(field(label: '1 包 = 多少（可选）'), findsNothing);
+
+      // 折叠区在页面底部 —— **先滚到它再点**（`tap` 落空只 warn 不报错）
+      final Finder toggle = find.text('启用包装换算');
+      await tester.ensureVisible(toggle);
+      await tester.pumpAndSettle();
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+
+      expect(field(label: '包装单位（可选）'), findsOneWidget);
+      expect(field(label: '1 包 = 多少（可选）'), findsOneWidget);
+    });
+
+    testWidgets('编辑已配置换算的商品 ⇒ 自动展开并回填原值', (WidgetTester tester) async {
+      // 先建一个带换算的商品
+      final Product existing = service.create(
+        const ProductDraft(
+          name: '可口可乐',
+          unit: '瓶',
+          sellPrice: '3.00',
+          packageUnit: '箱',
+          packageSize: '24',
+        ),
+        now: 1700000000000,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (BuildContext context) => Center(
+                child: FilledButton(
+                  // 编辑已配置换算的商品
+                  onPressed: () => showProductFormDialog(
+                    context,
+                    service: service,
+                    sink: ServiceMasterSink(service),
+                    existing: existing,
+                  ),
+                  child: const Text('打开表单'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开表单'));
+      await tester.pumpAndSettle();
+
+      final TextField unit = tester.widget<TextField>(field(label: '包装单位（可选）'));
+      final TextField size = tester.widget<TextField>(
+        field(label: '1 包 = 多少（可选）'),
+      );
+      expect(unit.controller!.text, '箱', reason: '已配置的换算必须回填，不能被折叠藏起来');
+      expect(size.controller!.text, '24');
     });
   });
 }
