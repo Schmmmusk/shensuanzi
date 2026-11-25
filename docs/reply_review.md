@@ -22863,3 +22863,47 @@ python perf_bench.py --db "C:/Users/yzx/神算子数据/shensuanzi.db" --cold --
 #### ④ 门禁
 
 `flutter analyze` **0** · root `flutter test` **630**（1 条按平台跳过；+2）。
+
+### 一百三十一、2026-11-25 **宽屏上限：其余六页接线完成（七页全到位）**
+
+> 用户裁定顺序：单据 → 商品 → 库存 → 往来方 → 账户 → 设置。全部按「一页一交」推进。
+
+| 页 | 容器 | 接法 | 几何断言 |
+|---|---|---|---|
+| 概览 | `ListView(padding)` | `LayoutBuilder` + `pageContentInset(base:16)` | ListView 宽 1916 / 卡片 ≤1081 / 左右留白相等；窄屏 left=16 |
+| 单据 | `CustomScrollView`（3 处 `SliverPadding` 20） | `buildList(inset)` 局部函数 + `LayoutBuilder` | 行宽 ≤1081 居中；窄屏 left=20 |
+| 商品 | `Column[工具条, Divider, ListView]` | 工具条 padding + 列表 padding + **表头分割线也居中** | 分割线宽 ≤1081 居中；窄屏 left=16 |
+| 库存 | `CustomScrollView`（2 处 20） | 同单据 | 视口宽 1916、标题 left=418；窄屏 left=20 |
+| 往来方 | `CustomScrollView`（3 处 20） | 同单据 | 视口宽 1916、标题 left=418；窄屏 left=20 |
+| 账户 | `SingleChildScrollView(padding)` | padding 换成 inset | 标题 left=418；窄屏 left=20 |
+| 设置 | `SingleChildScrollView(padding)` | 同上 | 标题 left=418 |
+
+**顺带修的一致性问题**：商品页表头分割线原本横贯整窗、行只占中间 —— 宽屏上会很割裂，
+现在分割线与内容列一起居中。
+
+**灵敏度**：单据在 inset 写死 20 时 `Actual: <1876.0>` ⇒ 红（已验）。
+
+**还没接的页**（都属于"次级/沉浸"面，按需再动）：开单三页（沉浸模式、无面包屑）、
+三个流水页（`flow_page_scaffold` 共用骨架，改一处即可）、单据详情、帮助/手册。
+
+门禁：`flutter analyze` **0** · root `flutter test` **641**（+5）。
+
+### 一百三十二、2026-11-25 **修：商品页「显示已停用的商品」+「共 N 种」仍贴左缘**
+
+> 用户超宽屏截图：工具条与列表都居中了，只有这一块还在最左边。
+
+**根因**：那块是**独立的一段 `Padding(horizontal: 16)`**，我只把工具条、
+列表与表头分割线换成了 `inset` —— 它自带边距、不继承任何容器，于是成了漏网的那一块。
+
+**修法**：`EdgeInsets.symmetric(horizontal: inset)`，与工具条/列表同一个起点。
+
+**为什么之前的断言没抓住**：宽屏用例只量了**表头分割线**（它居中）——
+「页面里某一块自己写死边距」这类漏改，用单一参照物测不出来。
+**已补断言**：`Checkbox` 的左边缘 == 分割线左边缘（即内容列左缘）。
+**灵敏度**：改回 16 ⇒ `Actual: <16.0>`（期望 418），红。
+
+**顺带全仓排查**：其余六页（单据 / 库存 / 往来方 / 账户 / 设置 / 概览）
+grep `EdgeInsets.symmetric(horizontal: 16|20)` 与 `fromLTRB(16|20` —— **0 处残留**；
+行内部边距（`_ProductRow` 的 16）在 inset 列表里，属于正确用法。
+
+门禁：`flutter analyze` **0** · root `flutter test` **641**。

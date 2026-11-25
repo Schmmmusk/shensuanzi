@@ -327,6 +327,43 @@ void main() {
       reason: '搜索框 + 导出 + 新增商品原来挤在一行（溢出 144 px）；商品行同理',
     );
   });
+
+  // ------------------------------------------------------------ 宽屏上限（2026-11-25）
+  //
+  // 与概览 / 单据同款：内容最宽 1080 居中，滚动体全宽。
+  // 这里用表头分割线当尺子 —— 它被包在同一层内边距里，宽度就等于内容列宽。
+  testWidgets('宽屏 1916：内容 1080 居中（表头分割线当尺子）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1916, 790);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    final Rect line = tester.getRect(find.byType(Divider).first);
+    expect(line.width, lessThanOrEqualTo(1081), reason: '内容列宽上限 1080');
+    expect(line.left, closeTo(1916 - line.right, 1.5), reason: '左右留白必须相等（居中）');
+
+    // ⚠️ 2026-11-25 用户截图：「显示已停用的商品」+「共 N 种」原来自带 16 边距，
+    // 宽屏上是**唯一还贴在左缘**的东西。它必须与内容列同起点 ——
+    // 这条断言就是为它加的：只测分割线会漏掉这种"页面里某一块自带宽窄"的漏改。
+    expect(
+      tester.getRect(find.byType(Checkbox)).left,
+      closeTo(line.left, 1.5),
+      reason: '复选框那一块必须与内容列同起点（不是贴着窗口左缘）',
+    );
+  });
+
+  testWidgets('窄屏 800：不干预（左边距回到 16）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(tester.getRect(find.byType(Divider).first).left, closeTo(16, 1));
+  });
 }
 
 /// 只数「查了几次库」的服务（钉住「查询不在 build 里」）。

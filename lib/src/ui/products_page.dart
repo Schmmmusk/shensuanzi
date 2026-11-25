@@ -21,6 +21,7 @@ import 'scaled.dart';
 
 import 'export_button.dart';
 import 'list_scaffold.dart';
+import 'page_width.dart';
 import 'product_form_dialog.dart';
 import 'notice.dart';
 
@@ -212,149 +213,166 @@ class _ProductsPageState extends State<ProductsPage> {
     // ⚠️ 一次 build 取一次快照，再逐行 contains —— `ids` 每次访问都查库
     final Set<String> pending = widget.pendingMarks?.ids ?? const <String>{};
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          // 2026-11-18 用户截图（343 px 窗口）：这一行原来是
-          // `Row[Expanded(搜索框), 16, 导出, 新增商品]` —— 两个按钮**不参与收缩**，
-          // 内容区 232 px 时它们的固有宽加起来就超了，右边那条被顶出去
-          // （截图：新建商品被切掉 + 黄黑条纹）。
-          // 现在按宽度分两排：窄了搜索框独占一行，两个按钮用 `Wrap` 跟着摆。
-          child: LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final Widget search = TextField(
-                controller: _search,
-                onChanged: (_) => _applyFilters(() {}),
-                decoration: InputDecoration(
-                  labelText: '搜商品',
-                  hintText: '商品名 / 编码 / 条码',
-                  prefixIcon: const Icon(Icons.search),
-                  // 2026-10-21：加「清空」—— 报告 §2.5「清空搜索全仓只有单据页有」
-                  suffixIcon: _search.text.isEmpty
-                      ? null
-                      : IconButton(
-                          key: const Key('products-clear-search'),
-                          tooltip: '清空',
-                          icon: const Icon(Icons.clear),
-                          onPressed: () {
-                            _search.clear();
-                            _applyFilters(() {});
-                          },
+    // 2026-11-25（批 B·1 续）：宽屏内容上限 1080 —— 与概览 / 单据同款：
+    // 滚动体（ListView）仍全宽，居中靠视口内的横向内边距。
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double inset = pageContentInset(constraints.maxWidth, base: 16);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Padding(
+              padding: EdgeInsets.fromLTRB(inset, 16, inset, 8),
+              // 2026-11-18 用户截图（343 px 窗口）：这一行原来是
+              // `Row[Expanded(搜索框), 16, 导出, 新增商品]` —— 两个按钮**不参与收缩**，
+              // 内容区 232 px 时它们的固有宽加起来就超了，右边那条被顶出去
+              // （截图：新建商品被切掉 + 黄黑条纹）。
+              // 现在按宽度分两排：窄了搜索框独占一行，两个按钮用 `Wrap` 跟着摆。
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  final Widget search = TextField(
+                    controller: _search,
+                    onChanged: (_) => _applyFilters(() {}),
+                    decoration: InputDecoration(
+                      labelText: '搜商品',
+                      hintText: '商品名 / 编码 / 条码',
+                      prefixIcon: const Icon(Icons.search),
+                      // 2026-10-21：加「清空」—— 报告 §2.5「清空搜索全仓只有单据页有」
+                      suffixIcon: _search.text.isEmpty
+                          ? null
+                          : IconButton(
+                              key: const Key('products-clear-search'),
+                              tooltip: '清空',
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _search.clear();
+                                _applyFilters(() {});
+                              },
+                            ),
+                      border: const OutlineInputBorder(),
+                    ),
+                  );
+                  final List<Widget> actions = <Widget>[
+                    if (widget.exports != null)
+                      ExportButton(
+                        key: const Key('export-products'),
+                        // AF-2：按钮文案说清导的是**全部商品（含停用）**
+                        // 刻意**不看搜索框**，否则用户以为导的是搜出来的那几条
+                        label: '导出全部商品',
+                        export: () => widget.exports!.write(
+                          productExportTable(widget.service!.listForExport()),
                         ),
-                  border: const OutlineInputBorder(),
-                ),
-              );
-              final List<Widget> actions = <Widget>[
-                if (widget.exports != null)
-                  ExportButton(
-                    key: const Key('export-products'),
-                    // AF-2：按钮文案说清导的是**全部商品（含停用）**
-                    // 刻意**不看搜索框**，否则用户以为导的是搜出来的那几条
-                    label: '导出全部商品',
-                    export: () => widget.exports!.write(
-                      productExportTable(widget.service!.listForExport()),
+                      ),
+                    // 常驻可见的文字按钮（不是图标按钮）
+                    FilledButton.icon(
+                      onPressed: widget.canWrite ? _create : null,
+                      icon: const Icon(Icons.add),
+                      label: const Text('新增商品'),
                     ),
-                  ),
-                // 常驻可见的文字按钮（不是图标按钮）
-                FilledButton.icon(
-                  onPressed: widget.canWrite ? _create : null,
-                  icon: const Icon(Icons.add),
-                  label: const Text('新增商品'),
-                ),
-              ];
-              if (isNarrowOf(context, constraints.maxWidth, base: 420)) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    search,
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.end,
-                      children: actions,
-                    ),
-                  ],
-                );
-              }
-              return Row(
+                  ];
+                  if (isNarrowOf(context, constraints.maxWidth, base: 420)) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        search,
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          alignment: WrapAlignment.end,
+                          children: actions,
+                        ),
+                      ],
+                    );
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Expanded(child: search),
+                      const SizedBox(width: 16),
+                      ...actions,
+                    ],
+                  );
+                },
+              ),
+            ),
+            // ⚠️ 2026-11-25（用户截图）：「显示已停用的商品」+「共 N 种」这一块
+            // 原来自带 16 边距 ⇒ 宽屏上是**唯一还贴在左缘**的东西。
+            // 它与工具条、列表同属内容列，必须用同一个 inset。
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: inset),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Expanded(child: search),
-                  const SizedBox(width: 16),
-                  ...actions,
-                ],
-              );
-            },
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Checkbox(
-                    value: _showInactive,
-                    onChanged: (bool? value) =>
-                        _applyFilters(() => _showInactive = value ?? false),
-                  ),
-                  // 文字标签必须在（中老年用户不看纯图标）。
-                  // ⚠️ 必须 `Expanded`：`Row` 里非弹性子节点拿的是无界宽 ⇒
-                  // 242 px 内容区时「显示已停用的商品」直接顶出去（2026-11-18 截图）。
-                  // 包进 `Expanded` 才有有界宽，放不下就折成两行。
-                  const Expanded(child: Text('显示已停用的商品')),
-                ],
-              ),
-              // 计数行：**真实总数**，且被 `limit: 200` 截断时说清「只展示了多少」
-              // 与「去哪儿看其余的」。
-              // ⚠️ 从前是 `共 ${rows.length} 种` 且塞在上一行的 `Row` 里：
-              // ① 数字错（`rows` 被 limit 截断）；② 长文案在 2.0 档会把 Row 撑溢出。
-              // 所以**单独一行**（`Expanded` 宽度、可换行）。
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  countWithLimitText(
-                    shown: rows.length,
-                    total: _total,
-                    unit: '种',
-                    searching: _queryText != null,
-                  ),
-                  style: TextStyle(
-                    height: 1.6,
-                    color: theme.textTheme.bodySmall?.color,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        // 分隔线改用 `outline`（#73777F，对 #FAFAFA **4.30 : 1**）：
-        // 默认的 `outlineVariant` 只有 1.63 : 1，弱视用户等于看不见（用户 2026-11-22 截图）。
-        // 与导航分割线同一取色（`nav_divider.dart` 有同一张对比度表）。
-        Divider(height: 1, color: theme.colorScheme.outline),
-        Expanded(
-          child: rows.isEmpty
-              ? _Empty(query: _search.text.trim())
-              : ListView.separated(
-                  itemCount: rows.length,
-                  separatorBuilder: (BuildContext context, int index) =>
-                      Divider(
-                        height: 1,
-                        color: Theme.of(context).colorScheme.outline,
+                  Row(
+                    children: <Widget>[
+                      Checkbox(
+                        value: _showInactive,
+                        onChanged: (bool? value) =>
+                            _applyFilters(() => _showInactive = value ?? false),
                       ),
-                  itemBuilder: (BuildContext context, int index) => _ProductRow(
-                    product: rows[index],
-                    isPending: pending.contains(rows[index].id),
-                    onEdit: _edit,
-                    onToggleActive: _toggleActive,
+                      // 文字标签必须在（中老年用户不看纯图标）。
+                      // ⚠️ 必须 `Expanded`：`Row` 里非弹性子节点拿的是无界宽 ⇒
+                      // 242 px 内容区时「显示已停用的商品」直接顶出去（2026-11-18 截图）。
+                      // 包进 `Expanded` 才有有界宽，放不下就折成两行。
+                      const Expanded(child: Text('显示已停用的商品')),
+                    ],
                   ),
-                ),
-        ),
-      ],
+                  // 计数行：**真实总数**，且被 `limit: 200` 截断时说清「只展示了多少」
+                  // 与「去哪儿看其余的」。
+                  // ⚠️ 从前是 `共 ${rows.length} 种` 且塞在上一行的 `Row` 里：
+                  // ① 数字错（`rows` 被 limit 截断）；② 长文案在 2.0 档会把 Row 撑溢出。
+                  // 所以**单独一行**（`Expanded` 宽度、可换行）。
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      countWithLimitText(
+                        shown: rows.length,
+                        total: _total,
+                        unit: '种',
+                        searching: _queryText != null,
+                      ),
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // 分隔线改用 `outline`（#73777F，对 #FAFAFA **4.30 : 1**）：
+            // 默认的 `outlineVariant` 只有 1.63 : 1，弱视用户等于看不见（用户 2026-11-22 截图）。
+            // 与导航分割线同一取色（`nav_divider.dart` 有同一张对比度表）。
+            // 分割线也跟着内容列一起居中 —— 否则宽屏上会出现「线横贯整窗、
+            // 行只占中间」的割裂感（2026-11-25 加宽屏上限时一并处理）
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: inset),
+              child: Divider(height: 1, color: theme.colorScheme.outline),
+            ),
+            Expanded(
+              child: rows.isEmpty
+                  ? _Empty(query: _search.text.trim())
+                  : ListView.separated(
+                      padding: EdgeInsets.symmetric(horizontal: inset),
+                      itemCount: rows.length,
+                      separatorBuilder: (BuildContext context, int index) =>
+                          Divider(
+                            height: 1,
+                            color: Theme.of(context).colorScheme.outline,
+                          ),
+                      itemBuilder: (BuildContext context, int index) =>
+                          _ProductRow(
+                            product: rows[index],
+                            isPending: pending.contains(rows[index].id),
+                            onEdit: _edit,
+                            onToggleActive: _toggleActive,
+                          ),
+                    ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
