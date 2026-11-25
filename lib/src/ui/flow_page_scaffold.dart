@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
 import 'export_button.dart';
+import 'page_width.dart';
 
 /// 流水页骨架：标题栏（只放返回）+ body 表头（标题 + 导出）+ 列表 / 空态。
 ///
@@ -93,72 +94,89 @@ class FlowPageScaffold extends StatelessWidget {
       // 导出按钮**不在这里**（见文件头表格）—— AppBar 只留返回箭头。
       appBar: AppBar(title: Text(title)),
       body: SafeArea(
-        child: Column(
-          children: <Widget>[
-            // 没导出服务也没表头标题 ⇒ 整条不渲染（省出一行高度给列表）
-            if (hasExport || headerTitle != null)
-              Padding(
-                // 与列表同款左内边距 16，表头与行左对齐
-                padding: EdgeInsets.fromLTRB(narrow ? 12 : 16, 10, 12, 2),
-                // Wrap：超大字号下标题与按钮自动换行，不挤成竖排（§BH·六 B1c·补）
-                //
-                // ⚠️ **必须给满宽**（2026-11-22 用户截图）：`Wrap` 在**松约束**下会
-                // shrink-wrap 到内容宽度，而外层 `Column` 是默认的居中 ⇒ 整块被居中、
-                // `spaceBetween` 没有余量可分配，于是「导出流水」落在页面中间偏右，
-                // 看起来像"按钮居中"。给 `double.infinity` 之后 spaceBetween 才真的
-                // 把标题与按钮推到两端。
-                child: SizedBox(
-                  width: double.infinity,
-                  child: Wrap(
-                    alignment: headerTitle == null
-                        ? WrapAlignment.end
-                        : WrapAlignment.spaceBetween,
-                    spacing: 8,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: <Widget>[
-                      // 与另外 5 个导出页表头同款：Text 直接进 Wrap（`Flexible`
-                      // 是 Flex 的 ParentDataWidget，放进 Wrap 会报
-                      // Incorrect use of ParentDataWidget）。Wrap 会给子件
-                      // 松约束，长标题自己折行，不会挤爆。
-                      if (headerTitle != null)
-                        Text(headerTitle!, style: theme.textTheme.titleLarge),
-                      if (hasExport)
-                        ExportButton(
-                          key: exportKey,
-                          label: exportLabel,
-                          export: () => exports!.write(
-                            buildExportTable!(),
-                            extra: exportExtra,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            Expanded(
-              child: itemCount == 0
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Text(
-                          emptyText,
-                          style: TextStyle(height: 1.8, color: theme.hintColor),
-                        ),
+        // 2026-11-25（批 B·1 收尾）：宽屏内容上限 1080 —— 一处改动，三个流水页
+        // （商品 / 往来方 / 账户）同时生效。滚动体仍全宽（滚轮处处有效），
+        // 居中靠视口内补白，与其余七页同一套（见 `page_width.dart`）。
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final double inset = pageContentInset(
+              constraints.maxWidth,
+              base: narrow ? 12 : 16,
+            );
+            return Column(
+              children: <Widget>[
+                // 没导出服务也没表头标题 ⇒ 整条不渲染（省出一行高度给列表）
+                if (hasExport || headerTitle != null)
+                  Padding(
+                    // 与列表同款左内边距 16，表头与行左对齐
+                    padding: EdgeInsets.fromLTRB(inset, 10, inset, 2),
+                    // Wrap：超大字号下标题与按钮自动换行，不挤成竖排（§BH·六 B1c·补）
+                    //
+                    // ⚠️ **必须给满宽**（2026-11-22 用户截图）：`Wrap` 在**松约束**下会
+                    // shrink-wrap 到内容宽度，而外层 `Column` 是默认的居中 ⇒ 整块被居中、
+                    // `spaceBetween` 没有余量可分配，于是「导出流水」落在页面中间偏右，
+                    // 看起来像"按钮居中"。给 `double.infinity` 之后 spaceBetween 才真的
+                    // 把标题与按钮推到两端。
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: Wrap(
+                        alignment: headerTitle == null
+                            ? WrapAlignment.end
+                            : WrapAlignment.spaceBetween,
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: <Widget>[
+                          // 与另外 5 个导出页表头同款：Text 直接进 Wrap（`Flexible`
+                          // 是 Flex 的 ParentDataWidget，放进 Wrap 会报
+                          // Incorrect use of ParentDataWidget）。Wrap 会给子件
+                          // 松约束，长标题自己折行，不会挤爆。
+                          if (headerTitle != null)
+                            Text(
+                              headerTitle!,
+                              style: theme.textTheme.titleLarge,
+                            ),
+                          if (hasExport)
+                            ExportButton(
+                              key: exportKey,
+                              label: exportLabel,
+                              export: () => exports!.write(
+                                buildExportTable!(),
+                                extra: exportExtra,
+                              ),
+                            ),
+                        ],
                       ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                      itemCount: footer == null ? itemCount : itemCount + 1,
-                      itemBuilder: (BuildContext context, int index) {
-                        if (footer != null && index == itemCount) {
-                          return footer;
-                        }
-                        return itemBuilder(context, index);
-                      },
                     ),
-            ),
-          ],
+                  ),
+                Expanded(
+                  child: itemCount == 0
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            child: Text(
+                              emptyText,
+                              style: TextStyle(
+                                height: 1.8,
+                                color: theme.hintColor,
+                              ),
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: EdgeInsets.fromLTRB(inset, 8, inset, 8),
+                          itemCount: footer == null ? itemCount : itemCount + 1,
+                          itemBuilder: (BuildContext context, int index) {
+                            if (footer != null && index == itemCount) {
+                              return footer;
+                            }
+                            return itemBuilder(context, index);
+                          },
+                        ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );

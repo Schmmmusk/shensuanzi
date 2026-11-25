@@ -1420,4 +1420,42 @@ void main() {
 
     expect(tester.getRect(find.text('库存')).left, closeTo(20, 1));
   });
+
+  // ------------------------------------------------------------ 流水页宽屏上限（2026-11-25）
+  //
+  // 三个流水页共用 `flow_page_scaffold` ⇒ 一处改动三页生效。
+  // 判据：滚动体全宽 + 表头随内容列居中（左右留白 (1916−1080)/2 = 418）。
+  testWidgets('流水页宽屏 1916：表头左缘 418，列表视口全宽', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1916, 790);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    buy(10);
+    await tester.pumpWidget(
+      page(
+        stockFlow: StockLedgerDao(db),
+        settlements: SettlementService(db: db, engine: RuleEngine(db)),
+        deliveries: DeliveryService(engine: RuleEngine(db), queries: queries),
+        exports: FakeExport(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('红富士苹果').last);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(StockFlowPage), findsOneWidget);
+    final Rect list = tester.getRect(find.byType(ListView).first);
+    expect(list.width, closeTo(1916, 1), reason: '滚动视口必须全宽');
+    // 流水页的标题只出现在 AppBar（贴左 72），表头里没有 —— 所以要量**行**。
+    // 行的 key 前缀 `stock-flow-row-`，与单据 / 库存页同一套定位手法。
+    final Finder firstRow = find.byWidgetPredicate((Widget w) {
+      final Key? key = w.key;
+      return key is ValueKey<String> && key.value.startsWith('stock-flow-row-');
+    }).first;
+    expect(
+      tester.getRect(firstRow).left,
+      closeTo(418, 1.5),
+      reason: '(1916 − 1080) / 2 = 418 —— 行随内容列居中',
+    );
+  });
 }

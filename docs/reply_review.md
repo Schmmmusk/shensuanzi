@@ -22907,3 +22907,23 @@ grep `EdgeInsets.symmetric(horizontal: 16|20)` 与 `fromLTRB(16|20` —— **0 �
 行内部边距（`_ProductRow` 的 16）在 inset 列表里，属于正确用法。
 
 门禁：`flutter analyze` **0** · root `flutter test` **641**。
+
+### 一百三十三、2026-11-25 **流水页：一处改动，三个页面生效**
+
+> 三个流水页（商品 / 往来方 / 账户）共用 `flow_page_scaffold.dart` ⇒ 只改这一处。
+
+| 位置 | 改法 |
+|---|---|
+| body | 外包 `LayoutBuilder`，`inset = pageContentInset(width, base: narrow ? 12 : 16)` |
+| 表头 | `fromLTRB(narrow?12:16, 10, 12, 2)` → `fromLTRB(inset, 10, inset, 2)` |
+| 列表 | `fromLTRB(16, 8, 16, 8)` → `fromLTRB(inset, 8, inset, 8)` |
+
+窄屏行为不变（`base` 就是原来的 12 / 16）。
+
+**几何断言**（加在 `stock_page_test`）：打开商品流水后，行左缘 = **418**、ListView 宽 = **1916**。
+⚠️ 踩了一次坑：起初量的是标题文本，命中 AppBar 那份（贴左 72）—— 流水页的**表头没有标题**
+（标题只在 AppBar）。改用行 key 前缀 `stock-flow-row-` 定位。
+
+**灵敏度**：把 inset 写死 16 ⇒ `Actual: <16.0>`（期望 418），红。
+
+门禁：`flutter analyze` **0** · root `flutter test` **642**（+1）。
