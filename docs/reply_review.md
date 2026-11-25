@@ -22927,3 +22927,42 @@ grep `EdgeInsets.symmetric(horizontal: 16|20)` 与 `fromLTRB(16|20` —— **0 �
 **灵敏度**：把 inset 写死 16 ⇒ `Actual: <16.0>`（期望 418），红。
 
 门禁：`flutter analyze` **0** · root `flutter test` **642**（+1）。
+
+### 一百三十四、2026-11-25 **单据列表行的商品摘要（`苹果 ×10、可乐 ×3`）**
+
+> 用户：「可以进行单据详情的商品摘要」。按上下文与 Q6 的实测，落地在**列表行**
+> （详情页本来就有完整明细表）；若你要的是详情页再加一句摘要，说一声，两行代码。
+
+#### ① 先测，再动手（纪律 20）
+
+core 只有 `linesOf(documentId)`（单张），没有批量 API；而本轮纪律是**只动 `lib/src/ui`**。
+所以先用真实压测库量「逐个查」到底多贵：
+
+| 口径 | 结果 |
+|---|---|
+| 200 张单逐个 `linesOf`（291 行） | p50 **4.9 ms**、max 9.1 ms |
+| 商品名一次取全（300 件） | 8 ms |
+| **端到端（查明细 + 名字映射 + 拼串）** | p50 **4.0 ms**、max 5.1 ms |
+
+⇒ 不需要动 core 加批量 API，也不必退成「只给首行商品」。
+
+#### ② 实现（全在 `documents_page.dart`）
+
+| 件 | 做法 |
+|---|---|
+| 快照 | `DocumentsSnapshot` 加 `items: Map<docId, 摘要>` —— 与 `rows` 在**同一个只读事务**里产出 |
+| 摘要规则 | `summarizeDocumentLines()`：最多 **3 行**商品，再多写「等 N 项」；名字查不到写**「已删商品」**（不写空）；无明细返回空串 |
+| 渲染 | 左列第 3 行（类型/时间/单号之后、生命周期摘要之前），`maxLines: 1` + 省略号 |
+| 兜底路径 | 没有 `dbPath`（不进 isolate）时，用 `widget.products.list()` 建名字表；**拿不到商品服务就不显示摘要** —— 宁可不显示，也不要把每行写成「已删商品」 |
+
+#### ③ 用例
+
+| 用例 | 判据 |
+|---|---|
+| `summarizeDocumentLines`（纯函数） | 2 行 ✅ / 4 行截断为「…等 4 项」/ 已删商品写「已删商品 ×2」/ 空明细返回空串 |
+| 列表行显示摘要 | `find.textContaining('商品 ×4')` |
+| 同步装载实体 | `loadDocumentsSnapshotSync(...).items[docId] == '商品 ×4'` |
+
+**灵敏度**：把 `items:` 从行构建里去掉 ⇒ `Found 0 widgets`，红（已验证）。
+
+门禁：`flutter analyze` **0** · root `flutter test` **645**（+3）。

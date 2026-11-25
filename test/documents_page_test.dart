@@ -1217,6 +1217,81 @@ void main() {
 
     expect(tester.getRect(firstRow()).left, closeTo(20, 1));
   });
+
+  // ============================================================ 商品摘要（2026-11-25）
+  //
+  // 用户：列表行只看得到「谁、多少钱」，看不出**这张单卖了什么** ——
+  // 找单还得一张张点进去。摘要与列表**同一次装载**算好（不另查）。
+  test('summarizeDocumentLines：最多 3 行 + 「等 N 项」+ 已删商品不写空', () {
+    DocumentLine line(String pid, int qty) => DocumentLine(
+      id: 'l-$pid-$qty',
+      documentId: 'd1',
+      productId: pid,
+      quantity: qty,
+      unitPrice: 100,
+      amount: 100 * qty,
+    );
+    final Map<String, String> names = <String, String>{
+      'p1': '苹果',
+      'p2': '可乐',
+      'p3': '面包',
+      'p4': '牛奶',
+    };
+
+    expect(
+      summarizeDocumentLines(<DocumentLine>[
+        line('p1', 10),
+        line('p2', 3),
+      ], names),
+      '苹果 ×10、可乐 ×3',
+    );
+    expect(
+      summarizeDocumentLines(<DocumentLine>[
+        line('p1', 10),
+        line('p2', 3),
+        line('p3', 1),
+        line('p4', 2),
+      ], names),
+      '苹果 ×10、可乐 ×3、面包 ×1 等 4 项',
+      reason: '超过 3 行就截断 —— 行只有一行位置，列全会折行',
+    );
+    expect(
+      summarizeDocumentLines(<DocumentLine>[line('p9', 2)], names),
+      '已删商品 ×2',
+      reason: '商品被删也要写出来，空着会让人以为这行没录商品',
+    );
+    expect(summarizeDocumentLines(const <DocumentLine>[], names), '');
+  });
+
+  testWidgets('列表行显示商品摘要（商品名 × 数量）', (WidgetTester tester) async {
+    sell(date: dayStr(1), qty: 4, partyId: 'pt2');
+    // products 只在 withSettlement 时传入 ⇒ 取不到商品名时不显示摘要（见实现注释）
+    await tester.pumpWidget(page(withSettlement: true));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('商品 ×4'),
+      findsOneWidget,
+      reason: '行内要能看出这张单卖了什么、多少',
+    );
+  });
+
+  test('同步装载（isolate 那条路的实体）：items 与 rows 同时返回', () {
+    sell(date: dayStr(1), qty: 4, partyId: 'pt2');
+    final DocumentsSnapshot snapshot = loadDocumentsSnapshotSync(
+      dbPath: p.join(box.path, 'shensuanzi.db'),
+      types: <DocType>{},
+      statusViews: <DocumentStatusView>{},
+      sinceMillis: null,
+      untilMillis: null,
+      includeDerived: false,
+      rootsOnly: true,
+      query: null,
+      limit: 200,
+    );
+    final String id = snapshot.rows.single.document.id;
+    expect(snapshot.items[id], '商品 ×4');
+  });
 }
 
 /// 只数「查了几次库」的 DAO —— 钉住「查询不在 build 里」这条结构。

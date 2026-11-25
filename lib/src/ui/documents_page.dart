@@ -46,7 +46,19 @@ enum _TimeRange {
 
 /// 单据列表页。
 /// 单据页一次查询的结果（工作 isolate 的返回值，纯数据）。
-typedef DocumentsSnapshot = ({int total, List<DocumentSummary> rows});
+/// [items]：单据 id → 商品摘要（`苹果 ×10、可乐 ×3`）。
+///
+/// 2026-11-25（用户）：列表行要能看出「这张单卖了什么」——只显示金额与对方，
+/// 找单时还得一张张点进去。
+///
+/// 成本（真实压测库 26 万单 / 291 行明细，热态实测）：逐个 `linesOf` + 名字映射
+/// + 拼串 **p50 4.0 ms**（200 张单）；商品名一次取全 300 件 8 ms。
+/// ⇒ 不需要动 core 加批量 API，也不必退成"只给首行商品"。
+typedef DocumentsSnapshot = ({
+  int total,
+  List<DocumentSummary> rows,
+  Map<String, String> items,
+});
 
 /// 在**工作 isolate** 里查单据列表 + 总数（只读连接 + 单只读事务）。
 ///
@@ -75,6 +87,27 @@ Future<DocumentsSnapshot> loadDocumentsSnapshot({
     limit: limit,
   ),
 );
+
+/// 一张单的**商品摘要**（列表行用）：`苹果 ×10、可乐 ×3`。
+///
+/// 规则（用户 2026-11-25）：
+/// - 最多列 **3 行商品**，再多写「等 N 项」—— 行只有一行位置，列全就折行了；
+/// - 商品被删（名字查不到）写「已删商品」，**不写空**（空会让人以为这行没录商品）；
+/// - 一行都没有 ⇒ 返回空串（调用方整行不渲染）。
+String summarizeDocumentLines(
+  List<DocumentLine> lines,
+  Map<String, String> productNames,
+) {
+  if (lines.isEmpty) return '';
+  const int maxShown = 3;
+  final List<String> parts = <String>[
+    for (final DocumentLine line in lines.take(maxShown))
+      '${productNames[line.productId] ?? '已删商品'} ×${line.quantity}',
+  ];
+  final String head = parts.join('、');
+  if (lines.length <= maxShown) return head;
+  return '$head 等 ${lines.length} 项';
+}
 
 /// [loadDocumentsSnapshot] 的同步实体（也直接给「没有库路径」的兜底路径用）。
 DocumentsSnapshot loadDocumentsSnapshotSync({
@@ -112,7 +145,20 @@ DocumentsSnapshot loadDocumentsSnapshotSync({
         rootsOnly: rootsOnly,
         query: query,
       );
-      return (total: total, rows: rows);
+      // 商品名：一次取全（与库存导出同一个 API）。库里商品几百件量级，
+      // 一次取全比拼 200 次单查便宜（实测 300 件 8 ms）。
+      final Map<String, String> names = <String, String>{
+        for (final Product product in ProductDao(db).findAllForExport())
+          product.id: product.name,
+      };
+      final Map<String, String> items = <String, String>{
+        for (final DocumentSummary row in rows)
+          row.document.id: summarizeDocumentLines(
+            dao.linesOf(row.document.id),
+            names,
+          ),
+      };
+      return (total: total, rows: rows, items: items);
     });
   } finally {
     db.close();
@@ -204,6 +250,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
   int _total = 0;
   List<DocumentSummary> _rows = const <DocumentSummary>[];
 
+  /// 单据 id → 商品摘要（2026-11-25）。与 [_rows] 同一次查询带出，不另查。
+  Map<String, String> _items = const <String, String>{};
+
   /// 首屏载入中（乙）。`true` 时 `_rows` 还是空的，别把它画成「没有单据」。
   bool _loading = false;
 
@@ -258,6 +307,22 @@ class _DocumentsPageState extends State<DocumentsPage> {
       rootsOnly: !_includeDerived,
       query: hasQuery ? query : null,
     );
+    // 摘要：与列表同一次装载算好（无 dbPath 的兜底路径 —— 桌面壳一般都有 dbPath，
+    // 走 isolate 那趟；这里只是手机壳 / 无路径时的一致性）。
+    // 没有商品服务就拿不到名字 ⇒ 宁可不显示摘要，也不要把每行都写成「已删商品」。
+    final ProductService? products = widget.products;
+    _items = products == null
+        ? const <String, String>{}
+        : <String, String>{
+            for (final DocumentSummary row in _rows)
+              row.document.id: summarizeDocumentLines(
+                widget.dao.linesOf(row.document.id),
+                <String, String>{
+                  for (final Product product in products.list())
+                    product.id: product.name,
+                },
+              ),
+          };
   }
 
   /// **改筛选 + 重查**（唯一入口）：一次 setState 里把状态和结果一起换掉，
@@ -292,6 +357,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
     if (cached == null) return;
     _total = cached.total;
     _rows = cached.rows;
+    _items = cached.items;
     _hasSnapshot = true;
   }
 
@@ -340,6 +406,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
       setState(() {
         _total = snapshot.total;
         _rows = snapshot.rows;
+        _items = snapshot.items;
         _loading = false;
         _refreshing = false;
         _hasSnapshot = true;
@@ -858,6 +925,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
               key: Key('doc-row-${rows[i].document.id}'),
               entry: rows[i],
               returnedCents: rows[i].returnedCents,
+              items: _items[rows[i].document.id] ?? '',
               onTap: widget.settlements == null
                   ? null
                   : () => _openDetail(rows[i].document.id),
@@ -884,6 +952,7 @@ class _DocumentRow extends StatelessWidget {
     super.key,
     required this.entry,
     required this.returnedCents,
+    this.items = '',
     this.onTap,
   });
 
@@ -891,6 +960,10 @@ class _DocumentRow extends StatelessWidget {
 
   /// 该单**已发生的退货冲减额**（分）—— 真实未收的第三项（§审查 BUG-04）
   final int returnedCents;
+
+  /// 商品摘要（`苹果 ×10、可乐 ×3`）；空串 = 不显示（收付款单没有明细，
+  /// 或取不到商品名）。规则见 [summarizeDocumentLines]。
+  final String items;
 
   /// `null` = 不可点（没接核销服务 —— 与其他可选服务同款判定）
   final VoidCallback? onTap;
@@ -979,7 +1052,19 @@ class _DocumentRow extends StatelessWidget {
                       color: theme.textTheme.bodySmall?.color,
                     ),
                   ),
-                  // 第 3 行 = **生命周期摘要**（只在有子单时出现）
+                  // 第 3 行 = **商品摘要**（2026-11-25 用户：要能看出这张单卖了什么）。
+                  // 收付款单没有明细 ⇒ 空串，整行不渲染。
+                  if (items.isNotEmpty)
+                    Text(
+                      items,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        height: 1.6,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                    ),
+                  // 第 4 行 = **生命周期摘要**（只在有子单时出现）
                   if (trailParts.isNotEmpty)
                     Text(
                       trailParts.join(' · '),
