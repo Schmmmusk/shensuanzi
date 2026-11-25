@@ -35,9 +35,58 @@ class _ManualPageState extends State<ManualPage> {
   GlobalKey _keyFor(int index) =>
       _sectionKeys.putIfAbsent(index, () => GlobalKey());
 
+  // ---- 宽屏两栏（2026-11-25 用户裁定）----
+  //
+  // 宽屏上把目录钉在**左侧**、正文自己滚：原来目录是正文顶部的一个折叠面板，
+  // 滚到第 8 章想换章得一路滚回顶上。窄屏保持原样（折叠面板），不倒退。
+
+  /// 正文滚动控制器（只用于「滚到哪一章了」的跟随高亮）
+  final ScrollController _contentScroll = ScrollController();
+
+  /// 正文视口的 GlobalKey（用来把章标题的全局 y 换成"相对视口"的 y）
+  final GlobalKey _contentKey = GlobalKey();
+
+  /// 当前章下标（左侧目录高亮它）
+  int _current = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _contentScroll.addListener(_syncCurrentSection);
+  }
+
+  @override
+  void dispose() {
+    _contentScroll
+      ..removeListener(_syncCurrentSection)
+      ..dispose();
+    super.dispose();
+  }
+
+  /// 跟随高亮：找**最后一个**顶边已经越过视口顶部的章。
+  ///
+  /// 用 `localToGlobal` 而不是「累计偏移」——章高随字号/窗口变化，
+  /// 累计偏移在 200% 档必然漂（与 `_jumpTo` 用 `ensureVisible` 同一个理由）。
+  void _syncCurrentSection() {
+    if (!mounted) return;
+    final RenderBox? viewport =
+        _contentKey.currentContext?.findRenderObject() as RenderBox?;
+    if (viewport == null) return;
+    final double top = viewport.localToGlobal(Offset.zero).dy;
+    int best = 0;
+    for (int i = 0; i < _sectionKeys.length; i++) {
+      final RenderBox? box =
+          _sectionKeys[i]?.currentContext?.findRenderObject() as RenderBox?;
+      if (box == null) continue;
+      if (box.localToGlobal(Offset.zero).dy <= top + 12) best = i;
+    }
+    if (best != _current) setState(() => _current = best);
+  }
+
   /// 跳到第 [index] 章。**用 `ensureVisible` 而不是算偏移** ——
   /// 章高随字号变化，算偏移必然在 200% 档跳错位置。
   Future<void> _jumpTo(int index) async {
+    if (index != _current) setState(() => _current = index);
     final BuildContext? target = _sectionKeys[index]?.currentContext;
     if (target == null) return;
     await Scrollable.ensureVisible(
@@ -58,42 +107,116 @@ class _ManualPageState extends State<ManualPage> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('用户手册')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                // 批 3 第 17 条：**目录可跳转**。20 章的手册没有目录，
-                // 用户只能一路滚 —— 对中老年用户等于「找不到」。
-                _ManualToc(sections: sections, onTap: _jumpTo),
-                const SizedBox(height: 8),
-                for (int i = 0; i < sections.length; i++) ...<Widget>[
-                  KeyedSubtree(
-                    key: _keyFor(i),
-                    child: _SectionHeader(
-                      index: i + 1,
-                      title: sections[i].title,
-                    ),
-                  ),
-                  for (final ManualBlock block in sections[i].blocks)
-                    _Block(block: block, secondary: secondary),
-                  const SizedBox(height: 28),
-                ],
-                Text(
-                  '这份手册在软件文件夹里也有一份网页版（用户手册.html），'
-                  '双击就能用浏览器打开、可打印。',
-                  style: TextStyle(height: 1.7, color: secondary),
-                ),
-              ],
+      body: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          // 2026-11-25（用户）：宽屏改 **左侧目录固定 + 正文独立滚动**。
+          // 阈值 1000：正文列本身 640 + 目录 280 + 边距仍有余量；
+          // 窄屏（手机 / 小窗）保持原来的「目录在正文顶部」，不倒退。
+          if (constraints.maxWidth < 1000) {
+            return _singlePane(theme, secondary, sections);
+          }
+          return _twoPane(theme, secondary, sections);
+        },
+      ),
+    );
+  }
+
+  /// 窄屏：与原来完全一致（目录是正文顶部的一个折叠面板）。
+  Widget _singlePane(
+    ThemeData theme,
+    Color secondary,
+    List<ManualSection> sections,
+  ) => SingleChildScrollView(
+    padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+    child: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 640),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            // 批 3 第 17 条：**目录可跳转**。20 章的手册没有目录，
+            // 用户只能一路滚 —— 对中老年用户等于「找不到」。
+            _ManualToc(sections: sections, onTap: _jumpTo),
+            const SizedBox(height: 8),
+            ..._sectionWidgets(theme, secondary, sections),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  /// 宽屏：左目录（固定，当前章高亮）+ 右正文（独立滚动）。
+  Widget _twoPane(
+    ThemeData theme,
+    Color secondary,
+    List<ManualSection> sections,
+  ) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: <Widget>[
+      SizedBox(width: 280, child: _sideToc(theme, sections)),
+      const VerticalDivider(width: 1),
+      Expanded(
+        child: SingleChildScrollView(
+          key: _contentKey,
+          controller: _contentScroll,
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _sectionWidgets(theme, secondary, sections),
+              ),
             ),
           ),
         ),
       ),
-    );
-  }
+    ],
+  );
+
+  /// 左侧固定目录。点一行 ⇒ 正文滚过去；滚正文 ⇒ `_current` 跟着变。
+  Widget _sideToc(ThemeData theme, List<ManualSection> sections) =>
+      ListView.builder(
+        key: const Key('manual-side-toc'),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: sections.length,
+        itemBuilder: (BuildContext context, int i) => ListTile(
+          key: Key('manual-side-toc-$i'),
+          dense: true,
+          selected: i == _current,
+          selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.10),
+          leading: Text('${i + 1}', style: const TextStyle(height: 1.6)),
+          title: Text(
+            sections[i].title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(height: 1.5),
+          ),
+          onTap: () => _jumpTo(i),
+        ),
+      );
+
+  /// 正文（章 + 内容块 + 页脚）—— 两种布局共用，避免两份漂移。
+  List<Widget> _sectionWidgets(
+    ThemeData theme,
+    Color secondary,
+    List<ManualSection> sections,
+  ) => <Widget>[
+    for (int i = 0; i < sections.length; i++) ...<Widget>[
+      KeyedSubtree(
+        key: _keyFor(i),
+        child: _SectionHeader(index: i + 1, title: sections[i].title),
+      ),
+      for (final ManualBlock block in sections[i].blocks)
+        _Block(block: block, secondary: secondary),
+      const SizedBox(height: 28),
+    ],
+    Text(
+      '这份手册在软件文件夹里也有一份网页版（用户手册.html），'
+      '双击就能用浏览器打开、可打印。',
+      style: TextStyle(height: 1.7, color: secondary),
+    ),
+  ];
 }
 
 /// 手册目录（批 3 第 17 条）。

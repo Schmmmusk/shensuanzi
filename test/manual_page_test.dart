@@ -77,4 +77,48 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull, reason: '跳转不该抛异常');
   });
+
+  // ------------------------------------------------------------ 宽屏两栏（2026-11-25）
+  //
+  // 用户：宽屏上目录钉在**左侧**、正文自己滚，滚到第 8 章想换章不必滚回顶上。
+  // 窄屏保持原样（正文顶部的折叠目录）—— 那是对手机的正确答案，不倒退。
+  testWidgets('宽屏 1200：左目录固定、正文顶部的折叠目录消失、点章跟随', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('manual-side-toc')), findsOneWidget);
+    expect(
+      find.byKey(const Key('manual-toc')),
+      findsNothing,
+      reason: '宽屏不该再出现正文顶部的折叠目录（两处目录 = 两个真相）',
+    );
+
+    // 点第 10 章 ⇒ 高亮跟过去（正文滚动 + `_current` 同一次 setState）
+    await tester.tap(find.byKey(const Key('manual-side-toc-9')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ListTile>(find.byKey(const Key('manual-side-toc-9')))
+          .selected,
+      isTrue,
+      reason: '点过的章必须高亮 —— 否则用户不知道自己在哪',
+    );
+    expect(tester.takeException(), isNull, reason: '跳转不该抛异常');
+  });
+
+  testWidgets('窄屏 800：仍是正文顶部的折叠目录（不倒退）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('manual-toc')), findsOneWidget);
+    expect(find.byKey(const Key('manual-side-toc')), findsNothing);
+  });
 }
