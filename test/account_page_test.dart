@@ -596,4 +596,25 @@ void main() {
       reason: '内容是「¥ 100,000.00」那一档长金额（金额原来与名字并排，顶出 9.8 px）',
     );
   });
+
+  // ------------------------------------------------------------ 宽屏上限（2026-11-25）
+  testWidgets('宽屏 1916：标题左边缘 = 418（内容 1080 居中）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1916, 790);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    expect(tester.getRect(find.text('账户')).left, closeTo(418, 1.5));
+  });
+
+  testWidgets('窄屏 800：不干预（标题左边缘 20）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    expect(tester.getRect(find.text('账户')).left, closeTo(20, 1));
+  });
 }

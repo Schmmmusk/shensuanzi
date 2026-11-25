@@ -14,6 +14,7 @@ import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
     show ExportSink, MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'page_width.dart';
 import 'scaled.dart';
 
 import 'disable_action.dart';
@@ -105,110 +106,117 @@ class _AccountsPageState extends State<AccountsPage> {
     // ⚠️ 一次 build 取一次快照，再逐行 contains —— `ids` 每次访问都查库
     final Set<String> pending = widget.pendingMarks?.ids ?? const <String>{};
 
+    // 2026-11-25（批 B·1 续）：宽屏内容上限 1080，滚动体全宽（滚轮处处有效）。
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              // §BH·六 B1c·补：超大字号下标题被按钮挤成竖排 ⇒ Wrap 自适应换行
-              Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final double inset = pageContentInset(constraints.maxWidth);
+            return SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(inset, 16, inset, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  // 术语统一（§CV·八十 Q3 / 附录 A）：导航叫「账户」，页标题不另起一个名
-                  Text('账户', style: theme.textTheme.titleLarge),
-                  FilledButton.icon(
-                    onPressed: () => _editAccount(context),
-                    icon: const Icon(Icons.add),
-                    label: const Text('新建账户'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '开单时从这里选「钱从哪进出」。余额 = 期初 + 每一笔收付。',
-                style: TextStyle(
-                  height: 1.6,
-                  color: theme.textTheme.bodySmall?.color,
-                ),
-              ),
-              const SizedBox(height: 8),
-              // 批 3 第 16 条：常驻搜索 + 计数（原来账户页没有搜索）
-              ListHeader(
-                searchKey: const Key('account-search'),
-                controller: _search,
-                hintText: '搜账户名',
-                onQueryChanged: (String q) => setState(() => _query = q.trim()),
-                countText: _query.isEmpty
-                    ? '共 ${visible.length} 个'
-                    : '找到 ${visible.length} 个',
-                leading: Row(
-                  children: <Widget>[
-                    Checkbox(
-                      key: const Key('accounts-show-inactive'),
-                      value: _showInactiveWithoutBalance,
-                      onChanged: (bool? value) => setState(
-                        () => _showInactiveWithoutBalance = value ?? false,
-                      ),
-                    ),
-                    const Text('显示已停用的账户'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (visible.isEmpty && _query.isNotEmpty)
-                ListEmptyState(
-                  icon: Icons.search_off,
-                  title: '没有叫「$_query」的账户',
-                  hint: '换个词试试，或点搜索框右边的 × 清空，看全部账户。',
-                  actionLabel: '清空搜索',
-                  onAction: () {
-                    _search.clear();
-                    setState(() => _query = '');
-                  },
-                )
-              else if (accounts.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 40),
-                  child: Text(
-                    // 本机不能建 ⇒ 空列表更可能是「镜像还没拉到」，别让用户
-                    // 以为数据丢了（与往来页同款处置）
-                    !widget.masterDataPolicy.canCreateAccounts
-                        ? mirrorEmptyMessage('账户列表')
-                        : '还没有资金账户。点右上角「新建账户」建一个，'
-                              '比如「现金」或「微信收款」—— '
-                              '有了账户才能在开单时当场收付款。',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(height: 1.8, color: theme.hintColor),
-                  ),
-                )
-              else
-                Card(
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
+                  // §BH·六 B1c·补：超大字号下标题被按钮挤成竖排 ⇒ Wrap 自适应换行
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: <Widget>[
-                      for (int i = 0; i < visible.length; i++) ...<Widget>[
-                        if (i > 0) const Divider(height: 1),
-                        _AccountRow(
-                          account: visible[i],
-                          isPending: pending.contains(visible[i].id),
-                          balanceCents: balances[visible[i].id] ?? 0,
-                          onOpenFlow: () =>
-                              _openAccountFlow(context, visible[i]),
-                          onEdit: () =>
-                              _editAccount(context, existing: visible[i]),
-                          onToggleActive: () => _toggleActive(visible[i]),
-                        ),
-                      ],
+                      // 术语统一（§CV·八十 Q3 / 附录 A）：导航叫「账户」，页标题不另起一个名
+                      Text('账户', style: theme.textTheme.titleLarge),
+                      FilledButton.icon(
+                        onPressed: () => _editAccount(context),
+                        icon: const Icon(Icons.add),
+                        label: const Text('新建账户'),
+                      ),
                     ],
                   ),
-                ),
-            ],
-          ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '开单时从这里选「钱从哪进出」。余额 = 期初 + 每一笔收付。',
+                    style: TextStyle(
+                      height: 1.6,
+                      color: theme.textTheme.bodySmall?.color,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // 批 3 第 16 条：常驻搜索 + 计数（原来账户页没有搜索）
+                  ListHeader(
+                    searchKey: const Key('account-search'),
+                    controller: _search,
+                    hintText: '搜账户名',
+                    onQueryChanged: (String q) =>
+                        setState(() => _query = q.trim()),
+                    countText: _query.isEmpty
+                        ? '共 ${visible.length} 个'
+                        : '找到 ${visible.length} 个',
+                    leading: Row(
+                      children: <Widget>[
+                        Checkbox(
+                          key: const Key('accounts-show-inactive'),
+                          value: _showInactiveWithoutBalance,
+                          onChanged: (bool? value) => setState(
+                            () => _showInactiveWithoutBalance = value ?? false,
+                          ),
+                        ),
+                        const Text('显示已停用的账户'),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (visible.isEmpty && _query.isNotEmpty)
+                    ListEmptyState(
+                      icon: Icons.search_off,
+                      title: '没有叫「$_query」的账户',
+                      hint: '换个词试试，或点搜索框右边的 × 清空，看全部账户。',
+                      actionLabel: '清空搜索',
+                      onAction: () {
+                        _search.clear();
+                        setState(() => _query = '');
+                      },
+                    )
+                  else if (accounts.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 40),
+                      child: Text(
+                        // 本机不能建 ⇒ 空列表更可能是「镜像还没拉到」，别让用户
+                        // 以为数据丢了（与往来页同款处置）
+                        !widget.masterDataPolicy.canCreateAccounts
+                            ? mirrorEmptyMessage('账户列表')
+                            : '还没有资金账户。点右上角「新建账户」建一个，'
+                                  '比如「现金」或「微信收款」—— '
+                                  '有了账户才能在开单时当场收付款。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(height: 1.8, color: theme.hintColor),
+                      ),
+                    )
+                  else
+                    Card(
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        children: <Widget>[
+                          for (int i = 0; i < visible.length; i++) ...<Widget>[
+                            if (i > 0) const Divider(height: 1),
+                            _AccountRow(
+                              account: visible[i],
+                              isPending: pending.contains(visible[i].id),
+                              balanceCents: balances[visible[i].id] ?? 0,
+                              onOpenFlow: () =>
+                                  _openAccountFlow(context, visible[i]),
+                              onEdit: () =>
+                                  _editAccount(context, existing: visible[i]),
+                              onToggleActive: () => _toggleActive(visible[i]),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );

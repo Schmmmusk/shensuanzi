@@ -547,4 +547,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('setting-refresh-now')), findsNothing);
   });
+
+  // ------------------------------------------------------------ 宽屏上限（2026-11-25）
+  testWidgets('宽屏 1916：标题左边缘 = 418（内容 1080 居中）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1916, 790);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(page((AppConfig _) {}));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(find.text('设置')).left, closeTo(418, 1.5));
+  });
 }

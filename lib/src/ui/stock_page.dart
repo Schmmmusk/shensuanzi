@@ -47,6 +47,7 @@ import 'export_button.dart';
 import 'list_scaffold.dart';
 import 'low_stock_card.dart';
 import 'opening_stock_page.dart';
+import 'page_width.dart';
 import 'scaled.dart';
 import 'snapshot_cache.dart';
 import 'shortage.dart';
@@ -971,246 +972,249 @@ class _StockPageState extends State<StockPage> {
 
     // ⚠️ **列表懒加载**（2026-11-09，与单据页同款）：从前
     // `SingleChildScrollView + Column(for … 全部商品)` 一次性 build 全部行。
-    return Scaffold(
-      body: SafeArea(
-        child: CustomScrollView(
-          slivers: <Widget>[
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-              sliver: SliverToBoxAdapter(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+    // 2026-11-25（批 B·1 续）：宽屏内容上限 1080 —— 与概览 / 单据 / 商品同款：
+    // 滚动体全宽（滚轮处处有效），居中靠视口内补白。
+    Widget buildList(double inset) => CustomScrollView(
+      slivers: <Widget>[
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(inset, 16, inset, 0),
+          sliver: SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                // §BH·六 B1c·补（2026-10-04 真机反馈：超大字号下标题被按钮挤成竖排）：
+                // 换 Wrap —— 宽屏 spaceBetween 与原右对齐一致，窄屏自动换行
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: <Widget>[
-                    // §BH·六 B1c·补（2026-10-04 真机反馈：超大字号下标题被按钮挤成竖排）：
-                    // 换 Wrap —— 宽屏 spaceBetween 与原右对齐一致，窄屏自动换行
+                    // §AD 遗漏 2：入口按钮（文案按首次 / 再次区分）
+                    Text('库存', style: theme.textTheme.titleLarge),
+                    // ⚠️ 动作按钮必须**收成一组**再进 spaceBetween（2026-11-22）：
+                    // 从前三个子项（标题 / 导出 / 清点）直接铺在 spaceBetween 里，
+                    // spaceBetween 会把**中间那个**摆到工作区正中 ——
+                    // 用户截图里「导出库存」在中间、「重新清点」在最右就是这么来的。
+                    // 现在：标题左、这一组整体靠右，两者之间才是真正的空白。
                     Wrap(
-                      alignment: WrapAlignment.spaceBetween,
+                      alignment: WrapAlignment.end,
                       spacing: 8,
                       runSpacing: 8,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: <Widget>[
-                        // §AD 遗漏 2：入口按钮（文案按首次 / 再次区分）
-                        Text('库存', style: theme.textTheme.titleLarge),
-                        // ⚠️ 动作按钮必须**收成一组**再进 spaceBetween（2026-11-22）：
-                        // 从前三个子项（标题 / 导出 / 清点）直接铺在 spaceBetween 里，
-                        // spaceBetween 会把**中间那个**摆到工作区正中 ——
-                        // 用户截图里「导出库存」在中间、「重新清点」在最右就是这么来的。
-                        // 现在：标题左、这一组整体靠右，两者之间才是真正的空白。
-                        Wrap(
-                          alignment: WrapAlignment.end,
-                          spacing: 8,
-                          runSpacing: 8,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: <Widget>[
-                            if (widget.exports != null)
-                              ExportButton(
-                                key: const Key('export-stock'),
-                                // AF-2：说清导的是「有流水或有库存」的那批
-                                label: '导出库存',
-                                export: () => widget.exports!.write(
-                                  stockExportTable(
-                                    // AF-12：**含停用** —— 停用但有库存的商品也要能对账
-                                    //（页面上看不到它们，但导出的账里不能少）
-                                    products: widget.products.listForExport(),
-                                    book: book,
-                                    inTransit: inTransit,
-                                    cost: cost,
-                                  ),
-                                ),
+                        if (widget.exports != null)
+                          ExportButton(
+                            key: const Key('export-stock'),
+                            // AF-2：说清导的是「有流水或有库存」的那批
+                            label: '导出库存',
+                            export: () => widget.exports!.write(
+                              stockExportTable(
+                                // AF-12：**含停用** —— 停用但有库存的商品也要能对账
+                                //（页面上看不到它们，但导出的账里不能少）
+                                products: widget.products.listForExport(),
+                                book: book,
+                                inTransit: inTransit,
+                                cost: cost,
                               ),
-                            if (canStocktake)
-                              TextButton.icon(
-                                key: const Key('stock-open-entry'),
-                                // 2026-10-20（§CV·七十八）：手机端**也能清点** —— 清点单走
-                                // 单据通道入队，差额由主机算（客户端零规则）。原引导删除。
-                                //
-                                // 2026-10-31：只读降级时**整个入口不显示**（见 `canStocktake`）
-                                onPressed: () =>
-                                    setState(() => _showOpening = true),
-                                icon: const Icon(
-                                  Icons.inventory_2_outlined,
-                                  size: 18,
-                                ),
-                                label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
-                              ),
-                            // #27 批 2（2026-10-17 裁定乙）：库存页的「新建商品」= **补充
-                            // 快速建档入口**（手机壳专属；桌面建档在「商品」页，期初在同页
-                            // 「录入现有货物」）。手机壳 ⇒ 对话框带「当前库存」字段（#31
-                            // stocktake 通路）。桌面不显示 ⇒ 不存在「桌面带库存走什么通路」。
-                            if (widget.mobileShell &&
-                                widget.canCreateProducts &&
-                                widget.masterDataSink != null)
-                              OutlinedButton.icon(
-                                key: const Key('stock-create-product'),
-                                onPressed: () => _createProduct(context),
-                                icon: const Icon(Icons.add, size: 18),
-                                label: const Text('新建商品'),
-                              ),
-                          ],
-                        ),
+                            ),
+                          ),
+                        if (canStocktake)
+                          TextButton.icon(
+                            key: const Key('stock-open-entry'),
+                            // 2026-10-20（§CV·七十八）：手机端**也能清点** —— 清点单走
+                            // 单据通道入队，差额由主机算（客户端零规则）。原引导删除。
+                            //
+                            // 2026-10-31：只读降级时**整个入口不显示**（见 `canStocktake`）
+                            onPressed: () =>
+                                setState(() => _showOpening = true),
+                            icon: const Icon(
+                              Icons.inventory_2_outlined,
+                              size: 18,
+                            ),
+                            label: Text(hasAnyLedger ? '重新清点' : '录入现有货物'),
+                          ),
+                        // #27 批 2（2026-10-17 裁定乙）：库存页的「新建商品」= **补充
+                        // 快速建档入口**（手机壳专属；桌面建档在「商品」页，期初在同页
+                        // 「录入现有货物」）。手机壳 ⇒ 对话框带「当前库存」字段（#31
+                        // stocktake 通路）。桌面不显示 ⇒ 不存在「桌面带库存走什么通路」。
+                        if (widget.mobileShell &&
+                            widget.canCreateProducts &&
+                            widget.masterDataSink != null)
+                          OutlinedButton.icon(
+                            key: const Key('stock-create-product'),
+                            onPressed: () => _createProduct(context),
+                            icon: const Icon(Icons.add, size: 18),
+                            label: const Text('新建商品'),
+                          ),
                       ],
                     ),
+                  ],
+                ),
 
-                    // 甲（2026-11-21）：命中上次快照时明说「还会变」
-                    if (_refreshing)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          '正在刷新…（先显示上次的数字，算完会更新）',
-                          key: const Key('stock-refreshing'),
-                          style: TextStyle(
-                            height: 1.6,
-                            color: theme.textTheme.bodySmall?.color,
-                          ),
-                        ),
-                      ),
-
-                    // 两张榜（提案 61 §四 决策 3 甲）：**缺货榜在前、压货榜在后**，
-                    // 宽屏并排、窄屏（或大字号）上下叠。缺货要行动，压货只是知晓 ——
-                    // 目标用户的注意力在上面。
-                    _boards(theme, lowStock),
-                    const SizedBox(height: 4),
-                    Text(
-                      '「在店可售」= 账面库存 − 送货在途；低库存按它判断。',
+                // 甲（2026-11-21）：命中上次快照时明说「还会变」
+                if (_refreshing)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      '正在刷新…（先显示上次的数字，算完会更新）',
+                      key: const Key('stock-refreshing'),
                       style: TextStyle(
                         height: 1.6,
                         color: theme.textTheme.bodySmall?.color,
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    // 批 3 第 16 条：换成共用列表头（补 × 清空 + 真实总数 + 防抖）
-                    ListHeader(
-                      searchKey: const Key('stock-search'),
-                      controller: _query,
-                      hintText: '商品名 / 编码 / 条码（可扫码）',
-                      onQueryChanged: (String q) => setState(() {
-                        _searchText = q.trim();
-                        // 搜索词清空 ⇒ 「在哪儿找」也回到「全部」。
-                        // 否则下次搜索还停在「条码」上，用户会以为搜不到货。
-                        if (_searchText.isEmpty) {
-                          _searchField = StockSearchField.all;
-                        }
-                      }),
-                      // 2026-11-11：搜索时可选「在哪儿找」（全部 / 商品名 / 编码 / 条码）
-                      leading: _searchFieldChips(),
-                      countText: _searchText.isEmpty
-                          ? '共 ${all.length} 个商品'
-                          : '找到 ${matched.length} 个 / 共 ${all.length} 个',
-                    ),
-                    const SizedBox(height: 4),
-                    // 遗漏 5：默认隐藏零流水商品，开关让「建了还没进货」的也能看。
-                    // 用 CheckboxListTile 而不是 Row(Checkbox+Text) —— **整行可点**：
-                    // 用户（和测试）自然会点文字，点文字必须能切换。
-                    CheckboxListTile(
-                      dense: true,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                      title: const Text('显示全部（含没进过货的商品）'),
-                      // ⚠️ CheckboxListTile 没有 `trailing` 参数（那是 ListTile 的，
-                      // 尾部被 checkbox 占了）—— 计数放 subtitle
-                      subtitle: hiddenCount > 0
-                          ? Text(
-                              '已隐藏 $hiddenCount 个',
-                              style: TextStyle(
-                                height: 1.6,
-                                color: theme.textTheme.bodySmall?.color,
-                              ),
-                            )
-                          : null,
-                      value: _showAll,
-                      onChanged: (bool? value) =>
-                          setState(() => _showAll = value ?? false),
-                    ),
-                    const SizedBox(height: 8),
-                    if (shown.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 24),
-                        child: Column(
-                          children: <Widget>[
-                            Text(
-                              widget.mobileShell && _searchText.isEmpty
-                                  ? mirrorEmptyMessage('库存数字')
-                                  : _searchText.isEmpty
-                                  ? '还没有库存记录'
-                                  // 选了具体字段又没结果 ⇒ 必须说「你只在哪儿找了」，
-                                  // 否则用户会以为「店里没这个货」。
-                                  // 2026-11-11 真机上就出现过：搜「6」命中全部，
-                                  // 反倒是「搜不到」时要解释清楚才安全。
-                                  : _searchField == StockSearchField.all
-                                  ? '没有匹配的商品。'
-                                  : '只在「${_searchFieldLabel()}」里找，没有匹配。'
-                                        '\n可以点上面的「全部」再试一次。',
-                              textAlign: TextAlign.center,
-                              key: const Key('stock-search-empty'),
-                              style: TextStyle(
-                                height: 1.8,
-                                color: theme.hintColor,
+                  ),
+
+                // 两张榜（提案 61 §四 决策 3 甲）：**缺货榜在前、压货榜在后**，
+                // 宽屏并排、窄屏（或大字号）上下叠。缺货要行动，压货只是知晓 ——
+                // 目标用户的注意力在上面。
+                _boards(theme, lowStock),
+                const SizedBox(height: 4),
+                Text(
+                  '「在店可售」= 账面库存 − 送货在途；低库存按它判断。',
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // 批 3 第 16 条：换成共用列表头（补 × 清空 + 真实总数 + 防抖）
+                ListHeader(
+                  searchKey: const Key('stock-search'),
+                  controller: _query,
+                  hintText: '商品名 / 编码 / 条码（可扫码）',
+                  onQueryChanged: (String q) => setState(() {
+                    _searchText = q.trim();
+                    // 搜索词清空 ⇒ 「在哪儿找」也回到「全部」。
+                    // 否则下次搜索还停在「条码」上，用户会以为搜不到货。
+                    if (_searchText.isEmpty) {
+                      _searchField = StockSearchField.all;
+                    }
+                  }),
+                  // 2026-11-11：搜索时可选「在哪儿找」（全部 / 商品名 / 编码 / 条码）
+                  leading: _searchFieldChips(),
+                  countText: _searchText.isEmpty
+                      ? '共 ${all.length} 个商品'
+                      : '找到 ${matched.length} 个 / 共 ${all.length} 个',
+                ),
+                const SizedBox(height: 4),
+                // 遗漏 5：默认隐藏零流水商品，开关让「建了还没进货」的也能看。
+                // 用 CheckboxListTile 而不是 Row(Checkbox+Text) —— **整行可点**：
+                // 用户（和测试）自然会点文字，点文字必须能切换。
+                CheckboxListTile(
+                  dense: true,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  title: const Text('显示全部（含没进过货的商品）'),
+                  // ⚠️ CheckboxListTile 没有 `trailing` 参数（那是 ListTile 的，
+                  // 尾部被 checkbox 占了）—— 计数放 subtitle
+                  subtitle: hiddenCount > 0
+                      ? Text(
+                          '已隐藏 $hiddenCount 个',
+                          style: TextStyle(
+                            height: 1.6,
+                            color: theme.textTheme.bodySmall?.color,
+                          ),
+                        )
+                      : null,
+                  value: _showAll,
+                  onChanged: (bool? value) =>
+                      setState(() => _showAll = value ?? false),
+                ),
+                const SizedBox(height: 8),
+                if (shown.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Column(
+                      children: <Widget>[
+                        Text(
+                          widget.mobileShell && _searchText.isEmpty
+                              ? mirrorEmptyMessage('库存数字')
+                              : _searchText.isEmpty
+                              ? '还没有库存记录'
+                              // 选了具体字段又没结果 ⇒ 必须说「你只在哪儿找了」，
+                              // 否则用户会以为「店里没这个货」。
+                              // 2026-11-11 真机上就出现过：搜「6」命中全部，
+                              // 反倒是「搜不到」时要解释清楚才安全。
+                              : _searchField == StockSearchField.all
+                              ? '没有匹配的商品。'
+                              : '只在「${_searchFieldLabel()}」里找，没有匹配。'
+                                    '\n可以点上面的「全部」再试一次。',
+                          textAlign: TextAlign.center,
+                          key: const Key('stock-search-empty'),
+                          style: TextStyle(height: 1.8, color: theme.hintColor),
+                        ),
+                        // §AD-6：空态两段式 —— 首段给「开店」场景，次段给「日常」场景
+                        // （手机端期初录入被引导接管 ⇒ 不展示这段，裁定六的空态文案顶上）
+                        if (_searchText.isEmpty &&
+                            !widget.mobileShell) ...<Widget>[
+                          const SizedBox(height: 8),
+                          Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                children: <Widget>[
+                                  const Text(
+                                    '店里已经有货？',
+                                    style: TextStyle(height: 1.8),
+                                  ),
+                                  Text(
+                                    '点右上角的「录入现有货物」，一次记进来',
+                                    style: TextStyle(
+                                      height: 1.8,
+                                      color: theme.textTheme.bodySmall?.color,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                            // §AD-6：空态两段式 —— 首段给「开店」场景，次段给「日常」场景
-                            // （手机端期初录入被引导接管 ⇒ 不展示这段，裁定六的空态文案顶上）
-                            if (_searchText.isEmpty &&
-                                !widget.mobileShell) ...<Widget>[
-                              const SizedBox(height: 8),
-                              Card(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Column(
-                                    children: <Widget>[
-                                      const Text(
-                                        '店里已经有货？',
-                                        style: TextStyle(height: 1.8),
-                                      ),
-                                      Text(
-                                        '点右上角的「录入现有货物」，一次记进来',
-                                        style: TextStyle(
-                                          height: 1.8,
-                                          color:
-                                              theme.textTheme.bodySmall?.color,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                '以后新进的货，走「采购入库」',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  height: 1.8,
-                                  color: theme.textTheme.bodySmall?.color,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '以后新进的货，走「采购入库」',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              height: 1.8,
+                              color: theme.textTheme.bodySmall?.color,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+              ],
             ),
-            if (shown.isNotEmpty)
-              cardRowsSliver(
-                key: const Key('stock-rows'),
-                itemCount: shown.length,
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                itemBuilder: (BuildContext context, int i) => _StockRow(
-                  product: shown[i],
-                  book: book[shown[i].id] ?? 0,
-                  inTransit: inTransit[shown[i].id] ?? 0,
-                  costCents: cost[shown[i].id] ?? 0,
-                  everInbound: inbound.contains(shown[i].id),
-                  unsynced: unsyncedByProduct[shown[i].id] ?? 0,
-                  openingPending: openingPending[shown[i].id],
-                  onOpen: widget.stockFlow == null
-                      ? null
-                      : () => _openStockFlow(context, shown[i]),
-                  delta: widget.stockDelta,
-                ),
-              ),
-            const SliverToBoxAdapter(child: SizedBox(height: 24)),
-          ],
+          ),
+        ),
+        if (shown.isNotEmpty)
+          cardRowsSliver(
+            key: const Key('stock-rows'),
+            itemCount: shown.length,
+            padding: EdgeInsets.symmetric(horizontal: inset),
+            itemBuilder: (BuildContext context, int i) => _StockRow(
+              product: shown[i],
+              book: book[shown[i].id] ?? 0,
+              inTransit: inTransit[shown[i].id] ?? 0,
+              costCents: cost[shown[i].id] ?? 0,
+              everInbound: inbound.contains(shown[i].id),
+              unsynced: unsyncedByProduct[shown[i].id] ?? 0,
+              openingPending: openingPending[shown[i].id],
+              onOpen: widget.stockFlow == null
+                  ? null
+                  : () => _openStockFlow(context, shown[i]),
+              delta: widget.stockDelta,
+            ),
+          ),
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      ],
+    );
+
+    return Scaffold(
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) =>
+              buildList(pageContentInset(constraints.maxWidth)),
         ),
       ),
     );

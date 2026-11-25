@@ -1180,6 +1180,43 @@ void main() {
       reason: '必须明说「这几个数是上次的、还在算」',
     );
   });
+
+  // ------------------------------------------------------------ 宽屏上限（2026-11-25）
+  //
+  // 与概览页同一套判据（见 `page_width.dart`）：内容最宽 1080 居中，
+  // **滚动视口全宽**（否则滚轮在左右留白上失效 —— 壳层那版就是这么翻车的）。
+  Finder firstRow() => find.byWidgetPredicate((Widget w) {
+    final Key? key = w.key;
+    return key is ValueKey<String> && key.value.startsWith('doc-row-');
+  }).first;
+
+  testWidgets('宽屏 1916：内容 1080 居中，滚动视口全宽', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1916, 790);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // 先建一张单 —— 空库没有行，几何断言就无从谈起
+    sell(date: dayStr(1), qty: 4, partyId: 'pt2');
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(firstRow(), findsOneWidget, reason: '夹具里应有单据行');
+    final Rect row = tester.getRect(firstRow());
+    expect(row.width, lessThanOrEqualTo(1081), reason: '内容列宽上限 1080');
+    expect(row.left, closeTo(1916 - row.right, 1.5), reason: '左右留白必须相等（居中）');
+  });
+
+  testWidgets('窄屏 800：不干预（左边距回到 20）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    sell(date: dayStr(1), qty: 4, partyId: 'pt2');
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(tester.getRect(firstRow()).left, closeTo(20, 1));
+  });
 }
 
 /// 只数「查了几次库」的 DAO —— 钉住「查询不在 build 里」这条结构。

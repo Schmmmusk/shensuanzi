@@ -36,6 +36,7 @@ import 'package:shensuanzi_host/shensuanzi_host.dart';
 import 'host_service_section.dart';
 import 'pairing_scan_page.dart';
 import 'notice.dart';
+import 'page_width.dart';
 
 /// 设置页。
 class SettingsPage extends StatefulWidget {
@@ -343,328 +344,337 @@ class _SettingsPageState extends State<SettingsPage> {
     final ThemeData theme = Theme.of(context);
     final UiScale current = _current.uiScale;
 
+    // 2026-11-25（批 B·1 续）：宽屏内容上限 1080，滚动体全宽（滚轮处处有效）。
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Text('设置', style: theme.textTheme.titleLarge),
-              const SizedBox(height: 16),
-
-              // ---- 概览图表：月度对比的说法（2026-10-31 真机）----
-              _Section(
-                title: '概览图表',
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final double inset = pageContentInset(constraints.maxWidth);
+            return SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(inset, 16, inset, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  Text(
-                    '「这个月和上个月」里，涨了还是跌了怎么说。\n'
-                    '上月基数很小时，百分数会显得夸张（¥140 → ¥973 会显示「+595%」），'
-                    '倍数更贴近直觉（「6.9 倍」）。',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
-                  ),
-                  SwitchListTile(
-                    key: const Key('setting-month-compare-percent'),
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('用百分数显示变化'),
-                    subtitle: Text(
-                      _current.monthComparePercent
-                          ? '现在：比上月同期多 ¥833.00（+595%）'
-                          : '现在：比上月同期多 ¥833.00，是上月的 6.9 倍',
-                    ),
-                    value: _current.monthComparePercent,
-                    onChanged: (bool value) =>
-                        _apply(_current.copyWith(monthComparePercent: value)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
+                  Text('设置', style: theme.textTheme.titleLarge),
+                  const SizedBox(height: 16),
 
-              // ---- 界面缩放（SC-1 + 遗漏 2）----
-              _Section(
-                title: '界面大小',
-                children: <Widget>[
-                  Text(
-                    '觉得字小就调大。改完立即生效，全应用一起变。\n系统字号调得比这里更大时，会跟着系统走（取两者中较大的）。',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<UiScale>(
-                    key: const Key('setting-scale'),
-                    initialValue: current,
-                    items: <DropdownMenuItem<UiScale>>[
-                      for (final UiScale scale in UiScale.values)
-                        DropdownMenuItem<UiScale>(
-                          value: scale,
-                          child: Text(scale.label),
-                        ),
-                    ],
-                    onChanged: (UiScale? value) {
-                      // 2026-10-23（真机复测）：**去掉「选当前值就返回」的守卫**。
-                      // 它会把人卡死 —— 一旦 `_current` 与磁盘不一致（存盘失败过），
-                      // 用户重选同一个档位不会有任何反应，而他又看不出差别。
-                      // `_apply` 是幂等的，重选一遍没有代价。
-                      if (value == null) return;
-                      _apply(
-                        AppConfig(
-                          dataDirectory: _current.dataDirectory,
-                          uiScale: value,
-                          shopName: _current.shopName,
-                        ),
-                      );
-                    },
-                    decoration: const InputDecoration(
-                      labelText: '界面大小',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const SizedBox(height: 8),
-                  // 遗漏 2：一键重置 —— 200% 下发现乱了的退路
-                  TextButton.icon(
-                    key: const Key('setting-reset-scale'),
-                    onPressed: _current.uiScale == UiScale.standard
-                        ? null
-                        : () => _apply(
-                            AppConfig(
-                              dataDirectory: _current.dataDirectory,
-                              uiScale: UiScale.standard,
-                              shopName: _current.shopName,
-                            ),
-                          ),
-                    icon: const Icon(Icons.restart_alt),
-                    label: const Text('恢复默认大小'),
-                  ),
-                ],
-              ),
-
-              // ---- 店名（SC-2）----
-              _Section(
-                title: '店名（可选）',
-                children: <Widget>[
-                  TextField(
-                    key: const Key('setting-shop-name'),
-                    controller: _shopName,
-                    // 5b：失焦立即落盘（见 `_onShopNameFocus`）
-                    focusNode: _shopNameFocus,
-                    // 刻意**不设 maxLength**：输入阶段截断会让 onChanged 永远
-                    // 收不到超长文本，「超长提示」成死代码 —— 放手让用户输入，
-                    // 超长时显示提示且不落盘（SC-2）
-                    onChanged: _updateShopName,
-                    decoration: InputDecoration(
-                      labelText: '店名',
-                      hintText: '显示在概览页，比如「王记小卖部」',
-                      errorText: _shopNameError,
-                      counterText: '',
-                    ),
-                  ),
-                ],
-              ),
-
-              // ---- 数据安全区（遗漏 1 + §AE-5 / 遗漏 5、6、11）----
-              _Section(
-                title: '数据',
-                children: <Widget>[
-                  // §BH·六 B1c：Android 私有目录用户打不开，「打开」按钮无效
-                  // ⇒ 显示友好文案、隐藏两行路径（桌面 `null` = 零变化）
-                  if (widget.dataPathsNote != null)
-                    Text(
-                      widget.dataPathsNote!,
-                      style: TextStyle(
-                        height: 1.6,
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
-                    )
-                  else if (_current.dataDirectory != null) ...<Widget>[
-                    _FolderRow(
-                      label: '数据位置',
-                      path: _current.dataDirectory!,
-                      onOpen: () => _openFolder(_current.dataDirectory!),
-                      onChange: widget.onMigrateData,
-                    ),
-                    if (widget.backupDirectory != null) ...<Widget>[
-                      const SizedBox(height: 8),
-                      _FolderRow(
-                        label: '备份位置',
-                        path: widget.backupDirectory!,
-                        onOpen: () => _openFolder(widget.backupDirectory!),
-                        // 2026-10-22：备份目录不可写时，用户**必须**有路可走
-                        onChange: widget.onChangeBackupLocation,
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                  ],
-                  if (widget.backupStatusLine != null) ...<Widget>[
-                    const SizedBox(height: 4),
-                    Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: Text(
-                            widget.backupStatusLine!,
-                            style: TextStyle(
-                              height: 1.6,
-                              // AE-5：超 3 天没备份 → 红字（数据安全要看得见）
-                              color: widget.backupNeedsAttention
-                                  ? theme.colorScheme.error
-                                  : null,
-                              fontWeight: widget.backupNeedsAttention
-                                  ? FontWeight.w700
-                                  : null,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        if (widget.onBackupNow != null)
-                          FilledButton.icon(
-                            key: const Key('setting-backup-now'),
-                            onPressed: _backupBusy ? null : _backupNow,
-                            icon: const Icon(Icons.save_alt, size: 18),
-                            label: Text(_backupBusy ? '备份中…' : '立即备份'),
-                          ),
-                      ],
-                    ),
-                  ],
-                  // §BH·六 B1c 的入口；**2026-10-07 按 `docs/reply.md` §4
-                  // B 方案改口径**：卸载 = 手机侧数据全丢，但账本的权威副本
-                  // 在电脑主机上 —— 手机端真正保命的是「还没推给主机的单」，
-                  // 所以这个出口带上队列，且**不叫备份**
-                  if (widget.onExportBackup != null) ...<Widget>[
-                    const SizedBox(height: 4),
-                    ListTile(
-                      key: const Key('setting-export-backup'),
-                      contentPadding: EdgeInsets.zero,
-                      leading: _exporting
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.upload_file_outlined),
-                      title: Text(
-                        _exporting ? '导出中…' : '导出本机数据文件',
-                        style: const TextStyle(height: 1.6),
-                      ),
-                      subtitle: Text(
-                        // B 方案（2026-10-07，docs/reply.md §4）：**不叫备份** ——
-                        // 叫备份会让用户以为「手机上有备份，电脑坏了也没事」
-                        '你的账本在电脑主机上，手机丢了不影响账。\n'
-                        '这个文件只用来排查问题；里面会带上还没传过去的单。',
+                  // ---- 概览图表：月度对比的说法（2026-10-31 真机）----
+                  _Section(
+                    title: '概览图表',
+                    children: <Widget>[
+                      Text(
+                        '「这个月和上个月」里，涨了还是跌了怎么说。\n'
+                        '上月基数很小时，百分数会显得夸张（¥140 → ¥973 会显示「+595%」），'
+                        '倍数更贴近直觉（「6.9 倍」）。',
                         style: TextStyle(
                           height: 1.6,
                           color: theme.textTheme.bodySmall?.color,
                         ),
                       ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: _exporting ? null : _exportBackup,
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  Text(
-                    // 遗漏 6：第一次看到「上次备份：从未」的人要知道这是什么，
-                    // 以及「数据永远属于他」（§AE-1 的技术承诺写进界面）
-                    '每天首次打开软件会自动备份一次。\n'
-                    '备份文件是普通的数据库文件，可以用任何 SQLite 工具打开。',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
-                    ),
+                      SwitchListTile(
+                        key: const Key('setting-month-compare-percent'),
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('用百分数显示变化'),
+                        subtitle: Text(
+                          _current.monthComparePercent
+                              ? '现在：比上月同期多 ¥833.00（+595%）'
+                              : '现在：比上月同期多 ¥833.00，是上月的 6.9 倍',
+                        ),
+                        value: _current.monthComparePercent,
+                        onChanged: (bool value) => _apply(
+                          _current.copyWith(monthComparePercent: value),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
-                  // **TM-2（2026-11-10 裁定）**：备份是**明文**文件，必须当面说清，
-                  // 并给「怎么办」——只说「有风险」而不说往哪放，等于没说。
+                  const SizedBox(height: 16),
+
+                  // ---- 界面缩放（SC-1 + 遗漏 2）----
+                  _Section(
+                    title: '界面大小',
+                    children: <Widget>[
+                      Text(
+                        '觉得字小就调大。改完立即生效，全应用一起变。\n系统字号调得比这里更大时，会跟着系统走（取两者中较大的）。',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<UiScale>(
+                        key: const Key('setting-scale'),
+                        initialValue: current,
+                        items: <DropdownMenuItem<UiScale>>[
+                          for (final UiScale scale in UiScale.values)
+                            DropdownMenuItem<UiScale>(
+                              value: scale,
+                              child: Text(scale.label),
+                            ),
+                        ],
+                        onChanged: (UiScale? value) {
+                          // 2026-10-23（真机复测）：**去掉「选当前值就返回」的守卫**。
+                          // 它会把人卡死 —— 一旦 `_current` 与磁盘不一致（存盘失败过），
+                          // 用户重选同一个档位不会有任何反应，而他又看不出差别。
+                          // `_apply` 是幂等的，重选一遍没有代价。
+                          if (value == null) return;
+                          _apply(
+                            AppConfig(
+                              dataDirectory: _current.dataDirectory,
+                              uiScale: value,
+                              shopName: _current.shopName,
+                            ),
+                          );
+                        },
+                        decoration: const InputDecoration(
+                          labelText: '界面大小',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const SizedBox(height: 8),
+                      // 遗漏 2：一键重置 —— 200% 下发现乱了的退路
+                      TextButton.icon(
+                        key: const Key('setting-reset-scale'),
+                        onPressed: _current.uiScale == UiScale.standard
+                            ? null
+                            : () => _apply(
+                                AppConfig(
+                                  dataDirectory: _current.dataDirectory,
+                                  uiScale: UiScale.standard,
+                                  shopName: _current.shopName,
+                                ),
+                              ),
+                        icon: const Icon(Icons.restart_alt),
+                        label: const Text('恢复默认大小'),
+                      ),
+                    ],
+                  ),
+
+                  // ---- 店名（SC-2）----
+                  _Section(
+                    title: '店名（可选）',
+                    children: <Widget>[
+                      TextField(
+                        key: const Key('setting-shop-name'),
+                        controller: _shopName,
+                        // 5b：失焦立即落盘（见 `_onShopNameFocus`）
+                        focusNode: _shopNameFocus,
+                        // 刻意**不设 maxLength**：输入阶段截断会让 onChanged 永远
+                        // 收不到超长文本，「超长提示」成死代码 —— 放手让用户输入，
+                        // 超长时显示提示且不落盘（SC-2）
+                        onChanged: _updateShopName,
+                        decoration: InputDecoration(
+                          labelText: '店名',
+                          hintText: '显示在概览页，比如「王记小卖部」',
+                          errorText: _shopNameError,
+                          counterText: '',
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  // ---- 数据安全区（遗漏 1 + §AE-5 / 遗漏 5、6、11）----
+                  _Section(
+                    title: '数据',
+                    children: <Widget>[
+                      // §BH·六 B1c：Android 私有目录用户打不开，「打开」按钮无效
+                      // ⇒ 显示友好文案、隐藏两行路径（桌面 `null` = 零变化）
+                      if (widget.dataPathsNote != null)
+                        Text(
+                          widget.dataPathsNote!,
+                          style: TextStyle(
+                            height: 1.6,
+                            color: theme.textTheme.bodySmall?.color,
+                          ),
+                        )
+                      else if (_current.dataDirectory != null) ...<Widget>[
+                        _FolderRow(
+                          label: '数据位置',
+                          path: _current.dataDirectory!,
+                          onOpen: () => _openFolder(_current.dataDirectory!),
+                          onChange: widget.onMigrateData,
+                        ),
+                        if (widget.backupDirectory != null) ...<Widget>[
+                          const SizedBox(height: 8),
+                          _FolderRow(
+                            label: '备份位置',
+                            path: widget.backupDirectory!,
+                            onOpen: () => _openFolder(widget.backupDirectory!),
+                            // 2026-10-22：备份目录不可写时，用户**必须**有路可走
+                            onChange: widget.onChangeBackupLocation,
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                      ],
+                      if (widget.backupStatusLine != null) ...<Widget>[
+                        const SizedBox(height: 4),
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: Text(
+                                widget.backupStatusLine!,
+                                style: TextStyle(
+                                  height: 1.6,
+                                  // AE-5：超 3 天没备份 → 红字（数据安全要看得见）
+                                  color: widget.backupNeedsAttention
+                                      ? theme.colorScheme.error
+                                      : null,
+                                  fontWeight: widget.backupNeedsAttention
+                                      ? FontWeight.w700
+                                      : null,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            if (widget.onBackupNow != null)
+                              FilledButton.icon(
+                                key: const Key('setting-backup-now'),
+                                onPressed: _backupBusy ? null : _backupNow,
+                                icon: const Icon(Icons.save_alt, size: 18),
+                                label: Text(_backupBusy ? '备份中…' : '立即备份'),
+                              ),
+                          ],
+                        ),
+                      ],
+                      // §BH·六 B1c 的入口；**2026-10-07 按 `docs/reply.md` §4
+                      // B 方案改口径**：卸载 = 手机侧数据全丢，但账本的权威副本
+                      // 在电脑主机上 —— 手机端真正保命的是「还没推给主机的单」，
+                      // 所以这个出口带上队列，且**不叫备份**
+                      if (widget.onExportBackup != null) ...<Widget>[
+                        const SizedBox(height: 4),
+                        ListTile(
+                          key: const Key('setting-export-backup'),
+                          contentPadding: EdgeInsets.zero,
+                          leading: _exporting
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.upload_file_outlined),
+                          title: Text(
+                            _exporting ? '导出中…' : '导出本机数据文件',
+                            style: const TextStyle(height: 1.6),
+                          ),
+                          subtitle: Text(
+                            // B 方案（2026-10-07，docs/reply.md §4）：**不叫备份** ——
+                            // 叫备份会让用户以为「手机上有备份，电脑坏了也没事」
+                            '你的账本在电脑主机上，手机丢了不影响账。\n'
+                            '这个文件只用来排查问题；里面会带上还没传过去的单。',
+                            style: TextStyle(
+                              height: 1.6,
+                              color: theme.textTheme.bodySmall?.color,
+                            ),
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: _exporting ? null : _exportBackup,
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Text(
+                        // 遗漏 6：第一次看到「上次备份：从未」的人要知道这是什么，
+                        // 以及「数据永远属于他」（§AE-1 的技术承诺写进界面）
+                        '每天首次打开软件会自动备份一次。\n'
+                        '备份文件是普通的数据库文件，可以用任何 SQLite 工具打开。',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      // **TM-2（2026-11-10 裁定）**：备份是**明文**文件，必须当面说清，
+                      // 并给「怎么办」——只说「有风险」而不说往哪放，等于没说。
+                      //
+                      // 为什么放在这里而不是弹窗：这是**常驻事实**，不是一次性的确认；
+                      // 用户过两周换了个共享盘，不会再有弹窗提醒他。
+                      Text(
+                        key: const Key('setting-backup-plaintext-hint'),
+                        '⚠️ 备份是明文文件（没有加密）：别放在共享文件夹或网盘同步目录里，'
+                        '放在只有你能进的文件夹，或拷到自己的 U 盘收好。',
+                        style: TextStyle(
+                          height: 1.6,
+                          color: theme.textTheme.bodySmall?.color,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  // ---- 数据刷新（#40 余项，2026-11-19）----
                   //
-                  // 为什么放在这里而不是弹窗：这是**常驻事实**，不是一次性的确认；
-                  // 用户过两周换了个共享盘，不会再有弹窗提醒他。
-                  Text(
-                    key: const Key('setting-backup-plaintext-hint'),
-                    '⚠️ 备份是明文文件（没有加密）：别放在共享文件夹或网盘同步目录里，'
-                    '放在只有你能进的文件夹，或拷到自己的 U 盘收好。',
-                    style: TextStyle(
-                      height: 1.6,
-                      color: theme.textTheme.bodySmall?.color,
+                  // 为什么要有「手动刷新」：多数刷新是自动的（主机落库 → 壳递增
+                  // `remoteVersion` → 缓存页面自己重查）。但用户遇到「数字看着不对」
+                  // 时**没有出口** —— 只能自己发现「切到别的页再切回来就会变」。
+                  // 一个按钮比让他猜便宜得多。
+                  //
+                  // **刻意不做「定时刷新」**（原 #40 的另一半）：主机的落库有回调
+                  // 兜着，而每 N 分钟轮询要在 26 万单的库上付一次 ~225 ms 的 SQL
+                  //（`docs/proposals/冷库页面成本-方案.md` §1.2 实测），还会在用户
+                  // 低头算账时重绘。判定「用不上且有害」，登记在台账，不悄悄跳过。
+                  if (widget.onRefreshNow != null)
+                    _Section(
+                      title: '数据刷新',
+                      children: <Widget>[
+                        Text(
+                          '手机推上来的数据、别处改过的账，一般会自动刷新。\n'
+                          '如果数字看着不对，点一下这里重新读一遍 —— 不会改筛选，也不会跳页。',
+                          style: TextStyle(
+                            height: 1.6,
+                            color: theme.textTheme.bodySmall?.color,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: OutlinedButton.icon(
+                            key: const Key('setting-refresh-now'),
+                            onPressed: widget.onRefreshNow,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('立即刷新数据'),
+                          ),
+                        ),
+                      ],
                     ),
+
+                  // ---- 多设备同步（§AH · AH-A 落地；原 §AG-6「开发中」占位在此退场）----
+                  //
+                  // §AG-6 当年裁定「显示一行灰字、不隐藏」：藏起来用户不会知道将来
+                  // 会有这个功能。现在功能真的到了，占位换成实装 —— 那条裁定的目的
+                  // （让用户看得见产品在往哪走）已完成，不是被推翻。
+                  _Section(
+                    title: '多设备同步',
+                    children: <Widget>[
+                      // §BL·三：手机端 = 客户端面板（扫码 / 已连接 / 立即同步）——
+                      // 取代 B1c 时代的纯文案引导（当时功能还没到，现在是真功能）
+                      if (widget.mobileSync != null)
+                        _MobileSyncPanel(
+                          service: widget.mobileSync!,
+                          onScanPair: widget.onScanPair,
+                          onSyncNow: widget.onSyncNow,
+                        )
+                      else if (widget.hostSyncNote != null)
+                        Text(
+                          widget.hostSyncNote!,
+                          style: TextStyle(
+                            height: 1.6,
+                            color: theme.textTheme.bodySmall?.color,
+                          ),
+                        )
+                      else if (widget.hostService == null)
+                        Text(
+                          '数据目录还没准备好，这个功能暂时用不了。'
+                          '先把上面的数据位置设好，再回来打开它。',
+                          style: TextStyle(height: 1.6, color: theme.hintColor),
+                        )
+                      else
+                        HostServicePanel(controller: widget.hostService!),
+                    ],
                   ),
                 ],
               ),
-
-              // ---- 数据刷新（#40 余项，2026-11-19）----
-              //
-              // 为什么要有「手动刷新」：多数刷新是自动的（主机落库 → 壳递增
-              // `remoteVersion` → 缓存页面自己重查）。但用户遇到「数字看着不对」
-              // 时**没有出口** —— 只能自己发现「切到别的页再切回来就会变」。
-              // 一个按钮比让他猜便宜得多。
-              //
-              // **刻意不做「定时刷新」**（原 #40 的另一半）：主机的落库有回调
-              // 兜着，而每 N 分钟轮询要在 26 万单的库上付一次 ~225 ms 的 SQL
-              //（`docs/proposals/冷库页面成本-方案.md` §1.2 实测），还会在用户
-              // 低头算账时重绘。判定「用不上且有害」，登记在台账，不悄悄跳过。
-              if (widget.onRefreshNow != null)
-                _Section(
-                  title: '数据刷新',
-                  children: <Widget>[
-                    Text(
-                      '手机推上来的数据、别处改过的账，一般会自动刷新。\n'
-                      '如果数字看着不对，点一下这里重新读一遍 —— 不会改筛选，也不会跳页。',
-                      style: TextStyle(
-                        height: 1.6,
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: OutlinedButton.icon(
-                        key: const Key('setting-refresh-now'),
-                        onPressed: widget.onRefreshNow,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('立即刷新数据'),
-                      ),
-                    ),
-                  ],
-                ),
-
-              // ---- 多设备同步（§AH · AH-A 落地；原 §AG-6「开发中」占位在此退场）----
-              //
-              // §AG-6 当年裁定「显示一行灰字、不隐藏」：藏起来用户不会知道将来
-              // 会有这个功能。现在功能真的到了，占位换成实装 —— 那条裁定的目的
-              // （让用户看得见产品在往哪走）已完成，不是被推翻。
-              _Section(
-                title: '多设备同步',
-                children: <Widget>[
-                  // §BL·三：手机端 = 客户端面板（扫码 / 已连接 / 立即同步）——
-                  // 取代 B1c 时代的纯文案引导（当时功能还没到，现在是真功能）
-                  if (widget.mobileSync != null)
-                    _MobileSyncPanel(
-                      service: widget.mobileSync!,
-                      onScanPair: widget.onScanPair,
-                      onSyncNow: widget.onSyncNow,
-                    )
-                  else if (widget.hostSyncNote != null)
-                    Text(
-                      widget.hostSyncNote!,
-                      style: TextStyle(
-                        height: 1.6,
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
-                    )
-                  else if (widget.hostService == null)
-                    Text(
-                      '数据目录还没准备好，这个功能暂时用不了。'
-                      '先把上面的数据位置设好，再回来打开它。',
-                      style: TextStyle(height: 1.6, color: theme.hintColor),
-                    )
-                  else
-                    HostServicePanel(controller: widget.hostService!),
-                ],
-              ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );

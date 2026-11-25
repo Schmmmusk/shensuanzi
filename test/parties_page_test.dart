@@ -824,4 +824,37 @@ void main() {
       reason: '总应收 / 总应付原来各占半宽，金额被折成「¥390.」+「00」',
     );
   });
+
+  // ------------------------------------------------------------ 宽屏上限（2026-11-25）
+  testWidgets('宽屏 1916：标题左边缘 = 418（内容 1080 居中），视口全宽', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1916, 790);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getRect(find.byType(CustomScrollView).first).width,
+      closeTo(1916, 1),
+      reason: '滚动视口必须全宽（否则滚轮在留白上失效）',
+    );
+    expect(
+      tester.getRect(find.text('往来方')).left,
+      closeTo(418, 1.5),
+      reason: '(1916 − 1080) / 2 = 418',
+    );
+  });
+
+  testWidgets('窄屏 800：不干预（标题左边缘 20）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    expect(tester.getRect(find.text('往来方')).left, closeTo(20, 1));
+  });
 }

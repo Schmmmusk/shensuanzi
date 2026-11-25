@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'page_width.dart';
 import 'scaled.dart';
 
 import 'disable_action.dart';
@@ -143,198 +144,198 @@ class _PartiesPageState extends State<PartiesPage> {
     }
 
     // ⚠️ **列表懒加载**（2026-11-09，与单据 / 库存页同款）
-    return Scaffold(
-      body: SafeArea(
-        child: CustomScrollView(
-          slivers: <Widget>[
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-              sliver: SliverToBoxAdapter(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+    // 2026-11-25（批 B·1 续）：宽屏内容上限 1080，滚动体全宽（滚轮处处有效）。
+    Widget buildList(double inset) => CustomScrollView(
+      slivers: <Widget>[
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(inset, 16, inset, 0),
+          sliver: SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                // §BH·六 B1c·补：超大字号下标题被按钮挤成竖排 ⇒ Wrap 自适应换行
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: <Widget>[
-                    // §BH·六 B1c·补：超大字号下标题被按钮挤成竖排 ⇒ Wrap 自适应换行
-                    Wrap(
-                      alignment: WrapAlignment.spaceBetween,
-                      spacing: 8,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: <Widget>[
-                        Text('往来方', style: theme.textTheme.titleLarge),
-                        if (widget.exports != null)
-                          ExportButton(
-                            key: const Key('export-parties'),
-                            // AF-2：全量（**含停用** —— 停用但还欠钱的客户不能少）
-                            label: '导出往来方',
-                            export: () => widget.exports!.write(
-                              partyExportTable(
-                                parties: widget.service.listForExport(),
-                                balances: balances,
-                              ),
-                            ),
-                          ),
-                        // 2026-11-01（用户裁定 A3）：只读态**置灰**。
-                        //
-                        // 点下去本来就是安全的（`_canWriteParties` 为 false ⇒ 弹
-                        // 「这一步在电脑上做」），但三处写入口的表现不一致：
-                        // 开单页带锁发灰、商品页置灰，唯独这里还是蓝色实心。
-                        // 对不熟悉软件的人来说，**按钮外观就是操作能力的暗示**。
-                        //
-                        // 指路不丢：那句「要建往来方请在电脑上操作」搬进了顶部红条
-                        // （见 `write_blocked.dart` 的 `writeBlockedReason`）。
-                        FilledButton.icon(
-                          onPressed: _canWriteParties
-                              ? () => _editParty(context)
-                              : null,
-                          icon: const Icon(Icons.add),
-                          label: const Text('新建往来方'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    // 批 3 第 16 条：常驻搜索 + 计数（原来往来方页没有搜索）
-                    ListHeader(
-                      searchKey: const Key('parties-search'),
-                      controller: _search,
-                      hintText: '搜姓名 / 电话',
-                      onQueryChanged: (String q) =>
-                          setState(() => _query = q.trim()),
-                      countText: _query.isEmpty
-                          ? '共 ${visible.length} 个'
-                          : '找到 ${visible.length} 个',
-                    ),
-                    const SizedBox(height: 4),
-                    // #40②：照抄商品页的形态（Checkbox + **文字标签**，中老年不看纯图标）
-                    Row(
-                      children: <Widget>[
-                        Checkbox(
-                          key: const Key('parties-show-inactive'),
-                          value: _showInactiveWithoutBalance,
-                          onChanged: (bool? value) => setState(
-                            () => _showInactiveWithoutBalance = value ?? false,
+                    Text('往来方', style: theme.textTheme.titleLarge),
+                    if (widget.exports != null)
+                      ExportButton(
+                        key: const Key('export-parties'),
+                        // AF-2：全量（**含停用** —— 停用但还欠钱的客户不能少）
+                        label: '导出往来方',
+                        export: () => widget.exports!.write(
+                          partyExportTable(
+                            parties: widget.service.listForExport(),
+                            balances: balances,
                           ),
                         ),
-                        // 措辞按 `docs/reply.md` 2026-10-18 的建议。
-                        // ⚠️ `Expanded` 不能省：`Row` 的非弹性子节点拿无界宽，
-                        // 232 px 内容区时这行标签会顶出去（2026-11-18 截图）。
-                        const Expanded(child: Text('显示全部（含无欠款的停用档）')),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    // 遗漏 3：总应收 / 总应付 —— 一打开就能看到全貌
+                      ),
+                    // 2026-11-01（用户裁定 A3）：只读态**置灰**。
                     //
-                    // ⚠️ 2026-11-18 用户截图（343 px 窗口）：原来是
-                    // `Row[EXPANDED 应收, Expanded 应付]`，两半各约 100 px，而
-                    // 「总应收 ¥390.00」要 110 px ⇒ 金额被折成「¥390.」+「00」
-                    // 两行（截图里能看见）。金额是**不可断行的整体**，
-                    // 所以窄了就把两条改成上下两行，各占整宽。
-                    Card(
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 10,
-                        ),
-                        child: LayoutBuilder(
-                          builder:
-                              (
-                                BuildContext context,
-                                BoxConstraints constraints,
-                              ) {
-                                final String receivable =
-                                    '总应收 ¥${Money.formatGrouped(totalReceivable)}';
-                                final String payable =
-                                    '总应付 ¥${Money.formatGrouped(totalPayable)}';
-                                final TextStyle style = TextStyle(
-                                  height: 1.6,
-                                  fontWeight: FontWeight.w700,
-                                );
-                                if (isNarrowOf(
-                                  context,
-                                  constraints.maxWidth,
-                                  base: 360,
-                                )) {
-                                  return Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: <Widget>[
-                                      Text(receivable, style: style),
-                                      Text(payable, style: style),
-                                    ],
-                                  );
-                                }
-                                return Row(
-                                  children: <Widget>[
-                                    Expanded(
-                                      child: Text(receivable, style: style),
-                                    ),
-                                    Expanded(
-                                      child: Text(
-                                        payable,
-                                        textAlign: TextAlign.right,
-                                        style: style,
-                                      ),
-                                    ),
-                                  ],
-                                );
-                              },
-                        ),
-                      ),
+                    // 点下去本来就是安全的（`_canWriteParties` 为 false ⇒ 弹
+                    // 「这一步在电脑上做」），但三处写入口的表现不一致：
+                    // 开单页带锁发灰、商品页置灰，唯独这里还是蓝色实心。
+                    // 对不熟悉软件的人来说，**按钮外观就是操作能力的暗示**。
+                    //
+                    // 指路不丢：那句「要建往来方请在电脑上操作」搬进了顶部红条
+                    // （见 `write_blocked.dart` 的 `writeBlockedReason`）。
+                    FilledButton.icon(
+                      onPressed: _canWriteParties
+                          ? () => _editParty(context)
+                          : null,
+                      icon: const Icon(Icons.add),
+                      label: const Text('新建往来方'),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '点一个往来方看流水。正数是对方欠你（应收），负数是你欠对方（应付）。'
-                      '停用过的往来方，只要还有账没结清，也会留在这张表里提醒你。',
-                      style: TextStyle(
-                        height: 1.6,
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    if (visible.isEmpty && _query.isNotEmpty)
-                      ListEmptyState(
-                        icon: Icons.search_off,
-                        title: '没有叫「$_query」的往来方',
-                        hint: '换个词试试，或点搜索框右边的 × 清空，看全部往来方。',
-                        actionLabel: '清空搜索',
-                        onAction: () {
-                          _search.clear();
-                          setState(() => _query = '');
-                        },
-                      )
-                    else if (sorted.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 40),
-                        child: Text(
-                          !widget.masterDataPolicy.canCreateParties
-                              ? mirrorEmptyMessage('往来方列表')
-                              : '还没有往来方。开单时选客户/供应商会自动建，'
-                                    '也可以点右上角「新建往来方」。',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(height: 1.8, color: theme.hintColor),
-                        ),
-                      ),
                   ],
                 ),
-              ),
-            ),
-            if (visible.isNotEmpty)
-              cardRowsSliver(
-                key: const Key('party-rows'),
-                itemCount: visible.length,
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                itemBuilder: (BuildContext context, int i) => _PartyRow(
-                  key: Key('party-row-${visible[i].id}'),
-                  party: visible[i],
-                  isPending: pending.contains(visible[i].id),
-                  balanceCents: balances[visible[i].id] ?? 0,
-                  onOpen: () => _openFlow(context, visible[i]),
-                  onEdit: () => _editParty(context, existing: visible[i]),
-                  onToggleActive: () => _toggleActive(visible[i]),
+                const SizedBox(height: 8),
+                // 批 3 第 16 条：常驻搜索 + 计数（原来往来方页没有搜索）
+                ListHeader(
+                  searchKey: const Key('parties-search'),
+                  controller: _search,
+                  hintText: '搜姓名 / 电话',
+                  onQueryChanged: (String q) =>
+                      setState(() => _query = q.trim()),
+                  countText: _query.isEmpty
+                      ? '共 ${visible.length} 个'
+                      : '找到 ${visible.length} 个',
                 ),
-              ),
-            const SliverToBoxAdapter(child: SizedBox(height: 24)),
-          ],
+                const SizedBox(height: 4),
+                // #40②：照抄商品页的形态（Checkbox + **文字标签**，中老年不看纯图标）
+                Row(
+                  children: <Widget>[
+                    Checkbox(
+                      key: const Key('parties-show-inactive'),
+                      value: _showInactiveWithoutBalance,
+                      onChanged: (bool? value) => setState(
+                        () => _showInactiveWithoutBalance = value ?? false,
+                      ),
+                    ),
+                    // 措辞按 `docs/reply.md` 2026-10-18 的建议。
+                    // ⚠️ `Expanded` 不能省：`Row` 的非弹性子节点拿无界宽，
+                    // 232 px 内容区时这行标签会顶出去（2026-11-18 截图）。
+                    const Expanded(child: Text('显示全部（含无欠款的停用档）')),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // 遗漏 3：总应收 / 总应付 —— 一打开就能看到全貌
+                //
+                // ⚠️ 2026-11-18 用户截图（343 px 窗口）：原来是
+                // `Row[EXPANDED 应收, Expanded 应付]`，两半各约 100 px，而
+                // 「总应收 ¥390.00」要 110 px ⇒ 金额被折成「¥390.」+「00」
+                // 两行（截图里能看见）。金额是**不可断行的整体**，
+                // 所以窄了就把两条改成上下两行，各占整宽。
+                Card(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    child: LayoutBuilder(
+                      builder:
+                          (BuildContext context, BoxConstraints constraints) {
+                            final String receivable =
+                                '总应收 ¥${Money.formatGrouped(totalReceivable)}';
+                            final String payable =
+                                '总应付 ¥${Money.formatGrouped(totalPayable)}';
+                            final TextStyle style = TextStyle(
+                              height: 1.6,
+                              fontWeight: FontWeight.w700,
+                            );
+                            if (isNarrowOf(
+                              context,
+                              constraints.maxWidth,
+                              base: 360,
+                            )) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Text(receivable, style: style),
+                                  Text(payable, style: style),
+                                ],
+                              );
+                            }
+                            return Row(
+                              children: <Widget>[
+                                Expanded(child: Text(receivable, style: style)),
+                                Expanded(
+                                  child: Text(
+                                    payable,
+                                    textAlign: TextAlign.right,
+                                    style: style,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '点一个往来方看流水。正数是对方欠你（应收），负数是你欠对方（应付）。'
+                  '停用过的往来方，只要还有账没结清，也会留在这张表里提醒你。',
+                  style: TextStyle(
+                    height: 1.6,
+                    color: theme.textTheme.bodySmall?.color,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (visible.isEmpty && _query.isNotEmpty)
+                  ListEmptyState(
+                    icon: Icons.search_off,
+                    title: '没有叫「$_query」的往来方',
+                    hint: '换个词试试，或点搜索框右边的 × 清空，看全部往来方。',
+                    actionLabel: '清空搜索',
+                    onAction: () {
+                      _search.clear();
+                      setState(() => _query = '');
+                    },
+                  )
+                else if (sorted.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 40),
+                    child: Text(
+                      !widget.masterDataPolicy.canCreateParties
+                          ? mirrorEmptyMessage('往来方列表')
+                          : '还没有往来方。开单时选客户/供应商会自动建，'
+                                '也可以点右上角「新建往来方」。',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(height: 1.8, color: theme.hintColor),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        if (visible.isNotEmpty)
+          cardRowsSliver(
+            key: const Key('party-rows'),
+            itemCount: visible.length,
+            padding: EdgeInsets.symmetric(horizontal: inset),
+            itemBuilder: (BuildContext context, int i) => _PartyRow(
+              key: Key('party-row-${visible[i].id}'),
+              party: visible[i],
+              isPending: pending.contains(visible[i].id),
+              balanceCents: balances[visible[i].id] ?? 0,
+              onOpen: () => _openFlow(context, visible[i]),
+              onEdit: () => _editParty(context, existing: visible[i]),
+              onToggleActive: () => _toggleActive(visible[i]),
+            ),
+          ),
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      ],
+    );
+
+    return Scaffold(
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) =>
+              buildList(pageContentInset(constraints.maxWidth)),
         ),
       ),
     );

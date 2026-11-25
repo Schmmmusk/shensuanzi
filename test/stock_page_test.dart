@@ -1382,4 +1382,42 @@ void main() {
     expect(find.byKey(const Key('stock-loading')), findsNothing);
     expect(find.byKey(const Key('stock-reload')), findsOneWidget);
   });
+
+  // ------------------------------------------------------------ 宽屏上限（2026-11-25）
+  //
+  // 判据同其余页：滚动视口全宽 + 内容列 1080 居中。
+  // 库存页没有独立卡片，用「标题左边缘 = inset」与「视口宽 = 屏宽」两条一起钉住。
+  testWidgets('宽屏 1916：标题左边缘 = 418（内容 1080 居中），视口全宽', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1916, 790);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    buy(3);
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    final Rect viewport = tester.getRect(find.byType(CustomScrollView).first);
+    expect(viewport.width, closeTo(1916, 1), reason: '滚动视口必须全宽');
+
+    final Rect title = tester.getRect(find.text('库存'));
+    expect(
+      title.left,
+      closeTo(418, 1.5),
+      reason: '(1916 − 1080) / 2 = 418 —— 内容列居中',
+    );
+  });
+
+  testWidgets('窄屏 800：不干预（标题左边缘 20）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    buy(3);
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+
+    expect(tester.getRect(find.text('库存')).left, closeTo(20, 1));
+  });
 }
