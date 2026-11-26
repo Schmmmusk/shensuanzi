@@ -48,6 +48,18 @@ class StockFlowPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final List<StockFlowEntry> flow = flowDao.ofProductReadable(product.id);
+    // 「累计」列（提案 §2.5-②）：**从最早一笔加到现在**的库存数。
+    // `ofProductReadable` 是 `ORDER BY seq_no` 升序（最早在前）⇒ 一趟正向累加即可。
+    //
+    // ⚠️ 只算**数量**，不算"累计成本"：成本按历史平均价、退货还会回退分摊，
+    // 把一串运行中的成本值摆给店主看，容易被读成"这货一共花了多少钱"。
+    // 数量是单调可加的，退出/盘点也照实进退，语义没有争议。
+    final List<int> running = <int>[];
+    int acc = 0;
+    for (final StockFlowEntry entry in flow) {
+      acc += entry.quantity;
+      running.add(acc);
+    }
 
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
@@ -79,8 +91,18 @@ class StockFlowPage extends StatelessWidget {
           itemBuilder: (BuildContext context, int index) {
             final StockFlowEntry entry = flow[index];
             final Widget row = narrow
-                ? _NarrowFlowCard(entry: entry, showCost: !mobileShell)
-                : _WideFlowTile(entry: entry, showCost: !mobileShell);
+                ? _NarrowFlowCard(
+                    entry: entry,
+                    showCost: !mobileShell,
+                    cumulative: running[index],
+                    unit: product.unit,
+                  )
+                : _WideFlowTile(
+                    entry: entry,
+                    showCost: !mobileShell,
+                    cumulative: running[index],
+                    unit: product.unit,
+                  );
             final bool canTap = !mobileShell && onOpenDocument != null;
             return InkWell(
               key: Key('stock-flow-row-${entry.documentId}'),
@@ -126,7 +148,9 @@ Widget _footerNote(
   return Padding(
     padding: const EdgeInsets.symmetric(vertical: 16),
     child: Text(
-      text,
+      // 2026-11-26（§2.5-②）：累计的语义必须写在页面上 —— 退货 / 盘点都会
+      // 让累计"往回走"，只给数字不给说法，用户会以为算错了。
+      '$text\n「累计」是从最早一笔一直加到现在（退货、盘点也计入）。',
       textAlign: TextAlign.center,
       style: TextStyle(height: 1.6, color: theme.hintColor),
     ),
@@ -136,10 +160,19 @@ Widget _footerNote(
 /// 窄屏流水卡片：行 1 = 类型 + ±数量（右对齐大字）；
 /// 行 2 = 单号 + 日期（+ 离线标）；桌面窄窗加成本。
 class _NarrowFlowCard extends StatelessWidget {
-  const _NarrowFlowCard({required this.entry, required this.showCost});
+  const _NarrowFlowCard({
+    required this.entry,
+    required this.showCost,
+    required this.cumulative,
+    required this.unit,
+  });
 
   final StockFlowEntry entry;
   final bool showCost;
+
+  /// 截至本行的累计数量（从最早一笔加起）
+  final int cumulative;
+  final String unit;
 
   @override
   Widget build(BuildContext context) {
@@ -184,6 +217,16 @@ class _NarrowFlowCard extends StatelessWidget {
               color: theme.textTheme.bodySmall?.color,
             ),
           ),
+          // 累计（同上：紧跟数量、不让人自己加）
+          Text(
+            '累计 $cumulative $unit',
+            key: const Key('stock-flow-cumulative'),
+            style: TextStyle(
+              height: 1.6,
+              fontSize: 12,
+              color: theme.textTheme.bodySmall?.color,
+            ),
+          ),
           if (showCost)
             Text(
               '成本 ¥${Money.format(entry.totalCost)}'
@@ -201,10 +244,19 @@ class _NarrowFlowCard extends StatelessWidget {
 
 /// 宽窗流水行：单号 + 类型（+ 离线标）｜ ±数量 ｜（桌面：成本）｜ 日期。
 class _WideFlowTile extends StatelessWidget {
-  const _WideFlowTile({required this.entry, required this.showCost});
+  const _WideFlowTile({
+    required this.entry,
+    required this.showCost,
+    required this.cumulative,
+    required this.unit,
+  });
 
   final StockFlowEntry entry;
   final bool showCost;
+
+  /// 截至本行的累计数量（从最早一笔加起）
+  final int cumulative;
+  final String unit;
 
   @override
   Widget build(BuildContext context) {
@@ -235,12 +287,30 @@ class _WideFlowTile extends StatelessWidget {
               ],
             ),
           ),
-          Text(
-            '${entry.quantity}',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
-            ),
+          // 2026-11-26（提案 §2.5-②）：±数量下面挂一行「累计」——
+          // 用户原话是"不用自己一条条加"，所以它必须紧跟数量、同一竖列。
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: <Widget>[
+              Text(
+                '${entry.quantity}',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const <FontFeature>[
+                    FontFeature.tabularFigures(),
+                  ],
+                ),
+              ),
+              Text(
+                '累计 $cumulative $unit',
+                key: const Key('stock-flow-cumulative'),
+                style: TextStyle(
+                  height: 1.5,
+                  fontSize: 12,
+                  color: theme.textTheme.bodySmall?.color,
+                ),
+              ),
+            ],
           ),
           const SizedBox(width: 16),
           if (showCost)

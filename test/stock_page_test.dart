@@ -1421,6 +1421,64 @@ void main() {
     expect(tester.getRect(find.text('库存')).left, closeTo(20, 1));
   });
 
+  // ------------------------------------------------------------ 累计列（2026-11-26 §2.5-②）
+  //
+  // 用户：中间每行的数字得自己一条条加，想回答"算几轮之后是多少"。
+  // 判据：**累计值本身**必须正确（不是"有个标签"）——
+  // 买 10 → 卖 3 ⇒ 两行累计分别是 10 / 7（`seq_no` 升序，最早在前）。
+  testWidgets('商品流水：每行显示"截至本行"的累计数量', (WidgetTester tester) async {
+    buy(10);
+    sell(3);
+    await tester.pumpWidget(
+      page(
+        stockFlow: StockLedgerDao(db),
+        settlements: SettlementService(db: db, engine: RuleEngine(db)),
+        deliveries: DeliveryService(engine: RuleEngine(db), queries: queries),
+        exports: FakeExport(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('红富士苹果').last);
+    await tester.pumpAndSettle();
+
+    final List<String> cumulative = tester
+        .widgetList<Text>(find.byKey(const Key('stock-flow-cumulative')))
+        .map((Text t) => t.data ?? '')
+        .toList();
+    expect(cumulative, <String>[
+      '累计 10 件',
+      '累计 7 件',
+    ], reason: '累计必须是"从最早一笔加到现在"的运行和，且跟着 seq_no 升序走');
+  });
+
+  testWidgets('商品流水：2.0 字号下不溢出（累计列多了一行）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1000, 900);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    buy(10);
+    sell(3);
+    await tester.pumpWidget(
+      page(
+        stockFlow: StockLedgerDao(db),
+        settlements: SettlementService(db: db, engine: RuleEngine(db)),
+        deliveries: DeliveryService(engine: RuleEngine(db), queries: queries),
+        exports: FakeExport(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('红富士苹果').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: '累计列在 2.0 档会把行撑高 —— 撑高可以，溢出不行',
+    );
+  });
+
   // ------------------------------------------------------------ 流水页宽屏上限（2026-11-25）
   //
   // 三个流水页共用 `flow_page_scaffold` ⇒ 一处改动三页生效。
