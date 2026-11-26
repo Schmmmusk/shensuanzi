@@ -95,9 +95,18 @@ class StockTopCard extends StatelessWidget {
               )
             else ...<Widget>[
               const SizedBox(height: 12),
+              // 2026-11-26（提案 §2.1）：「数量」原来各占各的自然宽 ⇒
+              // 每行的柱子**可用宽度不同**，柱长根本不可比（金额看着"每行位置都不同"
+              // 是同一个病根的另一面）。这里先量出所有行里最宽的那条数量文案，
+              // 统一给一个列宽：柱子在同一个 x 结束，金额与数量同列右对齐。
               for (int i = 0; i < rows.length; i++) ...<Widget>[
                 if (i > 0) const SizedBox(height: 10),
-                _row(theme, rows[i], maxValue),
+                _row(
+                  theme,
+                  rows[i],
+                  maxValue,
+                  _trailingColumnWidth(context, theme, rows),
+                ),
               ],
             ],
             // 两种「不能进榜」的，各说一句 —— 数量照报，但不假装有金额
@@ -158,7 +167,65 @@ class StockTopCard extends StatelessWidget {
     ),
   );
 
-  Widget _row(ThemeData theme, StockValueRow row, int maxValue) {
+  /// 所有行共用的**右侧数字列**宽度（逻辑像素）。
+  ///
+  /// 金额（16px w600）与数量（13px）**共用这一列**：金额右对齐在列里 ⇒
+  /// 三行的个位对齐、可以直接上下比较；数量也右对齐在同一列 ⇒ 视觉成一条线。
+  ///
+  /// ⚠️ 2026-11-26 之前这里是 `Flexible`（2026-11-18 为窄窗加的）：
+  /// `Flexible` 会跟 `Expanded(name)` **平分**剩余空间，而 `Text` 只取自身宽度、
+  /// 从分到的框**左边**开始画 ⇒ 金额被顶到卡片中间、各行的右边缘还参差
+  ///（截图 `20261126-压货榜-数量列对齐-125%.png` 之前那一版就是这个样子）。
+  /// 改成**测量出来的固定列宽**后，柱子在同一个 x 结束、柱长才可比。
+  double _trailingColumnWidth(
+    BuildContext context,
+    ThemeData theme,
+    List<StockValueRow> rows,
+  ) {
+    final TextScaler scaler = MediaQuery.textScalerOf(context);
+    final TextStyle amountStyle = const TextStyle(
+      height: 1.5,
+      fontSize: 16,
+      fontWeight: FontWeight.w600,
+    );
+    final TextStyle quantityStyle = TextStyle(
+      height: 1.4,
+      fontSize: 13,
+      color: theme.textTheme.bodySmall?.color,
+    );
+    double measure(String text, TextStyle style) {
+      final TextPainter painter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+      )..layout();
+      final double width = painter.width;
+      painter.dispose();
+      return width;
+    }
+
+    double widest = 0;
+    for (final StockValueRow row in rows) {
+      final double amount = measure(
+        '¥${Money.formatGrouped(row.valueCents)}',
+        amountStyle,
+      );
+      final double quantity = measure(
+        '${row.quantity} ${row.unit}',
+        quantityStyle,
+      );
+      if (amount > widest) widest = amount;
+      if (quantity > widest) widest = quantity;
+    }
+    return widest + 2;
+  }
+
+  Widget _row(
+    ThemeData theme,
+    StockValueRow row,
+    int maxValue,
+    double trailingColumn,
+  ) {
     return Column(
       key: Key('overview-stock-top-${row.productId}'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -175,10 +242,12 @@ class StockTopCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            // ⚠️ `Flexible` + 右对齐（2026-11-18）：固定宽度的金额在 88 px 的
-            // 极窄卡里比整行还宽，`Row` 直接顶出去。给了弹性以后它能在
-            // 真放不下时折成两行，而不是画黄黑条纹。
-            Flexible(
+            // 金额放进**与数量共用的右列**（该列宽由 `_trailingColumnWidth` 量出）：
+            // 右对齐 ⇒ 各行个位对齐；列宽固定 ⇒ 柱子在同一个 x 结束。
+            // ⚠️ 列宽是"所有行里最宽的那条金额/数量"，所以不会比原来更窄 ——
+            // 2026-11-18 那个"88 px 极窄卡顶出去"的问题不会回来。
+            SizedBox(
+              width: trailingColumn,
               child: Text(
                 '¥${Money.formatGrouped(row.valueCents)}',
                 textAlign: TextAlign.right,
@@ -204,13 +273,18 @@ class StockTopCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            // 数量 + 单位：**各自单位照实写，不换算、不跨商品求和**
-            Text(
-              '${row.quantity} ${row.unit}',
-              style: TextStyle(
-                height: 1.4,
-                fontSize: 13,
-                color: theme.textTheme.bodySmall?.color,
+            // 数量 + 单位：**各自单位照实写，不换算、不跨商品求和**。
+            // 固定列宽（卡片级算好）⇒ 所有行的柱子在同一 x 结束，柱长可比。
+            SizedBox(
+              width: trailingColumn,
+              child: Text(
+                '${row.quantity} ${row.unit}',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  height: 1.4,
+                  fontSize: 13,
+                  color: theme.textTheme.bodySmall?.color,
+                ),
               ),
             ),
           ],

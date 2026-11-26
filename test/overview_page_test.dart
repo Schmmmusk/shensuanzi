@@ -1821,6 +1821,97 @@ void main() {
     );
   });
 
+  // ------------------------------------------------------------ 压货榜对齐（2026-11-26 §2.1）
+  //
+  // 用户：金额"每行位置都不同"，跟柱子一起漂。
+  // 根因不是金额没右对齐，而是 `Flexible` 把金额和名称**平分**剩余宽度、
+  // `Text` 又从分到的框左边开始画 —— 于是金额落在卡片中间、右边缘参差；
+  // 数量列各占各的自然宽 ⇒ **每行的柱子可用宽度不同**，柱长也不可比。
+  testWidgets('压货榜：金额右边缘对齐、柱子起止点一致', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: StockTopCard(
+            summary: StockTopSummary(
+              rows: <StockValueRow>[
+                StockValueRow(
+                  productId: 'big',
+                  name: '大件',
+                  unit: '台',
+                  quantity: 1,
+                  valueCents: 1260000,
+                ),
+                StockValueRow(
+                  productId: 'tiny',
+                  name: '小件（名字更长一些）',
+                  unit: '个',
+                  quantity: 500,
+                  valueCents: 500,
+                ),
+              ],
+              uncalibratedCount: 0,
+              negativeCostCount: 0,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Rect bigMoney = tester.getRect(find.text('¥12,600.00'));
+    final Rect tinyMoney = tester.getRect(find.text('¥5.00'));
+    expect(
+      bigMoney.right,
+      closeTo(tinyMoney.right, 1),
+      reason: '金额必须右对齐在同一列 —— 否则上下两行个位对不上，没法比大小',
+    );
+
+    // ⚠️ 不能比「两行柱子的右边缘」——`RatioBar` 的 key 挂在**填充段**上，
+    // 填充按比例长（¥5 那根就只有 4 px），右边缘本来就不一样。
+    // 要验的不变式是「**轨道的可用宽度**与数量文案无关」：
+    // 同一组金额、把最宽的数量文案换到另一行，满格那根的宽度必须不变。
+    final double bigBarWidth = tester
+        .getSize(find.byKey(const Key('overview-stock-top-big-bar')))
+        .width;
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: StockTopCard(
+            summary: StockTopSummary(
+              rows: <StockValueRow>[
+                // 金额不变，把「1200 包」挪到**满格那一行**（数量文案更宽）
+                StockValueRow(
+                  productId: 'big',
+                  name: '大件',
+                  unit: '包',
+                  quantity: 1200,
+                  valueCents: 1260000,
+                ),
+                StockValueRow(
+                  productId: 'tiny',
+                  name: '小件（名字更长一些）',
+                  unit: '个',
+                  quantity: 1,
+                  valueCents: 500,
+                ),
+              ],
+              uncalibratedCount: 0,
+              negativeCostCount: 0,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getSize(find.byKey(const Key('overview-stock-top-big-bar'))).width,
+      closeTo(bigBarWidth, 1),
+      reason: '柱子可用宽度不许受「数量文案多长」影响 —— 否则柱长不可比',
+    );
+  });
+
   // ------------------------------------------------------------ 宽屏上限（2026-11-24 批 B·1）
   //
   // 用户 1916×790 实测：内容铺满整条工作区，视线要左右来回。
