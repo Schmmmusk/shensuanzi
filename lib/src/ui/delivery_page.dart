@@ -43,6 +43,8 @@ import 'keyboard_reveal.dart';
 import 'mobile_guidance_dialog.dart';
 import 'entry_unit_hints.dart';
 import 'entry_fields_row.dart';
+import 'entry_page_title.dart';
+import 'line_row.dart';
 import 'stock_snapshot_cache.dart';
 import 'draft_banner.dart';
 import 'submit_error_summary.dart';
@@ -125,160 +127,11 @@ class DeliveryPage extends StatefulWidget {
   State<DeliveryPage> createState() => _DeliveryPageState();
 }
 
-/// 一行明细的控制器（商品选择结果 + 数量 / 单价原文）
-class _RowCtl {
-  _RowCtl({
-    String quantity = '',
-    String unitPrice = '',
-    String productName = '',
-  }) : quantity = TextEditingController(text: quantity),
-       unitPrice = TextEditingController(text: unitPrice),
-       name = TextEditingController(text: productName);
-
-  /// 商品名输入框的焦点（自动补全要用；**每行一个**，不能共用）。
-  final FocusNode nameFocus = FocusNode();
-
-  /// 明细行上的**商品名**（② 无缝建档，2026-10-25，§CV·一百零五）。
-  /// 与销售 / 采购页**逐字段同构** —— 改一边必须扫另两边（纪律 18）。
-  final TextEditingController name;
-
-  /// 名字被手改 ⇒ 解绑商品；换算上下文一并对齐清空。
-  void setName(String text) {
-    if (product == null) return;
-    if (text.trim() == product!.name.trim()) return;
-    product = null;
-    baseUnit = null;
-    packageUnit = null;
-    packageSize = null;
-    entryUnit = '';
-    entryPriceKept = false;
-  }
-
-  /// 商品选择结果 —— 只能由「选商品」动作写入（`_pickProduct`）。
-  Product? product;
-
-  // ---- v3 换算上下文（选商品时由 [attachProduct] 写入）----
-  String? baseUnit;
-  String? packageUnit;
-  int? packageSize;
-
-  /// **录入单位**：'' = 最小单位（没切）；切到包装 = [packageUnit] 原文
-  String entryUnit = '';
-
-  /// 切单位时价格没换成（除不尽，保留原值）⇒ `true`：橙色告知，不拦提交
-  /// （§BG 方案 A ②）—— 与采购 / 销售**逐字段同构**，改一边必须扫另两边
-  bool entryPriceKept = false;
-
-  /// 成对启用 ⇒ 行卡显示单位切换（§BD·三 第 3 条）
-  bool get canSwitchPackage =>
-      packageUnit != null && packageUnit!.isNotEmpty && (packageSize ?? 0) > 0;
-
-  /// 数量框 label 上显示的单位
-  String get entryUnitDisplay =>
-      entryUnit.isNotEmpty ? entryUnit : (baseUnit ?? '');
-
-  /// 单价框 label（§BG 方案 A ②：标注「这个数现在按什么单位计」——
-  /// 否则切到箱后，瓶价会被悄悄当成箱价，真机踩过）
-  String get priceLabel {
-    final String unit = entryUnitDisplay;
-    return unit.isEmpty ? '单价（元）' : '单价（元/$unit）';
-  }
-
-  /// 选商品时写入换算上下文；**换商品重置单位**（不同商品上下文不同）
-  void attachProduct(Product picked) {
-    product = picked;
-    name.text = picked.name;
-    baseUnit = picked.unit;
-    packageUnit = picked.packageUnit;
-    packageSize = picked.packageSize;
-    entryUnit = '';
-    entryPriceKept = false;
-    priceTouched = false;
-  }
-
-  /// 价格框被**用户手改过**（§BG 方案 A ①：裁定明令用**显式布尔**，
-  /// 不靠「值变没变」猜）—— 预填 = false；用户编辑（非空）= true；
-  /// 用户清空 = false；**程序换算不算手改**（换算后的价仍是「预填价」，
-  /// 可继续跟随单位）。
-  bool priceTouched = false;
-
-  /// 切录入单位（§BG 方案 A）。**判断在 core**（`convertEntryPriceCents`），
-  /// 这里只做状态变更：未被手改的价格跟着换到新单位；换算不出（除不尽）⇒
-  /// 保留原值 + [entryPriceKept] 告知。与采购 / 销售**逐字段同构**。
-  void switchEntryUnit(String toUnit) {
-    final String fromUnit = entryUnit;
-    final int? price = Money.tryParseYuan(unitPrice.text.trim());
-    entryUnit = toUnit;
-    entryPriceKept = false;
-    if (priceTouched || price == null) return; // 手改过 / 空 ⇒ 数字是用户的，不动
-    final int? converted = convertEntryPriceCents(
-      priceCents: price,
-      fromUnit: fromUnit,
-      toUnit: toUnit,
-      baseUnit: baseUnit ?? '',
-      packageUnit: packageUnit,
-      packageSize: packageSize,
-    );
-    if (converted == null) {
-      entryPriceKept = true;
-      return;
-    }
-    // 程序写入不触发 onChanged ⇒ priceTouched 保持 false（仍是「预填价」）
-    unitPrice.text = Money.format(converted);
-  }
-
-  final TextEditingController quantity;
-  final TextEditingController unitPrice;
-
-  bool get isEmpty =>
-      product == null &&
-      name.text.trim().isEmpty &&
-      quantity.text.trim().isEmpty &&
-      unitPrice.text.trim().isEmpty;
-
-  /// 数量取值；非法时 `null`（与 `PurchaseLineDraft.quantityValue` 同名对齐）
-  int? get quantityValue {
-    final int? qty = int.tryParse(quantity.text.trim());
-    return (qty == null || qty <= 0) ? null : qty;
-  }
-
-  /// 换算后的**最小单位数量**（`document_lines.quantity` 的值）。
-  ///
-  /// ⚠️ **与销售页 `_RowCtl.baseQuantityValue` 逐字同构**（#44 的硬前置：
-  /// 三页是**三份独立实现**，改一页必须 grep 另两页 —— `Agents.md` 纪律 18）。
-  /// 采购页**故意没有**这份 getter：进货是加库存，不做负库存判定。
-  ///
-  /// 语义（#44 裁定「甲」）：**数量没填 / 非法 ⇒ `null`**（**不换算、不兜底**）；
-  /// 换算失败也 `null`。⚠️ 不能写 `quantityValue ?? 0` —— 空框被 0 兜底会让
-  /// 「本行没数量」伪装成一个合法的 0，负库存判定（`qty > estimated`）就会
-  /// 在快照为负时**假告警**（销售页 #28① 踩过，见 §CV·三十三）。
-  int? get baseQuantityValue {
-    final int? entry = quantityValue;
-    if (entry == null) return null;
-    return toBaseQuantity(
-      entryQuantity: entry,
-      entryUnit: entryUnit.isEmpty ? null : entryUnit,
-      baseUnit: baseUnit ?? '',
-      packageUnit: packageUnit,
-      packageSize: packageSize,
-    ).baseQuantityOrNull;
-  }
-
-  /// 本行小计（分）；字段没填全 ⇒ `null`（合计按 0 处理，校验会拦）
-  int? get amountCents {
-    final int? qty = int.tryParse(quantity.text.trim());
-    final int? price = Money.tryParseYuan(unitPrice.text.trim());
-    if (qty == null || qty <= 0 || price == null || price < 0) return null;
-    return qty * price;
-  }
-
-  void dispose() {
-    quantity.dispose();
-    unitPrice.dispose();
-    name.dispose();
-    nameFocus.dispose();
-  }
-}
+/// 本页的行编辑模型 —— 实现搬到 `line_row.dart`（2026-11-26 抽离）。
+///
+/// ⚠️ 保留 `_RowCtl` 这个名字：本文件里有几十处 `List<_RowCtl>` / `row.xxx`，
+/// 改名会制造一个巨大的、纯噪音的 diff。**类型就是同一个** [LineRowModel]。
+typedef _RowCtl = LineRowModel;
 
 class _DeliveryPageState extends State<DeliveryPage> {
   /// **本机能不能建往来方**：策略放开 **且** 出口齐备。
@@ -939,6 +792,9 @@ class _DeliveryPageState extends State<DeliveryPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
+                      // 2026-11-26（提案 §1.3）：沉浸模式下页面内**没有标题**时，
+                      // 用户开单前无法确认"我在开哪一种单"（三页录入区几乎一样）。
+                      const EntryPageTitle('送货'),
                       // ① 草稿橙条（最上面）
                       if (_restoreRaw != null) _draftBanner(theme),
                       // §CV·八十 批 1 ③：失败时把「哪几处要填」摆在页顶

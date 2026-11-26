@@ -112,12 +112,76 @@ void expectSameBlock(String header) {
 
 void main() {
   group('开单三页同构（#45 丙 · 机械保证）', () {
-    test('`quantityValue`：销售 / 送货 逐字同构', () {
-      expectSameBlock('int? get quantityValue');
+    // 2026-11-26：`_RowCtl` 已抽成 `line_row.dart` 的 `LineRowModel`
+    //（三页共用一份）。原来的「逐字比对两份源码」**降级为更强的判据**：
+    // ① 定义只许有一处；② 三个页面不许再各自带一份 `class _RowCtl`。
+    //
+    // ⚠️ 为什么这比逐字比对更强：从前三份复制体只要**同时**改错，逐字比对照样绿；
+    // 现在物理上只有一份实现，改错也是三个页面一起错（可被行为测试抓住）。
+    // 2026-11-26（提案 §1.3）：开单三页原来**页面内没有标题**，
+    // 用户开单前无法确认"我在开哪一种单"。标题必须三页都在，且共用同一个组件。
+    test('三页都有标题（`EntryPageTitle`），文案各自正确', () {
+      const Map<String, String> expected = <String, String>{
+        'sale_page': "EntryPageTitle('店内销售')",
+        'purchase_page': "EntryPageTitle('采购入库')",
+        'delivery_page': "EntryPageTitle('送货')",
+      };
+      for (final MapEntry<String, String> e in expected.entries) {
+        final String src = pageSource(e.key);
+        expect(
+          src,
+          contains("import 'entry_page_title.dart';"),
+          reason: '${e.key} 没接共享标题组件 —— 三页各写一份必然分叉（字号/边距）',
+        );
+        expect(
+          src,
+          contains(e.value),
+          reason: '${e.key} 的标题文案写错或丢了：期望 ${e.value}',
+        );
+      }
     });
 
-    test('`baseQuantityValue`：销售 / 送货 逐字同构（#44 的「没填 ⇒ null」口径）', () {
-      expectSameBlock('int? get baseQuantityValue');
+    test('`quantityValue` / `baseQuantityValue` 只在 `line_row.dart` 定义一次', () {
+      final String shared = pageSource('line_row');
+      expect(
+        shared,
+        contains('int? get quantityValue'),
+        reason: '共享模型必须提供 quantityValue（录入单位原始数）',
+      );
+      expect(
+        shared,
+        contains('int? get baseQuantityValue'),
+        reason: '共享模型必须提供 baseQuantityValue（最小单位数量，#44 的「没填 ⇒ null」口径）',
+      );
+      expect(
+        shared,
+        contains('toBaseQuantity('),
+        reason: '换算必须走 core 的纯函数，不许在 UI 里自己乘',
+      );
+
+      // 三个页面都不许再自带一份（否则"抽离"只是多了一份副本）
+      for (final String page in <String>[
+        'sale_page',
+        'purchase_page',
+        'delivery_page',
+      ]) {
+        final String src = pageSource(page);
+        expect(
+          src,
+          isNot(contains('class _RowCtl')),
+          reason: '$page 仍自带 `class _RowCtl` —— 抽离没落地',
+        );
+        expect(
+          src,
+          contains("import 'line_row.dart';"),
+          reason: '$page 必须 import 共享模型',
+        );
+        expect(
+          src,
+          contains('typedef _RowCtl = LineRowModel;'),
+          reason: '$page 要保留 `_RowCtl` 这个名字（否则全页改名，diff 变噪音）',
+        );
+      }
     });
 
     test('负库存判定式：销售 / 送货 逐字同构', () {
@@ -253,7 +317,8 @@ void main() {
       }
     });
 
-    test('返回拦截（#51）：三页同款 —— 手机确认放弃退出、桌面吞掉系统返回', () {      // 三页是逐字复制的（M09 的教训：只改 sale 漏了 delivery/delivery 漏了
+    test('返回拦截（#51）：三页同款 —— 手机确认放弃退出、桌面吞掉系统返回', () {
+      // 三页是逐字复制的（M09 的教训：只改 sale 漏了 delivery/delivery 漏了
       // purchase）⇒ 返回拦截的三个特征串必须**三页都在**。改法若有意变化，
       // 三页同步改（本测试继续过）；只改一页 ⇒ 这里红。
       const List<String> pins = <String>[
@@ -279,79 +344,84 @@ void main() {
       }
     });
 
-  // ------------------------------------------------------------ 提交错误摘要（2026-11-19）
-  //
-  // 来源：2026-11-17 提案 60 给**四页**加了「校验失败 → 点一下跳到出错字段」。
-  // 四页各自接线（`SubmitErrorSummary` + `_submitErrorItems()` + `_jumpTo`），
-  // 漏一页的表现是**点了没反应**（不报错、不红字）—— 比崩了更难发现。
-  group('提交错误摘要（四页）', () {
-    const List<String> pages = <String>[
-      'sale_page',
-      'purchase_page',
-      'delivery_page',
-      'return_page',
-    ];
+    // ------------------------------------------------------------ 提交错误摘要（2026-11-19）
+    //
+    // 来源：2026-11-17 提案 60 给**四页**加了「校验失败 → 点一下跳到出错字段」。
+    // 四页各自接线（`SubmitErrorSummary` + `_submitErrorItems()` + `_jumpTo`），
+    // 漏一页的表现是**点了没反应**（不报错、不红字）—— 比崩了更难发现。
+    group('提交错误摘要（四页）', () {
+      const List<String> pages = <String>[
+        'sale_page',
+        'purchase_page',
+        'delivery_page',
+        'return_page',
+      ];
 
-    test('四页都接了：摘要控件 / 生成器 / 跳转回调 / 跳转实现', () {
-      for (final String page in pages) {
-        final String source = normalize(pageSource(page));
-        for (final String pin in <String>[
-          'SubmitErrorSummary(',
-          '_submitErrorItems()',
-          'onJump: _jumpTo',
-          'Future<void> _jumpTo(SubmitSection section)',
-        ]) {
-          expect(
+      test('四页都接了：摘要控件 / 生成器 / 跳转回调 / 跳转实现', () {
+        for (final String page in pages) {
+          final String source = normalize(pageSource(page));
+          for (final String pin in <String>[
+            'SubmitErrorSummary(',
+            '_submitErrorItems()',
+            'onJump: _jumpTo',
+            'Future<void> _jumpTo(SubmitSection section)',
+          ]) {
+            expect(
+              source,
+              contains(pin),
+              reason:
+                  '$page 缺「$pin」—— 那一页的错误摘要点上去不会跳'
+                  '（静默失效：不报错、不红字，只有用户点不动）',
+            );
+          }
+        }
+      });
+
+      test('报出来的每一段，都必须在**同一页**的 `_jumpTo` 里被处理', () {
+        // 判据比「有没有 onJump」更近一步：**报的段 ⊆ 能跳的段**。
+        // 少一个 case 的表现同样是「点了没反应」，而它不会让任何 UI 测试红。
+        final RegExp sectionRef = RegExp(r'SubmitSection\.(\w+)');
+        for (final String page in pages) {
+          final String source = pageSource(page);
+          final String? produced = blockOf(
             source,
-            contains(pin),
+            'List<SubmitErrorItem> _submitErrorItems()',
+          );
+          final String? handled = blockOf(
+            source,
+            'Future<void> _jumpTo(SubmitSection section)',
+          );
+          expect(
+            produced,
+            isNotNull,
+            reason: '前提：$page 找不到 `_submitErrorItems()`',
+          );
+          expect(handled, isNotNull, reason: '前提：$page 找不到 `_jumpTo(...)`');
+          if (produced == null || handled == null) continue;
+
+          final Set<String> made = sectionRef
+              .allMatches(produced)
+              .map((RegExpMatch m) => m.group(1)!)
+              .toSet();
+          final Set<String> canJump = sectionRef
+              .allMatches(handled)
+              .map((RegExpMatch m) => m.group(1)!)
+              .toSet();
+          expect(
+            made,
+            isNotEmpty,
             reason:
-                '$page 缺「$pin」—— 那一页的错误摘要点上去不会跳'
-                '（静默失效：不报错、不红字，只有用户点不动）',
+                '$page 的 `_submitErrorItems()` 里找不到任何 `SubmitSection.` —— 钳子失效',
+          );
+          expect(
+            made.difference(canJump),
+            isEmpty,
+            reason:
+                '$page 报出了 ${made.difference(canJump).join(' / ')} 段，'
+                '但 `_jumpTo` 里没有对应分支 —— 用户点上去不会跳',
           );
         }
-      }
+      });
     });
-
-    test('报出来的每一段，都必须在**同一页**的 `_jumpTo` 里被处理', () {
-      // 判据比「有没有 onJump」更近一步：**报的段 ⊆ 能跳的段**。
-      // 少一个 case 的表现同样是「点了没反应」，而它不会让任何 UI 测试红。
-      final RegExp sectionRef = RegExp(r'SubmitSection\.(\w+)');
-      for (final String page in pages) {
-        final String source = pageSource(page);
-        final String? produced = blockOf(
-          source,
-          'List<SubmitErrorItem> _submitErrorItems()',
-        );
-        final String? handled = blockOf(
-          source,
-          'Future<void> _jumpTo(SubmitSection section)',
-        );
-        expect(produced, isNotNull, reason: '前提：$page 找不到 `_submitErrorItems()`');
-        expect(handled, isNotNull, reason: '前提：$page 找不到 `_jumpTo(...)`');
-        if (produced == null || handled == null) continue;
-
-        final Set<String> made = sectionRef
-            .allMatches(produced)
-            .map((RegExpMatch m) => m.group(1)!)
-            .toSet();
-        final Set<String> canJump = sectionRef
-            .allMatches(handled)
-            .map((RegExpMatch m) => m.group(1)!)
-            .toSet();
-        expect(
-          made,
-          isNotEmpty,
-          reason: '$page 的 `_submitErrorItems()` 里找不到任何 `SubmitSection.` —— 钳子失效',
-        );
-        expect(
-          made.difference(canJump),
-          isEmpty,
-          reason:
-              '$page 报出了 ${made.difference(canJump).join(' / ')} 段，'
-              '但 `_jumpTo` 里没有对应分支 —— 用户点上去不会跳',
-        );
-      }
-    });
-  });
   });
 }
