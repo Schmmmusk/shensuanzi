@@ -54,6 +54,28 @@ class StockTopCard extends StatelessWidget {
     if (summary.isEmpty) return const SizedBox.shrink();
     final ThemeData theme = Theme.of(context);
     final List<StockValueRow> rows = summary.rows;
+    // ⚠️ 2026-11-26 真机 bug：金额被折成两行（`¥1,186.` / `81`）。
+    // 根因是**测量用的字体不是渲染用的字体** —— `TextPainter` 没带
+    // `fontFamily`，用的是 Roboto 的度量，而真机主题是微软雅黑（更宽），
+    // 于是量出来的列宽比实际需要的小，`Text` 就换行了。
+    // 现在两个样式都从 `theme.textTheme` 派生（带 family），测量与渲染**同一份**。
+    final TextStyle amountStyle =
+        (theme.textTheme.bodyLarge ?? const TextStyle()).copyWith(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          height: 1.5,
+        );
+    final TextStyle quantityStyle =
+        (theme.textTheme.bodySmall ?? const TextStyle()).copyWith(
+          fontSize: 13,
+          height: 1.4,
+        );
+    final double trailingColumn = _trailingColumnWidth(
+      context,
+      rows,
+      amountStyle,
+      quantityStyle,
+    );
     final int maxValue = rows.isEmpty
         ? 0
         : rows
@@ -105,7 +127,9 @@ class StockTopCard extends StatelessWidget {
                   theme,
                   rows[i],
                   maxValue,
-                  _trailingColumnWidth(context, theme, rows),
+                  trailingColumn,
+                  amountStyle,
+                  quantityStyle,
                 ),
               ],
             ],
@@ -179,20 +203,11 @@ class StockTopCard extends StatelessWidget {
   /// 改成**测量出来的固定列宽**后，柱子在同一个 x 结束、柱长才可比。
   double _trailingColumnWidth(
     BuildContext context,
-    ThemeData theme,
     List<StockValueRow> rows,
+    TextStyle amountStyle,
+    TextStyle quantityStyle,
   ) {
     final TextScaler scaler = MediaQuery.textScalerOf(context);
-    final TextStyle amountStyle = const TextStyle(
-      height: 1.5,
-      fontSize: 16,
-      fontWeight: FontWeight.w600,
-    );
-    final TextStyle quantityStyle = TextStyle(
-      height: 1.4,
-      fontSize: 13,
-      color: theme.textTheme.bodySmall?.color,
-    );
     double measure(String text, TextStyle style) {
       final TextPainter painter = TextPainter(
         text: TextSpan(text: text, style: style),
@@ -225,6 +240,8 @@ class StockTopCard extends StatelessWidget {
     StockValueRow row,
     int maxValue,
     double trailingColumn,
+    TextStyle amountStyle,
+    TextStyle quantityStyle,
   ) {
     return Column(
       key: Key('overview-stock-top-${row.productId}'),
@@ -251,11 +268,12 @@ class StockTopCard extends StatelessWidget {
               child: Text(
                 '¥${Money.formatGrouped(row.valueCents)}',
                 textAlign: TextAlign.right,
-                style: const TextStyle(
-                  height: 1.5,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
+                // 单行 + 不换行：列宽是按**同一份样式**量出来的，正常不会不够；
+                // 万一字体回退导致差几个像素，也宁可溢出 1 px，不要折成两行
+                //（真机 2026-11-26 就是这么坏的）。
+                maxLines: 1,
+                softWrap: false,
+                style: amountStyle,
               ),
             ),
           ],
@@ -280,11 +298,9 @@ class StockTopCard extends StatelessWidget {
               child: Text(
                 '${row.quantity} ${row.unit}',
                 textAlign: TextAlign.right,
-                style: TextStyle(
-                  height: 1.4,
-                  fontSize: 13,
-                  color: theme.textTheme.bodySmall?.color,
-                ),
+                maxLines: 1,
+                softWrap: false,
+                style: quantityStyle,
               ),
             ),
           ],

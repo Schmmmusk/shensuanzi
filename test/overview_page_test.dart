@@ -1912,6 +1912,54 @@ void main() {
     );
   });
 
+  // 真机回归（2026-11-26）：金额被折成两行（`¥1,186.` / `81`）。
+  // 根因：`TextPainter` 测量时**没带 fontFamily**，用的是 Roboto 度量；
+  // 而真机主题是微软雅黑（更宽）⇒ 量出的列宽偏小 ⇒ `Text` 换行。
+  // 判据：金额文本的高度必须是**单行**高度（16px × 缩放 × 1.5），不是两行。
+  testWidgets('压货榜：金额不折行（2.0 档最容易折）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        // 模拟真机：主题指定字体族（测试环境会回退，但测量与渲染必须用**同一族**）
+        theme: ThemeData(fontFamily: 'Microsoft YaHei'),
+        home: const Scaffold(
+          body: StockTopCard(
+            summary: StockTopSummary(
+              rows: <StockValueRow>[
+                StockValueRow(
+                  productId: 'big',
+                  name: '13w LED灯泡',
+                  unit: '个',
+                  quantity: 80,
+                  valueCents: 118681,
+                ),
+                StockValueRow(
+                  productId: 'mid',
+                  name: '自攻螺丝',
+                  unit: '个',
+                  quantity: 45,
+                  valueCents: 58500,
+                ),
+              ],
+              uncalibratedCount: 0,
+              negativeCostCount: 0,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Size money = tester.getSize(find.text('¥1,186.81'));
+    // 单行高度 = 16 × 2.0 × 1.5 = 48；折成两行会接近 96。
+    expect(money.height, lessThan(70), reason: '金额折行了 —— 列宽必须按**渲染用的同一份样式**测量');
+  });
+
   // ------------------------------------------------------------ 宽屏上限（2026-11-24 批 B·1）
   //
   // 用户 1916×790 实测：内容铺满整条工作区，视线要左右来回。
