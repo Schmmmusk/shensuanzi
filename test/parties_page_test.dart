@@ -825,6 +825,40 @@ void main() {
     );
   });
 
+  // ------------------------------------------------------------ 表头按钮分组（2026-11-26 §2.7）
+  //
+  // 提案 §2.4 的同一个病：`Wrap(spaceBetween)` 里三个子项 ⇒ 中间那个被摆到**正中间**。
+  // 往来方页原来是 [标题][导出][新建] ⇒ 导出按钮看着像居中。
+  // 判据：导出按钮在**右半边**，且紧邻「新建往来方」（两者之间没有大空隙）。
+  testWidgets('表头：导出与新建都靠右（不再有一个在正中间）', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1000, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final FakeExport fake = FakeExport();
+    await tester.pumpWidget(page(exports: fake));
+    await tester.pumpAndSettle();
+
+    final Rect export = tester.getRect(find.byKey(const Key('export-parties')));
+    final Rect create = tester.getRect(find.text('新建往来方'));
+
+    expect(
+      export.left,
+      greaterThan(1000 * 0.5),
+      reason: '导出按钮被 spaceBetween 摆到了中间 —— 应整组靠右',
+    );
+    expect(
+      create.left,
+      greaterThan(export.left),
+      reason: '两个动作按钮必须相邻靠右：[标题] …… [导出] [新建]',
+    );
+    expect(
+      create.left - export.right,
+      lessThan(200),
+      reason: '两者之间不许塞进一大段空白 —— 那正是"中间那个被 spaceBetween 摆到正中间"',
+    );
+  });
+
   // ------------------------------------------------------------ 宽屏上限（2026-11-25）
   testWidgets('宽屏 1916：标题左边缘 = 418（内容 1080 居中），视口全宽', (
     WidgetTester tester,

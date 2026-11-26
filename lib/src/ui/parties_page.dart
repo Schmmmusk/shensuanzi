@@ -161,33 +161,45 @@ class _PartiesPageState extends State<PartiesPage> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: <Widget>[
                     Text('往来方', style: theme.textTheme.titleLarge),
-                    if (widget.exports != null)
-                      ExportButton(
-                        key: const Key('export-parties'),
-                        // AF-2：全量（**含停用** —— 停用但还欠钱的客户不能少）
-                        label: '导出往来方',
-                        export: () => widget.exports!.write(
-                          partyExportTable(
-                            parties: widget.service.listForExport(),
-                            balances: balances,
+                    // 2026-11-26（提案 §2.7，套用 §2.4 的结论）：三个子项挤在
+                    // `spaceBetween` 里 ⇒ **中间那个被摆到正中间**（导出按钮看着像居中）。
+                    // 两个动作收进一个右对齐的子 Wrap，整体靠右：
+                    //   [往来方] ............ [导出往来方] [新建往来方]
+                    Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: <Widget>[
+                        if (widget.exports != null)
+                          ExportButton(
+                            key: const Key('export-parties'),
+                            // AF-2：全量（**含停用** —— 停用但还欠钱的客户不能少）
+                            label: '导出往来方',
+                            export: () => widget.exports!.write(
+                              partyExportTable(
+                                parties: widget.service.listForExport(),
+                                balances: balances,
+                              ),
+                            ),
                           ),
+                        // 2026-11-01（用户裁定 A3）：只读态**置灰**。
+                        //
+                        // 点下去本来就是安全的（`_canWriteParties` 为 false ⇒ 弹
+                        // 「这一步在电脑上做」），但三处写入口的表现不一致：
+                        // 开单页带锁发灰、商品页置灰，唯独这里还是蓝色实心。
+                        // 对不熟悉软件的人来说，**按钮外观就是操作能力的暗示**。
+                        //
+                        // 指路不丢：那句「要建往来方请在电脑上操作」搬进了顶部红条
+                        // （见 `write_blocked.dart` 的 `writeBlockedReason`）。
+                        FilledButton.icon(
+                          onPressed: _canWriteParties
+                              ? () => _editParty(context)
+                              : null,
+                          icon: const Icon(Icons.add),
+                          label: const Text('新建往来方'),
                         ),
-                      ),
-                    // 2026-11-01（用户裁定 A3）：只读态**置灰**。
-                    //
-                    // 点下去本来就是安全的（`_canWriteParties` 为 false ⇒ 弹
-                    // 「这一步在电脑上做」），但三处写入口的表现不一致：
-                    // 开单页带锁发灰、商品页置灰，唯独这里还是蓝色实心。
-                    // 对不熟悉软件的人来说，**按钮外观就是操作能力的暗示**。
-                    //
-                    // 指路不丢：那句「要建往来方请在电脑上操作」搬进了顶部红条
-                    // （见 `write_blocked.dart` 的 `writeBlockedReason`）。
-                    FilledButton.icon(
-                      onPressed: _canWriteParties
-                          ? () => _editParty(context)
-                          : null,
-                      icon: const Icon(Icons.add),
-                      label: const Text('新建往来方'),
+                      ],
                     ),
                   ],
                 ),

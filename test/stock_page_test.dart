@@ -1479,6 +1479,40 @@ void main() {
     );
   });
 
+  // 真机（2026-11-26）：导出按钮压住第一行流水 —— 左上角的单号被盖掉了。
+  // 判据：导出按钮的底边不得低于第一行的顶边（矩形不相交）。
+  testWidgets('商品流水：导出按钮不压第一行', (WidgetTester tester) async {
+    buy(10);
+    sell(3);
+    await tester.pumpWidget(
+      page(
+        stockFlow: StockLedgerDao(db),
+        settlements: SettlementService(db: db, engine: RuleEngine(db)),
+        deliveries: DeliveryService(engine: RuleEngine(db), queries: queries),
+        exports: FakeExport(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('红富士苹果').last);
+    await tester.pumpAndSettle();
+
+    final Rect export = tester.getRect(
+      find.byKey(const Key('export-stock-flow')),
+    );
+    final Finder firstRow = find.byWidgetPredicate((Widget w) {
+      final Key? key = w.key;
+      return key is ValueKey<String> && key.value.startsWith('stock-flow-row-');
+    }).first;
+    final Rect row = tester.getRect(firstRow);
+
+    debugPrint('导出按钮 rect=$export  第一行 rect=$row');
+    expect(
+      export.bottom,
+      lessThanOrEqualTo(row.top + 0.5),
+      reason: '导出按钮压住了第一行 —— 单号会被盖掉（真机 2026-11-26）',
+    );
+  });
+
   // ------------------------------------------------------------ 流水页宽屏上限（2026-11-25）
   //
   // 三个流水页共用 `flow_page_scaffold` ⇒ 一处改动三页生效。
