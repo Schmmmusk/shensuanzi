@@ -17,6 +17,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
+import 'app_dialog.dart';
 import 'product_form_dialog.dart';
 
 /// 一条候选的**匹配强度**（数字越小越靠前）。
@@ -369,7 +370,7 @@ Future<Product?> offerCreateMissingProduct(
 
   final bool? go = await showDialog<bool>(
     context: context,
-    builder: (BuildContext dialogContext) => AlertDialog(
+    builder: (BuildContext dialogContext) => AppDialog(
       title: const Text('没找到这个商品'),
       content: Text('「$name」还不在商品档案里，现在建一个吗？'),
       actions: <Widget>[

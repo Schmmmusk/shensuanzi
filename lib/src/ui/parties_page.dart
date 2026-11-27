@@ -16,6 +16,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_dialog.dart';
 import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -770,7 +771,7 @@ class _PartyFormDialogState extends State<_PartyFormDialog> {
   @override
   Widget build(BuildContext context) {
     final bool isEditing = widget.existing != null;
-    return AlertDialog(
+    return AppDialog(
       title: Text(isEditing ? '编辑往来方' : '新建往来方'),
       content: SingleChildScrollView(
         child: Column(

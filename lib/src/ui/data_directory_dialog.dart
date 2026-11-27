@@ -15,6 +15,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_dialog.dart';
 import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
@@ -134,7 +135,7 @@ class _DataDirectoryDialogState extends State<_DataDirectoryDialog> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
 
-    return AlertDialog(
+    return AppDialog(
       title: const Text('选择数据存放位置'),
       content: SizedBox(
         width: 420,

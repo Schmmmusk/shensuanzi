@@ -37,6 +37,8 @@
 library;
 
 import 'package:flutter/material.dart';
+
+import 'app_dialog.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
 class ReadFailureBanner extends StatefulWidget {
@@ -155,7 +157,7 @@ class _ReadFailureBannerState extends State<ReadFailureBanner> {
   void _showAdvice(BuildContext context) {
     showDialog<void>(
       context: context,
-      builder: (BuildContext context) => AlertDialog(
+      builder: (BuildContext context) => AppDialog(
         title: const Text('这些数据怎么办'),
         content: const Text(readFailureAdvice),
         actions: <Widget>[

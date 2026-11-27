@@ -13,6 +13,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_dialog.dart';
 import 'app_colors.dart';
 import 'scaled.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -303,7 +304,7 @@ class _ReturnPageState extends State<ReturnPage> {
               '（${draft.refunds.first.accountName}）';
     final bool? confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
+      builder: (BuildContext dialogContext) => AppDialog(
         title: const Text('确认退货？'),
         content: Text(
           '将退 $lineCount 行商品，金额合计 '

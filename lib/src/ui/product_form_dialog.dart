@@ -33,6 +33,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_dialog.dart';
 import 'app_colors.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
@@ -651,7 +652,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     // P3：内容高度会变（条码提示出现、错误框出现、窗口缩放）⇒ 每帧布局后重算
     WidgetsBinding.instance.addPostFrameCallback((_) => _syncMoreBelow());
 
-    return AlertDialog(
+    return AppDialog(
       // 2026-11-24：默认 `titlePadding`/`contentPadding` 各 24 px 上下，
       // 125% 下这两圈留白就是 60 px。压到 16 / 8 —— 视觉密度够用，
       // 换来的是「展开包装换算后一屏放得下」。

@@ -24,6 +24,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'app_dialog.dart';
 import 'product_form_dialog.dart';
 import 'notice.dart';
 
@@ -188,7 +189,7 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
     }
     final bool? abandon = await showDialog<bool>(
       context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
+      builder: (BuildContext dialogContext) => AppDialog(
         title: const Text('放弃这次录入吗？'),
         content: const Text('已填的内容会清空。', style: TextStyle(height: 1.6)),
         actions: <Widget>[
@@ -233,7 +234,7 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
     final int count = _draft().filledCount;
     final bool? confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
+      builder: (BuildContext dialogContext) => AppDialog(
         title: const Text('确认录入'),
         content: Text(
           '即将记录 $count 件商品的实际数量。\n\n'

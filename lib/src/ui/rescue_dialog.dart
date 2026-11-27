@@ -13,7 +13,9 @@
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
+import 'app_dialog.dart';
 import 'emphasized_text.dart';
+
 /// 跑一次抢救：确认 → 执行 → 报告。返回 `true` 表示产出了结果文件。
 Future<bool> showRescueFlow(
   BuildContext context, {
@@ -23,7 +25,7 @@ Future<bool> showRescueFlow(
 }) async {
   final bool? go = await showDialog<bool>(
     context: context,
-    builder: (BuildContext dialogContext) => AlertDialog(
+    builder: (BuildContext dialogContext) => AppDialog(
       title: const Text('从坏掉的文件里尽量找回'),
       content: const EmphasizedText(
         '这个办法用在「备份也没有、或者备份都坏了」的时候。\n\n'
@@ -109,7 +111,7 @@ class _RunningDialogState extends State<_RunningDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return AppDialog(
       title: const Text('正在找回…'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -140,7 +142,7 @@ class _ReportDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     if (!report.ok) {
-      return AlertDialog(
+      return AppDialog(
         title: const Text('没能找回数据'),
         content: Text(
           report.failure ?? '原因不明',
@@ -155,7 +157,7 @@ class _ReportDialog extends StatelessWidget {
       );
     }
 
-    return AlertDialog(
+    return AppDialog(
       title: const Text('找回完成'),
       content: SizedBox(
         width: 620,
@@ -214,9 +216,7 @@ class _ReportDialog extends StatelessWidget {
                         ),
                         // 抢救报告里有 `**方向反了**`（`rescue.dart`）——
                         // 用 EmphasizedText 才会真的加粗
-                        subtitle: EmphasizedText(
-                          issue.detail ?? issue.summary,
-                        ),
+                        subtitle: EmphasizedText(issue.detail ?? issue.summary),
                       );
                     },
                   ),

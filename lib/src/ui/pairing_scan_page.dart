@@ -16,6 +16,8 @@
 library;
 
 import 'package:flutter/material.dart';
+
+import 'app_dialog.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart'
@@ -442,7 +444,7 @@ class _ManualAddressDialogState extends State<ManualAddressDialog> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final Color secondary = theme.textTheme.bodySmall?.color ?? theme.hintColor;
-    return AlertDialog(
+    return AppDialog(
       title: Text(widget.title),
       content: SizedBox(
         width: 420,

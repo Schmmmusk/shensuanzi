@@ -13,6 +13,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_dialog.dart';
 import 'app_colors.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
@@ -207,7 +208,7 @@ class _SettlementDialogState extends State<_SettlementDialog> {
     final String? notice = _error;
     final String? change = _change;
 
-    return AlertDialog(
+    return AppDialog(
       title: Text(_verb),
       content: SizedBox(
         width: 420,

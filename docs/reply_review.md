@@ -23194,3 +23194,56 @@ core 只有 `linesOf(documentId)`（单张），没有批量 API；而本轮纪�
 **已保留一条回归断言**「导出按钮不压第一行」，若真机在**未滚动**时仍重叠，请再给一张静止截图，我按新证据查。
 
 门禁：`flutter analyze` **0** · root `flutter test` **653**（+1）。
+
+### 一百四十、2026-11-27 **弹窗内边距统一（批 0 结论落地）**
+
+#### ① 先纠正一个方向：**主题改不了这件事**
+
+第一版想用 `ThemeData` 全局覆盖，编译就否掉了：本 Flutter 版本的
+`DialogThemeData` **只有** `actionsPadding` / `insetPadding`，
+**没有** `titlePadding` / `contentPadding`。这两项只能在
+`AlertDialog` 构造里给 ⇒ 必须换组件，不能靠主题。
+
+#### ② 真正的算术：框架会乘一个**反向**收缩系数
+
+`material/dialog.dart` 的 `_scalePadding`：
+`lerp(1.0, 1/3, clamp(textScale,1,2)-1)` —— 2.0 档只剩 **1/3**。
+所以：**给 `24 / factor`**，乘完正好 24 px；任何缩放下边距都稳定。
+
+| 边 | 框架是否乘系数 | 给什么 |
+|---|---|---|
+| 标题 左/右/上 | 是 | `24 / factor` |
+| 标题 下 | 否 | `0`（间距交给正文上边距） |
+| 正文 左/右 | 是 | `24 / factor` |
+| 正文 上 | 否（有标题时） | `16` |
+| 正文 下 / 按钮 下 | 否 | `24` / `12` |
+
+**为什么不定"2.0 档给 34"**：同一个数既被除、又被原样用，混在一处必然算错一边。
+「稳定 24 px」简单、可验证、不会算错。
+
+#### ③ 落地：`AppDialog`
+
+新文件 `lib/src/ui/app_dialog.dart`：与 `AlertDialog` 同名同义的参数（title / content /
+actions / scrollable / backgroundColor / shape / insetPadding / 各 padding），
+`build` 里按当前 `textScaler` 算好边距。**显式传了 padding 的照旧生效**（尊重既有排版）。
+
+**替换范围：36 个调用点 / 21 个文件**（`AlertDialog(` → `AppDialog(`），
+四个没有同目录相对导入的文件单独补了 import。零行为改动，测试全过。
+
+#### ④ 用例：连"反证"一起钉住
+
+| 用例 | 判据 |
+|---|---|
+| `AppDialog` @1.0 | 实际左内边距 = **24** |
+| `AppDialog` @2.0 | 实际左内边距 = **24**（不再缩成 8） |
+| **对照**：裸 `AlertDialog` @2.0 | 实际左内边距 **< 12** —— 证明 8 px 的坑是真的，不是我们臆想 |
+
+⚠️ 量尺的坑：`AlertDialog` / `Dialog` 的 rect 是**整屏**（内部 `AnimatedPadding + Align`），
+要量的是包住标题的那个 `Material` 祖先 —— 第一次量出 524 px 就是这么来的。
+
+#### ⑤ 还没做的
+
+批 0 说的 **11 个自定义弹窗**（不共用 `AlertDialog` 的：恢复/抢救/数据目录/缺商品/引导…）
+未逐个看 —— 它们自带滚动或分栏，未必有同一个病；按实际报障优先级再排。
+
+门禁：`flutter analyze` **0** · root `flutter test` **656**（+3）。

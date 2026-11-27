@@ -21,6 +21,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_dialog.dart';
 import 'notice.dart';
 
 /// 停用前的确认（仅在**有余额**时弹）。返回 `true` = 继续停用。
@@ -37,7 +38,7 @@ Future<bool> confirmDisableWithBalance(
   if (balanceCents == 0) return true;
   final bool? sure = await showDialog<bool>(
     context: context,
-    builder: (BuildContext dialogContext) => AlertDialog(
+    builder: (BuildContext dialogContext) => AppDialog(
       title: Text(title),
       content: Text(
         '$name 现在还有$balanceLabel ¥${_yuan(balanceCents.abs())}。\n\n'

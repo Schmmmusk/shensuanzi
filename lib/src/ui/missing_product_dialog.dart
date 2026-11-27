@@ -19,6 +19,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'app_dialog.dart';
+
 /// 用户在对话框里的选择。
 enum MissingProductChoice {
   /// 先建档再保存（默认动作）
@@ -38,7 +40,7 @@ Future<MissingProductChoice> showMissingProductDialog(
 }) async {
   final MissingProductChoice? choice = await showDialog<MissingProductChoice>(
     context: context,
-    builder: (BuildContext dialogContext) => AlertDialog(
+    builder: (BuildContext dialogContext) => AppDialog(
       key: const Key('missing-product-dialog'),
       title: Text(
         names.length == 1

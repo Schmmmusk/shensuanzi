@@ -27,6 +27,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'app_dialog.dart';
 import 'app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
@@ -580,7 +581,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
     if (_hasContent) {
       final bool? confirmed = await showDialog<bool>(
         context: context,
-        builder: (BuildContext dialogContext) => AlertDialog(
+        builder: (BuildContext dialogContext) => AppDialog(
           title: const Text('放弃这次送货？'),
           content: const Text(
             '已填写的内容会被清空，且不会保存。',
@@ -658,7 +659,7 @@ class _DeliveryPageState extends State<DeliveryPage> {
   Future<bool> _confirmReplaceProduct(String from, String to) async {
     final bool? ok = await showDialog<bool>(
       context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
+      builder: (BuildContext dialogContext) => AppDialog(
         title: const Text('换掉这一行的商品？'),
         content: Text('原来是「$from」，要换成「$to」吗？'),
         actions: <Widget>[

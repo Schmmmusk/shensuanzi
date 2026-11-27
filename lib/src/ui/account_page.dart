@@ -10,6 +10,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'app_dialog.dart';
 import 'app_colors.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart'
     show ExportSink, MasterDataPolicy, MobileGuideTopic, mirrorEmptyMessage;
@@ -530,7 +531,7 @@ class _AccountFormDialogState extends State<_AccountFormDialog> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final bool isEditing = widget.existing != null;
-    return AlertDialog(
+    return AppDialog(
       title: Text(isEditing ? '编辑账户' : '新建账户'),
       content: SingleChildScrollView(
         child: Column(

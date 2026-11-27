@@ -31,6 +31,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'app_dialog.dart';
 import 'app_colors.dart';
 import 'host_service_hints.dart';
 // §BL·一：`PairingPayload` 是**同步协议**的 wire 格式，已迁进 `shensuanzi_core`
@@ -174,7 +175,7 @@ class _HostServicePanelState extends State<HostServicePanel> {
       if (!mounted) return;
       final bool? regenerate = await showDialog<bool>(
         context: context,
-        builder: (BuildContext context) => AlertDialog(
+        builder: (BuildContext context) => AppDialog(
           title: const Text('配对码现在画不出来'),
           content: const SizedBox(
             width: 420,
@@ -237,7 +238,7 @@ class _HostServicePanelState extends State<HostServicePanel> {
     final bool confirmed =
         await showDialog<bool>(
           context: context,
-          builder: (BuildContext context) => AlertDialog(
+          builder: (BuildContext context) => AppDialog(
             title: const Text('重新生成配对码？'),
             content: SizedBox(
               width: 420,
@@ -551,7 +552,7 @@ class _PairingDialogState extends State<_PairingDialog> {
     final HostServiceSnapshot snapshot = widget.controller.snapshot;
     final PairingPayload? payload = widget.controller.pairingPayload;
 
-    return AlertDialog(
+    return AppDialog(
       title: const Text('手机扫码连接'),
       content: SizedBox(
         width: 420,
@@ -795,7 +796,7 @@ class _ShortCodeDialogState extends State<_ShortCodeDialog> {
     final List<PairPending> pending = _store.pendingAwaiting();
     final String? address = widget.controller.snapshot.addressLine;
 
-    return AlertDialog(
+    return AppDialog(
       title: const Text('用 6 位配对码连接'),
       content: SizedBox(
         width: 420,

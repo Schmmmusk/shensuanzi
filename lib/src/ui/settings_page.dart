@@ -29,6 +29,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
+import 'app_dialog.dart';
 import 'emphasized_text.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 import 'package:shensuanzi_host/shensuanzi_host.dart';
@@ -843,7 +844,7 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
                 // 二次确认（断开是用户可感知的状态变化）
                 final bool? sure = await showDialog<bool>(
                   context: context,
-                  builder: (BuildContext context) => AlertDialog(
+                  builder: (BuildContext context) => AppDialog(
                     title: const Text('忘记这台主机？'),
                     content: const Text(
                       '手机上的数据副本会保留，但不再与电脑同步。'
@@ -936,7 +937,7 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
   Future<void> _showArchives(List<MirrorArchiveEntry> entries) async {
     await showDialog<void>(
       context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
+      builder: (BuildContext dialogContext) => AppDialog(
         title: const Text('历史主机数据'),
         content: SizedBox(
           width: 420,
@@ -984,7 +985,7 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
   ) async {
     final bool? sure = await showDialog<bool>(
       context: dialogContext,
-      builder: (BuildContext c) => AlertDialog(
+      builder: (BuildContext c) => AppDialog(
         title: const Text('删除这份历史数据？'),
         content: Text(
           '「主机 ${entry.hostId}」在 '
@@ -1016,7 +1017,7 @@ class _MobileSyncPanelState extends State<_MobileSyncPanel> {
   Future<void> _rebuild() async {
     final bool? sure = await showDialog<bool>(
       context: context,
-      builder: (BuildContext c) => AlertDialog(
+      builder: (BuildContext c) => AppDialog(
         title: const Text('重建本机数据副本？'),
         content: const Text(
           '会先把现在这份副本归档（在「历史主机数据」里能看到），'

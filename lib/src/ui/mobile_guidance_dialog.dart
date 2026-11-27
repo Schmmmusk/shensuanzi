@@ -5,6 +5,8 @@
 library;
 
 import 'package:flutter/material.dart';
+
+import 'app_dialog.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
 /// 弹「这一步在电脑上做」引导。手机端主数据禁建的各处入口共用
@@ -15,7 +17,7 @@ Future<void> showMobileGuideDialog(
 ) async {
   await showDialog<void>(
     context: context,
-    builder: (BuildContext dialogContext) => AlertDialog(
+    builder: (BuildContext dialogContext) => AppDialog(
       title: Text(mobileGuideTitle(topic)),
       content: Text(
         mobileGuideMessage(topic),

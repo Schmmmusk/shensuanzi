@@ -25,7 +25,9 @@ import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart'
     show unexpectedFailureAdvice;
 
+import 'app_dialog.dart';
 import 'emphasized_text.dart';
+
 /// 打开「数据体检与恢复」。返回 `true` = 已经接回了一份（调用方应当重试打开库）。
 ///
 /// [log]（N-f 站点 4，2026-11-05 裁定甲）：体检 / 接回失败时的**原始异常出口**。
@@ -138,7 +140,7 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
   Future<void> _restore(RecoveryCandidate candidate) async {
     final bool? confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext confirmContext) => AlertDialog(
+      builder: (BuildContext confirmContext) => AppDialog(
         title: const Text('用这份接回去？'),
         content: EmphasizedText(
           '${_describe(candidate)}\n\n'
@@ -185,9 +187,7 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
       time: candidate.time,
     );
     widget.log?.write(
-      result.ok
-          ? '接回成功：${result.candidatePath}'
-          : '接回失败：${result.message}',
+      result.ok ? '接回成功：${result.candidatePath}' : '接回失败：${result.message}',
     );
     if (!mounted) return;
     if (result.ok) {
@@ -219,7 +219,7 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
         .where((RecoveryCandidate c) => c.usable)
         .toList(growable: false);
 
-    return AlertDialog(
+    return AppDialog(
       title: const Text('数据体检与恢复'),
       content: SizedBox(
         width: 620,
@@ -403,9 +403,7 @@ class _RecoveryDialogState extends State<_RecoveryDialog> {
                 : waitingTurn
                 ? '请等待体检完成'
                 : '不可用',
-            key: ValueKey<String>(
-              'recovery-row-status-${candidate.fileName}',
-            ),
+            key: ValueKey<String>('recovery-row-status-${candidate.fileName}'),
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.disabledColor,
             ),

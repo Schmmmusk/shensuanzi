@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'app_dialog.dart';
 import 'app_shell.dart';
 import 'local_db_banner.dart';
 import 'notice.dart';
@@ -158,7 +159,9 @@ class _MobileShellState extends State<MobileShell> {
               onTap: readOnly != null
                   ? null
                   : () {
-                      final NavDestination? destination = AppNavigation.byId(id);
+                      final NavDestination? destination = AppNavigation.byId(
+                        id,
+                      );
                       if (destination != null) _openFull(destination);
                     },
             ),
@@ -562,7 +565,7 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
   ) async {
     final bool? confirmed = await showDialog<bool>(
       context: sheetContext,
-      builder: (BuildContext dialogContext) => AlertDialog(
+      builder: (BuildContext dialogContext) => AppDialog(
         title: const Text('把这张单发给现在这台电脑？'),
         content: const Text(
           '如果现在的电脑是同一家店的另一台电脑，这张单会正确接上。\n\n'
@@ -601,7 +604,7 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
   ) async {
     final bool? confirmed = await showDialog<bool>(
       context: sheetContext,
-      builder: (BuildContext dialogContext) => AlertDialog(
+      builder: (BuildContext dialogContext) => AppDialog(
         title: const Text('放弃这张单，不再发送？'),
         content: Text(
           '「${_docLabel(entry)}」放弃后就不再发给任何电脑，也找不回来。\n\n'
