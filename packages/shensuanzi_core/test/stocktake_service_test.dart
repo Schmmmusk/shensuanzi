@@ -162,6 +162,57 @@ void main() {
       ],
     );
 
+    // ======================================================== P1-1（2026-11-27）
+    //
+    // 用户裁定先写**能红的**测试：按箱盘 2 箱 ⇒ 库里要有**录入原文**
+    // （`entry_quantity=2` / `entry_unit='箱'`），而 `quantity` 仍是最小单位 48。
+    //
+    // 现状（修前）：`RuleEngine._stocktake` 用 `Map<productId, 实际数量>` 重建
+    // `DocumentLine`，原文没有任何入口能传进去 ⇒ 两列为 NULL。
+    test('P1-1：按箱盘点 2 箱 → 原文（2 / 箱）落库，quantity 仍是最小单位 48', () {
+      final StocktakeResult r = service.create(
+        const StocktakeDraft(
+          lines: <StocktakeLineDraft>[
+            StocktakeLineDraft(
+              productId: 'p1',
+              productName: '可乐',
+              quantity: '48', // 最小单位（UI 换算后）
+              entryQuantity: '2', // 用户敲的原文
+              entryUnit: '箱',
+            ),
+          ],
+        ),
+        now: t,
+      );
+
+      final List<Map<String, Object?>> rows = db.raw.select(
+        'SELECT quantity, entry_quantity, entry_unit FROM document_lines '
+        'WHERE document_id = ?',
+        <Object?>[r.documentId],
+      );
+      expect(rows, hasLength(1));
+      expect(rows.single['quantity'], 48, reason: '落库口径不变：最小单位实际数量');
+      expect(
+        rows.single['entry_quantity'],
+        2,
+        reason: 'P1-1：录入原文必须能回看（原文 2 箱）',
+      );
+      expect(rows.single['entry_unit'], '箱', reason: 'P1-1：原文单位');
+    });
+
+    test('P1-1：没切单位（只有最小单位）⇒ 原文两列留空，不编造', () {
+      final StocktakeResult r = service.create(
+        draftOf(<String, String>{'p1': '10'}),
+        now: t,
+      );
+      final List<Map<String, Object?>> rows = db.raw.select(
+        'SELECT entry_quantity, entry_unit FROM document_lines WHERE document_id = ?',
+        <Object?>[r.documentId],
+      );
+      expect(rows.single['entry_quantity'], isNull);
+      expect(rows.single['entry_unit'], isNull);
+    });
+
     test('首次录入两件 → changedCount=2；库存 = 实际数量；单号 PD 前缀', () {
       final StocktakeResult r = service.create(
         draftOf(<String, String>{'p1': '10', 'p2': '5'}),

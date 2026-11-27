@@ -452,14 +452,25 @@ class QueueSink implements DocumentSink {
       updatedAt: stamp,
       remark: draft.remark,
     );
+    // P1-1（2026-11-27）：手机端入队的盘点单**也要带原文单位**。
+    // 主机 `RuleEngine._stocktake` 现在按 productId 从 `lines` 里回填
+    // `entry_*`；这里不给，手机上按箱盘的点依然会丢原文。
+    // ⚠️ 不用 `DocumentLine.create`（它在缺省时把 quantity 写进 entryQuantity），
+    // 盘点「没切单位」必须是 null。
     final List<DocumentLine> lines = <DocumentLine>[
       for (final StocktakeLineDraft line in draft.lines)
         if (line.quantityValue != null)
-          DocumentLine.create(
+          DocumentLine(
+            id: newId(),
             documentId: id,
             productId: line.productId,
             quantity: line.quantityValue!,
             unitPrice: 0,
+            amount: 0,
+            entryQuantity: line.entryUnitValue == null
+                ? null
+                : line.entryQuantityValue,
+            entryUnit: line.entryUnitValue,
           ),
     ];
     _enqueue(

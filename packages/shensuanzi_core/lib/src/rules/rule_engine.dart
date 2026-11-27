@@ -269,6 +269,7 @@ class RuleEngine {
               prepared,
               stocktakeActual ?? _actualFromLines(lines),
               now,
+              lines,
             );
           default:
             // 到这里只剩 `transfer`（调拨）—— v1 有意不实现。
@@ -1001,10 +1002,19 @@ class RuleEngine {
     Document doc,
     Map<String, int> actualByProduct,
     int now,
+    List<DocumentLine> incoming,
   ) {
     if (doc.totalAmount != 0) {
       throw StateError('盘点单的 total_amount 必须为 0，实际 ${doc.totalAmount}');
     }
+
+    // P1-1（2026-11-27）：**保留录入原文**。
+    // 这一层原来按 `Map<productId, 实际数量>` 重建行，把调用方带上来的
+    // `entry_quantity` / `entry_unit` 整个丢掉 ⇒ 盘点单永远看不到「2 箱」。
+    // 现在按 productId 索回原行，只回填这两列；数量口径**一个字节都不动**。
+    final Map<String, DocumentLine> originals = <String, DocumentLine>{
+      for (final DocumentLine line in incoming) line.productId: line,
+    };
 
     final List<DocumentLine> lines = <DocumentLine>[
       for (final MapEntry<String, int> entry in actualByProduct.entries)
@@ -1012,9 +1022,11 @@ class RuleEngine {
           id: newId(),
           documentId: doc.id,
           productId: entry.key,
-          quantity: entry.value, // 实际数量
+          quantity: entry.value, // 实际数量（最小单位）
           unitPrice: 0,
           amount: 0,
+          entryQuantity: originals[entry.key]?.entryQuantity,
+          entryUnit: originals[entry.key]?.entryUnit,
         ),
     ];
 

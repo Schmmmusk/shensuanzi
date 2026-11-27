@@ -25,6 +25,7 @@ library;
 import '../dao/document_dao.dart';
 import '../dao/query_dao.dart';
 import '../models/document.dart';
+import '../models/document_line.dart';
 import '../rules/rule_engine.dart';
 import '../rules/rule_rejection.dart';
 import '../util/ids.dart';
@@ -162,8 +163,33 @@ class StocktakeService {
       remark: draft.remark,
     );
 
+    // P1-1（2026-11-27）：**把录入原文带进规则层**。
+    // 引擎不读草稿，它只认 `Document` + `lines`；原文必须随行一起下去，
+    // 否则 `document_lines.entry_*` 永远是 NULL（用户回看对不上纸质单）。
+    //
+    // ⚠️ 用**裸构造**而不是 `DocumentLine.create(...)`：后者在 `entryQuantity`
+    // 缺省时把 `quantity` 填进去（开单需要那个默认），而盘点这里
+    // 「没切单位」必须是 **null** —— 不能编造一个原文数量。
+    final List<DocumentLine> lines = <DocumentLine>[
+      for (final StocktakeLineDraft line in draft.lines)
+        if (line.productId.isNotEmpty && line.quantityValue != null)
+          DocumentLine(
+            id: newId(),
+            documentId: document.id,
+            productId: line.productId,
+            quantity: line.quantityValue!,
+            unitPrice: 0,
+            amount: 0,
+            entryQuantity: line.entryUnitValue == null
+                ? null //
+                : line.entryQuantityValue,
+            entryUnit: line.entryUnitValue,
+          ),
+    ];
+
     final RuleOutcome outcome = _engine!.dispatch(
       document: document,
+      lines: lines,
       stocktakeActual: actual,
       now: stamp,
     );

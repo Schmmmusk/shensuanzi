@@ -23247,3 +23247,46 @@ actions / scrollable / backgroundColor / shape / insetPadding / 各 padding）�
 未逐个看 —— 它们自带滚动或分栏，未必有同一个病；按实际报障优先级再排。
 
 门禁：`flutter analyze` **0** · root `flutter test` **656**（+3）。
+
+### 一百四十一、2026-11-27 **P1-1 修复：盘点单保留「录入原文」（先红后修）**
+
+> 用户裁定：先写能红的测试 → 改链路 → 复跑 → 汇报后等确认。严格按 TDD 执行。
+
+#### ① 取证（红）
+
+先写 `P1-1：按箱盘点 2 箱 → 原文（2 / 箱）落库` 与 `没切单位 ⇒ 两列留空` 两条 core 测试，
+**先跑**：`No named parameter with the name 'entryQuantity'` —— 红（编译级）。
+
+#### ② 改点（**五处**，比原提案多两处）
+
+| # | 文件 | 改动 |
+|---|---|---|
+| 1 | `stocktake_draft.dart` | `StocktakeLineDraft` + `entryQuantity` / `entryUnit` + `entryQuantityValue` / `entryUnitValue`（空 ⇒ **null**，不编造） |
+| 2 | `stocktake_service.dart` | `create()` 建行时带原文，并把 `lines` 传进 `dispatch` |
+| 3 | `rule_engine.dart::_stocktake` | 签名接 `incoming`；按 `productId` 索回原行，**只回填** `entry_*`；数量口径一字未动 |
+| 4 | `document_sink.dart::QueueSink.submitStocktake` | **手机入队路径**同样带原文（否则手机上按箱盘仍丢） |
+| 5 | `opening_stock_page.dart` | 页面把原文塞进草稿（没切单位时留空） |
+
+⚠️ 关键坑：`DocumentLine.create(...)` 在 `entryQuantity` 缺省时**自动填 `quantity`** ——
+开单需要那个默认，盘点不行（「没切单位」必须是 null）。两处都改用**裸构造**。
+
+#### ③ 复跑
+
+| 门禁 | 结果 |
+|---|---|
+| `dart test`（core，含新增 2 条） | **876** 全过 |
+| `flutter test`（root，含加强的端到端断言） | **656**（1 条按平台跳过） |
+| `flutter analyze` | **0** |
+
+**没有测试因为新增字段而挂**，因此没有改任何既有断言。
+
+#### ④ 端到端
+
+`opening_stock_page_test` 的多单位用例加了两条断言：UI 按箱填 2 → 库里
+`entry_quantity=2` / `entry_unit='箱'`、`quantity=48`（页面 → 草稿 → 服务 → 引擎 → DB 一条链）。
+详情页本来就渲染「录入原文：2 箱」（`_linePriceNote`），所以**不需要再改展示层**。
+
+#### ⑤ 顺带发现（未改，登记）
+
+`stocktake_service_test.dart` 头注释提到 `tool/selfcheck_stocktake.dart`（"两套并行镜像"），
+**该文件已不存在** —— 属旧描述，按纪律 17 应清理；本轮不动它（避免混入无关改动）。

@@ -363,6 +363,19 @@ void main() {
       48,
       reason: '落库必须是**最小单位数量**（48 瓶），不是录入原文（2 箱）',
     );
+
+    // P1-1（2026-11-27）：**原文也要落库** —— 详情页要能回看「2 箱」。
+    // 这条断言从 UI 一路穿到 DB（页面 → 草稿 → 服务 → 引擎），
+    // 中间任何一环丢字段都会红。
+    final List<Map<String, Object?>> rows = db.raw.select(
+      // 只取**这一批新落的**那一行（夹具里还有本用例开头 seedBook 的旧盘点行）
+      'SELECT entry_quantity, entry_unit FROM document_lines '
+      'WHERE product_id = ? ORDER BY rowid DESC LIMIT 1',
+      <Object?>[boxed.id],
+    );
+    expect(rows, hasLength(1));
+    expect(rows.single['entry_quantity'], 2, reason: 'P1-1：录入原文数量');
+    expect(rows.single['entry_unit'], '箱', reason: 'P1-1：录入原文单位');
   });
 }
 

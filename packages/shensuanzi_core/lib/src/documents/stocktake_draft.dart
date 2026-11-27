@@ -34,6 +34,8 @@ class StocktakeLineDraft {
     this.productId = '',
     this.productName = '',
     this.quantity = '',
+    this.entryQuantity = '',
+    this.entryUnit,
   });
 
   /// 从商品带入：数量留空待填（期初没有「参考进价」可预填 —— 成本按 0，AB-2）
@@ -44,16 +46,35 @@ class StocktakeLineDraft {
   final String productName;
 
   /// 用户敲的原文。**空 = 该行不参与本次盘点**（裁定：填了才算）
+  ///
+  /// ⚠️ 这个值是**最小单位**的实际数量（UI 已按包装换算过）。
+  /// 用户当时敲的字面量与单位见 [entryQuantity] / [entryUnit]。
   final String quantity;
+
+  /// **录入原文的数量**（P1-1，2026-11-27）：用户按「箱」填的 `2`。
+  ///
+  /// - 空 = 没切单位（[quantity] 就是原文，等价于按最小单位填）；
+  /// - 非空 = 用户真的按包装填的数字，落库进 `document_lines.entry_quantity`。
+  ///
+  /// 为什么要有它：只记 `quantity=48` 的话，用户回看单据对不上自己的纸质单
+  /// （「我明明填的 2 箱」）—— 数据没错，**可追溯性**丢了。
+  final String entryQuantity;
+
+  /// **录入原文的单位**（`'箱'`）。`null` / 空 = 没切单位（最小单位）。
+  final String? entryUnit;
 
   StocktakeLineDraft copyWith({
     String? productId,
     String? productName,
     String? quantity,
+    String? entryQuantity,
+    String? entryUnit,
   }) => StocktakeLineDraft(
     productId: productId ?? this.productId,
     productName: productName ?? this.productName,
     quantity: quantity ?? this.quantity,
+    entryQuantity: entryQuantity ?? this.entryQuantity,
+    entryUnit: entryUnit ?? this.entryUnit,
   );
 
   /// 空行 = 商品和数量都没填。**空行不报错、不参与盘点**（见类注释校验口径）。
@@ -80,6 +101,22 @@ class StocktakeLineDraft {
   int? get quantityValue {
     final int? qty = int.tryParse(quantity.trim());
     return (qty == null || qty < 0) ? null : qty;
+  }
+
+  /// **录入原文的数量**取值；没填（表示没切单位）⇒ 回落到 [quantityValue]。
+  ///
+  /// 刻意不把「空」解释成 0：空是"用户没切单位"，0 是"一件不剩"。
+  int? get entryQuantityValue {
+    final String text = entryQuantity.trim();
+    if (text.isEmpty) return quantityValue;
+    final int? qty = int.tryParse(text);
+    return (qty == null || qty < 0) ? null : qty;
+  }
+
+  /// **录入原文的单位**；空 ⇒ `null`（= 按最小单位填，不写库）
+  String? get entryUnitValue {
+    final String? unit = entryUnit?.trim();
+    return (unit == null || unit.isEmpty) ? null : unit;
   }
 
   @override

@@ -142,6 +142,11 @@ class _OpeningStockPageState extends State<OpeningStockPage> {
             final int base => '$base',
             null => '',
           },
+          // P1-1（2026-11-27）：**录入原文**一并交给草稿 —— 单据详情要能回看
+          // 「2 箱」。没切单位时原文两列留空（不编造），见
+          // `StocktakeLineDraft.entryQuantityValue` 的注释。
+          entryQuantity: row.entryUnit == null ? '' : row.quantity.text.trim(),
+          entryUnit: row.entryUnit,
         ),
     ],
   );
