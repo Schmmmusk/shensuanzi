@@ -23365,3 +23365,48 @@ actions / scrollable / backgroundColor / shape / insetPadding / 各 padding）�
 「与 `tool/selfcheck_stocktake.dart` 两套并行镜像」按纪律 17 **删除**（该脚本已不存在）。
 
 门禁：`flutter analyze` **0** · root `flutter test` **658** · core `dart test` **876**。
+
+### 一百四十三、2026-11-28 **合并外部 PR：开单纠错 / 移动端反馈 / 大字号布局**
+
+> 另一开发者（`lonstarcat <kbakihito@gmail.com>`）的分支 `origin/codex/ui-validation-mobile-feedback`
+> 单个提交 `c289c1f`，基于我们的 `16fe4f3`（P1-1）。用户裁定：**保留显式合并点**（`--no-ff`）。
+> 合并提交 `fb673e4`；连同我们的 `c9b914f`（详情明细行单位收口）一起。
+
+#### ① 这笔改动做了什么（24 个文件 / +1076 −536）
+
+| 块 | 主要文件 | 要点 |
+|---|---|---|
+| **开单纠错** | `submit_error_summary.dart`（240 行）、`sale_page` / `purchase_page` / `line_row` | 错误条目带 `FocusNode`，点了**直接聚焦到出错的输入框**（原来只跳到区块）；`LineRowModel` 追加 `quantityFocus` / `priceFocus` / `unitFocus`（+ 成对 `dispose`） |
+| **移动端反馈** | `mobile_shell.dart`、`keyboard_reveal.dart`（+ 新 `keyboard_reveal_test.dart`） | 同步徽标：正常态改「对勾 + 不可点」，可操作态保证 **44×44** 触达；键盘顶起时的回滚逻辑重写 |
+| **大字号布局** | `overview_page`（214）、`revenue_chart`（182）、`gross_margin_chart`、`product_form_dialog`（49） | 字号放大时图表与建档表单的重排 |
+| **文档** | `docs/ui_principles.md`、`用户手册.html`、`manual_content.dart` | 纪律 17 有跟上（描述与实现同步） |
+
+#### ② 合并前的隔离验证（不在主工作区动一刀）
+
+用 `git worktree` 在临时目录检出对方分支，做三次跑：
+
+| 跑法 | 结果 |
+|---|---|
+| 对方分支**单独** | `analyze lib test` **0** · root `flutter test` 全过 · core `dart test` **876** |
+| 我们的 5 个文件 patch 打上去 | `git apply` **干净通过**（零冲突） |
+| **合并态** | `analyze lib test` **0** · root `flutter test` 全过 · core **876** |
+
+**关键核查项**（防止我们的成果被覆盖）：三页 `EntryPageTitle` 仍在、`AppDialog` 无裸 `AlertDialog(`、
+`pageContentInset`（宽屏上限）仍在、`stock_top.dart` **未被改动**（压货榜右列安全）、
+`line_row` 只追加焦点节点、未改原有逻辑。
+
+#### ③ 合并后复跑（真实工作区）
+
+| 门禁 | 结果 |
+|---|---|
+| `flutter analyze lib test` | **0** |
+| root `flutter test` | 全过 |
+| core `dart test` | **876** |
+
+#### ④ 遗留与提醒（未擅自处理）
+
+1. 对方提交**只有标题没有正文**（缺「改了什么 / 为什么 / 门禁数字」），与仓内惯例不一致；
+2. 这笔改动**本身没有台账条目**（本条由我们补记，满足「落地即记录」）；
+3. 两处行为变更需真机确认：① 同步正常时徽标不可点；② 开单出错点摘要后焦点直达字段；
+4. `D:/shensuanzi/shensuanzi-pr-check` 是离线合并 worktree（detached `46a7559`，**不含**我们的
+   `c9b914f`），**不可**用来推 master；确认后 `git worktree remove` 清掉。
