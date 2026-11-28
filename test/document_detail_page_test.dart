@@ -739,10 +739,101 @@ void main() {
       findsOneWidget,
       reason: 'F5：明细要说清单价，不能只有金额',
     );
+    // ⚠️ 规格变更（2026-11-28 用户裁定，非"改断言让测试变绿"）：
+    // 录入原文从**小字注释**升级为**主行**显示 —— 用户原话「主行右侧应该优先
+    // 显示原文：× 60 箱…而不是直接冷冰冰地写个 × 1440」。
+    // 断言跟着搬：不再找「录入原文：2 箱」，改为找主行的 `× 2 箱` 与换算小字。
     expect(
-      find.textContaining('录入原文：2 箱'),
+      find.textContaining('× 2 箱'),
       findsOneWidget,
-      reason: 'F5：按箱录的单要能回看出「2 箱」，而不是只看到 24 瓶',
+      reason: '主行必须显示**用户录入时的单位**（2 箱），而不是只印 24',
+    );
+    expect(
+      find.textContaining('共 24 件'),
+      findsOneWidget,
+      reason: '基础单位的换算要写在下面小字里，两种口径都不丢',
+    );
+  });
+
+  // ============================================================ 盘点明细单位口径（2026-11-28）
+  //
+  // 真机事故：按箱盘 60 箱的单子，明细行印成 `× 1440`、差额行印成
+  // 「账面 0.27 → 实盘 14.40（盘盈 +14.13）」—— 后者的根因是**拿金额格式化
+  // 去印件数**（`Money.formatGrouped(1440)` = `14.40`，入参是"分"）。
+  test('盘点差额文案：全行用基础单位（1440−27=1413 闭环），原文单位进括号', () {
+    expect(
+      stocktakeDiffText(
+        book: 27,
+        actual: 1440,
+        diff: 1413,
+        baseUnit: '件',
+        entryUnit: '箱',
+        entryQuantity: 60,
+      ),
+      '账面 27 件 → 实盘 1440 件（60 箱） · 盘盈 +1413 件',
+      reason:
+          '① 不能再出现 14.40 / 0.27 / 14.13 这种"把件数当分"的数字；'
+          '② 账面与实盘必须**同单位**（27 件 对 1440 件），否则读者会以为盘盈 33；'
+          '③ 录入单位仍保留在括号里，信息不丢',
+    );
+    expect(
+      stocktakeDiffText(book: 20, actual: 15, diff: -5, baseUnit: '件'),
+      '账面 20 件 → 实盘 15 件 · 盘亏 5 件',
+    );
+    expect(
+      stocktakeDiffText(book: 8, actual: 8, diff: 0, baseUnit: '件'),
+      '账面 8 件 → 实盘 8 件 · 无变化',
+    );
+    expect(
+      stocktakeDiffText(book: 0, actual: 1440, diff: 1440),
+      '账面 0 → 实盘 1440 · 盘盈 +1440',
+      reason: '没有商品服务（查不到单位）时也不能崩，只是不带单位',
+    );
+  });
+
+  testWidgets('盘点明细主行：优先显示录入单位（× 60 箱 + 共 1440 件）', (
+    WidgetTester tester,
+  ) async {
+    final Document doc = Document(
+      id: 'd-pd-60',
+      docNo: 'PD20261128-001',
+      docType: DocType.stocktake,
+      status: DocStatus.confirmed,
+      totalAmount: 0,
+      occurredAt: 1700000000000,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+    );
+    dao.insert(doc, <DocumentLine>[
+      DocumentLine(
+        id: 'l-pd-60',
+        documentId: doc.id,
+        productId: 'p1',
+        quantity: 1440,
+        unitPrice: 0,
+        amount: 0,
+        entryQuantity: 60,
+        entryUnit: '箱',
+      ),
+    ]);
+
+    await tester.pumpWidget(page(doc.id));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('× 60 箱'),
+      findsOneWidget,
+      reason: '用户填的是 60 箱，主行就该显示 60 箱',
+    );
+    expect(
+      find.textContaining('共 1440 件'),
+      findsOneWidget,
+      reason: '基础单位换算放小字（夹具商品 p1 用默认单位「件」）',
+    );
+    expect(
+      find.textContaining('× 1440'),
+      findsNothing,
+      reason: '只印 1440 正是用户说的"冷冰冰"—— 主行不能再出现它',
     );
   });
 

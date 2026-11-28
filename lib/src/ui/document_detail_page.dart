@@ -35,6 +35,50 @@ import 'settlement_dialog.dart';
 import 'return_page.dart';
 import 'notice.dart';
 
+/// 盘点单某一行的「账面 → 实盘（差额）」文案（2026-11-28）。
+///
+/// ## 为什么单独抽成顶层函数
+///
+/// 上一版这里用 `Money.formatGrouped`（**金额**格式化，入参是「分」）去印
+/// **件数**：1440 件被印成 `14.40`、27 件印成 `0.27`，差额 1413 印成 `14.13`。
+/// 用户看到「账面 0.27 → 实盘 14.40」以为自己有三万块钱的货对不上。
+/// 件数是**整数**，不能走金额格式化 —— 抽成纯函数，`dart test` 直接钉住。
+///
+/// ## 单位口径
+///
+/// - 实盘：有录入单位（且与基础单位不同）⇒ `60 箱（1440 件）`，否则 `1440 件`；
+/// - 账面 / 差额：**一律用基础单位**并显式写出单位名 ——
+///   账面不一定是整箱（27 件 = 1 箱 3 件，写 1.125 箱只会更乱）。
+String stocktakeDiffText({
+  required int book,
+  required int actual,
+  required int diff,
+  String? baseUnit,
+  String? entryUnit,
+  int? entryQuantity,
+}) {
+  String qty(int n) => baseUnit == null ? '$n' : '$n $baseUnit';
+  final bool entryIsPackage =
+      entryUnit != null &&
+      entryQuantity != null &&
+      (baseUnit == null || entryUnit != baseUnit);
+  // 2026-11-28 二改（用户）：**基础单位打头、原文单位进括号**。
+  //
+  // 上一版是「实盘 60 箱（1440 件）」，与左边的「账面 27 件」**单位不同** ——
+  // 27 和 60 摆在一起，读者会以为盘盈 33；后面却写 +1413。数字没错，读法错了。
+  // 现在是「实盘 1440 件（60 箱）」：1440 − 27 = 1413，**同一单位、逻辑闭环**；
+  // 用户熟悉的「箱」仍保留在括号里，不丢信息。
+  final String actualText = entryIsPackage
+      ? '${qty(actual)}（$entryQuantity $entryUnit）'
+      : qty(actual);
+  final String diffText = diff == 0
+      ? '无变化'
+      : diff > 0
+      ? '盘盈 +${qty(diff)}'
+      : '盘亏 ${qty(diff.abs())}';
+  return '账面 ${qty(book)} → 实盘 $actualText · $diffText';
+}
+
 class DocumentDetailPage extends StatefulWidget {
   const DocumentDetailPage({
     super.key,
@@ -881,11 +925,8 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
     if (showUnitPrice) {
       parts.add('¥${Money.format(line.unitPrice)} × ${line.quantity}');
     }
-    // 录入原文只在**和账面单位不同**时才有意义 —— 按最小单位录的单
-    //（entryUnit == null）不必重复一遍「24 瓶」。
-    if (line.entryUnit != null && line.entryQuantity != null) {
-      parts.add('录入原文：${line.entryQuantity} ${line.entryUnit}');
-    }
+    // 2026-11-28：录入原文已经**升到主行**显示（`× 60 箱` + `（共 1440 件）`），
+    // 这里不再重复一遍，否则同一行同一件事说两遍。
     return parts.isEmpty ? null : parts.join('  ·  ');
   }
 
@@ -909,14 +950,13 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
                           style: const TextStyle(height: 1.6),
                         ),
                       ),
-                      Text(
-                        '× ${_lines[i].quantity}',
-                        style: TextStyle(
-                          height: 1.6,
-                          color: theme.textTheme.bodySmall?.color,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
+                      // 2026-11-28（真机）：按箱盘 60 箱的单子，这里原来只印
+                      // `× 1440`（最小单位），用户第一反应是"我明明填的 60 箱"。
+                      // 现在**优先显示他录入时的单位**，基础数量降级成下面一行小字。
+                      _quantityCell(theme, _lines[i]),
+                      // 2026-11-28（用户真机）：`× 60 箱` 与 `¥0.00` 之间太挤；
+                      // 数量格现在是两行，视觉重量更大，间距跟着加到 20。
+                      const SizedBox(width: 20),
                       Text(
                         '¥${Money.formatGrouped(_lines[i].amount)}',
                         style: const TextStyle(
@@ -977,21 +1017,73 @@ class _DocumentDetailPageState extends State<DocumentDetailPage> {
   Widget _stocktakeDiffLine(ThemeData theme, int index) {
     final DocumentLine line = _lines[index];
     final int diff = _stockFlow[line.productId] ?? 0;
-    final int actual = line.quantity;
-    final int book = actual - diff;
-    // 盘亏取绝对值 —— 否则印出「盘亏 -3」两个负号
-    final String diffText = diff == 0
-        ? '无变化'
-        : diff > 0
-        ? '盘盈 +${Money.formatGrouped(diff)}'
-        : '盘亏 ${Money.formatGrouped(diff.abs())}';
     return Padding(
       padding: const EdgeInsets.only(top: 2),
       child: Text(
-        '账面 ${Money.formatGrouped(book)} → 实盘 ${Money.formatGrouped(actual)}'
-        '（$diffText）',
+        stocktakeDiffText(
+          book: line.quantity - diff,
+          actual: line.quantity,
+          diff: diff,
+          baseUnit: _productUnit(line),
+          entryUnit: line.entryUnit,
+          entryQuantity: line.entryQuantity,
+        ),
         style: TextStyle(height: 1.6, color: theme.textTheme.bodySmall?.color),
       ),
+    );
+  }
+
+  /// 商品的基础单位（查不到商品 ⇒ `null`，调用方按"不带单位"处理）
+  String? _productUnit(DocumentLine line) =>
+      widget.products?.byId(line.productId)?.unit;
+
+  /// 主行右侧的**数量格**（2026-11-28 真机）。
+  ///
+  /// 两行：第一行是**用户录入时的单位**（`× 60 箱`），第二行是基础单位换算
+  ///（`共 1440 件`）。为什么这样排：数据层 `quantity` 永远是最小单位
+  ///（1440），而用户脑子里是「60 箱」—— 把 1440 放在最显眼的位置，
+  /// 等于每次回看都要自己除一遍。
+  Widget _quantityCell(ThemeData theme, DocumentLine line) {
+    final ({String main, String? base}) parts = _quantityParts(line);
+    final String? base = parts.base;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: <Widget>[
+        Text(
+          parts.main,
+          style: const TextStyle(height: 1.6, fontWeight: FontWeight.w600),
+        ),
+        if (base != null)
+          Text(
+            base,
+            style: TextStyle(
+              height: 1.5,
+              fontSize: 12,
+              color: theme.textTheme.bodySmall?.color,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// 数量格的文字：有包装录入且**与基础单位不同** ⇒ 主行用录入单位。
+  ({String main, String? base}) _quantityParts(DocumentLine line) {
+    final String? unit = _productUnit(line);
+    final String? entryUnit = line.entryUnit;
+    final int? entryQty = line.entryQuantity;
+    final bool entryIsPackage =
+        entryUnit != null &&
+        entryQty != null &&
+        (unit == null || entryUnit != unit);
+    if (entryIsPackage) {
+      return (
+        main: '× $entryQty $entryUnit',
+        base: unit == null ? null : '共 ${line.quantity} $unit',
+      );
+    }
+    return (
+      main: unit == null ? '× ${line.quantity}' : '× ${line.quantity} $unit',
+      base: null,
     );
   }
 
