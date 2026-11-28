@@ -107,7 +107,7 @@ void main() {
       reason: '「例：」= 这里可以自由填（chips 不是白名单）',
     );
 
-    final TextField note = tester.widget<TextField>(field(label: '包装说明（可选）'));
+    final TextField note = tester.widget<TextField>(field(label: '包装说明'));
     expect(note.decoration!.hintText, startsWith('例：'));
     // 2026-11-24（`docs/reply.md` §二·3 的措辞）：从「只是备注，不影响记账」
     // 改成「只是给人看的备注，不影响计算。」—— 与下面「启用包装换算」的副标题
@@ -221,8 +221,8 @@ void main() {
       findsOneWidget,
       reason: '评审问题一：必须指向「包装换算」，不是「包装说明」',
     );
-    expect(find.text('包装说明（可选）'), findsOneWidget);
-    expect(find.text('包装换算（选填）'), findsOneWidget);
+    expect(find.text('包装说明'), findsOneWidget);
+    expect(find.text('启用包装换算'), findsOneWidget);
   });
 
   testWidgets('AI-5 端到端：带包装说明建档 → 库里 package_note 有值', (
@@ -235,7 +235,7 @@ void main() {
     await tester.tap(find.text('瓶').first);
     await tester.pumpAndSettle();
     await tester.enterText(field(label: '售价'), '2.00');
-    await tester.enterText(field(label: '包装说明（可选）'), '1 箱 = 48 瓶');
+    await tester.enterText(field(label: '包装说明'), '1 箱 = 48 瓶');
 
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
@@ -471,18 +471,41 @@ void main() {
     testWidgets('默认折叠：两个换算输入框不出现；点开才出现', (WidgetTester tester) async {
       await openForm(tester);
 
-      expect(field(label: '包装单位（可选）'), findsNothing);
-      expect(field(label: '1 包 = 多少（可选）'), findsNothing);
+      expect(field(label: '包装单位'), findsNothing);
+      expect(field(label: '换算数量'), findsNothing);
 
       // 折叠区在页面底部 —— **先滚到它再点**（`tap` 落空只 warn 不报错）
-      final Finder toggle = find.text('包装换算（选填）');
+      final Finder toggle = find.text('启用包装换算');
       await tester.ensureVisible(toggle);
       await tester.pumpAndSettle();
       await tester.tap(toggle);
       await tester.pumpAndSettle();
 
-      expect(field(label: '包装单位（可选）'), findsOneWidget);
-      expect(field(label: '1 包 = 多少（可选）'), findsOneWidget);
+      expect(field(label: '包装单位'), findsOneWidget);
+      expect(field(label: '换算数量'), findsOneWidget);
+    });
+
+    testWidgets('换算等式随单位更新，关闭后保存不采用隐藏值', (tester) async {
+      await openForm(tester);
+      await tester.enterText(field(label: '商品名称'), '测试商品');
+      await tester.tap(find.text('瓶').first);
+      await tester.enterText(field(label: '售价'), '1');
+      final toggle = find.byKey(const Key('product-package-enable'));
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      await tester.enterText(field(label: '包装单位'), '箱');
+      await tester.enterText(field(label: '换算数量'), '12');
+      await tester.pumpAndSettle();
+      expect(find.text('1 箱 = 12 瓶'), findsOneWidget);
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      final saved = service.list().single;
+      expect(saved.packageUnit, isNull);
+      expect(saved.packageSize, isNull);
     });
 
     testWidgets('编辑已配置换算的商品 ⇒ 自动展开并回填原值', (WidgetTester tester) async {
@@ -521,10 +544,8 @@ void main() {
       await tester.tap(find.text('打开表单'));
       await tester.pumpAndSettle();
 
-      final TextField unit = tester.widget<TextField>(field(label: '包装单位（可选）'));
-      final TextField size = tester.widget<TextField>(
-        field(label: '1 包 = 多少（可选）'),
-      );
+      final TextField unit = tester.widget<TextField>(field(label: '包装单位'));
+      final TextField size = tester.widget<TextField>(field(label: '换算数量'));
       expect(unit.controller!.text, '箱', reason: '已配置的换算必须回填，不能被折叠藏起来');
       expect(size.controller!.text, '24');
     });
@@ -549,7 +570,7 @@ void main() {
       reason: '480×360 是窗口最小尺寸（480×360）那一档，会滚但不许溢出',
     );
     // 展开包装换算后再验一次（展开才是最高的一档）
-    final Finder check = find.text('包装换算（选填）');
+    final Finder check = find.text('启用包装换算');
     await tester.ensureVisible(check);
     await tester.pumpAndSettle();
     await tester.tap(check);

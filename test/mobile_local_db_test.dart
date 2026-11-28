@@ -126,7 +126,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('请到设置里换一个位置'), findsNothing);
-      expect(find.textContaining('数据文件已就绪'), findsOneWidget);
+      expect(find.textContaining('账本已就绪'), findsOneWidget);
     });
   });
 

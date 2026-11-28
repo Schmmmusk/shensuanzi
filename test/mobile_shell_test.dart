@@ -155,6 +155,16 @@ void main() {
     // M04（2026-10-08，`docs/reply.md` §二·1）：**空队列不再等于「已同步」** ——
     // 没配对过就是什么都没连上，显示「已同步」会让用户以为单已经传给电脑了
     expect(find.text('尚未连接电脑'), findsOneWidget);
+    final label = find.text('尚未连接电脑');
+    final hit = find.ancestor(of: label, matching: find.byType(InkWell)).first;
+    expect(tester.getSize(hit).height, greaterThanOrEqualTo(44));
+    final theme = Theme.of(tester.element(label));
+    final foreground = tester.widget<Text>(label).style!.color!;
+    final ratio =
+        (theme.colorScheme.surfaceContainerHighest.computeLuminance() + .05) /
+        (foreground.computeLuminance() + .05);
+    expect(ratio, greaterThanOrEqualTo(4.5));
+
     expect(find.text('已同步'), findsNothing);
 
     // tab 之间常驻（切到「我的」再回来看，它还在）
@@ -194,6 +204,11 @@ void main() {
 
     // 过了前两关，队列的空才有话语权（这就是原来那条断言的正确位置）
     expect(find.text('已同步'), findsOneWidget);
+    expect(
+      find.ancestor(of: find.text('已同步'), matching: find.byType(InkWell)),
+      findsNothing,
+    );
+
     expect(find.text('尚未连接电脑'), findsNothing);
   });
 

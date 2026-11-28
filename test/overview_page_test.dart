@@ -221,15 +221,72 @@ void main() {
 
   final Finder card = find.byKey(const Key('overview-backup-now'));
 
+  testWidgets('正常账本收为一行，点击查看位置', (tester) async {
+    await tester.pumpWidget(page());
+    expect(find.text(r'D:\神算子数据'), findsNothing);
+    await tester.tap(find.text('查看位置'));
+    await tester.pumpAndSettle();
+    expect(find.text(r'D:\神算子数据'), findsOneWidget);
+  });
+
+  testWidgets('大字号为图表金额预留可读空间', (tester) async {
+    Future<Size> chart(double scale) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MediaQuery(
+              data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+              child: const SingleChildScrollView(
+                child: SizedBox(
+                  width: 340,
+                  child: RevenueChartCard(
+                    rows: [
+                      RevenueDay(
+                        day: 30,
+                        saleCents: 123456789,
+                        documentCount: 1,
+                      ),
+                    ],
+                    fromDay: 1,
+                    toDay: 30,
+                    mobileShell: true,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final plot = find.byWidgetPredicate(
+        (w) => w is CustomPaint && w.painter is RevenueBarPainter,
+      );
+      final painter =
+          tester.widget<CustomPaint>(plot).painter! as RevenueBarPainter;
+      expect(painter.textScaler.scale(15), 15 * scale);
+      expect(
+        tester.getSize(plot).width,
+        greaterThanOrEqualTo(painter.minimumWidth),
+      );
+      return tester.getSize(plot);
+    }
+
+    final normal = await chart(1.25);
+    final large = await chart(2);
+    expect(large.height, greaterThan(normal.height));
+    expect(large.width, greaterThan(normal.width));
+  });
+
   testWidgets('没有提醒 → 不出现橙卡（不该打扰有备份的人）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
 
     expect(card, findsNothing);
     expect(find.text('立即备份'), findsNothing);
     // 原有的「数据在哪」照旧
+    await tester.tap(find.text('查看位置'));
+    await tester.pumpAndSettle();
     expect(find.text(r'D:\神算子数据'), findsOneWidget);
     expect(find.textContaining(r'D:\神算子备份'), findsOneWidget);
-    expect(find.textContaining('数据文件已就绪'), findsOneWidget);
+    expect(find.textContaining('账本已就绪'), findsOneWidget);
   });
 
   testWidgets('有提醒 → 橙卡 + 「立即备份」按钮（AE-3 两层机制的上层）', (WidgetTester tester) async {
@@ -426,8 +483,26 @@ void main() {
 
     expect(find.byKey(const Key('overview-card-today')), findsOneWidget);
     // 赊销 2×6.00 = 12.00；送货 3×10.00 = 30.00 挂账给客户甲 ⇒ 应收 42.00
-    expect(find.text('店内销售 1 笔 · ¥12.00'), findsOneWidget);
-    expect(find.text('送货 1 笔 · ¥30.00（未签收 1 张）'), findsOneWidget);
+    final today = find.byKey(const Key('overview-card-today'));
+    for (final label in [
+      '店内销售',
+      '送货',
+      '1 笔',
+      '1 笔 · 未签收 1 张',
+      '¥12.00',
+      '¥30.00',
+    ]) {
+      expect(
+        find.descendant(of: today, matching: find.text(label)),
+        findsOneWidget,
+      );
+    }
+    final sale = find.descendant(of: today, matching: find.text('¥12.00'));
+    final delivery = find.descendant(of: today, matching: find.text('¥30.00'));
+    expect(
+      tester.getTopRight(sale).dx,
+      closeTo(tester.getTopRight(delivery).dx, 1),
+    );
     expect(find.textContaining('应收合计 ¥42.00（1 家未结）'), findsOneWidget);
     expect(find.textContaining('其中 客户甲 ¥42.00'), findsOneWidget);
     // 标题带「按单据日期」（裁定②：补录单不进今日的口径说明）
@@ -476,6 +551,8 @@ void main() {
     await tester.pumpWidget(page(onNavigate: (_) {}));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('查看位置'));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('overview-open-folder')), findsOneWidget);
     expect(find.text('数据只在这台电脑上，不会上传到任何地方。'), findsOneWidget);
   });
@@ -1984,17 +2061,14 @@ void main() {
       reason: '滚动视口必须全宽 —— 缩窄它，滚轮在左右留白上就没反应了',
     );
 
-    final Rect firstCard = tester.getRect(find.byType(Card).first);
-    expect(
-      firstCard.width,
-      lessThanOrEqualTo(1081),
-      reason: '内容最宽 1080（Q1：min(70%, 1080) 的绝对上限）',
-    );
-    expect(
-      firstCard.left,
-      closeTo(1916 - firstCard.right, 1.5),
-      reason: '左右留白必须相等（居中）',
-    );
+    // 经营三卡并排时，整行才代表可用内容宽度。
+    final Rect row = tester
+        .getRect(find.byKey(const Key('overview-card-today')))
+        .expandToInclude(
+          tester.getRect(find.byKey(const Key('overview-card-entries'))),
+        );
+    expect(row.width, closeTo(1080, 1));
+    expect(row.left, closeTo(1916 - row.right, 1.5), reason: '左右留白必须相等');
   });
 
   testWidgets('窄屏 800：不干预（内容铺满，边距回到 16）', (WidgetTester tester) async {

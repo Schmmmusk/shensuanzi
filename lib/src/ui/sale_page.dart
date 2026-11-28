@@ -49,6 +49,7 @@ import 'missing_product_dialog.dart';
 import 'product_form_dialog.dart';
 import 'product_name_autocomplete.dart';
 import 'notice.dart';
+import 'paint_first.dart';
 
 /// 店内销售开单页。
 class SalePage extends StatefulWidget {
@@ -149,11 +150,15 @@ class _PayCtl {
 
   Account? account;
   final TextEditingController amount;
+  final FocusNode amountFocus = FocusNode();
+  final FocusNode accountFocus = FocusNode();
 
   bool get isBlank => amount.text.trim().isEmpty;
 
   void dispose() {
     amount.dispose();
+    amountFocus.dispose();
+    accountFocus.dispose();
   }
 }
 
@@ -197,11 +202,15 @@ class _SalePageState extends State<SalePage> {
   /// 估算库存**不含刚下的那一单**（两个快照都过期）⇒ 该提示负库存时不提示。
   /// 现在改成在 `build()` 里各取一次（每条都是一次单查询，不是每行一次）。
 
-  /// 保存失败的字段级原因（用户改任何输入后清掉）
+  /// 上一次提交后仍待修正的字段。
   SaleDraftInvalid? _invalid;
 
-  /// 保存失败要**滚回页顶**（§CV·八十 批 1 ③：错误摘要放在页顶）
+  /// 多处错误时返回页首摘要。
   final ScrollController _scroll = ScrollController();
+  final FocusNode _partyFocus = FocusNode();
+  final FocusNode _dateFocus = FocusNode();
+  final FocusNode _remarkFocus = FocusNode();
+  final FocusNode _discountFocus = FocusNode();
 
   // ---------------------------------------------------------------- 提案 60（乙）
   //
@@ -282,6 +291,10 @@ class _SalePageState extends State<SalePage> {
     _draftTimer?.cancel();
     _writeDraftNow();
     _scroll.dispose();
+    _partyFocus.dispose();
+    _dateFocus.dispose();
+    _remarkFocus.dispose();
+    _discountFocus.dispose();
     _remark.dispose();
     _given.dispose();
     _discountAll.dispose();
@@ -467,10 +480,15 @@ class _SalePageState extends State<SalePage> {
 
   // ------------------------------------------------------------ 动作
 
+  // 只有提交失败后才继续校验，改完一格仍能直接找到其余错误。
+  void _refreshErrors() {
+    if (_invalid != null) _invalid = saleDraftFailure(_draft);
+  }
+
   void _addRow() {
     setState(() {
       _rows.add(_RowCtl());
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -479,7 +497,7 @@ class _SalePageState extends State<SalePage> {
       _rows[index].dispose();
       _rows.removeAt(index);
       if (_rows.isEmpty) _addRow();
-      _invalid = null;
+      _refreshErrors();
     });
     _syncSpread();
   }
@@ -525,15 +543,15 @@ class _SalePageState extends State<SalePage> {
   /// （报告实测：3×20 + 2×20 让价 30，把第二行数量改成 1 后预览仍是 60，应为 50。）
   void _onRowChanged() {
     setState(() {
-      _invalid = null;
       _syncSpread();
+      _refreshErrors();
     });
   }
 
   void _addPayment() {
     setState(() {
       _pays.add(_PayCtl(account: _accounts.isEmpty ? null : _accounts.first));
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -541,7 +559,7 @@ class _SalePageState extends State<SalePage> {
     setState(() {
       _pays[index].dispose();
       _pays.removeAt(index);
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -560,7 +578,7 @@ class _SalePageState extends State<SalePage> {
             amount: Money.format(total),
           ),
         );
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -597,7 +615,7 @@ class _SalePageState extends State<SalePage> {
     setState(() {
       _pays.first.amount.text = Money.format(_draft.totalCents);
       _given.text = Money.format(cents);
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -614,7 +632,10 @@ class _SalePageState extends State<SalePage> {
       helpText: '选择销售日期',
     );
     if (picked == null) return;
-    setState(() => _date = picked);
+    setState(() {
+      _date = picked;
+      _refreshErrors();
+    });
   }
 
   /// 选客户：底部弹层（搜索 + 最近往来 + 新建）。返回后无需刷新列表
@@ -625,7 +646,7 @@ class _SalePageState extends State<SalePage> {
     setState(() {
       _partyId = picked.id;
       _partyName = picked.name;
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -634,7 +655,7 @@ class _SalePageState extends State<SalePage> {
     setState(() {
       _partyId = null;
       _partyName = null;
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -663,7 +684,10 @@ class _SalePageState extends State<SalePage> {
   Future<void> _save() async {
     if (_saving) return;
     _syncSpread();
-    if (_discountError != null) return; // 内联橙字已在屏上（onChanged 里 setState）
+    if (_discountError != null) {
+      SubmitErrorItem(_discountError!, focusNode: _discountFocus).revealField();
+      return;
+    }
 
     // ② 无缝建档（2026-10-25，§CV·一百零五）：手打名字、还没绑商品的行，
     // 保存前**先按名字绑一次已有商品**（只读，不写库）。
@@ -701,6 +725,8 @@ class _SalePageState extends State<SalePage> {
 
     final SaleDraft draft = _draft;
     setState(() => _saving = true);
+    await letBusyStatePaint();
+    if (!mounted) return;
     try {
       // B3b：提交走 Sink（桌面 = 落库+规则；手机 = 入队）——页面无分支
       final DocumentSubmitResult result = widget.sink.submitSale(draft);
@@ -710,8 +736,16 @@ class _SalePageState extends State<SalePage> {
           _invalid = result.error! as SaleDraftInvalid;
           _saving = false;
         });
-        // 用户视线在页底保存按钮 ⇒ 滚回页顶看摘要（§CV·八十 批 1 ③）
-        _scrollToTop();
+        final SubmitErrorItem? error = _submitErrorItems().singleOrNull;
+        if (error?.focusNode != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && identical(_invalid, result.error)) {
+              error!.revealField();
+            }
+          });
+        } else {
+          _scrollToTop();
+        }
         return;
       }
       _afterSaved(result);
@@ -759,6 +793,7 @@ class _SalePageState extends State<SalePage> {
     // 下一单看到的「当前库存」才是扣过的（否则该报负库存时不报）
     _stockSnapshot.invalidate();
     setState(() {
+      _invalid = null;
       for (final _RowCtl row in _rows) {
         row.dispose();
       }
@@ -776,7 +811,6 @@ class _SalePageState extends State<SalePage> {
       // §审查 BUG-07：整单让价也要清 —— 否则下一单悄悄继承上一单的让价
       _discountAll.clear();
       _discountError = null;
-      _invalid = null;
       _saving = false;
     });
 
@@ -908,7 +942,7 @@ class _SalePageState extends State<SalePage> {
     // 建好了 ⇒ 直接绑到这一行（与「选商品」同款：无条件预填价格）
     row.attachProduct(created);
     row.unitPrice.text = Money.format(created.sellPrice);
-    setState(() => _invalid = null);
+    setState(_refreshErrors);
   }
 
   // ------------------------------------------------------------ 选择器
@@ -924,7 +958,7 @@ class _SalePageState extends State<SalePage> {
     // 与「切单位」（§BG 方案 A）判据**不同**：那里换的是**同一商品**的价格单位，
     // 手改过的价仍是用户的意愿 ⇒ 「未被手改才跟随」；这里换的是**不同商品** ⇒ 总覆盖。
     row.unitPrice.text = Money.format(picked.sellPrice);
-    setState(() => _invalid = null);
+    setState(_refreshErrors);
   }
 
   /// 从**自动补全候选**里选中一条（2026-10-29，提案「商品名称自动补全」）。
@@ -954,7 +988,7 @@ class _SalePageState extends State<SalePage> {
     // 换商品无条件覆盖价格，`priceTouched` 不是预填守卫）
     row.attachProduct(picked);
     row.unitPrice.text = Money.format(picked.sellPrice);
-    setState(() => _invalid = null);
+    setState(_refreshErrors);
     // 选中即前进 —— 保持「选完接着填数量」的录入节奏
     if (mounted) FocusScope.of(context).nextFocus();
   }
@@ -1144,7 +1178,7 @@ class _SalePageState extends State<SalePage> {
     );
   }
 
-  /// 把 typed invalid 摊成「人话 + 跳到哪块」（去重保序）。
+  /// 按行和字段保留每一处错误。
   ///
   /// 去重按**文案**：同一句话挂在两个字段上时（core 偶尔会那么写）只留第一次，
   /// 连带保留它的跳转目标 —— 后出现的那条丢掉，不会出现「同一句话两个按钮」。
@@ -1153,44 +1187,58 @@ class _SalePageState extends State<SalePage> {
     if (invalid == null) return const <SubmitErrorItem>[];
 
     // 字段 → （跳到哪块，按钮上叫什么）
-    (SubmitSection, String) targetOf(SaleField field) {
-      switch (field) {
-        case SaleField.party:
-          return (SubmitSection.header, '往来方');
-        case SaleField.date:
-          return (SubmitSection.header, '日期');
-        case SaleField.lines:
-          return (SubmitSection.lines, '明细');
-        case SaleField.payments:
-          return (SubmitSection.payments, '收款');
-        case SaleField.remark:
-          return (SubmitSection.remark, '备注');
-      }
+    SubmitErrorItem headerError(SaleField field, String message) {
+      final (section, label, focus) = switch (field) {
+        SaleField.party => (SubmitSection.header, '往来方', _partyFocus),
+        SaleField.date => (SubmitSection.header, '日期', _dateFocus),
+        SaleField.lines => (
+          SubmitSection.lines,
+          '明细',
+          _rows.firstOrNull?.nameFocus,
+        ),
+        SaleField.payments => (
+          SubmitSection.payments,
+          '收款',
+          _pays.firstOrNull?.amountFocus,
+        ),
+        SaleField.remark => (SubmitSection.remark, '备注', _remarkFocus),
+      };
+      return SubmitErrorItem(
+        message,
+        section: section,
+        sectionLabel: label,
+        focusNode: focus,
+      );
     }
 
-    final List<SubmitErrorItem> all = <SubmitErrorItem>[
-      for (final MapEntry<SaleField, String> e in invalid.fieldErrors.entries)
-        if (e.value.trim().isNotEmpty)
-          SubmitErrorItem(
-            e.value,
-            section: targetOf(e.key).$1,
-            sectionLabel: targetOf(e.key).$2,
-          ),
-      // 行级错误只能跳到「明细」—— 具体第几行在文案里（core 已经写了「第 N 行」）
-      for (final Map<SaleLineField, String> line in invalid.lineErrors)
-        for (final String message in line.values)
-          if (message.trim().isNotEmpty)
-            SubmitErrorItem(
-              message,
-              section: SubmitSection.lines,
-              sectionLabel: '明细',
-            ),
-    ];
-
-    final Set<String> seen = <String>{};
     return <SubmitErrorItem>[
-      for (final SubmitErrorItem item in all)
-        if (seen.add(item.message)) item,
+      for (final entry in invalid.fieldErrors.entries)
+        headerError(entry.key, entry.value),
+      for (final (i, errors) in invalid.lineErrors.indexed)
+        for (final e in errors.entries)
+          SubmitErrorItem(
+            '第 ${i + 1} 行：${e.value}',
+            section: SubmitSection.lines,
+            focusNode: switch (e.key) {
+              SaleLineField.product => _rows[i].nameFocus,
+              SaleLineField.quantity => _rows[i].quantityFocus,
+              SaleLineField.unitPrice => _rows[i].priceFocus,
+              SaleLineField.entryUnit =>
+                _rows[i].canSwitchPackage
+                    ? _rows[i].unitFocus
+                    : _rows[i].quantityFocus,
+              SaleLineField.discount => _discountFocus,
+            },
+          ),
+      for (final (i, errors) in invalid.paymentErrors.indexed)
+        for (final e in errors.entries)
+          SubmitErrorItem(
+            '第 ${i + 1} 笔收款：${e.value}',
+            section: SubmitSection.payments,
+            focusNode: e.key == SalePaymentField.amount
+                ? _pays[i].amountFocus
+                : _pays[i].accountFocus,
+          ),
     ];
   }
 
@@ -1209,7 +1257,8 @@ class _SalePageState extends State<SalePage> {
           Text('客户', style: theme.textTheme.bodySmall),
           const SizedBox(height: 4),
           InkWell(
-            onTap: _pickParty,
+            onTap: _saving ? null : _pickParty,
+            focusNode: _partyFocus,
             child: InputDecorator(
               isEmpty: _partyName == null,
               decoration: InputDecoration(
@@ -1240,7 +1289,8 @@ class _SalePageState extends State<SalePage> {
           Text('日期', style: theme.textTheme.bodySmall),
           const SizedBox(height: 4),
           InkWell(
-            onTap: _pickDate,
+            onTap: _saving ? null : _pickDate,
+            focusNode: _dateFocus,
             child: InputDecorator(
               decoration: InputDecoration(
                 border: const OutlineInputBorder(),
@@ -1386,6 +1436,7 @@ class _SalePageState extends State<SalePage> {
         TextField(
           key: const Key('sale-discount'),
           controller: _discountAll,
+          focusNode: _discountFocus,
           enabled: !_saving,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           onChanged: (_) {
@@ -1458,9 +1509,11 @@ class _SalePageState extends State<SalePage> {
                 ? null
                 : _invalid!.paymentErrors[i],
             enabled: !_saving,
-            onAccountChanged: (Account? account) =>
-                setState(() => _pays[i].account = account),
-            onChanged: () => setState(() => _invalid = null),
+            onAccountChanged: (Account? account) => setState(() {
+              _pays[i].account = account;
+              _refreshErrors();
+            }),
+            onChanged: () => setState(_refreshErrors),
             onRemove: _pays.length > 1 ? () => _removePayment(i) : null,
           ),
         // 超收告知（§AX·一）：**橙色内联**、**不拦住提交** ——
@@ -1663,6 +1716,7 @@ class _SalePageState extends State<SalePage> {
   /// 备注变了不重建的话，「只填备注 + 按返回」仍会直接走掉（M11）。
   Widget _remarkField() => TextField(
     controller: _remark,
+    focusNode: _remarkFocus,
     enabled: !_saving,
     maxLines: 2,
     onChanged: (_) => setState(() {}),
@@ -1816,6 +1870,7 @@ class _LineCard extends StatelessWidget {
                         )
                       : InkWell(
                           onTap: enabled ? onPickProduct : null,
+                          focusNode: row.nameFocus,
                           child: InputDecorator(
                             isEmpty: row.product == null,
                             decoration: InputDecoration(
@@ -1852,6 +1907,7 @@ class _LineCard extends StatelessWidget {
               quantityField: TextField(
                 key: const Key('sale-qty'),
                 controller: row.quantity,
+                focusNode: row.quantityFocus,
                 enabled: enabled,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
@@ -1871,6 +1927,7 @@ class _LineCard extends StatelessWidget {
               priceField: TextField(
                 key: const Key('sale-price'),
                 controller: row.unitPrice,
+                focusNode: row.priceFocus,
                 enabled: enabled,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
@@ -1911,6 +1968,7 @@ class _LineCard extends StatelessWidget {
                 children: <Widget>[
                   ChoiceChip(
                     label: Text(row.baseUnit ?? ''),
+                    focusNode: row.unitFocus,
                     selected:
                         row.entryUnit.isEmpty || row.entryUnit == row.baseUnit,
                     onSelected: (_) {
@@ -2015,6 +2073,7 @@ class _PayCard extends StatelessWidget {
       ),
       child: DropdownButton<Account>(
         value: pay.account,
+        focusNode: pay.accountFocus,
         isDense: true,
         isExpanded: true,
         underline: const SizedBox.shrink(),
@@ -2032,6 +2091,7 @@ class _PayCard extends StatelessWidget {
     final Widget amountCell = TextField(
       key: const Key('sale-pay-amount'),
       controller: pay.amount,
+      focusNode: pay.amountFocus,
       enabled: enabled,
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       textInputAction: TextInputAction.next,

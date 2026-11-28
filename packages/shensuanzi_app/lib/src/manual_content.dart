@@ -163,7 +163,7 @@ List<ManualSection> buildManualSections({required String versionLine}) =>
         blocks: <ManualBlock>[
           const ManualParagraph('左边一列是所有功能的入口，从上到下分成四组：'),
           const ManualParagraph(
-            '「概览」—— 开门第一眼：今天要不要备份、数据在哪，都在这一页。\n'
+            '「概览」—— 开门第一眼：查看备份提醒和今日销售；点「查看位置」可看账本存在哪里。\n'
             '这一页下面还有几张图：最近 30 天卖了多少钱、**毛利**、这个月比上月、'
             '谁还欠着钱、哪些货压得最多。每张图下面都有一句话说清它是怎么算的。\n'
             '「销售开单」「采购入库」—— 每天用得最多的两个动作，做成大按钮。\n'

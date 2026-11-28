@@ -53,6 +53,7 @@ import 'missing_product_dialog.dart';
 import 'product_form_dialog.dart';
 import 'product_name_autocomplete.dart';
 import 'notice.dart';
+import 'paint_first.dart';
 
 /// 店内送货页。
 class DeliveryPage extends StatefulWidget {
@@ -465,6 +466,8 @@ class _DeliveryPageState extends State<DeliveryPage> {
 
     final DeliveryDraft draft = _draft;
     setState(() => _saving = true);
+    await letBusyStatePaint();
+    if (!mounted) return;
     try {
       // B3b：提交走 Sink（桌面 = 落库+规则；手机 = 入队）——页面无分支
       final DocumentSubmitResult result = widget.sink.submitDelivery(draft);

@@ -32,6 +32,9 @@ class LineRowModel {
 
   /// 商品名输入框的焦点（自动补全要用；**每行一个**，不能共用）。
   final FocusNode nameFocus = FocusNode();
+  final FocusNode quantityFocus = FocusNode();
+  final FocusNode priceFocus = FocusNode();
+  final FocusNode unitFocus = FocusNode();
 
   /// 明细行上的**商品名**（② 无缝建档，2026-10-25，§CV·一百零五）。
   ///
@@ -191,5 +194,8 @@ class LineRowModel {
     unitPrice.dispose();
     name.dispose();
     nameFocus.dispose();
+    quantityFocus.dispose();
+    priceFocus.dispose();
+    unitFocus.dispose();
   }
 }

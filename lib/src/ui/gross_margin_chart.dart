@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
-import 'revenue_chart.dart' show ChartBar, RevenueBarPainter;
+import 'revenue_chart.dart' show ChartBar, WeeklyBarChart;
 
 /// 毛利趋势卡（N-a，2026-11-06）。
 ///
@@ -112,23 +112,12 @@ class _GrossMarginChartCardState extends State<GrossMarginChartCard> {
             else ...<Widget>[
               Semantics(
                 label: _summaryText(margin, revenue, activeDays),
-                child: SizedBox(
-                  height: widget.mobileShell ? 150 : 190,
-                  width: double.infinity,
-                  child: CustomPaint(
-                    painter: RevenueBarPainter(
-                      points: <ChartBar>[
-                        for (final GrossMarginPoint p in weeks)
-                          ChartBar.grossMargin(p),
-                      ],
-                      barColor: theme.colorScheme.primary,
-                      negativeColor: theme.colorScheme.error,
-                      labelColor:
-                          theme.textTheme.bodyMedium?.color ?? Colors.black87,
-                      axisColor: theme.dividerColor,
-                      compact: widget.mobileShell,
-                    ),
-                  ),
+                child: WeeklyBarChart(
+                  points: <ChartBar>[
+                    for (final GrossMarginPoint p in weeks)
+                      ChartBar.grossMargin(p),
+                  ],
+                  compact: widget.mobileShell,
                 ),
               ),
               const SizedBox(height: 10),

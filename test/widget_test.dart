@@ -226,9 +226,11 @@ void main() {
   testWidgets('默认停在概览，并把「数据在哪」说清楚', (WidgetTester tester) async {
     await tester.pumpWidget(shell());
 
+    await tester.tap(find.text('查看位置'));
+    await tester.pumpAndSettle();
     expect(find.text(r'D:\神算子数据'), findsOneWidget);
     expect(find.textContaining(r'D:\神算子备份'), findsOneWidget);
-    expect(find.textContaining('数据文件已就绪'), findsOneWidget);
+    expect(find.textContaining('账本已就绪'), findsOneWidget);
   });
 
   testWidgets('点「商品」→ 内容区切过去，概览的内容消失', (WidgetTester tester) async {
@@ -236,7 +238,7 @@ void main() {
     await tapNav(tester, 'products');
 
     expect(find.textContaining('数据文件还没就绪'), findsOneWidget);
-    expect(find.textContaining('数据文件已就绪'), findsNothing);
+    expect(find.textContaining('账本已就绪'), findsNothing);
     // 概览只剩导航里那一个（内容区已经换掉了）
     expect(find.text('概览'), findsOneWidget);
   });
