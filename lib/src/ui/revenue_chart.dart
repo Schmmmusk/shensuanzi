@@ -117,22 +117,11 @@ class _RevenueChartCardState extends State<RevenueChartCard> {
             else ...<Widget>[
               Semantics(
                 label: _summaryText(total, avg, weeks.length),
-                child: SizedBox(
-                  height: widget.mobileShell ? 150 : 190,
-                  width: double.infinity,
-                  child: CustomPaint(
-                    painter: RevenueBarPainter(
-                      points: <ChartBar>[
-                        for (final RevenuePoint p in weeks) ChartBar.revenue(p),
-                      ],
-                      barColor: theme.colorScheme.primary,
-                      negativeColor: theme.colorScheme.error,
-                      labelColor:
-                          theme.textTheme.bodyMedium?.color ?? Colors.black87,
-                      axisColor: theme.dividerColor,
-                      compact: widget.mobileShell,
-                    ),
-                  ),
+                child: WeeklyBarChart(
+                  points: <ChartBar>[
+                    for (final RevenuePoint p in weeks) ChartBar.revenue(p),
+                  ],
+                  compact: widget.mobileShell,
                 ),
               ),
               const SizedBox(height: 10),
@@ -342,6 +331,59 @@ String chooseBarLabel(
 /// 只做两件事：按 [ChartBar.value] 画柱、把金额写在柱子上。
 /// 营收图与毛利图共用它（见 [ChartBar] 的说明）。
 /// **不画网格线**（对中老年是噪音）、**不用渐变色**（规则 3：只用两种颜色）。
+/// 销售额与毛利共用布局。金额决定各柱的最小间距，日期按可用空间显示。
+class WeeklyBarChart extends StatelessWidget {
+  const WeeklyBarChart({
+    super.key,
+    required this.points,
+    required this.compact,
+  });
+
+  final List<ChartBar> points;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final painter = RevenueBarPainter(
+      points: points,
+      barColor: theme.colorScheme.primary,
+      negativeColor: theme.colorScheme.error,
+      labelColor: theme.colorScheme.onSurface,
+      axisColor: theme.dividerColor,
+      compact: compact,
+      textStyle: theme.textTheme.bodyMedium ?? const TextStyle(),
+      textScaler: MediaQuery.textScalerOf(context),
+      textDirection: Directionality.of(context),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = math.max(constraints.maxWidth, painter.minimumWidth);
+        final chart = SizedBox(
+          width: width,
+          height:
+              (compact ? 104.0 : 144.0) +
+              painter.labelBand +
+              painter.axisBand +
+              (points.any((p) => p.value < 0) ? painter.labelBand : 0),
+          child: CustomPaint(painter: painter),
+        );
+        if (width <= constraints.maxWidth) return chart;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: chart,
+            ),
+            Text('左右滑动查看各周金额', style: theme.textTheme.bodySmall),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class RevenueBarPainter extends CustomPainter {
   RevenueBarPainter({
     required this.points,
@@ -349,6 +391,9 @@ class RevenueBarPainter extends CustomPainter {
     required this.negativeColor,
     required this.labelColor,
     required this.axisColor,
+    this.textStyle = const TextStyle(),
+    this.textScaler = TextScaler.noScaling,
+    this.textDirection = TextDirection.ltr,
     this.compact = false,
   });
 
@@ -361,11 +406,32 @@ class RevenueBarPainter extends CustomPainter {
   final Color axisColor;
   final bool compact;
 
-  /// 柱子上方留给金额标签的高度
-  static const double _labelBand = 24;
+  final TextStyle textStyle;
+  final TextScaler textScaler;
+  final TextDirection textDirection;
 
-  /// 柱子下方留给日期标签的高度
-  static const double _axisBand = 22;
+  Size _measure(String text, double fontSize) {
+    final painter = _layout(text, fontSize);
+    final size = painter.size;
+    painter.dispose();
+    return size;
+  }
+
+  late final double labelBand = _measure('0', 15).height + 8;
+  late final double axisBand = _measure('12/31', 13).height + 8;
+
+  double get minimumWidth {
+    double widest = 0;
+    for (final point in points) {
+      final text = barAmountLabel(
+        point.value,
+        withCurrency: false,
+        withSeparators: false,
+      );
+      widest = math.max(widest, _measure(text, 15).width);
+    }
+    return (widest + 8) * points.length;
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -381,16 +447,18 @@ class RevenueBarPainter extends CustomPainter {
 
     // 负数柱子的金额标签要画在柱子**下方**，得单独给它一条带子 ——
     // 否则它会压到日期标签上（第一版就是直接画，渲染出来才发现）。
-    final double negLabelBand = maxNeg > 0 ? 26 : 0;
-    final double barArea = size.height - _labelBand - _axisBand - negLabelBand;
+    final double topBand = labelBand;
+    final double bottomBand = axisBand;
+    final double negLabelBand = maxNeg > 0 ? topBand : 0;
+    final double barArea = size.height - topBand - bottomBand - negLabelBand;
     if (barArea <= 0) return;
 
     // 有负数时把基线抬高，否则基线贴底。
     // ⚠️ `span == 0`（这段时间卖的和退的正好抵消）时**不能提前 return** ——
     // 那会画出一块空白，用户以为图坏了。基线照画、金额照写「¥0」。
     final double baselineY = span <= 0
-        ? _labelBand + barArea
-        : _labelBand + barArea * (maxPos / span);
+        ? topBand + barArea
+        : topBand + barArea * (maxPos / span);
     final double unit = span <= 0 ? 0 : barArea / span;
 
     final Paint axis = Paint()
@@ -404,6 +472,7 @@ class RevenueBarPainter extends CustomPainter {
     // 视觉上更「实」，同时仍远小于格位、不会连成一片。
     final double barWidth = math.min(slot * 0.56, compact ? 36 : 72);
 
+    double previousDateRight = -4;
     for (int i = 0; i < points.length; i++) {
       final ChartBar p = points[i];
       final double centerX = slot * i + slot / 2;
@@ -436,7 +505,7 @@ class RevenueBarPainter extends CustomPainter {
         chooseBarLabel(
           p.value,
           slot: slot,
-          measure: (String text) => _layout(text, 15).width,
+          measure: (String text) => _measure(text, 15).width,
         ),
         15,
       );
@@ -449,16 +518,19 @@ class RevenueBarPainter extends CustomPainter {
       );
 
       // 日期（或周范围）写在轴下方
-      _drawText(
-        canvas,
-        _rangeLabel(p, compact: compact || slot < 96),
-        centerX,
-        size.height - _axisBand + 4,
-        size: 13,
-        bold: false,
-        align: _Align.top,
-        color: labelColor.withValues(alpha: 0.72),
-      );
+      label.dispose();
+      final date = _layout(_rangeLabel(p, compact: compact || slot < 96), 13);
+      if (date.width <= size.width) {
+        final left = (centerX - date.width / 2).clamp(
+          0.0,
+          size.width - date.width,
+        );
+        if (left >= previousDateRight + 4) {
+          date.paint(canvas, Offset(left, size.height - bottomBand + 4));
+          previousDateRight = left + date.width;
+        }
+      }
+      date.dispose();
     }
   }
 
@@ -478,40 +550,13 @@ class RevenueBarPainter extends CustomPainter {
     return '${date.month}/${date.day}';
   }
 
-  void _drawText(
-    Canvas canvas,
-    String text,
-    double centerX,
-    double y, {
-    required double size,
-    required bool bold,
-    required _Align align,
-    Color? color,
-  }) {
-    _paint(
-      canvas,
-      _layout(text, size, bold: bold, color: color),
-      centerX,
-      y,
-      align: align,
-    );
-  }
-
-  TextPainter _layout(
-    String text,
-    double size, {
-    bool bold = false,
-    Color? color,
-  }) => TextPainter(
+  TextPainter _layout(String text, double size) => TextPainter(
     text: TextSpan(
       text: text,
-      style: TextStyle(
-        fontSize: size,
-        fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
-        color: color ?? labelColor,
-      ),
+      style: textStyle.copyWith(fontSize: size, color: labelColor),
     ),
-    textDirection: TextDirection.ltr,
+    textScaler: textScaler,
+    textDirection: textDirection,
     maxLines: 1,
   )..layout();
 
@@ -534,7 +579,10 @@ class RevenueBarPainter extends CustomPainter {
       old.negativeColor != negativeColor ||
       old.labelColor != labelColor ||
       old.axisColor != axisColor ||
-      old.compact != compact;
+      old.compact != compact ||
+      old.textStyle != textStyle ||
+      old.textScaler != textScaler ||
+      old.textDirection != textDirection;
 }
 
 enum _Align {

@@ -52,6 +52,7 @@ import 'line_row.dart';
 import 'draft_banner.dart';
 import 'submit_error_summary.dart';
 import 'notice.dart';
+import 'paint_first.dart';
 
 /// 采购入库开单页。
 ///
@@ -134,11 +135,15 @@ class _PayCtl {
 
   Account? account;
   final TextEditingController amount;
+  final FocusNode amountFocus = FocusNode();
+  final FocusNode accountFocus = FocusNode();
 
   bool get isBlank => amount.text.trim().isEmpty;
 
   void dispose() {
     amount.dispose();
+    amountFocus.dispose();
+    accountFocus.dispose();
   }
 }
 
@@ -165,11 +170,14 @@ class _PurchasePageState extends State<PurchasePage> {
   final List<_RowCtl> _rows = <_RowCtl>[];
   final List<_PayCtl> _pays = <_PayCtl>[];
 
-  /// 保存失败的字段级原因（用户改任何输入后清掉）
+  /// 上一次提交后仍待修正的字段。
   PurchaseDraftInvalid? _invalid;
 
-  /// 保存失败要**滚回页顶**（§CV·八十 批 1 ③）
+  /// 多处错误时返回页首摘要。
   final ScrollController _scroll = ScrollController();
+  final FocusNode _partyFocus = FocusNode();
+  final FocusNode _dateFocus = FocusNode();
+  final FocusNode _remarkFocus = FocusNode();
 
   // 提案 60（乙）：摘要卡上的「跳到…」只挂 4 个**静态区块** key（见
   // `submit_error_summary.dart` 的说明；行级 key 是纪律 18 的高发区，不挂）。
@@ -229,6 +237,9 @@ class _PurchasePageState extends State<PurchasePage> {
     _draftTimer?.cancel();
     _writeDraftNow();
     _scroll.dispose();
+    _partyFocus.dispose();
+    _dateFocus.dispose();
+    _remarkFocus.dispose();
     _remark.dispose();
     for (final _RowCtl row in _rows) {
       row.dispose();
@@ -391,10 +402,15 @@ class _PurchasePageState extends State<PurchasePage> {
 
   // ------------------------------------------------------------ 动作
 
+  // 只有提交失败后才继续校验，改完一格仍能直接找到其余错误。
+  void _refreshErrors() {
+    if (_invalid != null) _invalid = purchaseDraftFailure(_draft);
+  }
+
   void _addRow() {
     setState(() {
       _rows.add(_RowCtl());
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -403,14 +419,14 @@ class _PurchasePageState extends State<PurchasePage> {
       _rows[index].dispose();
       _rows.removeAt(index);
       if (_rows.isEmpty) _addRow();
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
   void _addPayment() {
     setState(() {
       _pays.add(_PayCtl(account: _accounts.isEmpty ? null : _accounts.first));
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -418,7 +434,7 @@ class _PurchasePageState extends State<PurchasePage> {
     setState(() {
       _pays[index].dispose();
       _pays.removeAt(index);
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -438,7 +454,7 @@ class _PurchasePageState extends State<PurchasePage> {
             amount: Money.format(total),
           ),
         );
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -455,7 +471,10 @@ class _PurchasePageState extends State<PurchasePage> {
       helpText: '选择采购日期',
     );
     if (picked == null) return;
-    setState(() => _date = picked);
+    setState(() {
+      _date = picked;
+      _refreshErrors();
+    });
   }
 
   /// 选供应商：底部弹层（搜索 + 新建）。返回后刷新供应商列表。
@@ -469,7 +488,7 @@ class _PurchasePageState extends State<PurchasePage> {
     setState(() {
       _partyId = party.id;
       _partyName = party.name;
-      _invalid = null;
+      _refreshErrors();
     });
     // #40①：提交后**如实告知**发生了什么（以前采购页整个丢掉这个信息）
     final String? notice = partyMutationNotice(
@@ -489,7 +508,7 @@ class _PurchasePageState extends State<PurchasePage> {
     setState(() {
       _partyId = null;
       _partyName = null;
-      _invalid = null;
+      _refreshErrors();
     });
   }
 
@@ -543,6 +562,8 @@ class _PurchasePageState extends State<PurchasePage> {
 
     final PurchaseDraft draft = _draft;
     setState(() => _saving = true);
+    await letBusyStatePaint();
+    if (!mounted) return;
     try {
       // B3b：提交走 Sink（桌面 = 落库+规则；手机 = 入队）——页面无分支
       final DocumentSubmitResult result = widget.sink.submitPurchase(draft);
@@ -552,7 +573,16 @@ class _PurchasePageState extends State<PurchasePage> {
           _invalid = result.error! as PurchaseDraftInvalid;
           _saving = false;
         });
-        _scrollToTop();
+        final SubmitErrorItem? error = _submitErrorItems().singleOrNull;
+        if (error?.focusNode != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && identical(_invalid, result.error)) {
+              error!.revealField();
+            }
+          });
+        } else {
+          _scrollToTop();
+        }
         return;
       }
       _afterSaved(result);
@@ -596,6 +626,7 @@ class _PurchasePageState extends State<PurchasePage> {
       if (mounted) _savedSig = _draftSig();
     });
     setState(() {
+      _invalid = null;
       for (final _RowCtl row in _rows) {
         row.dispose();
       }
@@ -608,7 +639,6 @@ class _PurchasePageState extends State<PurchasePage> {
       if (_accounts.isNotEmpty) {
         _pays.add(_PayCtl(account: _accounts.first));
       }
-      _invalid = null;
       _saving = false;
     });
 
@@ -743,7 +773,7 @@ class _PurchasePageState extends State<PurchasePage> {
     // 与对话框选择**完全同款**的绑定与预填
     row.attachProduct(picked);
     row.unitPrice.text = Money.format(picked.costPrice);
-    setState(() => _invalid = null);
+    setState(_refreshErrors);
     if (mounted) FocusScope.of(context).nextFocus();
   }
 
@@ -800,7 +830,7 @@ class _PurchasePageState extends State<PurchasePage> {
     // 建好了 ⇒ 直接绑到这一行（与「选商品」同款：无条件预填价格）
     row.attachProduct(created);
     row.unitPrice.text = Money.format(created.costPrice);
-    setState(() => _invalid = null);
+    setState(_refreshErrors);
   }
 
   // ------------------------------------------------------------ 选择器
@@ -817,7 +847,7 @@ class _PurchasePageState extends State<PurchasePage> {
     // 与「切单位」（§BG 方案 A）判据**不同**：那里换的是**同一商品**的价格单位，
     // 手改过的价仍是用户的意愿 ⇒ 「未被手改才跟随」；这里换的是**不同商品** ⇒ 总覆盖。
     row.unitPrice.text = Money.format(picked.costPrice);
-    setState(() => _invalid = null);
+    setState(_refreshErrors);
   }
 
   /// 选供应商 + 最小新建
@@ -961,50 +991,64 @@ class _PurchasePageState extends State<PurchasePage> {
     );
   }
 
-  /// 把 typed invalid 摊成「人话 + 跳到哪块」（去重保序，按文案去重）
+  /// 按行和字段保留每一处错误。
   List<SubmitErrorItem> _submitErrorItems() {
     final PurchaseDraftInvalid? invalid = _invalid;
     if (invalid == null) return const <SubmitErrorItem>[];
 
     // 采购页叫「供应商」「付款」，不叫「往来方」「收款」
-    (SubmitSection, String) targetOf(PurchaseField field) {
-      switch (field) {
-        case PurchaseField.party:
-          return (SubmitSection.header, '供应商');
-        case PurchaseField.date:
-          return (SubmitSection.header, '日期');
-        case PurchaseField.lines:
-          return (SubmitSection.lines, '明细');
-        case PurchaseField.payments:
-          return (SubmitSection.payments, '付款');
-        case PurchaseField.remark:
-          return (SubmitSection.remark, '备注');
-      }
+    SubmitErrorItem headerError(PurchaseField field, String message) {
+      final (section, label, focus) = switch (field) {
+        PurchaseField.party => (SubmitSection.header, '供应商', _partyFocus),
+        PurchaseField.date => (SubmitSection.header, '日期', _dateFocus),
+        PurchaseField.lines => (
+          SubmitSection.lines,
+          '明细',
+          _rows.firstOrNull?.nameFocus,
+        ),
+        PurchaseField.payments => (
+          SubmitSection.payments,
+          '付款',
+          _pays.firstOrNull?.amountFocus,
+        ),
+        PurchaseField.remark => (SubmitSection.remark, '备注', _remarkFocus),
+      };
+      return SubmitErrorItem(
+        message,
+        section: section,
+        sectionLabel: label,
+        focusNode: focus,
+      );
     }
 
-    final List<SubmitErrorItem> all = <SubmitErrorItem>[
-      for (final MapEntry<PurchaseField, String> e
-          in invalid.fieldErrors.entries)
-        if (e.value.trim().isNotEmpty)
-          SubmitErrorItem(
-            e.value,
-            section: targetOf(e.key).$1,
-            sectionLabel: targetOf(e.key).$2,
-          ),
-      for (final Map<PurchaseLineField, String> line in invalid.lineErrors)
-        for (final String message in line.values)
-          if (message.trim().isNotEmpty)
-            SubmitErrorItem(
-              message,
-              section: SubmitSection.lines,
-              sectionLabel: '明细',
-            ),
-    ];
-
-    final Set<String> seen = <String>{};
     return <SubmitErrorItem>[
-      for (final SubmitErrorItem item in all)
-        if (seen.add(item.message)) item,
+      for (final entry in invalid.fieldErrors.entries)
+        headerError(entry.key, entry.value),
+      for (final (i, errors) in invalid.lineErrors.indexed)
+        for (final e in errors.entries)
+          SubmitErrorItem(
+            '第 ${i + 1} 行：${e.value}',
+            section: SubmitSection.lines,
+            focusNode: switch (e.key) {
+              PurchaseLineField.product => _rows[i].nameFocus,
+              PurchaseLineField.quantity => _rows[i].quantityFocus,
+              PurchaseLineField.unitPrice => _rows[i].priceFocus,
+              PurchaseLineField.entryUnit =>
+                _rows[i].canSwitchPackage
+                    ? _rows[i].unitFocus
+                    : _rows[i].quantityFocus,
+              PurchaseLineField.discount => _rows[i].priceFocus,
+            },
+          ),
+      for (final (i, errors) in invalid.paymentErrors.indexed)
+        for (final e in errors.entries)
+          SubmitErrorItem(
+            '第 ${i + 1} 笔付款：${e.value}',
+            section: SubmitSection.payments,
+            focusNode: e.key == PurchasePaymentField.amount
+                ? _pays[i].amountFocus
+                : _pays[i].accountFocus,
+          ),
     ];
   }
 
@@ -1019,7 +1063,8 @@ class _PurchasePageState extends State<PurchasePage> {
             Text('供应商', style: theme.textTheme.bodySmall),
             const SizedBox(height: 4),
             InkWell(
-              onTap: _pickParty,
+              onTap: _saving ? null : _pickParty,
+              focusNode: _partyFocus,
               child: InputDecorator(
                 isEmpty: _partyName == null,
                 decoration: InputDecoration(
@@ -1050,7 +1095,8 @@ class _PurchasePageState extends State<PurchasePage> {
             Text('日期', style: theme.textTheme.bodySmall),
             const SizedBox(height: 4),
             InkWell(
-              onTap: _pickDate,
+              onTap: _saving ? null : _pickDate,
+              focusNode: _dateFocus,
               child: InputDecorator(
                 decoration: InputDecoration(
                   border: const OutlineInputBorder(),
@@ -1108,7 +1154,7 @@ class _PurchasePageState extends State<PurchasePage> {
           // ② 主机出口才能顺手建档（手机 QueueSink 不行）
           allowTypedName: widget.sink.canCreateProducts,
           onPickProduct: () => _pickProduct(i),
-          onChanged: () => setState(() => _invalid = null),
+          onChanged: () => setState(_refreshErrors),
           onRemove: _rows.length > 1 ? () => _removeRow(i) : null,
         ),
       Align(
@@ -1200,9 +1246,11 @@ class _PurchasePageState extends State<PurchasePage> {
                 ? null
                 : _invalid!.paymentErrors[i],
             enabled: !_saving,
-            onAccountChanged: (Account? account) =>
-                setState(() => _pays[i].account = account),
-            onChanged: () => setState(() => _invalid = null),
+            onAccountChanged: (Account? account) => setState(() {
+              _pays[i].account = account;
+              _refreshErrors();
+            }),
+            onChanged: () => setState(_refreshErrors),
             onRemove: _pays.length > 1 ? () => _removePayment(i) : null,
           ),
         // 多付告知（§AY·四，与销售同构）：**橙色内联**、**不拦住提交** ——
@@ -1245,6 +1293,7 @@ class _PurchasePageState extends State<PurchasePage> {
   /// 备注变了不重建的话，「只填备注 + 按返回」仍会直接走掉（M11）。
   Widget _remarkField() => TextField(
     controller: _remark,
+    focusNode: _remarkFocus,
     enabled: !_saving,
     maxLines: 2,
     onChanged: (_) => setState(() {}),
@@ -1369,6 +1418,7 @@ class _LineCard extends StatelessWidget {
                         )
                       : InkWell(
                           onTap: enabled ? onPickProduct : null,
+                          focusNode: row.nameFocus,
                           child: InputDecorator(
                             isEmpty: row.product == null,
                             decoration: InputDecoration(
@@ -1406,6 +1456,7 @@ class _LineCard extends StatelessWidget {
               quantityField: TextField(
                 key: const Key('purchase-qty'),
                 controller: row.quantity,
+                focusNode: row.quantityFocus,
                 enabled: enabled,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
@@ -1425,6 +1476,7 @@ class _LineCard extends StatelessWidget {
               priceField: TextField(
                 key: const Key('purchase-price'),
                 controller: row.unitPrice,
+                focusNode: row.priceFocus,
                 enabled: enabled,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
@@ -1464,6 +1516,7 @@ class _LineCard extends StatelessWidget {
                 children: <Widget>[
                   ChoiceChip(
                     label: Text(row.baseUnit ?? ''),
+                    focusNode: row.unitFocus,
                     selected:
                         row.entryUnit.isEmpty || row.entryUnit == row.baseUnit,
                     onSelected: (_) {
@@ -1554,6 +1607,7 @@ class _PayCard extends StatelessWidget {
             ),
             child: DropdownButton<Account>(
               value: pay.account,
+              focusNode: pay.accountFocus,
               isDense: true,
               isExpanded: true,
               underline: const SizedBox.shrink(),
@@ -1577,6 +1631,7 @@ class _PayCard extends StatelessWidget {
           child: TextField(
             key: const Key('purchase-pay-amount'),
             controller: pay.amount,
+            focusNode: pay.amountFocus,
             enabled: enabled,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             textInputAction: TextInputAction.next,

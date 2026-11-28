@@ -230,6 +230,36 @@ void main() {
   Future<void> tapBottomButton(WidgetTester tester, String label) =>
       tapFinder(tester, find.text(label));
 
+  testWidgets('单笔付款金额校验直接定位字段', (tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    await fillRow(tester);
+    final amount = find.byKey(const Key('purchase-pay-amount'));
+    await tester.enterText(amount, '0');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tapBottomButton(tester, '保存 (Ctrl+S)');
+    final editable = tester.widget<EditableText>(
+      find.descendant(of: amount, matching: find.byType(EditableText)),
+    );
+    expect(editable.focusNode.hasFocus, isTrue);
+    final summary = find.byKey(const Key('submit-error-summary'));
+    expect(
+      find.descendant(of: summary, matching: find.textContaining('第 1 笔付款')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('开单先绘制保存反馈', (tester) async {
+    await tester.pumpWidget(page());
+    final save = find.byKey(const Key('purchase-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pump();
+    expect(find.text('保存中…'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('保存中…'), findsNothing);
+  });
+
   testWidgets('空表单点保存 → 行级报「请选一个商品」等（不是整单级）', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();

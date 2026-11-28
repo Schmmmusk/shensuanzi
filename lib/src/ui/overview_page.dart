@@ -339,6 +339,7 @@ class _OverviewPageState extends State<OverviewPage> {
   /// 与「失败」（`_loadError != null`）。三态必须分开画 —— 混在一起就会
   /// 「查挂了」和「还在算」长得一样（比不加载更糟）。
   bool _pending = false;
+  bool _locationExpanded = false;
 
   /// isolate 里抛出来的错误；`null` = 没出错。
   Object? _loadError;
@@ -595,88 +596,26 @@ class _OverviewPageState extends State<OverviewPage> {
                   ),
                 ),
               ),
-            Card(
-              margin: EdgeInsets.zero,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text('你的数据在', style: theme.textTheme.titleMedium),
-                    const SizedBox(height: 8),
-                    if (widget.locationNote != null)
-                      Text(
-                        widget.locationNote!,
-                        style: const TextStyle(height: 1.6),
-                      )
-                    else ...<Widget>[
-                      SelectableText(
-                        widget.dataDirectory,
-                        style: const TextStyle(height: 1.6),
-                      ),
-                      const SizedBox(height: 4),
-                      // 2026-10-22（§CV·八十三 批 2 第 12 条）：**把「打开文件夹」
-                      // 搬到概览**。设置页早就有（`settings_page`），概览只给一条
-                      // 只读路径 —— 用户想看数据在哪，还得跑去设置里翻。
-                      // 手机端不显示（没有「文件管理器打开这个路径」的概念）。
-                      if (!widget.mobileShell)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton.icon(
-                            key: const Key('overview-open-folder'),
-                            onPressed: () => _openFolder(widget.dataDirectory),
-                            icon: const Icon(
-                              Icons.folder_open_outlined,
-                              size: 18,
-                            ),
-                            label: const Text('打开文件夹'),
-                          ),
-                        ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '备份会放在旁边：${widget.backupDirectory}',
-                        style: TextStyle(
-                          height: 1.6,
-                          color: theme.textTheme.bodySmall?.color,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      // `ui_principles.md` 要求的那句核心承诺 —— 页面上原先没有
-                      Text(
-                        '数据只在这台电脑上，不会上传到任何地方。',
-                        style: TextStyle(
-                          height: 1.6,
-                          color: theme.textTheme.bodySmall?.color,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    Row(
-                      children: <Widget>[
-                        Icon(
-                          widget.databaseReady
-                              ? Icons.check_circle_outline
-                              : Icons.error_outline,
-                          size: 20,
-                          color: widget.databaseReady
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.error,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            widget.databaseReady
-                                ? '数据文件已就绪（版本 ${widget.schemaVersion}）'
-                                : '数据文件打不开，请到设置里换一个位置',
-                            style: const TextStyle(height: 1.6),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+            if (widget.databaseReady)
+              Wrap(
+                spacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Icon(
+                    Icons.check_circle_outline,
+                    color: theme.colorScheme.primary,
+                    size: 20,
+                  ),
+                  const Text('账本已就绪'),
+                  TextButton(
+                    onPressed: () =>
+                        setState(() => _locationExpanded = !_locationExpanded),
+                    child: Text(_locationExpanded ? '收起位置' : '查看位置'),
+                  ),
+                ],
               ),
-            ),
+            if (!widget.databaseReady || _locationExpanded)
+              _locationDetails(theme),
             const SizedBox(height: 24),
             Text('从这里开始', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
@@ -938,15 +877,13 @@ class _OverviewPageState extends State<OverviewPage> {
       key: 'overview-card-today',
       title: '今日销售（按单据日期）',
       lines: <Widget>[
-        Text(
-          '店内销售 ${today.saleCount} 笔 · ¥${Money.formatGrouped(today.saleCents)}',
-          style: const TextStyle(height: 1.7, fontSize: 15),
-        ),
-        Text(
-          '送货 ${today.deliveryCount} 笔 · '
-          '¥${Money.formatGrouped(today.deliveryCents)}'
-          '${transitCount > 0 ? '（未签收 $transitCount 张）' : ''}',
-          style: const TextStyle(height: 1.7, fontSize: 15),
+        _todayAmount(theme, '店内销售', '${today.saleCount} 笔', today.saleCents),
+        const SizedBox(height: 12),
+        _todayAmount(
+          theme,
+          '送货',
+          '${today.deliveryCount} 笔${transitCount > 0 ? ' · 未签收 $transitCount 张' : ''}',
+          today.deliveryCents,
         ),
         // 裁定④：镜像可能滞后 —— 诚实口径（不假装算得出来，只报条数）
         if (widget.mobileShell && unsynced > 0)
@@ -1172,6 +1109,103 @@ class _OverviewPageState extends State<OverviewPage> {
         ? null
         : () => widget.onNavigate!('stock'),
   );
+
+  Widget _locationDetails(ThemeData theme) => Card(
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!widget.databaseReady)
+            Text(
+              '数据文件打不开，请到设置里换一个位置',
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+          Text('你的数据在', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (widget.locationNote != null)
+            Text(widget.locationNote!, style: const TextStyle(height: 1.6))
+          else ...<Widget>[
+            SelectableText(
+              widget.dataDirectory,
+              style: const TextStyle(height: 1.6),
+            ),
+            const SizedBox(height: 4),
+            // 2026-10-22（§CV·八十三 批 2 第 12 条）：**把「打开文件夹」
+            // 搬到概览**。设置页早就有（`settings_page`），概览只给一条
+            // 只读路径 —— 用户想看数据在哪，还得跑去设置里翻。
+            // 手机端不显示（没有「文件管理器打开这个路径」的概念）。
+            if (!widget.mobileShell)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const Key('overview-open-folder'),
+                  onPressed: () => _openFolder(widget.dataDirectory),
+                  icon: const Icon(Icons.folder_open_outlined, size: 18),
+                  label: const Text('打开文件夹'),
+                ),
+              ),
+            const SizedBox(height: 8),
+            Text(
+              '备份会放在旁边：${widget.backupDirectory}',
+              style: TextStyle(
+                height: 1.6,
+                color: theme.textTheme.bodySmall?.color,
+              ),
+            ),
+            const SizedBox(height: 4),
+            // `ui_principles.md` 要求的那句核心承诺 —— 页面上原先没有
+            Text(
+              '数据只在这台电脑上，不会上传到任何地方。',
+              style: TextStyle(
+                height: 1.6,
+                color: theme.textTheme.bodySmall?.color,
+              ),
+            ),
+          ],
+
+          if (widget.databaseReady)
+            Text(
+              '数据文件版本 ${widget.schemaVersion}',
+              style: theme.textTheme.bodySmall,
+            ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _todayAmount(ThemeData theme, String label, String count, int cents) =>
+      MergeSemantics(
+        child: OverflowBar(
+          alignment: MainAxisAlignment.spaceBetween,
+          overflowAlignment: OverflowBarAlignment.end,
+          spacing: 12,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: theme.textTheme.bodyMedium),
+                Text(
+                  count,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            Text(
+              '¥${Money.formatGrouped(cents)}',
+              textAlign: TextAlign.right,
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      );
 
   Widget _bizCard(
     ThemeData theme, {

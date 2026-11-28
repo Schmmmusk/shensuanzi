@@ -638,28 +638,56 @@ class _SyncStatusBarState extends State<_SyncStatusBar> {
     final ColorScheme colors = Theme.of(context).colorScheme;
     // M04：文案与色调都由纯 Dart 判定（`syncBarLabel` / `syncBarToneOf`）
     final String label = syncBarLabel(link: _link, triage: triage);
+    final bool actionable = _link != SyncLinkState.linked || !triage.isSynced;
     final Color color = switch (syncBarToneOf(link: _link, triage: triage)) {
       SyncBarTone.error => colors.error,
       SyncBarTone.active => colors.primary,
-      SyncBarTone.neutral => colors.outline,
+      SyncBarTone.neutral => colors.onSurfaceVariant,
     };
+    final badge = Ink(
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!actionable) Icon(Icons.check, size: 16, color: color),
+            if (!actionable) const SizedBox(width: 4),
+            Flexible(
+              child: Text(label, style: TextStyle(fontSize: 12, color: color)),
+            ),
+            if (actionable) Icon(Icons.chevron_right, size: 18, color: color),
+          ],
+        ),
+      ),
+    );
 
     return Align(
       alignment: Alignment.topRight,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(0, 4, 8, 0),
-        child: Material(
-          color: colors.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: _showDetail,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              child: Text(label, style: TextStyle(fontSize: 12, color: color)),
-            ),
-          ),
-        ),
+        padding: const EdgeInsets.only(right: 8),
+        child: actionable
+            ? Semantics(
+                button: true,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: _showDetail,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                    child: Align(widthFactor: 1, heightFactor: 1, child: badge),
+                  ),
+                ),
+              )
+            : ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 44),
+                child: Align(widthFactor: 1, heightFactor: 1, child: badge),
+              ),
       ),
     );
   }

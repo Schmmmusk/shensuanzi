@@ -185,7 +185,11 @@ export 'src/documents/quantity_conversion.dart'
         packageEntryHint,
         toBaseQuantity;
 export 'src/documents/purchase_service.dart'
-    show PurchaseDraftInvalid, PurchaseSaved, PurchaseService;
+    show
+        PurchaseDraftInvalid,
+        PurchaseSaved,
+        PurchaseService,
+        purchaseDraftFailure;
 export 'src/documents/sale_draft.dart'
     show
         SaleDraft,
@@ -195,7 +199,7 @@ export 'src/documents/sale_draft.dart'
         SalePaymentDraft,
         SalePaymentField;
 export 'src/documents/sale_service.dart'
-    show SaleDraftInvalid, SaleSaved, SaleService;
+    show SaleDraftInvalid, SaleSaved, SaleService, saleDraftFailure;
 export 'src/documents/return_draft.dart'
     show
         ReturnDraft,

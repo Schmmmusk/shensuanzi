@@ -284,6 +284,17 @@ void main() {
               .first['s']!
           as int;
 
+  testWidgets('开单先绘制保存反馈', (tester) async {
+    await tester.pumpWidget(page());
+    final save = find.byKey(const Key('delivery-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pump();
+    expect(find.text('保存中…'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('保存中…'), findsNothing);
+  });
+
   testWidgets('客户必选：填了货、没选客户 ⇒ 拦下并说清后果，库里没有单据', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await fillRow(tester);

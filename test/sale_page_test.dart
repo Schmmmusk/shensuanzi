@@ -327,6 +327,69 @@ void main() {
     );
   });
 
+  testWidgets('单笔收款金额校验直接定位字段', (tester) async {
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    await fillRow(tester);
+    final amount = find.byKey(const Key('sale-pay-amount'));
+    await tester.enterText(amount, '0');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tapBottomButton(tester, '保存 (Ctrl+S)');
+    final editable = tester.widget<EditableText>(
+      find.descendant(of: amount, matching: find.byType(EditableText)),
+    );
+    expect(editable.focusNode.hasFocus, isTrue);
+    final summary = find.byKey(const Key('submit-error-summary'));
+    expect(
+      find.descendant(of: summary, matching: find.textContaining('第 1 笔收款')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('开单先绘制保存反馈', (tester) async {
+    await tester.pumpWidget(page());
+    final save = find.byKey(const Key('sale-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pump();
+    expect(find.text('保存中…'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('保存中…'), findsNothing);
+  });
+
+  testWidgets('两行相同的数量错误可分别定位', (tester) async {
+    await tester.pumpWidget(page());
+    final add = find.text('加一行');
+    await tester.ensureVisible(add);
+    await tester.tap(add);
+    await tester.pumpAndSettle();
+    await tapBottomButton(tester, '保存 (Ctrl+S)');
+    final summary = find.byKey(const Key('submit-error-summary'));
+    for (final i in [1, 2]) {
+      final target = find.descendant(
+        of: summary,
+        matching: find.textContaining('第 $i 行：请填数量'),
+      );
+      expect(target, findsOneWidget);
+      await tester.ensureVisible(target);
+      await tester.tap(target);
+      await tester.pumpAndSettle();
+      final field = find.byKey(const Key('sale-qty')).at(i - 1);
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(of: field, matching: find.byType(EditableText)),
+            )
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      await tester.enterText(field, '2');
+      await tester.pumpAndSettle();
+      expect(target, findsNothing);
+    }
+  });
+
   testWidgets('空表单点保存 → 行级报「请选一个商品」', (WidgetTester tester) async {
     await tester.pumpWidget(page());
     await tester.pumpAndSettle();
@@ -353,14 +416,7 @@ void main() {
     expect(find.textContaining('请选一个商品'), findsWidgets);
   });
 
-  // 提案 60（乙，2026-11-17）：摘要卡从「只读的一句话」升级成**可点**的 ——
-  // 点「跳到明细」要真的把明细区滚进视口。
-  //
-  // 改坏点（反向灵敏度）：① 去掉 `onJump: _jumpTo` ⇒ 按钮根本不出现；
-  // ② `_jumpTo` 里对 lines 返回 null / 把 `_linesKey` 从布局上摘掉 ⇒ 滚不动、offset 仍为 0。
-  testWidgets('摘要卡「跳到明细」⇒ 页面真的滚下去（提案 60）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('摘要中的明细错误可点到具体字段', (WidgetTester tester) async {
     // 视口压矮：内容必须溢出，否则「滚过去」和「本来就在眼前」分不出来
     tester.view.physicalSize = const Size(800, 400);
     tester.view.devicePixelRatio = 1.0;
@@ -370,13 +426,8 @@ void main() {
     await tester.pumpAndSettle();
     await tapBottomButton(tester, '保存 (Ctrl+S)');
 
-    final Finder chip = find.byKey(const Key('submit-error-jump-lines'));
-    expect(
-      chip,
-      findsOneWidget,
-      reason: '明细那处错了就该给一个「跳到明细」的按钮',
-    );
-    expect(find.textContaining('跳到明细'), findsOneWidget);
+    final Finder chip = find.textContaining('第 1 行：请填数量');
+    expect(chip, findsOneWidget);
 
     final ScrollableState scroller = tester.state<ScrollableState>(
       find
@@ -1680,7 +1731,8 @@ void main() {
       expect(
         tester.takeException(),
         isNull,
-        reason: '真机日志：Row ← Column ← LayoutBuilder 溢出 9.6 px（sale_page.dart:1735）',
+        reason:
+            '真机日志：Row ← Column ← LayoutBuilder 溢出 9.6 px（sale_page.dart:1735）',
       );
 
       // 换成可滚动到底部，逐段检查（惰性构建的行要滚到才会 layout）

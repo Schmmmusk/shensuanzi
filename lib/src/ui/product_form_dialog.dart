@@ -263,8 +263,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     barcode: _barcode.text,
     safetyStock: _safetyStock.text,
     packageNote: _packageNote.text,
-    packageUnit: _packageUnit.text,
-    packageSize: _packageSize.text,
+    packageUnit: _packageOpen ? _packageUnit.text : '',
+    packageSize: _packageOpen ? _packageSize.text : '',
   );
 
   /// 用户一改这个字段就把它那条错误清掉 —— 边改边消，而不是等再点一次保存
@@ -413,21 +413,15 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _setUnit(picked);
   }
 
-  /// 包装换算那一行的说明（评审 2026-11-24 问题二：**别把「箱」写死**）。
-  ///
-  /// 一个槽位、两种消息：
-  /// - 没填全 ⇒ 说清它是干什么的；
-  /// - 填全 ⇒ 把它算出来的等式**读回来**（`1 箱 = 24 瓶 —— 开单时可以按「箱」录入。`）。
-  ///   填反了（24 箱 = 1 瓶）用户一眼就能看出来，不用等到开单时才发现。
+  /// 开启时实时预览换算等式，数量为空时标出待填的位置。
   String _packageSummary() {
     final String unit = _packageUnit.text.trim();
     final String size = _packageSize.text.trim();
-    if (unit.isEmpty || size.isEmpty) {
+    if (!_packageOpen) {
       return '按箱、包等较大单位录入时，自动换算成最小单位。';
     }
     final String smallest = _unit.text.trim();
-    return '1 $unit = $size ${smallest.isEmpty ? '个' : smallest}'
-        ' —— 开单时可以按「$unit」录入。';
+    return '1 ${unit.isEmpty ? '包装单位' : unit} = ${size.isEmpty ? '〔数量〕' : size} ${smallest.isEmpty ? '最小单位' : smallest}';
   }
 
   /// 分段标题（一、二、三）—— 三段式重排的锚点。
@@ -495,20 +489,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     ),
   );
 
-  /// 包装信息区块（2026-11-24 二次微调）。
-  ///
-  /// 三件事收在**一个**带边框的块里：包装说明（备注）→ 勾选框 → 展开后的换算两格。
-  /// 用户要的是"知道这是一个整体"，而不是两个长得差不多的折叠区。
-  ///
-  /// ⚠️ 展开方式从 `ExpansionTile`（点整行）改成**显式 Checkbox**：
-  /// 折叠区最贵的信息是「到底开没开」—— 复选框自己就带这个状态，
-  /// 而折叠箭头+标题的组合会让人分不清"点了会展开"还是"点了会启用"。
-  Widget _packageBlock(ThemeData theme) => Container(
-    padding: const EdgeInsets.fromLTRB(10, 8, 10, 2),
-    decoration: BoxDecoration(
-      border: Border.all(color: theme.dividerColor),
-      borderRadius: BorderRadius.circular(4),
-    ),
+  /// 备注与换算分别填写，组间留白标出包装区边界。
+  Widget _packageBlock(ThemeData theme) => Padding(
+    padding: const EdgeInsets.only(top: 8, bottom: 8),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -520,7 +503,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
           onChanged: (_) => _clearError(ProductField.packageNote),
           decoration: _decoration(
             ProductField.packageNote,
-            label: '包装说明（可选）',
+            label: '包装说明',
             hint: '例：1 箱 = 48 瓶',
             helper: '只是给人看的备注，不影响计算。',
           ),
@@ -534,7 +517,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
           contentPadding: EdgeInsets.zero,
           dense: true,
           visualDensity: VisualDensity.compact,
-          title: const Text('包装换算（选填）'),
+          title: const Text('启用包装换算'),
           // 副标题**一个槽位、两种消息**（评审问题二）：
           // 没填 ⇒ 说清它是干什么的；填全 ⇒ 直接把它换算出来的等式读回来，
           // 用户一眼能发现自己把「1 箱 = 24 瓶」填反了。
@@ -551,7 +534,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         // 勾选后**平滑展开**两格（`AnimatedSize` 而不是直接跳出来 ——
         // 「凭空多出两行」会让用户以为点错了什么）
         AnimatedSize(
-          duration: const Duration(milliseconds: 160),
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 160),
           curve: Curves.easeOut,
           alignment: Alignment.topCenter,
           child: !_packageOpen
@@ -570,7 +555,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                           ),
                           decoration: _decoration(
                             ProductField.packageUnit,
-                            label: '包装单位（可选）',
+                            label: '包装单位',
                             hint: '例：箱',
                           ),
                         ),
@@ -586,7 +571,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                           ),
                           decoration: _decoration(
                             ProductField.packageSize,
-                            label: '1 包 = 多少（可选）',
+                            label: '换算数量',
                             hint: '例：48',
                           ),
                         ),
@@ -728,7 +713,8 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                                 ? null
                                 : () => _pickUnit(context),
                             textInputAction: TextInputAction.next,
-                            onChanged: (_) => _clearError(ProductField.unit),
+                            onChanged: (_) =>
+                                setState(() => _clearError(ProductField.unit)),
                             decoration: _decoration(
                               ProductField.unit,
                               required: true,
@@ -893,6 +879,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                     ),
 
                     // ================= 三、包装信息（选填） =================
+                    const SizedBox(height: 8),
                     _sectionHeader(theme, '三、包装信息', optional: true),
 
                     _packageBlock(theme),

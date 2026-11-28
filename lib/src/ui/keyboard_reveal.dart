@@ -1,26 +1,7 @@
-/// 键盘弹出 / 高度变化时，把**当前焦点字段**滚回可视区
-/// （C3 真机反馈 ④：IME 输入时输入界面自行跳到输入法下方，看不到输入内容）。
-///
-/// ## 机制
-///
-/// [WidgetsBindingObserver.didChangeMetrics] 在窗口尺寸变化（键盘弹出 /
-/// 收起 / **输入法候选栏伸缩**）时触发。用 `View.of(context).viewInsets`
-/// 读**原始窗口** insets —— 不受页面 `Scaffold` 的 MediaQuery 裁剪影响，
-/// 嵌套在多深的壳里都能拿到真值。
-///
-/// - insets 变大（键盘在屏）⇒ 下一帧把 `FocusManager.primaryFocus` 的字段
-///   `Scrollable.ensureVisible` 到视口上沿 1/4 处（`alignment: 0.25` ——
-///   给输入法候选栏留出上方余量）；
-/// - insets 归零（键盘收起）⇒ **不动作** —— 不抢用户自己的滚动位置。
-///
-/// 焦点在页面级 `Focus`（非输入框）时，`ensureVisible` 找不到祖先滚动视图
-/// 是无害 no-op。
-///
-/// ## 用法
-///
-/// 包在含表单的 `Scaffold` 外层：
-/// `Focus(autofocus: true, child: KeyboardReveal(child: Scaffold(...)))`。
+/// 键盘或候选栏稳定后，将被遮住的焦点移回本页可视区域。
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -36,6 +17,7 @@ class KeyboardReveal extends StatefulWidget {
 class _KeyboardRevealState extends State<KeyboardReveal>
     with WidgetsBindingObserver {
   double _lastInset = -1;
+  Timer? _settle;
 
   @override
   void initState() {
@@ -45,6 +27,7 @@ class _KeyboardRevealState extends State<KeyboardReveal>
 
   @override
   void dispose() {
+    _settle?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -55,18 +38,53 @@ class _KeyboardRevealState extends State<KeyboardReveal>
     final double inset = View.of(context).viewInsets.bottom;
     if (inset == _lastInset) return;
     _lastInset = inset;
-    if (inset <= 0) return; // 键盘收起：不抢用户的滚动位置
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final BuildContext? focusContext =
-          FocusManager.instance.primaryFocus?.context;
-      if (focusContext == null) return;
-      Scrollable.ensureVisible(
-        focusContext,
-        duration: const Duration(milliseconds: 150),
-        alignment: 0.25,
+    _settle?.cancel();
+    if (inset <= 0) return;
+    _settle = Timer(const Duration(milliseconds: 75), _reveal);
+  }
+
+  void _reveal() {
+    if (!mounted) return;
+    final target = FocusManager.instance.primaryFocus?.context;
+    if (target == null ||
+        target.findAncestorStateOfType<_KeyboardRevealState>() != this) {
+      return;
+    }
+    final scroll = Scrollable.maybeOf(target, axis: Axis.vertical);
+    final field = target.findRenderObject();
+    final viewport = scroll?.context.findRenderObject();
+    if (scroll == null ||
+        field is! RenderBox ||
+        viewport is! RenderBox ||
+        !field.attached ||
+        !viewport.attached ||
+        !field.hasSize ||
+        !viewport.hasSize) {
+      return;
+    }
+    final rect = MatrixUtils.transformRect(
+      field.getTransformTo(viewport),
+      field.paintBounds,
+    );
+    final delta = rect.top < 0
+        ? rect.top
+        : rect.bottom > viewport.size.height
+        ? rect.bottom - viewport.size.height
+        : 0.0;
+    if (delta.abs() < 0.5) return;
+    final position = scroll.position;
+    final offset = (position.pixels + delta)
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      position.jumpTo(offset);
+    } else {
+      position.animateTo(
+        offset,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
       );
-    });
+    }
   }
 
   @override
