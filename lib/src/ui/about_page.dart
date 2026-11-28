@@ -28,6 +28,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'about_document.dart';
+import 'about_markdown.dart';
 
 /// 关于页（门户）。纯展示，无回调、无全局状态。
 class AboutPage extends StatelessWidget {
@@ -35,10 +36,17 @@ class AboutPage extends StatelessWidget {
     super.key,
     required this.versionLine,
     required this.schemaVersion,
+    this.openUrl,
   });
 
   /// 版本行（`AppVersion.display`），由调用方传。
   final String versionLine;
+
+  /// 打开外部链接的出口（测试注入用）。`null` ⇒ 用 [openExternalUrl]。
+  ///
+  /// 之所以做成构造参数：**零全局状态**（用户裁定），同时让"点开源仓库"
+  /// 这条路径可测 —— 否则测试只能靠真的去拉起浏览器。
+  final Future<bool> Function(String url)? openUrl;
 
   /// 数据格式版本（`Schema.version`），同上。
   final int schemaVersion;
@@ -84,18 +92,32 @@ class AboutPage extends StatelessWidget {
                 // ---- 顶部：图标 + 名称 + 版本（居中放大）----
                 const SizedBox(height: 16),
                 Center(
-                  child: Container(
-                    width: 88,
-                    height: 88,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    // 没有现成的应用图标资源 ⇒ 用 Material 图标 + 主题色
-                    child: Icon(
-                      Icons.receipt_long,
-                      size: 48,
-                      color: theme.colorScheme.primary,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Image.asset(
+                      'assets/app_icon.png',
+                      key: const Key('about-icon'),
+                      width: 88,
+                      height: 88,
+                      // 原图 1024×1024（1.4 MB）—— 只显示 88 逻辑像素，
+                      // 按 2 倍屏幕解码就够，别把 1024² 解进内存。
+                      cacheWidth: 176,
+                      fit: BoxFit.cover,
+                      // 理论上打包不会漏，但漏了不能白屏：回退到主题色 + 图标
+                      errorBuilder:
+                          (BuildContext context, Object error, StackTrace? s) =>
+                              Container(
+                                width: 88,
+                                height: 88,
+                                color: theme.colorScheme.primary.withValues(
+                                  alpha: 0.12,
+                                ),
+                                child: Icon(
+                                  Icons.receipt_long,
+                                  size: 48,
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
                     ),
                   ),
                 ),
@@ -175,7 +197,7 @@ class AboutPage extends StatelessWidget {
   /// 不引 `url_launcher`：那是新的平台插件依赖（要动各平台注册与构建配置）。
   /// Windows 上 `cmd /c start` 够用，且失败可判定、可兜底。
   Future<void> _openRepository(BuildContext context) async {
-    final bool ok = await openExternalUrl(_githubUrl);
+    final bool ok = await (openUrl ?? openExternalUrl)(sourceRepositoryUrl);
     if (!context.mounted) return;
     if (ok) return;
     await showDialog<void>(
@@ -191,8 +213,8 @@ class AboutPage extends StatelessWidget {
               const SizedBox(height: 8),
               const Text('请手动复制下面的地址，粘贴到浏览器里：'),
               const SizedBox(height: 8),
-              const SelectableText(_githubUrl),
-              const SelectableText(_giteeUrl),
+              const SelectableText(sourceRepositoryUrl),
+              const SelectableText(mirrorRepositoryUrl),
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerRight,
@@ -210,8 +232,11 @@ class AboutPage extends StatelessWidget {
 }
 
 /// 源码仓库（GitHub 为主，Gitee 为国内备用）
-const String _githubUrl = 'https://github.com/Schmmmusk/shensuanzi';
-const String _giteeUrl = 'https://gitee.com/fdatps/shensuanzi';
+/// 源码仓库（GitHub 为主）
+const String sourceRepositoryUrl = 'https://github.com/Schmmmusk/shensuanzi';
+
+/// 国内备用镜像（GitHub 打不开时）
+const String mirrorRepositoryUrl = 'https://gitee.com/fdatps/shensuanzi';
 
 /// 用系统默认浏览器打开 [url]；返回是否成功。
 ///
@@ -275,6 +300,8 @@ class ThirdPartyPage extends StatelessWidget {
     fileName: 'THIRD_PARTY.md',
     missingHint: '组件与许可清单应该在这个文件里：',
     searchDirs: searchDirs,
+    // 2026-11-28：`.md` 要渲染成标题 + 表格，不能把 `#` 与 `|` 原样丢给用户
+    markdown: true,
   );
 }
 
@@ -288,11 +315,15 @@ class _ProgramDocumentPage extends StatelessWidget {
     required this.fileName,
     required this.missingHint,
     this.searchDirs,
+    this.markdown = false,
   });
 
   final String title;
   final String fileName;
   final String missingHint;
+
+  /// `true` ⇒ 按 Markdown 渲染（标题 / 表格 / 列表）；`false` ⇒ 等宽原文
+  final bool markdown;
 
   /// 只给测试注入；生产为 `null`
   final List<Directory>? searchDirs;
@@ -336,6 +367,16 @@ class _ProgramDocumentPage extends StatelessWidget {
                 ),
             ],
           ),
+        ),
+      );
+    }
+    if (markdown) {
+      return Scaffold(
+        appBar: AppBar(title: Text(title)),
+        body: SingleChildScrollView(
+          key: const Key('about-document-text'),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          child: MarkdownView(parseMarkdown(doc.text!)),
         ),
       );
     }

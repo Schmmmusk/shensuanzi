@@ -113,9 +113,11 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    # 关于页顶部的应用图标（2026-11-28）。
+    # 源文件在 `generated-images/`，1024×1024；页面只显示 88 逻辑像素，
+    # 所以 `Image.asset(..., cacheWidth:)` 按需解码，不要按原尺寸解。
+    - assets/app_icon.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

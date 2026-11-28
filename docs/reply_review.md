@@ -23581,3 +23581,58 @@ actions / scrollable / backgroundColor / shape / insetPadding / 各 padding）�
 
 `flutter analyze` **0** · root `flutter test` **全过**（含三页各自的行为测试）。
 core 未改动 ⇒ 未跑 `dart test`。
+
+---
+
+### 一百四十七、2026-11-28 **关于页收尾：真实图标 + Markdown 渲染 + 源码链接可测**
+
+> 用户裁定：图标换成项目里的 1024×1024 真图；「第三方组件」要把 Markdown 渲染成表格与标题
+> （**零依赖**优先）；源码仓库要"真的调系统浏览器且地址正确"。盘点页维持独立视图（乙案）。
+
+#### ① 图标：真实资源，不再用 Material 占位
+
+| 项 | 做法 |
+|---|---|
+| 资源 | `assets/app_icon.png`（源 `generated-images/Minimal_flat_mobile_app_icon_f_….png`，1024×1024 / 1.4 MB） |
+| 登记 | `pubspec.yaml` 的 `assets:` 段 |
+| 显示 | `Image.asset(..., width: 88, height: 88, cacheWidth: 176)` —— **只按 2 倍屏解码**，不把 1024² 解进内存 |
+| 兜底 | `errorBuilder` ⇒ 主题色块 + `Icons.receipt_long`（打包漏了也不白屏） |
+| 圆角 | `ClipRRect(20)` |
+
+#### ② Markdown：自己写极简解析，**不引 `flutter_markdown`**
+
+用户给了两条路，选零依赖那条 —— 只渲染**一份** `THIRD_PARTY.md`，用到六种语法，
+为六种语法引一个库（+ 版本约束 + 跟着 Flutter 升级）不划算。
+
+`about_markdown.dart`：`parseMarkdown()`（纯函数，返回 `MdBlock` 列表）+ `MarkdownView`（渲染）。
+
+| 语法 | 渲染 |
+|---|---|
+| `#` / `##` / `###` | 三级标题，字号递减 |
+| 竖线表格 + 分隔行 | **真 `Table`**（边框 + 表头加粗 + 列宽比例） |
+| `- xxx` / `1. xxx` | 列表（保留原编号） |
+| `> 引用` | 左侧竖线 + 灰字 |
+| `---` | 分隔线 |
+
+**刻意不做的**：行内加粗 / 反引号代码 / 链接 —— 半解析会造成"有的粗有的不粗"的不一致。
+
+用例：`about_markdown_test`（5 条）—— 解析结构 4 条 + 渲染 1 条（断言页面里
+**找不到竖线与井号**，且表格用了真 `Table`）。
+
+#### ③ 源码仓库：把"打开"变成可测的构造参数
+
+`AboutPage(openUrl: …)` —— `null` 时走 `openExternalUrl`（Windows：用 cmd 的 start 动词）。
+用例注入假出口断言：**被打开的地址 = `https://github.com/Schmmmusk/shensuanzi`**；
+返回 `false` 时弹窗必须给出 Gitee 镜像 `https://gitee.com/fdatps/shensuanzi`。
+不引 `url_launcher`（新平台插件依赖，要动各平台注册与构建配置）。
+
+#### ④ 盘点页 = **乙案**（维持独立视图）
+
+用户裁定：`LineCard` 绝不塞盘点字段（否则是开关汤）。盘点页保持自己的三列大字视图，
+`_RowCtl` 也保持精简（2 字段）—— 这不是欠账，是**确定的边界**。
+
+#### ⑤ 门禁
+
+`flutter analyze` **0** · root `flutter test` **684**（新增 `about_markdown_test` 5 条、
+`about_page_test` 3 条：图标 / 源码成功 / 源码失败兜底）。
+截图：`docs/界面精修后截图/20261128-关于门户-真实图标-125%.png`。

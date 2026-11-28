@@ -69,6 +69,73 @@ void main() {
     expect(find.byKey(const Key('about-source')), findsOneWidget);
   });
 
+  testWidgets('图标：用真实资源（不是 Material 占位图标）', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      scaled(const AboutPage(versionLine: 'v9.9.9（示例）', schemaVersion: 8)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('about-icon')),
+      findsOneWidget,
+      reason: '顶部必须是 assets/app_icon.png 这张真实图标',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('访问源码仓库：用系统浏览器打开**正确地址**', (WidgetTester tester) async {
+    final List<String> opened = <String>[];
+    await tester.pumpWidget(
+      scaled(
+        AboutPage(
+          versionLine: 'v9.9.9（示例）',
+          schemaVersion: 8,
+          // 注入出口：测试不该真去拉起浏览器
+          openUrl: (String url) async {
+            opened.add(url);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('about-source')));
+    await tester.pumpAndSettle();
+
+    expect(opened, <String>[sourceRepositoryUrl]);
+    expect(opened.single, 'https://github.com/Schmmmusk/shensuanzi');
+    // 成功时不弹"没能打开浏览器"
+    expect(find.text('没能打开浏览器'), findsNothing);
+  });
+
+  testWidgets('访问源码仓库：打不开时给 Gitee 镜像（可复制）', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      scaled(
+        AboutPage(
+          versionLine: 'v9.9.9（示例）',
+          schemaVersion: 8,
+          openUrl: (String url) async => false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('about-source')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('没能打开浏览器'), findsOneWidget);
+    expect(
+      find.textContaining('https://github.com/Schmmmusk/shensuanzi'),
+      findsWidgets,
+    );
+    expect(
+      find.textContaining('https://gitee.com/fdatps/shensuanzi'),
+      findsWidgets,
+      reason: '国内打不开 GitHub 时，Gitee 镜像必须摆出来',
+    );
+  });
+
   testWidgets('开源许可：**从文件读**（不是代码里抄的）', (WidgetTester tester) async {
     final Directory dir = Directory.systemTemp.createTempSync('about_license_');
     addTearDown(() => dir.deleteSync(recursive: true));
