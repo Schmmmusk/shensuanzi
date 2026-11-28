@@ -170,29 +170,40 @@ void main() {
     String read(String relative) =>
         File('lib/src/ui/$relative').readAsStringSync();
 
-    test('三页各接一次 ProductNameAutocomplete（不复制匹配逻辑）', () {
+    // 2026-11-28（抽离 LineCard）：自动补全**只存在于共享卡片**里，
+    // 三页各自只接一次 `LineCard` —— 判据从"每页一份"改成"全局一份"。
+    test('自动补全只在共享 `LineCard` 里出现一次（三页只接卡片）', () {
+      final int sharedCount = RegExp(
+        r'ProductNameAutocomplete\(',
+      ).allMatches(File('lib/src/ui/line_row.dart').readAsStringSync()).length;
+      expect(sharedCount, 1, reason: '共享卡片应恰好接一次自动补全（实际 $sharedCount 次）');
       for (final String page in <String>[
         'sale_page.dart',
         'purchase_page.dart',
         'delivery_page.dart',
       ]) {
-        final int count = RegExp(
-          r'ProductNameAutocomplete\(',
-        ).allMatches(read(page)).length;
+        final String src = read(page);
         expect(
-          count,
-          1,
-          reason:
-              '$page 应恰好接一次共用组件（实际 $count 次）；'
-              '多出来的那份就是漂移的开始',
+          RegExp(r'ProductNameAutocomplete\(').allMatches(src).length,
+          0,
+          reason: '$page 不许再自己接一份自动补全（抽离后它只在 line_row.dart）',
         );
+        expect(src, contains('LineCard('), reason: '$page 应接共享明细卡片');
       }
     });
 
-    test('forPurchase 传对：只有采购页是 true', () {
+    test('forPurchase 传对：只有采购页显式传 true（其余走默认 false）', () {
       expect(read('purchase_page.dart'), contains('forPurchase: true'));
-      expect(read('sale_page.dart'), contains('forPurchase: false'));
-      expect(read('delivery_page.dart'), contains('forPurchase: false'));
+      for (final String page in <String>[
+        'sale_page.dart',
+        'delivery_page.dart',
+      ]) {
+        expect(
+          read(page),
+          isNot(contains('forPurchase:')),
+          reason: '$page 不该传这个参数 —— 默认就是 false（进货语义只属于采购）',
+        );
+      }
     });
 
     test('三页都接了「回车 ⇒ 立刻建档」，且询问逻辑只有一处', () {

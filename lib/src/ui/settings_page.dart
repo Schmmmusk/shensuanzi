@@ -29,6 +29,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
 
+import 'about_page.dart';
 import 'app_dialog.dart';
 import 'emphasized_text.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
@@ -670,6 +671,38 @@ class _SettingsPageState extends State<SettingsPage> {
                         )
                       else
                         HostServicePanel(controller: widget.hostService!),
+                    ],
+                  ),
+
+                  // ---- 关于（2026-11-28 设置页拆分·乙案第一块）----
+                  //
+                  // 只放**一行入口**：版本 / 许可 / 第三方组件都在 `AboutPage`。
+                  // 理由见 `about_page.dart` 文件头；这里是"入口页"，不重复展示。
+                  _Section(
+                    title: '关于',
+                    children: <Widget>[
+                      ListTile(
+                        key: const Key('setting-about'),
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('关于神算子'),
+                        subtitle: Text(
+                          AppVersion.display,
+                          style: TextStyle(
+                            height: 1.6,
+                            color: theme.textTheme.bodySmall?.color,
+                          ),
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (BuildContext _) => AboutPage(
+                              // 版本从唯一来源传进去 —— 子页面不自己读全局
+                              versionLine: AppVersion.display,
+                              schemaVersion: Schema.version,
+                            ),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ],

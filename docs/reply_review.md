@@ -23410,3 +23410,174 @@ actions / scrollable / backgroundColor / shape / insetPadding / 各 padding）�
 3. 两处行为变更需真机确认：① 同步正常时徽标不可点；② 开单出错点摘要后焦点直达字段；
 4. `D:/shensuanzi/shensuanzi-pr-check` 是离线合并 worktree（detached `46a7559`，**不含**我们的
    `c9b914f`），**不可**用来推 master；确认后 `git worktree remove` 清掉。
+
+### 一百四十四、2026-11-28 **设置页拆分·乙案第一块：`AboutPage`**
+
+> 用户裁定（第二战）：只把「关于 / 版本 / 许可」搬到新页面，设置主页留一个入口；
+> **绝对禁止引入任何全局状态**，回调走构造函数；改完真机点一遍返回逻辑。
+
+#### ① 先核事实：原设置页**根本没有**「关于」区块
+
+1087 行的设置页只有 6 个区块（概览图表 / 界面大小 / 店名 / 数据 / 数据刷新 / 多设备同步），
+11 个 `Key` 里没有一个是关于类。版本号当年落在**帮助页底部**（`help_page.dart:293`）。
+⇒ 所以这一块不是"搬"，而是**新建**：`about_page.dart` + 设置页一个入口。
+
+#### ② 新页面（纯展示，零状态）
+
+| 项 | 做法 |
+|---|---|
+| 结构 | `StatelessWidget`，无 `StatefulWidget` / `InheritedWidget` / Provider |
+| 版本 | `versionLine` + `schemaVersion` **由调用方传参**（设置页传 `AppVersion.display` / `Schema.version`），页面不自己读全局 |
+| 回调 | **没有** —— 本页没有任何可写操作，所以一个回调都不需要 |
+| 布局 | 与手册页同款：`SingleChildScrollView` + `Center` + `maxWidth: 640`（200% 字号可滚） |
+
+内容四段：许可（AGPL-3.0）/ 第三方组件（**指向随程序的 `THIRD_PARTY.md`，不另抄一份**）/
+源码地址 / 标题区的版本与 schema 版本。
+
+⚠️ **为什么第三方组件不抄清单**：`THIRD_PARTY.md` 是唯一来源，打包时随产物放
+（`docs/windows_build.md` §八）。两处各写一份，只要一份没跟上依赖升级就成了**错的许可声明**
+—— 那是法律问题，不是审美问题。
+
+#### ③ 设置页入口
+
+`_Section(title: '关于')` + `ListTile(key: 'setting-about', title: '关于神算子', subtitle: 版本号)`，
+`onTap` → `Navigator.push(MaterialPageRoute(AboutPage(...)))`。
+
+#### ④ 用例（新增 1 条）
+
+`关于：设置页有入口，点进去是 AboutPage，版本/许可/源码都在`：
+滚到入口（`ensureVisible`）→ 点 → 断言 `about-version` 等于 `AppVersion.display`、
+`about-schema` / `about-source` / AGPL 文案 / `THIRD_PARTY.md` 指向都在 → `pageBack()` 回到设置页。
+
+⚠️ 量尺坑：一开始用 `scrollUntilVisible`，抛 `Bad state: Too many elements`
+—— 设置页里不止一个 `Scrollable`（同步面板、下拉）。改用 `ensureVisible`（该页是
+`SingleChildScrollView`，子项本来就全部布局好）。
+
+#### ⑤ 观感
+
+`docs/界面精修后截图/20261128-关于页-125%.png`（800×900 + 125% + 微软雅黑）。
+第一版在底部还有一段「版本信息」，与标题区的版本**重复**——按仓内老规矩（同一事实不写两遍）
+已删，版本只出现一次。
+
+#### ⑥ 未动
+
+- 帮助页底部的版本行**保留**（那里是"报障时附上版本号"的上下文，删了反而断掉指路）；
+- 其余 5 个设置区块**未拆**（乙案只搬「关于」；甲案全量拆要动 19 条用例，另行评估）。
+
+门禁：`flutter analyze` **0** · root `flutter test` **670**（+1，1 条按平台跳过）。
+
+### 一百四十五、2026-11-28 **关于页重构（门户 + 子页 + 读文件）**
+
+> 用户判词：上一版「简陋」。给定标准信息架构：图标 + 大标题 + 版本副标题 + 六个列表项，
+> 长文本走独立子页，**必须读程序文件夹里的文件**，读不到要有兜底，200% 不溢出。
+
+#### ① 结构
+
+```
+关于（门户）
+├── 图标（Material 图标 + 主题色，88×88 圆角块）+「神算子」headlineMedium 粗体
+├── 版本副标题：`v0.8.0（第十七个可部署版本）（schema v8）`
+└── 六个 ListTile（右侧箭头）
+    开源许可 / 第三方组件 / 开发人员 / 致谢 / 开发者后记 / 访问源码仓库
+```
+
+#### ② 长文本：**读文件，不抄进代码**
+
+`about_document.dart`：`loadAboutDocument(fileName)` 依次找 ① 可执行文件所在目录
+（安装态）② 当前工作目录（`flutter run` / 测试态）。
+
+- **同步读**：LICENSE ~34 KB、THIRD_PARTY ~5 KB，只在点开时读一次；换来页面是
+  纯 `StatelessWidget`（没有 Future / loading 态 / 转圈）；
+- **读不到不崩**：返回 `text == null` + `searched`（找过的路径），页面显示
+  「未能读取文件」+ 逐个列出路径（`key: about-document-missing`）。
+
+#### ③ 三个文本子页
+
+开发人员 / 致谢 / 开发者后记共用一个 `_TextSubPage` 外壳（分段标题 + 正文）。
+
+⚠️ **开发人员名单按 Git 提交记录列**（fdapts / lonstarcat / fdatps / Schmmmusk），
+不编造角色分工；致谢只谢**可核实的**（Flutter / Dart / SQLite / 开源包）；
+后记取自项目自己的设计记录（离线优先 / 大字 / 账要对得上），
+不是杜撰的个人经历 —— 作者要换词直接改该页文本。
+
+#### ④ 一个命名坑
+
+子页**不能**叫 `LicensePage`：Flutter 的 Material 库里已有同名类，重名会让调用点
+报 `imported from both`。改名 `OpenSourceLicensePage`，并在类注释写明原因。
+
+#### ⑤ 200% 适配
+
+`about_page_test` 用 420×640 + `textScaler 2.0` 验了两件事：门户**不抛溢出**
+并能滚到最后一个入口；长文本页**能滚、不抛异常**。
+
+截图：`docs/界面精修后截图/20261128-关于门户-125%.png` / `-200%.png`
+（图里的方框是**测试环境缺 MaterialIcons 字体**，真机图标正常）。
+
+#### ⑥ 门禁
+
+`flutter analyze` **0** · root `flutter test` 全过（新增 `about_page_test` 6 条：
+门户 / 200% / 两个读文件页 / 缺文件兜底 / 长文本滚动）。
+
+---
+
+### 一百四十六、2026-11-28 **抽离共享明细卡片 `LineCard`（先改 pin，先红）**
+
+> 用户裁定：先改 `page_isomorphism_test`，把「pin 三份代码」改成「pin 都引用同一组件」，
+> **先让测试红，再动代码**；抽完让盘点页也用。
+
+#### ① 先红（按裁定的顺序）
+
+`page_isomorphism_test` 新增：三页都必须 `contains('LineCard(')`、都 import `line_row.dart`、
+且**页面里不许再出现库存提示块的复制体**。跑 → 红（三页都还是自家实现）。✅ 已确认红。
+
+#### ② 抽离结果
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| `sale_page` 的 `_LineCard` | 270 行 | **75 行**（构造 + 字段注释 + 30 行适配器） |
+| `purchase_page` | 220 行 | **62 行** |
+| `delivery_page` | 258 行 | **70 行** |
+| `line_row.dart` | — | **+285 行**（`LineCard` + `LineCardErrors`） |
+
+`LineCard` 参数化只有四类真实差异：`keyPrefix`（`sale-` / `purchase-` / `delivery-`，
+测试靠它定位）、`errors`（三个枚举归一成 [LineCardErrors] 四个字段）、
+`forPurchase`（进货语义）、`showStockHint`（**采购页不显示库存提示** ——
+入库前后库存都会变，摆"打开本页时"的快照只会误导）。
+
+#### ③ 连带改的 pin（5 条，全部是「复制体 → 单一来源」）
+
+| 文件 | 原判据 | 新判据 |
+|---|---|---|
+| `page_isomorphism_test` | 两页 `quantityValue` 逐字同构 | 只在 `line_row.dart` 一处 |
+| 同上 | 两页 `baseQuantityValue` 逐字同构 | 同上 |
+| 同上 | 负库存判定式两页逐字同构 | 同上 |
+| 同上 | 「按换算后数量判定」两页各有一行 | 同上 |
+| `product_name_autocomplete_test` | 三页各接一次自动补全 | 只在 `line_row.dart` 接一次 |
+
+⚠️ 这些**不是**「为了让测试变绿改断言」：每一条的**判据方向都变强了**
+（从"两份文字一样"变成"物理上只有一份"），并且先红后改。
+
+#### ④ 盘点页：**没有**硬塞进 `LineCard`，需要你定
+
+证据（`opening_stock_page.dart` 行卡片）：
+
+| 维度 | 三个开单页 | 盘点页 |
+|---|---|---|
+| 字段 | 商品名 / 数量 / 单价 / 小计 | 商品名 / **实际库存** |
+| 列 | 单价 × 数量 = 小计 | **账面 / 实盘 / 盘点结果** 三列大字 |
+| 额外 | 单位切换、库存提示、自动补全 | 单位选择器 + 「2 箱 = 48 瓶」读回 |
+| 行模型 | `LineRowModel`（8 个字段） | `_RowCtl` 只有 2 个（`product` / `quantity`） |
+
+硬塞进去要让 `LineCard` 长出 `showPrice` / `showAmount` / `threeColumn` / `showAutocomplete` …
+—— 正是 `line_row.dart` 头注释里写着"宁可各自维护，也不做布尔开关汤"的那种设计。
+
+两个方案（等你选）：
+- **甲**：抽 `LineCardShell`（Card 外壳 + 商品名 + 删除按钮）供盘点复用，
+  字段排布各自保留 —— 共享的是外壳，不是字段；
+- **乙**：维持现状，在盘点卡片上注明"这是不同视图"（只共享了 `LineCard` 之外的
+  `LineRowModel` 家族？—— 注意盘点的行模型**也不是** `LineRowModel`）。
+
+#### ⑤ 门禁
+
+`flutter analyze` **0** · root `flutter test` **全过**（含三页各自的行为测试）。
+core 未改动 ⇒ 未跑 `dart test`。

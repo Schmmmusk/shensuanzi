@@ -21,6 +21,10 @@ library;
 import 'package:flutter/material.dart';
 import 'package:shensuanzi_core/shensuanzi_core.dart';
 
+import 'entry_fields_row.dart';
+import 'entry_unit_hints.dart';
+import 'product_name_autocomplete.dart';
+
 class LineRowModel {
   LineRowModel({
     String quantity = '',
@@ -197,5 +201,286 @@ class LineRowModel {
     quantityFocus.dispose();
     priceFocus.dispose();
     unitFocus.dispose();
+  }
+}
+
+// ============================================================ 卡片（2026-11-28 抽离）
+
+/// 一行明细的错误文案（三页各自的枚举在这里**归一**成四个字段）。
+///
+/// 为什么不直接共用枚举：`SaleLineField` / `PurchaseLineField` /
+/// `DeliveryLineField` 定义在 core，且与各页的提交错误映射绑定；
+/// 把它们合并是一次 core 规格变更，不是本次抽离的范围。
+class LineCardErrors {
+  const LineCardErrors({this.product, this.quantity, this.price, this.unit});
+
+  final String? product;
+  final String? quantity;
+  final String? price;
+
+  /// 单位切换那一行的错误（`entryUnit`）
+  final String? unit;
+}
+
+/// **明细行卡片**（销售 / 采购 / 送货共用；2026-11-28 从三份复制体抽出一份）。
+///
+/// ## 抽离的理由
+///
+/// 三页的 `_LineCard` 原本是 220–270 行的逐字复制体，差异只有三样：
+/// **Key 前缀**（`sale-` / `purchase-` / `delivery-`）、**错误字段的枚举类型**、
+/// 以及注释措辞。这正是纪律 18 说的"同构漏改高发区"——
+/// 2026-10-14 的 #28① 就是只改了销售页、漏了送货页。
+///
+/// ## 参数化
+///
+/// - [keyPrefix]：测试靠 `sale-qty` / `delivery-qty` 这样的 Key 定位，
+///   前缀是页面级的，必须保留；
+/// - [errors]：见 [LineCardErrors]；
+/// - [forPurchase]：自动补全的候选排序/建档语义（进货价 vs 售价）；
+/// - [stockOfProduct] / [unsyncedOfProduct]：库存提示（**提示不是校验**）。
+class LineCard extends StatelessWidget {
+  const LineCard({
+    super.key,
+    required this.keyPrefix,
+    required this.row,
+    required this.index,
+    required this.errors,
+    this.stockOfProduct,
+    this.unsyncedOfProduct,
+    required this.enabled,
+    required this.allowTypedName,
+    this.forPurchase = false,
+    this.showStockHint = true,
+    required this.products,
+    required this.onPickedProduct,
+    required this.onPickProduct,
+    required this.onCreateRequested,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  final String keyPrefix;
+  final LineRowModel row;
+  final int index;
+  final LineCardErrors errors;
+  final int? stockOfProduct;
+  final int? unsyncedOfProduct;
+  final bool enabled;
+  final bool allowTypedName;
+  final bool forPurchase;
+
+  /// 是否显示「当前库存 …」提示。
+  ///
+  /// 采购页**不显示**：入库前后库存都会变，摆一个"打开本页时"的快照只会误导
+  /// （进 10 箱之后到底是多少？）。所以采购传 `false`，其余两页传 `true`。
+  final bool showStockHint;
+  final List<Product> products;
+  final void Function(Product product, {required String typedBefore})
+  onPickedProduct;
+  final VoidCallback onPickProduct;
+  final ValueChanged<String> onCreateRequested;
+  final VoidCallback onChanged;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    // ⚠️ 必须比「最小单位」：库存（snapshot / estimated）是最小单位口径，
+    // 而 `quantityValue` 是录入单位的原始数（3 箱 = 3）⇒ 按箱录入必然漏报。
+    final int? qty = row.baseQuantityValue;
+    final int snapshot = stockOfProduct ?? 0;
+    final int local = unsyncedOfProduct ?? 0;
+    final int estimated = snapshot + local;
+    final bool negativeStock =
+        row.product != null && qty != null && qty > estimated;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  flex: 5,
+                  child: allowTypedName
+                      ? ProductNameAutocomplete(
+                          fieldKey: Key('$keyPrefix-product-name'),
+                          pickerKey: Key('$keyPrefix-pick-product'),
+                          controller: row.name,
+                          focusNode: row.nameFocus,
+                          enabled: enabled,
+                          products: products,
+                          forPurchase: forPurchase,
+                          errorText: errors.product,
+                          onChangedText: (String text) {
+                            row.setName(text);
+                            onChanged();
+                          },
+                          onPicked: onPickedProduct,
+                          onPickPressed: onPickProduct,
+                          onCreateRequested: onCreateRequested,
+                        )
+                      : InkWell(
+                          onTap: enabled ? onPickProduct : null,
+                          focusNode: row.nameFocus,
+                          child: InputDecorator(
+                            isEmpty: row.product == null,
+                            decoration: InputDecoration(
+                              labelText: '商品 *',
+                              border: const OutlineInputBorder(),
+                              isDense: true,
+                              errorText: errors.product,
+                            ),
+                            child: Text(
+                              row.product?.name ?? '点此选商品',
+                              style: TextStyle(
+                                height: 1.6,
+                                color: row.product == null
+                                    ? theme.hintColor
+                                    : theme.colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                        ),
+                ),
+                const SizedBox(width: 8),
+                if (onRemove != null)
+                  IconButton(
+                    tooltip: '删除这一行',
+                    onPressed: onRemove,
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            EntryFieldsRow(
+              quantityField: TextField(
+                key: Key('$keyPrefix-qty'),
+                controller: row.quantity,
+                focusNode: row.quantityFocus,
+                enabled: enabled,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                onChanged: (_) => onChanged(),
+                decoration: InputDecoration(
+                  labelText: row.entryUnitDisplay.isEmpty
+                      ? '数量 *'
+                      : '数量（${row.entryUnitDisplay}）*',
+                  isDense: true,
+                  errorText: errors.quantity,
+                ),
+              ),
+              priceField: TextField(
+                key: Key('$keyPrefix-price'),
+                controller: row.unitPrice,
+                focusNode: row.priceFocus,
+                enabled: enabled,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                onChanged: (_) {
+                  // 显式布尔记「手改过」：编辑（非空）= true，清空 = false
+                  row.priceTouched = row.unitPrice.text.trim().isNotEmpty;
+                  row.entryPriceKept = false;
+                  onChanged();
+                },
+                decoration: InputDecoration(
+                  labelText: '${row.priceLabel}*',
+                  isDense: true,
+                  errorText: errors.price,
+                ),
+              ),
+              amount: Text(
+                row.product == null
+                    ? ''
+                    : '¥ ${Money.formatGrouped(row.amountCents ?? 0)}',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  height: 1.6,
+                  fontFeatures: const <FontFeature>[
+                    FontFeature.tabularFigures(),
+                  ],
+                ),
+              ),
+            ),
+            // 单位切换（只在**成对启用**时出现）；文字标签必须有，不用图标猜
+            if (row.canSwitchPackage && enabled) ...<Widget>[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: <Widget>[
+                  ChoiceChip(
+                    label: Text(row.baseUnit ?? ''),
+                    focusNode: row.unitFocus,
+                    selected:
+                        row.entryUnit.isEmpty || row.entryUnit == row.baseUnit,
+                    onSelected: (_) {
+                      row.switchEntryUnit('');
+                      onChanged();
+                    },
+                  ),
+                  ChoiceChip(
+                    label: Text(row.packageUnit ?? ''),
+                    selected:
+                        row.entryUnit.isNotEmpty &&
+                        row.entryUnit == row.packageUnit,
+                    onSelected: (_) {
+                      row.switchEntryUnit(row.packageUnit ?? '');
+                      onChanged();
+                    },
+                  ),
+                ],
+              ),
+            ],
+            if (errors.unit != null) ...<Widget>[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  errors.unit!,
+                  style: TextStyle(color: theme.colorScheme.error, height: 1.6),
+                ),
+              ),
+            ],
+            ...entryUnitHints(
+              theme: theme,
+              baseUnit: row.baseUnit,
+              packageUnit: row.packageUnit,
+              packageSize: row.packageSize,
+              entryUnit: row.entryUnit,
+              priceKept: row.entryPriceKept,
+            ),
+            // 库存快照：**提示不是校验** —— 负库存允许，保存必然放行。
+            if (showStockHint && row.product != null) ...<Widget>[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  negativeStock
+                      ? '当前库存 $estimated（打开本页时），本单会按负库存记账（成本按最近入库价）'
+                      : local == 0
+                      ? '当前库存 $snapshot（打开本页时）'
+                      : '当前库存 $estimated（打开本页时；权威 $snapshot，'
+                            '本地未同步 ${local > 0 ? '+' : ''}$local）',
+                  style: TextStyle(
+                    height: 1.6,
+                    color: negativeStock
+                        ? theme.colorScheme.error
+                        : theme.textTheme.bodySmall?.color,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }

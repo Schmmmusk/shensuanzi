@@ -11,6 +11,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:shensuanzi/src/ui/about_page.dart';
 import 'package:shensuanzi/src/ui/notice.dart';
 import 'package:shensuanzi/src/ui/settings_page.dart';
 import 'package:shensuanzi_app/shensuanzi_app.dart';
@@ -557,5 +558,51 @@ void main() {
     await tester.pumpWidget(page((AppConfig _) {}));
     await tester.pumpAndSettle();
     expect(tester.getRect(find.text('设置')).left, closeTo(418, 1.5));
+  });
+
+  // ------------------------------------------------------------ 关于（2026-11-28 乙案）
+  //
+  // 用户裁定：只把「关于/版本/许可」搬到 `AboutPage`，设置主页留一个入口，
+  // **零全局状态**（版本由构造函数传进去）。
+  testWidgets('关于：设置页有入口，点进去是 AboutPage，版本/许可/源码都在', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(page((AppConfig _) {}));
+    await tester.pumpAndSettle();
+
+    final Finder entry = find.byKey(const Key('setting-about'));
+    // 入口在页面底部 —— 先滚到它。用 `ensureVisible` 而不是 `scrollUntilVisible`：
+    // 设置页里不止一个 Scrollable（同步面板 / 下拉都有），后者要求 scrollable 唯一，
+    // 实测抛 Bad state: Too many elements。
+    await tester.ensureVisible(entry);
+    await tester.pumpAndSettle();
+    expect(entry, findsOneWidget);
+
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AboutPage), findsOneWidget);
+    // 门户结构（2026-11-28 重构）：六个入口 + 版本行含 schema
+    for (final String key in <String>[
+      'about-license',
+      'about-third-party',
+      'about-developers',
+      'about-thanks',
+      'about-postscript',
+      'about-source',
+    ]) {
+      expect(find.byKey(Key(key)), findsOneWidget, reason: '关于页缺少入口：$key');
+    }
+    expect(
+      tester.widget<Text>(find.byKey(const Key('about-version'))).data,
+      contains('schema v'),
+      reason: '版本行要带数据格式版本（报障时要说的信息）',
+    );
+
+    // 返回设置页：导航闭合（不是替换整棵树）
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(AboutPage), findsNothing);
+    expect(find.byKey(const Key('setting-about')), findsOneWidget);
   });
 }

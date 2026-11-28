@@ -45,8 +45,6 @@ import 'mobile_guidance_dialog.dart';
 import 'missing_product_dialog.dart';
 import 'product_form_dialog.dart';
 import 'product_name_autocomplete.dart';
-import 'entry_unit_hints.dart';
-import 'entry_fields_row.dart';
 import 'entry_page_title.dart';
 import 'line_row.dart';
 import 'draft_banner.dart';
@@ -1382,185 +1380,27 @@ class _LineCard extends StatelessWidget {
   final VoidCallback? onRemove;
 
   @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                Expanded(
-                  flex: 5,
-                  // ② 桌面：直接手打名字（右边小图标仍能开选择器）；
-                  //    手机：保持原来的「点此选商品」单元格（见 allowTypedName）
-                  child: allowTypedName
-                      // 自动补全（2026-10-29 落地，提案「商品名称自动补全」）：
-                      // 组件在 `product_name_autocomplete.dart`，三页共用一份。
-                      ? ProductNameAutocomplete(
-                          fieldKey: const Key('purchase-product-name'),
-                          pickerKey: const Key('purchase-pick-product'),
-                          controller: row.name,
-                          focusNode: row.nameFocus,
-                          enabled: enabled,
-                          products: products,
-                          forPurchase: true,
-                          errorText: errors?[PurchaseLineField.product],
-                          onChangedText: (String text) {
-                            row.setName(text);
-                            onChanged();
-                          },
-                          onPicked: onPickedProduct,
-                          onPickPressed: onPickProduct,
-                          onCreateRequested: onCreateRequested,
-                        )
-                      : InkWell(
-                          onTap: enabled ? onPickProduct : null,
-                          focusNode: row.nameFocus,
-                          child: InputDecorator(
-                            isEmpty: row.product == null,
-                            decoration: InputDecoration(
-                              border: const OutlineInputBorder(),
-                              isDense: true,
-                              errorText: errors?[PurchaseLineField.product],
-                            ),
-                            child: Text(
-                              row.product?.name ?? '点此选商品',
-                              style: TextStyle(
-                                height: 1.6,
-                                color: row.product == null
-                                    ? theme.hintColor
-                                    : theme.colorScheme.onSurface,
-                              ),
-                            ),
-                          ),
-                        ),
-                ),
-                const SizedBox(width: 8),
-                if (onRemove != null)
-                  IconButton(
-                    tooltip: '删除这一行',
-                    onPressed: onRemove,
-                    icon: const Icon(Icons.delete_outline),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // M10（2026-10-08）：数量 / 单价 / 小计交给共用控件（宽屏并排、
-            // 窄屏 + 超大字号堆叠）。⚠️ 单位 chips 与单位错误**移到行卡下方** ——
-            // 原先它们是 Row 的直接子项，会挤压两个输入框（与销售/送货页的
-            // 摆放也不一致）。
-            EntryFieldsRow(
-              quantityField: TextField(
-                key: const Key('purchase-qty'),
-                controller: row.quantity,
-                focusNode: row.quantityFocus,
-                enabled: enabled,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                textInputAction: TextInputAction.next,
-                // P-6：Enter 到下一格（桌面端没有虚拟键盘，要显式切焦点）
-                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                onChanged: (_) => onChanged(),
-                decoration: InputDecoration(
-                  labelText: row.entryUnitDisplay.isEmpty
-                      ? '数量 *'
-                      : '数量（${row.entryUnitDisplay}）*',
-                  isDense: true,
-                  errorText: errors?[PurchaseLineField.quantity],
-                ),
-              ),
-              priceField: TextField(
-                key: const Key('purchase-price'),
-                controller: row.unitPrice,
-                focusNode: row.priceFocus,
-                enabled: enabled,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                textInputAction: TextInputAction.next,
-                onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                onChanged: (_) {
-                  // §BG 方案 A ①：显式布尔记「手改过」——编辑（非空）= true，清空 = false
-                  row.priceTouched = row.unitPrice.text.trim().isNotEmpty;
-                  row.entryPriceKept = false; // 重新输入 ⇒ 「保留」告知失效
-                  onChanged();
-                },
-                decoration: InputDecoration(
-                  labelText: '${row.priceLabel}*',
-                  isDense: true,
-                  errorText: errors?[PurchaseLineField.unitPrice],
-                ),
-              ),
-              amount: Text(
-                row.product == null
-                    ? ''
-                    : '¥ ${Money.formatGrouped(row.amountCents ?? 0)}',
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  height: 1.6,
-                  fontFeatures: const <FontFeature>[
-                    FontFeature.tabularFigures(),
-                  ],
-                ),
-              ),
-            ),
-            // v3 单位切换（§BD·三 第 3 条）：只在**成对启用**时出现
-            if (row.canSwitchPackage && enabled) ...<Widget>[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: <Widget>[
-                  ChoiceChip(
-                    label: Text(row.baseUnit ?? ''),
-                    focusNode: row.unitFocus,
-                    selected:
-                        row.entryUnit.isEmpty || row.entryUnit == row.baseUnit,
-                    onSelected: (_) {
-                      row.switchEntryUnit(''); // §BG 方案 A：预填价跟着换
-                      onChanged();
-                    },
-                  ),
-                  ChoiceChip(
-                    label: Text(row.packageUnit ?? ''),
-                    selected:
-                        row.entryUnit.isNotEmpty &&
-                        row.entryUnit == row.packageUnit,
-                    onSelected: (_) {
-                      row.switchEntryUnit(row.packageUnit ?? '');
-                      onChanged();
-                    },
-                  ),
-                ],
-              ),
-            ],
-            if (errors?[PurchaseLineField.entryUnit] != null) ...<Widget>[
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  errors![PurchaseLineField.entryUnit]!,
-                  style: TextStyle(color: theme.colorScheme.error, height: 1.6),
-                ),
-              ),
-            ],
-            // §BG 方案 A ②③：切到包装才显示换算说明；除不尽保留原价的橙色告知
-            ...entryUnitHints(
-              theme: theme,
-              baseUnit: row.baseUnit,
-              packageUnit: row.packageUnit,
-              packageSize: row.packageSize,
-              entryUnit: row.entryUnit,
-              priceKept: row.entryPriceKept,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => LineCard(
+    keyPrefix: 'purchase',
+    row: row,
+    index: index,
+    errors: LineCardErrors(
+      product: errors?[PurchaseLineField.product],
+      quantity: errors?[PurchaseLineField.quantity],
+      price: errors?[PurchaseLineField.unitPrice],
+      unit: errors?[PurchaseLineField.entryUnit],
+    ),
+    enabled: enabled,
+    allowTypedName: allowTypedName,
+    forPurchase: true,
+    showStockHint: false,
+    products: products,
+    onPickedProduct: onPickedProduct,
+    onPickProduct: onPickProduct,
+    onCreateRequested: onCreateRequested,
+    onChanged: onChanged,
+    onRemove: onRemove,
+  );
 }
 
 /// 一条立即付款的摆放。控制器由页面持有。

@@ -110,6 +110,11 @@ void expectSameBlock(String header) {
   );
 }
 
+/// 库存提示块里那句**只在复制体里出现过**的特征串（用来查"页面还留着副本"）。
+///
+/// 用 raw string：里面有模板占位符，普通字符串会被测试自己插值掉。
+const String _localStockHintMarker = r"'当前库存 $estimated（打开本页时；权威 $snapshot，";
+
 void main() {
   group('开单三页同构（#45 丙 · 机械保证）', () {
     // 2026-11-26：`_RowCtl` 已抽成 `line_row.dart` 的 `LineRowModel`
@@ -184,67 +189,68 @@ void main() {
       }
     });
 
-    test('负库存判定式：销售 / 送货 逐字同构', () {
-      final String sale = pageSource('sale_page');
-      final String delivery = pageSource('delivery_page');
-      const String header = 'final bool negativeStock =';
-      final String? a = statementOf(sale, header);
-      final String? b = statementOf(delivery, header);
-      expect(a, isNotNull, reason: '前提：`sale_page.dart` 里找不到「$header」');
-      expect(b, isNotNull, reason: '前提：`delivery_page.dart` 里找不到「$header」');
-      if (a == null || b == null) return;
+    test('负库存判定式：只在 `line_row.dart` 一份（不再三页各写）', () {
+      final String shared = pageSource('line_row');
       expect(
-        normalize(a),
-        equals(normalize(b)),
-        reason: '判定式同构 —— 「数量口径」一页改了另一页没改，两页就会得出不同结论',
+        shared,
+        contains('final bool negativeStock ='),
+        reason: '判定式必须落在共享 LineCard 里',
       );
-    });
-
-    test('两页都按**换算后**的数量判定（`row.baseQuantityValue`，不是 `quantityValue`）', () {
-      const String marker = 'final int? qty = row.baseQuantityValue;';
+      expect(
+        shared,
+        contains('qty > estimated'),
+        reason: '比的是**最小单位**数量与估算库存（#44 的口径）',
+      );
       for (final String page in <String>['sale_page', 'delivery_page']) {
         expect(
           pageSource(page),
-          contains(marker),
-          reason:
-              '$page 的 `_LineCard` 必须比**最小单位**数量'
-              '（用 `quantityValue` = 录入单位原始数，按箱录入必然漏报 —— #44）',
+          isNot(contains('final bool negativeStock =')),
+          reason: '$page 还留着一份判定式 —— 抽离没落地',
         );
       }
     });
 
-    test('库存提示块：销售 / 送货 逐字同构（**比一致性，不比字面值**）', () {
-      // 裁定（2026-10-14 审查 §一·小建议）：**不要**把文案字面值钉死 ——
-      // 产品哪天把「本地未同步」改成「本地待传」，只要两页同步改，
-      // 本测试**不该**红（它守的是「同构」，不是「文案内容」）。
-      // 文案的**语义契约**由行为测试守：`sale_page_test` 的 M08 与
-      // `delivery_page_test` 的 #44 组都在断言「本地未同步」真的出现在界面上。
-      const String anchor = 'if (row.product != null) ...<Widget>[';
-      final String? sale = blockOf(
-        pageSource('sale_page'),
-        anchor,
-        open: '[',
-        close: ']',
-      );
-      final String? delivery = blockOf(
-        pageSource('delivery_page'),
-        anchor,
-        open: '[',
-        close: ']',
-      );
-      expect(sale, isNotNull, reason: '前提：`sale_page.dart` 里找不到库存提示块「$anchor」');
-      expect(delivery, isNotNull, reason: '前提：`delivery_page.dart` 里找不到库存提示块');
-      if (sale == null || delivery == null) return;
+    test('换算后数量：`row.baseQuantityValue` 只在共享卡片里取', () {
+      final String shared = pageSource('line_row');
       expect(
-        normalize(sale),
-        contains('negativeStock'),
-        reason: '前提：抠出来的确实是库存提示块（否则下面那条会在比空气）',
+        shared,
+        contains('final int? qty = row.baseQuantityValue;'),
+        reason: '库存比对必须用**最小单位**数量（`quantityValue` 是录入单位原始数）',
       );
-      expect(
-        normalize(sale),
-        equals(normalize(delivery)),
-        reason: '库存提示块必须逐字同构 —— 两页同一件事说法不同，用户会以为是两个功能',
-      );
+      for (final String page in <String>['sale_page', 'delivery_page']) {
+        expect(
+          pageSource(page),
+          isNot(contains('final int? qty = row.baseQuantityValue;')),
+          reason: '$page 还留着一份 —— 同构区又长回来了',
+        );
+      }
+    });
+
+    test('三页明细行都引用共享 `LineCard`（不再各自维护一份）', () {
+      for (final String page in <String>[
+        'sale_page',
+        'purchase_page',
+        'delivery_page',
+      ]) {
+        final String src = pageSource(page);
+        expect(
+          src,
+          contains('LineCard('),
+          reason: '$page 必须用 line_row.dart 的共享 LineCard（纪律 18：同构区不许再复制）',
+        );
+        expect(
+          src,
+          contains("import 'line_row.dart';"),
+          reason: '$page 要 import 共享组件',
+        );
+        expect(
+          src,
+          isNot(contains(_localStockHintMarker)),
+          reason:
+              '$page 里还留着**库存提示块的复制体** —— 那段文字已在 LineCard 里，'
+              '留在页面 = 又是两份实现',
+        );
+      }
     });
 
     test('采购页**豁免**：不加「无消费点」的对称 getter / 不做负库存判定（#44 裁定 §二）', () {
